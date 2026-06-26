@@ -40,10 +40,9 @@ TEMPLATE_OWNER=your-username
 TEMPLATE_REPO=your-template-repo
 ```
 
-**Permissions (least privilege).** Login requests only the minimal `public_repo`
-scope. The first time someone creates a **private** repo, the app sends them
-through GitHub once more to approve the broader `repo` scope (step-up
-authorization), then returns and finishes creating the repo.
+**Permissions.** Login requests the full `repo` scope. The app needs admin on
+the repos it creates — for example to enable read/write Actions permissions so
+the campaign automation (claim/submission workflows) can run.
 
 ## 4. Run locally
 

@@ -3,22 +3,16 @@
 
 	let { data, form } = $props();
 
-	// Open the create form on request, when a submission just came back, or
-	// when we're resuming after a step-up authorization.
-	let showForm = $state(Boolean(form) || Boolean(data.pending));
+	// Open the create form once a submission has come back (success or error).
+	let showForm = $state(Boolean(form));
 	let submitting = $state(false);
 
-	// Selected visibility — drives the notice that private repos need an extra
-	// GitHub permission prompt the first time.
-	let visibility = $state(
-		form ? (form.isPrivate === false ? 'public' : 'private') : data.pending ? 'private' : 'public'
-	);
-	let needsEscalation = $derived(visibility === 'private' && !data.canPrivate);
+	let visibility = $state(form ? (form.isPrivate === false ? 'public' : 'private') : 'public');
 </script>
 
 <section class="hero">
 	<h1>Spin up a new repository from a template</h1>
-	<p>Log in with GitHub, pick a name and visibility, and we'll create it for you.</p>
+	<p>Log in with GitHub, fill in your campaign details, and we'll create the repository and prepare it for encoding.</p>
 
 	{#if data.user}
 		{#if !showForm}
@@ -51,17 +45,14 @@
 			<div class="banner ok">
 				Created <a href={form.html_url} target="_blank" rel="noreferrer">{form.full_name}</a> 🎉
 			</div>
+			{#if form.initWarning}
+				<div class="banner warn">
+					The repository was created, but setting up its campaign files didn't finish. Create it
+					again to retry, or check the repository directly.
+				</div>
+			{/if}
 		{:else if form?.error}
 			<div class="banner err">{form.error}</div>
-		{:else if data.denied === 'private'}
-			<div class="banner warn">
-				Repository not created. A <strong>private</strong> repository can only be created if you
-				grant this app the broader <code>repo</code> permission on GitHub, and that access was
-				declined. Click <strong>Create repository</strong> to try again and approve it — or choose
-				<strong>Public</strong> below, which needs no extra access.
-			</div>
-		{:else if data.pending}
-			<div class="banner info">GitHub access granted — review the details and click Create to finish.</div>
 		{/if}
 
 		<form
@@ -69,26 +60,35 @@
 			action="?/create"
 			use:enhance={() => {
 				submitting = true;
-				return async ({ result, update }) => {
+				return async ({ update }) => {
 					submitting = false;
-					// A private repo needs broader access — send the user through
-					// GitHub once to approve it; we resume on the way back.
-					if (result.type === 'success' && result.data?.escalate) {
-						window.location.href = '/login?scope=repo';
-						return;
-					}
 					await update();
 				};
 			}}
 		>
 			<label>
 				Repository name
-				<input name="name" value={form?.name ?? data.pending?.name ?? ''} placeholder="my-new-project" required />
+				<input name="name" value={form?.name ?? ''} placeholder="my-new-project" required />
+			</label>
+
+			<label>
+				Campaign title
+				<input name="title" value={form?.title ?? ''} placeholder="Title shown on the score and platform" required />
 			</label>
 
 			<label>
 				Description <span class="muted">(optional)</span>
-				<input name="description" value={form?.description ?? data.pending?.description ?? ''} placeholder="What is this repo for?" />
+				<input name="description" value={form?.description ?? ''} placeholder="What is this repo for?" />
+			</label>
+
+			<label>
+				License
+				<input name="license" value={form?.license ?? 'CC-BY-4.0'} placeholder="e.g. CC-BY-4.0" />
+			</label>
+
+			<label>
+				Composer <span class="muted">(optional)</span>
+				<input name="composer" value={form?.composer ?? ''} placeholder="e.g. Anonymous" />
 			</label>
 
 			<fieldset>
@@ -102,15 +102,6 @@
 					Public
 				</label>
 			</fieldset>
-
-			{#if needsEscalation && data.denied !== 'private'}
-				<p class="hint">
-					Private repositories require the broader <code>repo</code> permission — full control of
-					your repositories, including private ones. When you click <strong>Create repository</strong>,
-					GitHub will ask you to approve it; once you do, we'll bring you straight back here and
-					finish creating this repo. Public repositories don't need this.
-				</p>
-			{/if}
 
 			<button type="submit" disabled={submitting}>
 				{submitting ? 'Creating…' : 'Create repository'}
@@ -251,20 +242,6 @@
 	.create .muted {
 		color: #999;
 		font-weight: 400;
-	}
-	.hint {
-		margin: 0;
-		font-size: 0.85rem;
-		color: #6a5300;
-		background: #fff8e1;
-		border: 1px solid #f0dca0;
-		border-radius: 8px;
-		padding: 0.6rem 0.8rem;
-	}
-	.hint code {
-		background: #f4e9c5;
-		padding: 0.05rem 0.3rem;
-		border-radius: 4px;
 	}
 	.banner {
 		padding: 0.7rem 1rem;

@@ -1,0 +1,22 @@
+// Action E — stale-lock reaper. Pure: given the current locks and the timeout,
+// split them into those still fresh and those stale (older than
+// staleAfterMinutes), so abandoned claims free up. `now` and each `locked_at`
+// are ISO-8601 strings; the comparison uses real elapsed time, so a coarse,
+// delayed cron is fine. See DESIGN.md §5.
+
+export function reapLocks({ locks, staleAfterMinutes, now }) {
+	const cutoffMs = staleAfterMinutes * 60_000;
+	const nowMs = Date.parse(now);
+	const kept = [];
+	const removed = [];
+	for (const lock of locks) {
+		const lockedMs = Date.parse(lock.locked_at);
+		// A lock is stale only if we can read both times and it's past the cutoff;
+		// anything with an unparseable timestamp is kept (don't free what we can't
+		// reason about).
+		const stale =
+			Number.isFinite(lockedMs) && Number.isFinite(nowMs) && nowMs - lockedMs > cutoffMs;
+		(stale ? removed : kept).push(lock);
+	}
+	return { kept, removed };
+}

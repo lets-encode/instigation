@@ -1,84 +1,68 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-import { searchReposByTopic, createRepoFromTemplate, setRepoTopics } from '$lib/server/github.js';
+import {
+	searchReposByTopic,
+	createRepoFromTemplate,
+	setRepoTopics,
+	setActionsWorkflowPermissions,
+	waitForRepoContents,
+	commitFiles
+} from '$lib/server/github.js';
+import {
+	buildCampaignConfig,
+	configToYaml,
+	stampTemplate,
+	buildStateCsv,
+	buildLocksCsv
+} from '$lib/server/campaign-init.js';
 
 const REPO_TOPIC = env.REPO_TOPIC || 'created-with-instigation';
-const PENDING_COOKIE = 'pending_repo';
 
-// `repo` (full access) is needed for private repos; `public_repo` is not enough.
-const hasRepoScope = (scope) => (scope ?? '').split(/[,\s]+/).includes('repo');
-
-export async function load({ locals, cookies, url }) {
+export async function load({ locals, url }) {
 	const template = `${env.TEMPLATE_OWNER}/${env.TEMPLATE_REPO}`;
-	const canPrivate = hasRepoScope(locals.scope);
-
-	// 'private' = declined the extra access needed for a private repo;
-	// 'login'   = declined the initial login. null otherwise.
+	// 'login' = the user declined the GitHub authorization. null otherwise.
 	const denied = url.searchParams.get('denied');
 
-	// Restore the repo the user was creating before we sent them to GitHub —
-	// either to finish (resume) or to retry/switch after declining (denied).
-	let pending = null;
-	const stash = cookies.get(PENDING_COOKIE);
-	if ((url.searchParams.get('resume') || denied === 'private') && stash) {
-		try {
-			pending = JSON.parse(stash);
-		} catch {
-			pending = null;
-		}
-	}
-
 	try {
-		// With a token: all public matches + the user's own private matches.
-		// Without: public matches only.
+		// The token holds the `repo` scope, so this returns the user's matching
+		// public and private repositories.
 		const repos = await searchReposByTopic(REPO_TOPIC, locals.token);
-		return { repos, listError: null, template, canPrivate, pending, denied };
+		return { repos, listError: null, template, denied };
 	} catch (e) {
 		console.error('Repo listing failed:', e.message);
 		return {
 			repos: [],
 			listError: 'Could not load the repository list right now.',
 			template,
-			canPrivate,
-			pending,
 			denied
 		};
 	}
 }
 
 export const actions = {
-	create: async ({ request, locals, cookies, url }) => {
+	create: async ({ request, locals }) => {
 		if (!locals.user) throw redirect(302, '/');
 
 		const form = await request.formData();
 		const name = String(form.get('name') ?? '').trim();
+		const title = String(form.get('title') ?? '').trim();
 		const description = String(form.get('description') ?? '').trim();
+		const license = String(form.get('license') ?? '').trim();
+		const composer = String(form.get('composer') ?? '').trim();
 		const isPrivate = form.get('visibility') === 'private';
 
+		// Echoed back on any early return so the form keeps what was typed.
+		const fields = { name, title, description, license, composer, isPrivate };
+
 		// GitHub repo name rules: letters, digits, -, _.
-		if (!name) return fail(400, { name, description, isPrivate, error: 'Repository name is required.' });
+		if (!name) return fail(400, { ...fields, error: 'Repository name is required.' });
 		if (!/^[A-Za-z0-9_-]+$/.test(name)) {
 			return fail(400, {
-				name,
-				description,
-				isPrivate,
+				...fields,
 				error: 'Name may only contain letters, numbers, hyphens and underscores.'
 			});
 		}
-
-		// Least privilege: only ask GitHub for private-repo access at the moment
-		// it's actually needed. Stash the form and tell the client to send the
-		// user through a step-up authorization; we'll resume on the way back.
-		if (isPrivate && !hasRepoScope(locals.scope)) {
-			cookies.set(PENDING_COOKIE, JSON.stringify({ name, description, isPrivate }), {
-				path: '/',
-				httpOnly: true,
-				sameSite: 'lax',
-				secure: url.protocol === 'https:',
-				maxAge: 600
-			});
-			return { escalate: true };
-		}
+		if (!title) return fail(400, { ...fields, error: 'Campaign title is required.' });
 
 		try {
 			const repo = await createRepoFromTemplate(locals.token, {
@@ -98,15 +82,61 @@ export const actions = {
 				console.warn('Could not tag new repo with topic:', e.message);
 			}
 
-			cookies.delete(PENDING_COOKIE, { path: '/' });
-			return { success: true, html_url: repo.html_url, full_name: repo.full_name };
+			// Give the campaign's Actions a read/write GITHUB_TOKEN so the claim
+			// and submission workflows can maintain the tracking tables. We log in
+			// with the full `repo` scope, so this succeeds for repos the user owns;
+			// kept non-fatal (warn and continue) in case of org-level restrictions.
+			try {
+				await setActionsWorkflowPermissions(locals.token, repo.owner.login, repo.name);
+			} catch (e) {
+				console.warn('Could not set Actions workflow permissions:', e.message);
+			}
+
+			// Initialise the campaign (Action A): stamp the score and write the
+			// tracking tables into the new repo, in one commit. The repo already
+			// exists by now, so if this fails we still report success — flagged so
+			// the user knows to retry initialisation rather than re-creating.
+			let initWarning = false;
+			try {
+				const owner = repo.owner.login;
+				const template = await waitForRepoContents(
+					locals.token,
+					owner,
+					repo.name,
+					'templates/score.template.mei'
+				);
+				const config = buildCampaignConfig(
+					{ title, description, license: license || undefined, composer },
+					locals.user.login
+				);
+				const mei = stampTemplate(template, {
+					title: config.campaign.title,
+					composer: config.sources[0].header.composer,
+					license: config.campaign.license
+				});
+				await commitFiles(
+					locals.token,
+					owner,
+					repo.name,
+					[
+						{ path: 'config.yaml', content: configToYaml(config) },
+						{ path: 'sources/score.mei', content: mei },
+						{ path: 'tracking/state.csv', content: buildStateCsv(config) },
+						{ path: 'tracking/locks.csv', content: buildLocksCsv() }
+					],
+					'Initialise campaign (Action A)'
+				);
+			} catch (e) {
+				console.error('Campaign initialisation failed:', e.message);
+				initWarning = true;
+			}
+
+			return { success: true, html_url: repo.html_url, full_name: repo.full_name, initWarning };
 		} catch (e) {
 			console.error('Repo creation failed:', e.message);
 			return fail(502, {
-				name,
-				description,
-				isPrivate,
-				error: 'Could not create the repository. Check the name is available and that you granted enough access, then try again.'
+				...fields,
+				error: 'Could not create the repository. Check the name isn’t already taken, then try again.'
 			});
 		}
 	}
