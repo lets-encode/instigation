@@ -55,15 +55,15 @@ export const actions = {
 		// Echoed back on any early return so the form keeps what was typed.
 		const fields = { name, title, description, license, composer, isPrivate };
 
-		// GitHub repo name rules: letters, digits, -, _.
-		if (!name) return fail(400, { ...fields, error: 'Repository name is required.' });
+		// Handle becomes the GitHub repo name: letters, digits, -, _.
+		if (!title) return fail(400, { ...fields, error: 'Campaign name is required.' });
+		if (!name) return fail(400, { ...fields, error: 'A handle is required.' });
 		if (!/^[A-Za-z0-9_-]+$/.test(name)) {
 			return fail(400, {
 				...fields,
-				error: 'Name may only contain letters, numbers, hyphens and underscores.'
+				error: 'The handle may only contain letters, numbers, hyphens and underscores.'
 			});
 		}
-		if (!title) return fail(400, { ...fields, error: 'Campaign title is required.' });
 
 		try {
 			const repo = await createRepoFromTemplate(locals.token!, {
@@ -146,7 +146,7 @@ export const actions = {
 			console.error('Repo creation failed:', (e as Error).message);
 			return fail(502, {
 				...fields,
-				error: 'Could not create the repository. Check the name isn’t already taken, then try again.'
+				error: 'Could not create the repository. Check the handle isn’t already taken, then try again.'
 			});
 		}
 	}

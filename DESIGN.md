@@ -221,14 +221,23 @@ Status:
 - **Campaign console** (`/campaign/[owner]/[repo]`) — a GUI page that drives the campaign: it
   opens the claim and validation PRs and dispatches the reaper (B, C-validation, E). The
   **encoding** path is a hand-off to mei-friend — "Open in mei-friend" claims the task (Action B)
-  and opens the score in the editor; the volunteer adds content there and mei-friend's own
-  commit/push opens the submission PR (Action C). Owners/collaborators commit on a branch in the
-  repo directly; **anyone else forks the repo and opens a cross-repo PR upstream** (the real
-  volunteer model — needs a public repo or read access to fork).
+  and opens the score in the editor; the volunteer adds content there and **commits it in
+  mei-friend**, then returns and clicks **"Submit encoding"**, which is what opens the submission
+  PR (Action C). The console opens that PR because mei-friend, on a normal commit, only
+  pushes to a branch — it does not open a cross-repo PR upstream itself (its only PR path is a
+  merge-conflict fallback, and that PR targets the fork, not the campaign repo). So the
+  console, not mei-friend, is the source of the submission PR. Two binding cases:
+  **owners/collaborators** commit on a console-created `encode-<task_id>` branch in the repo
+  itself (you can't fork your own repo) — mei-friend binds to it via a new `connect=true` URL
+  param (open + bind, no fork; see `mei-friend-connect.spec.md`, a pending mei-friend change);
+  **anyone else forks** the repo (mei-friend's existing `fork=true`), commits to the fork, and
+  the console opens a cross-repo PR upstream (needs a public repo or read access to fork).
 - All five Actions are **not yet live-tested** on a real campaign.
 - **mei-friend** already exists and can be connected to a campaign — volunteers open it via URL
   parameters (`file=` pointing at the score, `fork=true`), so the volunteer encoding/validation
-  loop has a working editor today.
+  loop has a working editor today. The **owner/collaborator** path additionally needs the
+  `connect=true` param (open + bind to GitHub without forking) — specified in
+  `mei-friend-connect.spec.md`, not yet shipped in mei-friend; the console already passes it.
 - Not built: the **MEI schema validator** and a dedicated **WYSIWYG MEI editor** (a separate,
   lower-friction editing surface).
 

@@ -17,6 +17,62 @@
 	let visibility = $state(
 		untrack(() => (form && 'error' in form ? (form.isPrivate === false ? 'public' : 'private') : 'public'))
 	);
+
+	// Campaign name and the derived handle. The handle is auto-filled from the
+	// name until the user edits it, after which it's left alone (handleTouched).
+	let title = $state(untrack(() => (form && 'error' in form ? form.title : '') || ''));
+	let handle = $state(untrack(() => (form && 'error' in form ? form.name : '') || ''));
+	let handleTouched = $state(untrack(() => Boolean(form && 'error' in form ? form.name : '')));
+
+	$effect(() => {
+		if (!handleTouched) handle = makeHandle(title);
+	});
+
+	// Generic words dropped when deriving a handle, so the distinctive words of a
+	// title survive. Stop words, plus key/mode names common to many pieces.
+	const STOP_WORDS = new Set([
+		'the', 'a', 'an', 'of', 'in', 'for', 'and', 'or', 'to', 'from', 'on', 'by', 'at', 'with',
+		'de', 'la', 'le', 'les', 'des', 'du', 'der', 'die', 'das', 'und', 'et', 'il', 'el'
+	]);
+	const MODE_WORDS = new Set(['major', 'minor', 'sharp', 'flat', 'dur', 'moll']);
+	// Catalogue labels (e.g. "Op. 125", "BWV 1043"): the label and its number are
+	// both dropped, since they don't help recognise the piece by name.
+	const CATALOGUE_WITH_NUMBER = new Set(['op', 'opus', 'k', 'kv', 'bwv', 'woo', 'hob', 'rv', 'd', 's', 'l', 'wq']);
+	// Labels whose following number names the piece (Symphony No. 9): drop the
+	// label, keep the number.
+	const CATALOGUE_KEEP_NUMBER = new Set(['no', 'nr', 'number']);
+
+	// Derive a short, slug-safe handle from a piece title: lowercase and strip
+	// diacritics, drop stop words and catalogue noise, then keep the first few
+	// distinctive words. Falls back to the raw words if everything was dropped.
+	function makeHandle(name: string): string {
+		const tokens = name
+			.replace(/[äÄ]/g, 'ae')
+			.replace(/[öÖ]/g, 'oe')
+			.replace(/[üÜ]/g, 'ue')
+			.replace(/ß/g, 'ss')
+			.normalize('NFKD')
+			.replace(/\p{Diacritic}/gu, '')
+			.toLowerCase()
+			.split(/[^a-z0-9]+/)
+			.filter(Boolean);
+
+		const kept: string[] = [];
+		for (let i = 0; i < tokens.length; i++) {
+			const t = tokens[i];
+			if (CATALOGUE_WITH_NUMBER.has(t)) {
+				if (/^\d+$/.test(tokens[i + 1] ?? '')) i++; // drop the catalogue number too
+				continue;
+			}
+			if (CATALOGUE_KEEP_NUMBER.has(t)) continue; // drop the label, keep its number
+			if (STOP_WORDS.has(t) || MODE_WORDS.has(t)) continue;
+			if (t.length === 1 && !/\d/.test(t)) continue; // lone letters (key names, initials)
+			kept.push(t);
+		}
+
+		const words = (kept.length ? kept : tokens).slice(0, 4);
+		return words.join('-').slice(0, 40).replace(/-+$/, '');
+	}
 </script>
 
 {#if submitting}
@@ -88,41 +144,54 @@
 			}}
 		>
 			<label>
-				Repository name
-				<input name="name" value={fields?.name ?? ''} placeholder="my-new-project" required />
+				Campaign name
+				<input name="title" bind:value={title} placeholder="e.g. Symphony No. 9 in D minor, Op. 125" required />
 			</label>
 
 			<label>
-				Campaign title
-				<input name="title" value={fields?.title ?? ''} placeholder="Title shown on the score and platform" required />
+				Handle
+				<input
+					name="name"
+					bind:value={handle}
+					oninput={(e) => (handleTouched = e.currentTarget.value.trim() !== '')}
+					placeholder="symphony-9-choral"
+					required
+				/>
+				<span class="hint">Used in the URL and as the Git repository name. Auto-filled from the campaign name — edit it if you like.</span>
 			</label>
 
-			<label>
-				Description <span class="muted">(optional)</span>
-				<input name="description" value={fields?.description ?? ''} placeholder="What is this repo for?" />
-			</label>
-
-			<label>
-				License
-				<input name="license" value={fields?.license ?? 'CC-BY-4.0'} placeholder="e.g. CC-BY-4.0" />
-			</label>
-
-			<label>
-				Composer <span class="muted">(optional)</span>
-				<input name="composer" value={fields?.composer ?? ''} placeholder="e.g. Anonymous" />
-			</label>
-
-			<fieldset>
-				<legend>Visibility (status)</legend>
-				<label class="radio">
-					<input type="radio" name="visibility" value="private" bind:group={visibility} />
-					Private
+			<details class="extra">
+				<summary>Additional metadata</summary>
+				<label>
+					Composer <span class="muted">(optional)</span>
+					<input name="composer" value={fields?.composer ?? ''} placeholder="e.g. Anonymous" />
 				</label>
-				<label class="radio">
-					<input type="radio" name="visibility" value="public" bind:group={visibility} />
-					Public
+			</details>
+
+			<details class="extra">
+				<summary>Advanced</summary>
+				<label>
+					Description <span class="muted">(optional)</span>
+					<input name="description" value={fields?.description ?? ''} placeholder="What is this repo for?" />
 				</label>
-			</fieldset>
+
+				<label>
+					License
+					<input name="license" value={fields?.license ?? 'CC-BY-4.0'} placeholder="e.g. CC-BY-4.0" />
+				</label>
+
+				<fieldset>
+					<legend>Visibility (status)</legend>
+					<label class="radio">
+						<input type="radio" name="visibility" value="private" bind:group={visibility} />
+						Private
+					</label>
+					<label class="radio">
+						<input type="radio" name="visibility" value="public" bind:group={visibility} />
+						Public
+					</label>
+				</fieldset>
+			</details>
 
 			<button type="submit" disabled={submitting}>
 				{submitting ? 'Creating…' : 'Create repository'}
@@ -316,6 +385,28 @@
 	.create .muted {
 		color: #999;
 		font-weight: 400;
+	}
+	.create .hint {
+		color: #888;
+		font-weight: 400;
+		font-size: 0.8rem;
+	}
+	.create .extra {
+		border: 1px solid #e0e0e0;
+		border-radius: 8px;
+		padding: 0 1rem;
+	}
+	.create .extra[open] {
+		padding-bottom: 1rem;
+	}
+	.create .extra summary {
+		cursor: pointer;
+		font-weight: 600;
+		font-size: 0.9rem;
+		padding: 0.7rem 0;
+	}
+	.create .extra label {
+		margin-top: 1rem;
 	}
 	.banner {
 		padding: 0.7rem 1rem;

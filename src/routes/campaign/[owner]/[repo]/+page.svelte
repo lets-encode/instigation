@@ -124,6 +124,17 @@
 							</button>
 						</form>
 
+						<form method="POST" action="?/submitpr" use:enhance={run}>
+							<input type="hidden" name="task_id" value={task.task_id} />
+							<button
+								type="submit"
+								disabled={busy || !myEncodingLock(task.task_id)}
+								title="After committing your encoding in mei-friend, open the submission PR (advances the task to validation)"
+							>
+								Submit encoding
+							</button>
+						</form>
+
 						<form method="POST" action="?/claim" use:enhance={run}>
 							<input type="hidden" name="task_id" value={task.task_id} />
 							<button name="kind" value="validation" disabled={busy || task.state !== 'validation_required'}>
@@ -173,8 +184,10 @@
 		{:else}
 			from its public raw URL
 		{/if}
-		and, at the same time, opens an encoding claim PR. You add the content in mei-friend;
-		its GitHub commit/push opens the submission PR.<br />
+		and, at the same time, opens an encoding claim PR. You add the content in mei-friend
+		and commit it there (to a branch, or to your fork if you can't push); then
+		<strong>Submit encoding</strong> opens the submission PR that advances the task to
+		validation.<br />
 		A task's <strong>encoder cannot validate their own work</strong> (peer review): logged in as
 		<code>{data.viewer}</code>, you'll need a second GitHub account to test a passing validation.
 		Buttons enable only when the relevant state/lock allows the action.
