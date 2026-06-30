@@ -15,10 +15,11 @@ import {
 	buildStateCsv,
 	buildLocksCsv
 } from '$lib/server/campaign-init.js';
+import type { PageServerLoad, Actions } from './$types';
 
 const REPO_TOPIC = env.REPO_TOPIC || 'created-with-instigation';
 
-export async function load({ locals, url }) {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	const template = `${env.TEMPLATE_OWNER}/${env.TEMPLATE_REPO}`;
 	// 'login' = the user declined the GitHub authorization. null otherwise.
 	const denied = url.searchParams.get('denied');
@@ -29,7 +30,7 @@ export async function load({ locals, url }) {
 		const repos = await searchReposByTopic(REPO_TOPIC, locals.token);
 		return { repos, listError: null, template, denied };
 	} catch (e) {
-		console.error('Repo listing failed:', e.message);
+		console.error('Repo listing failed:', (e as Error).message);
 		return {
 			repos: [],
 			listError: 'Could not load the repository list right now.',
@@ -37,7 +38,7 @@ export async function load({ locals, url }) {
 			denied
 		};
 	}
-}
+};
 
 export const actions = {
 	create: async ({ request, locals }) => {
@@ -65,7 +66,7 @@ export const actions = {
 		if (!title) return fail(400, { ...fields, error: 'Campaign title is required.' });
 
 		try {
-			const repo = await createRepoFromTemplate(locals.token, {
+			const repo = await createRepoFromTemplate(locals.token!, {
 				templateOwner: env.TEMPLATE_OWNER,
 				templateRepo: env.TEMPLATE_REPO,
 				owner: locals.user.login,
@@ -77,9 +78,9 @@ export const actions = {
 			// Tag it so it shows up in the listing. Non-fatal: the repo already
 			// exists; without the topic it just won't appear in the list.
 			try {
-				await setRepoTopics(locals.token, repo.owner.login, repo.name, [REPO_TOPIC]);
+				await setRepoTopics(locals.token!, repo.owner.login, repo.name, [REPO_TOPIC]);
 			} catch (e) {
-				console.warn('Could not tag new repo with topic:', e.message);
+				console.warn('Could not tag new repo with topic:', (e as Error).message);
 			}
 
 			// Give the campaign's Actions a read/write GITHUB_TOKEN so the claim
@@ -87,9 +88,9 @@ export const actions = {
 			// with the full `repo` scope, so this succeeds for repos the user owns;
 			// kept non-fatal (warn and continue) in case of org-level restrictions.
 			try {
-				await setActionsWorkflowPermissions(locals.token, repo.owner.login, repo.name);
+				await setActionsWorkflowPermissions(locals.token!, repo.owner.login, repo.name);
 			} catch (e) {
-				console.warn('Could not set Actions workflow permissions:', e.message);
+				console.warn('Could not set Actions workflow permissions:', (e as Error).message);
 			}
 
 			// Initialise the campaign (Action A): stamp the score and write the
@@ -100,7 +101,7 @@ export const actions = {
 			try {
 				const owner = repo.owner.login;
 				const template = await waitForRepoContents(
-					locals.token,
+					locals.token!,
 					owner,
 					repo.name,
 					'templates/score.template.mei'
@@ -115,7 +116,7 @@ export const actions = {
 					license: config.campaign.license
 				});
 				await commitFiles(
-					locals.token,
+					locals.token!,
 					owner,
 					repo.name,
 					[
@@ -127,17 +128,17 @@ export const actions = {
 					'Initialise campaign (Action A)'
 				);
 			} catch (e) {
-				console.error('Campaign initialisation failed:', e.message);
+				console.error('Campaign initialisation failed:', (e as Error).message);
 				initWarning = true;
 			}
 
 			return { success: true, html_url: repo.html_url, full_name: repo.full_name, initWarning };
 		} catch (e) {
-			console.error('Repo creation failed:', e.message);
+			console.error('Repo creation failed:', (e as Error).message);
 			return fail(502, {
 				...fields,
 				error: 'Could not create the repository. Check the name isn’t already taken, then try again.'
 			});
 		}
 	}
-};
+} satisfies Actions;

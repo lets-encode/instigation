@@ -2,8 +2,9 @@ import { redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { revokeToken } from '$lib/server/github.js';
 import { invalidateUser } from '$lib/server/session.js';
+import type { RequestHandler } from './$types';
 
-export async function POST({ cookies }) {
+export const POST: RequestHandler = async ({ cookies }) => {
 	const token = cookies.get('gh_token');
 	cookies.delete('gh_token', { path: '/' });
 
@@ -18,9 +19,9 @@ export async function POST({ cookies }) {
 				token
 			});
 		} catch (e) {
-			console.warn('Token revocation failed:', e.message);
+			console.warn('Token revocation failed:', (e as Error).message);
 		}
 	}
 
 	throw redirect(303, '/');
-}
+};

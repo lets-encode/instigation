@@ -1,13 +1,22 @@
-<script>
+<script lang="ts">
+	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import type { PageProps } from './$types';
 
-	let { data, form } = $props();
+	let { data, form }: PageProps = $props();
 
+	// Field values echoed back after a failed submit (absent on success).
+	let fields = $derived(form && 'error' in form ? form : null);
+
+	// Seeded from the initial submit result, then toggled by the user — so these
+	// intentionally capture `form`'s initial value rather than tracking it.
 	// Open the create form once a submission has come back (success or error).
-	let showForm = $state(Boolean(form));
+	let showForm = $state(untrack(() => Boolean(form)));
 	let submitting = $state(false);
 
-	let visibility = $state(form ? (form.isPrivate === false ? 'public' : 'private') : 'public');
+	let visibility = $state(
+		untrack(() => (form && 'error' in form ? (form.isPrivate === false ? 'public' : 'private') : 'public'))
+	);
 </script>
 
 <section class="hero">
@@ -41,7 +50,7 @@
 		<h2>Create a repository</h2>
 		<p class="template">From template: <code>{data.template}</code></p>
 
-		{#if form?.success}
+		{#if form && 'success' in form}
 			<div class="banner ok">
 				Created <a href={form.html_url} target="_blank" rel="noreferrer">{form.full_name}</a> 🎉
 			</div>
@@ -51,7 +60,7 @@
 					again to retry, or check the repository directly.
 				</div>
 			{/if}
-		{:else if form?.error}
+		{:else if form && 'error' in form}
 			<div class="banner err">{form.error}</div>
 		{/if}
 
@@ -68,27 +77,27 @@
 		>
 			<label>
 				Repository name
-				<input name="name" value={form?.name ?? ''} placeholder="my-new-project" required />
+				<input name="name" value={fields?.name ?? ''} placeholder="my-new-project" required />
 			</label>
 
 			<label>
 				Campaign title
-				<input name="title" value={form?.title ?? ''} placeholder="Title shown on the score and platform" required />
+				<input name="title" value={fields?.title ?? ''} placeholder="Title shown on the score and platform" required />
 			</label>
 
 			<label>
 				Description <span class="muted">(optional)</span>
-				<input name="description" value={form?.description ?? ''} placeholder="What is this repo for?" />
+				<input name="description" value={fields?.description ?? ''} placeholder="What is this repo for?" />
 			</label>
 
 			<label>
 				License
-				<input name="license" value={form?.license ?? 'CC-BY-4.0'} placeholder="e.g. CC-BY-4.0" />
+				<input name="license" value={fields?.license ?? 'CC-BY-4.0'} placeholder="e.g. CC-BY-4.0" />
 			</label>
 
 			<label>
 				Composer <span class="muted">(optional)</span>
-				<input name="composer" value={form?.composer ?? ''} placeholder="e.g. Anonymous" />
+				<input name="composer" value={fields?.composer ?? ''} placeholder="e.g. Anonymous" />
 			</label>
 
 			<fieldset>
@@ -259,19 +268,10 @@
 		background: #fdeaea;
 		border: 1px solid #f3c0c0;
 	}
-	.banner.info {
-		background: #e8f1fd;
-		border: 1px solid #bcd4f3;
-	}
 	.banner.warn {
 		background: #fff8e1;
 		border: 1px solid #f0dca0;
 		color: #6a5300;
-	}
-	.banner.warn code {
-		background: #f4e9c5;
-		padding: 0.05rem 0.3rem;
-		border-radius: 4px;
 	}
 	.repos {
 		margin-top: 3.5rem;

@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { reapLocks } from './campaign-reaper.js';
+import type { LockRow } from './campaign-tables.js';
 
 const NOW = '2026-06-25T12:00:00Z';
-const lock = (task_id, locked_at, kind = 'encoding') => ({
+const lock = (task_id: string, locked_at: string, kind = 'encoding'): LockRow => ({
 	task_id,
 	locked_by: 'bob',
 	locked_at,

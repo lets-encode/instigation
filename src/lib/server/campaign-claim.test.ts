@@ -2,7 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseStateCsv, parseLocksCsv } from './campaign-tables.js';
+import type { LockRow } from './campaign-tables.js';
 import { boundaryCheck, checkClaim } from './campaign-claim.js';
+import type { CheckClaimArgs } from './campaign-claim.js';
+
+// A relaxed view of the claim result for assertions, where the branch-specific
+// fields are read directly without narrowing each result.
+type ClaimView = { ok: boolean; reason?: string; lock?: LockRow };
 
 const NOW = '2026-06-25T10:00:00Z';
 const LOCKS_HEADER = 'task_id,locked_by,locked_at,kind\n';
@@ -18,7 +24,7 @@ const validationTwoSlots = parseStateCsv(
 	'task_id,fragment,state,encoder,encoded_at,v1,v2\nT0001,sources/score.mei,validation_required,bob,2026-06-25T09:00:00Z,,\n'
 );
 
-const claim = (over) =>
+const claim = (over: Partial<CheckClaimArgs> = {}): ClaimView =>
 	checkClaim({
 		tasks: encodingRequired,
 		locks: [],
@@ -46,7 +52,7 @@ test('encoding claim on a free task is accepted with an Action-authored lock', (
 test('lock identity comes from the author, never the fork', () => {
 	// Even if a fork tried to smuggle a different login, only `author` is used.
 	const v = claim({ author: 'dave' });
-	assert.equal(v.lock.locked_by, 'dave');
+	assert.equal(v.lock!.locked_by, 'dave');
 });
 
 test('rejects a PR that strays outside locks.csv', () => {
@@ -73,7 +79,7 @@ test('encoding claim is rejected in the wrong state', () => {
 test('validation claim by a different person is accepted', () => {
 	const v = claim({ tasks: validationRequired, intent: { task_id: 'T0001', kind: 'validation' }, author: 'carol' });
 	assert.equal(v.ok, true);
-	assert.equal(v.lock.kind, 'validation');
+	assert.equal(v.lock!.kind, 'validation');
 });
 
 test('validation claim by the encoder is rejected (no self-validation)', () => {

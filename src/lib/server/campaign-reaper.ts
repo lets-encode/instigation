@@ -4,11 +4,24 @@
 // are ISO-8601 strings; the comparison uses real elapsed time, so it does not
 // depend on how frequently or punctually the reaper runs. See DESIGN.md §5.
 
-export function reapLocks({ locks, staleAfterMinutes, now }) {
+import type { LockRow } from './campaign-tables.js';
+
+export interface ReapLocksArgs {
+	locks: LockRow[];
+	staleAfterMinutes: number;
+	now: string;
+}
+
+export interface ReapLocksResult {
+	kept: LockRow[];
+	removed: LockRow[];
+}
+
+export function reapLocks({ locks, staleAfterMinutes, now }: ReapLocksArgs): ReapLocksResult {
 	const cutoffMs = staleAfterMinutes * 60_000;
 	const nowMs = Date.parse(now);
-	const kept = [];
-	const removed = [];
+	const kept: LockRow[] = [];
+	const removed: LockRow[] = [];
 	for (const lock of locks) {
 		const lockedMs = Date.parse(lock.locked_at);
 		// A lock is stale only if we can read both times and it's past the cutoff;

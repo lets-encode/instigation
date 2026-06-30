@@ -2,7 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseStateCsv, parseLocksCsv, serializeStateCsv, serializeLocksCsv } from './campaign-tables.js';
+import type { ParsedState, LockRow } from './campaign-tables.js';
 import { checkEncoding, checkValidation } from './campaign-submit.js';
+import type { CheckEncodingArgs, CheckValidationArgs } from './campaign-submit.js';
+
+// A relaxed view of the submit result for assertions, where the accepted-branch
+// fields are read directly without narrowing each result.
+type SubmitView = { ok: boolean; reason?: string; tasks?: ParsedState; locks?: LockRow[] };
+
+const enc = (args: CheckEncodingArgs): SubmitView => checkEncoding(args);
+const val = (args: CheckValidationArgs): SubmitView => checkValidation(args);
 
 const NOW = '2026-06-25T10:00:00Z';
 const LOCKS_HEADER = 'task_id,locked_by,locked_at,kind\n';
@@ -19,7 +28,7 @@ const validationLock = parseLocksCsv(LOCKS_HEADER + 'T0001,carol,2026-06-25T09:3
 // --- Encoding submission ---------------------------------------------------
 
 test('encoding: accepted submission advances state and clears the lock', () => {
-	const v = checkEncoding({
+	const v = enc({
 		tasks: encodingState(),
 		locks: encodingLock,
 		intent: { task_id: 'T0001' },
@@ -30,15 +39,15 @@ test('encoding: accepted submission advances state and clears the lock', () => {
 	});
 	assert.equal(v.ok, true);
 	assert.equal(
-		serializeStateCsv(v.tasks),
+		serializeStateCsv(v.tasks!),
 		'task_id,fragment,state,encoder,encoded_at,v1\n' +
 			`T0001,sources/score.mei,validation_required,bob,${NOW},\n`
 	);
-	assert.equal(serializeLocksCsv(v.locks), LOCKS_HEADER);
+	assert.equal(serializeLocksCsv(v.locks!), LOCKS_HEADER);
 });
 
 test('encoding: rejects a PR that touches anything but the fragment', () => {
-	const v = checkEncoding({
+	const v = enc({
 		tasks: encodingState(),
 		locks: encodingLock,
 		intent: { task_id: 'T0001' },
@@ -51,7 +60,7 @@ test('encoding: rejects a PR that touches anything but the fragment', () => {
 });
 
 test('encoding: rejects when the author does not hold the encoding lock', () => {
-	const v = checkEncoding({
+	const v = enc({
 		tasks: encodingState(),
 		locks: encodingLock, // held by bob
 		intent: { task_id: 'T0001' },
@@ -71,12 +80,12 @@ test('encoding: rejects invalid MEI and the wrong state', () => {
 		changedPaths: ['sources/score.mei'],
 		now: NOW
 	};
-	assert.equal(checkEncoding({ ...base, tasks: encodingState(), meiValid: false }).reason, 'mei_invalid');
-	assert.equal(checkEncoding({ ...base, tasks: validationState(), meiValid: true }).reason, 'wrong_state');
+	assert.equal(enc({ ...base, tasks: encodingState(), meiValid: false }).reason, 'mei_invalid');
+	assert.equal(enc({ ...base, tasks: validationState(), meiValid: true }).reason, 'wrong_state');
 });
 
 test('encoding: rejects an unknown task', () => {
-	const v = checkEncoding({
+	const v = enc({
 		tasks: encodingState(),
 		locks: encodingLock,
 		intent: { task_id: 'T9999' },
@@ -91,7 +100,7 @@ test('encoding: rejects an unknown task', () => {
 // --- Validation outcome ----------------------------------------------------
 
 test('validation: a pass meeting the threshold completes the task and clears the lock', () => {
-	const v = checkValidation({
+	const v = val({
 		tasks: validationState(),
 		locks: validationLock,
 		intent: { task_id: 'T0001', verdict: 'pass' },
@@ -102,15 +111,15 @@ test('validation: a pass meeting the threshold completes the task and clears the
 	});
 	assert.equal(v.ok, true);
 	assert.equal(
-		serializeStateCsv(v.tasks),
+		serializeStateCsv(v.tasks!),
 		'task_id,fragment,state,encoder,encoded_at,v1\n' +
 			`T0001,sources/score.mei,completed,bob,2026-06-25T09:00:00Z,pass|carol|${NOW}\n`
 	);
-	assert.equal(serializeLocksCsv(v.locks), LOCKS_HEADER);
+	assert.equal(serializeLocksCsv(v.locks!), LOCKS_HEADER);
 });
 
 test('validation: a fail records the cell but does not complete', () => {
-	const v = checkValidation({
+	const v = val({
 		tasks: validationState(),
 		locks: validationLock,
 		intent: { task_id: 'T0001', verdict: 'fail' },
@@ -119,15 +128,15 @@ test('validation: a fail records the cell but does not complete', () => {
 		passThreshold: 1,
 		now: NOW
 	});
-	assert.equal(v.tasks.rows[0].state, 'validation_required');
-	assert.equal(v.tasks.rows[0].v1, `fail|carol|${NOW}`);
+	assert.equal(v.tasks!.rows[0].state, 'validation_required');
+	assert.equal(v.tasks!.rows[0].v1, `fail|carol|${NOW}`);
 });
 
 test('validation: below threshold stays validation_required, writing the next open slot', () => {
 	const tasks = parseStateCsv(
 		'task_id,fragment,state,encoder,encoded_at,v1,v2\nT0001,sources/score.mei,validation_required,bob,t,,\n'
 	);
-	const v = checkValidation({
+	const v = val({
 		tasks,
 		locks: validationLock,
 		intent: { task_id: 'T0001', verdict: 'pass' },
@@ -136,9 +145,9 @@ test('validation: below threshold stays validation_required, writing the next op
 		passThreshold: 2,
 		now: NOW
 	});
-	assert.equal(v.tasks.rows[0].v1, `pass|carol|${NOW}`);
-	assert.equal(v.tasks.rows[0].v2, '');
-	assert.equal(v.tasks.rows[0].state, 'validation_required');
+	assert.equal(v.tasks!.rows[0].v1, `pass|carol|${NOW}`);
+	assert.equal(v.tasks!.rows[0].v2, '');
+	assert.equal(v.tasks!.rows[0].state, 'validation_required');
 });
 
 test('validation: rejects an invalid verdict, wrong state, and non-lock-holders', () => {
@@ -150,15 +159,15 @@ test('validation: rejects an invalid verdict, wrong state, and non-lock-holders'
 		now: NOW
 	};
 	assert.equal(
-		checkValidation({ ...base, tasks: validationState(), intent: { task_id: 'T0001', verdict: 'maybe' } }).reason,
+		val({ ...base, tasks: validationState(), intent: { task_id: 'T0001', verdict: 'maybe' } }).reason,
 		'invalid_verdict'
 	);
 	assert.equal(
-		checkValidation({ ...base, tasks: encodingState(), intent: { task_id: 'T0001', verdict: 'pass' } }).reason,
+		val({ ...base, tasks: encodingState(), intent: { task_id: 'T0001', verdict: 'pass' } }).reason,
 		'wrong_state'
 	);
 	assert.equal(
-		checkValidation({
+		val({
 			...base,
 			tasks: validationState(),
 			author: 'eve',
@@ -172,7 +181,7 @@ test('validation: rejects when no open slot remains', () => {
 	const tasks = parseStateCsv(
 		'task_id,fragment,state,encoder,encoded_at,v1\nT0001,sources/score.mei,validation_required,bob,t,fail|dave|t\n'
 	);
-	const v = checkValidation({
+	const v = val({
 		tasks,
 		locks: validationLock,
 		intent: { task_id: 'T0001', verdict: 'pass' },

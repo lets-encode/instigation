@@ -1,5 +1,7 @@
-<script>
-  let { data, children } = $props();
+<script lang="ts">
+  import type { LayoutProps } from './$types';
+
+  let { data, children }: LayoutProps = $props();
 </script>
 
 <header>

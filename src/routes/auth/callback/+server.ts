@@ -1,10 +1,11 @@
 import { redirect, error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { exchangeCodeForToken } from '$lib/server/github.js';
+import type { RequestHandler } from './$types';
 
 // GitHub redirects back here with ?code & ?state. We verify state, swap the
 // code for an access token, and stash the token in an httpOnly cookie.
-export async function GET({ url, cookies }) {
+export const GET: RequestHandler = async ({ url, cookies }) => {
 	const code = url.searchParams.get('code');
 	const state = url.searchParams.get('state');
 	const errorParam = url.searchParams.get('error');
@@ -22,7 +23,7 @@ export async function GET({ url, cookies }) {
 		throw error(400, 'Invalid OAuth state. Please try logging in again.');
 	}
 
-	let token;
+	let token: string;
 	try {
 		token = await exchangeCodeForToken({
 			clientId: env.GITHUB_CLIENT_ID,
@@ -31,7 +32,7 @@ export async function GET({ url, cookies }) {
 			redirectUri: env.GITHUB_OAUTH_REDIRECT_URI
 		});
 	} catch (e) {
-		console.error('GitHub token exchange failed:', e.message);
+		console.error('GitHub token exchange failed:', (e as Error).message);
 		throw error(502, 'GitHub login failed. Please try again.');
 	}
 
@@ -44,4 +45,4 @@ export async function GET({ url, cookies }) {
 	});
 
 	throw redirect(302, '/');
-}
+};

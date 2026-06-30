@@ -1,9 +1,10 @@
+import type { Handle } from '@sveltejs/kit';
 import { resolveUser } from '$lib/server/session.js';
 
 // On every request, resolve the logged-in user from the session cookie so
 // that pages and actions can read `event.locals.user`. Backed by a short-lived
 // cache so we don't call GitHub's /user endpoint on every request.
-export async function handle({ event, resolve }) {
+export const handle: Handle = async ({ event, resolve }) => {
 	const token = event.cookies.get('gh_token');
 	if (token) {
 		const resolved = await resolveUser(token);
@@ -18,4 +19,4 @@ export async function handle({ event, resolve }) {
 		}
 	}
 	return resolve(event);
-}
+};

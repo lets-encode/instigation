@@ -8,6 +8,40 @@
 //   - tracking/state.csv   (buildStateCsv: one task T0001, encoding_required)
 //   - tracking/locks.csv   (buildLocksCsv: header only)
 
+/** A v1 campaign config object. */
+export interface CampaignConfig {
+	schema_version: number;
+	campaign: {
+		title: string;
+		description: string;
+		instigator: string;
+		language: string;
+		license: string;
+	};
+	sources: Array<{
+		id: string;
+		kind: string;
+		path: string;
+		template: string;
+		header: { composer: string };
+	}>;
+	fragmentation: { strategy: string };
+	validation: { required_validations: number; pass_threshold: number };
+	locking: { stale_after_minutes: number };
+}
+
+/** Create-form fields feeding buildCampaignConfig; unset fields fall to defaults. */
+export interface CampaignFields {
+	title?: string;
+	description?: string;
+	language?: string;
+	license?: string;
+	composer?: string;
+	required_validations?: number;
+	pass_threshold?: number;
+	stale_after_minutes?: number;
+}
+
 const STATE_BASE_COLUMNS = ['task_id', 'fragment', 'state', 'encoder', 'encoded_at'];
 const LOCK_COLUMNS = ['task_id', 'locked_by', 'locked_at', 'kind'];
 
@@ -22,7 +56,7 @@ const DEFAULTS = {
 };
 
 // Escape the minimum needed to keep substituted header values well-formed XML.
-function xmlEscape(value) {
+function xmlEscape(value: unknown): string {
 	return String(value ?? '')
 		.replaceAll('&', '&amp;')
 		.replaceAll('<', '&lt;')
@@ -30,21 +64,21 @@ function xmlEscape(value) {
 }
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
-function csvField(value) {
+function csvField(value: unknown): string {
 	const s = value == null ? '' : String(value);
 	return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
-const csvRow = (fields) => fields.map(csvField).join(',');
+const csvRow = (fields: unknown[]): string => fields.map(csvField).join(',');
 
 // Double-quoted YAML scalar; backslash and quote are the only escapes needed.
-function yamlStr(value) {
+function yamlStr(value: unknown): string {
 	return `"${String(value ?? '').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
 // v1 implements exactly one source kind, one fragmentation strategy and one
 // schema version. Fail loudly rather than silently mis-initialising.
-export function assertSupported(config) {
+export function assertSupported(config: CampaignConfig): void {
 	if (config?.schema_version !== 1) {
 		throw new Error(`Unsupported schema_version: ${config?.schema_version} (v1 expects 1).`);
 	}
@@ -63,7 +97,7 @@ export function assertSupported(config) {
  * Build the v1 campaign config object from create-form fields + the instigator
  * login. Unspecified optional fields fall back to v1 defaults.
  */
-export function buildCampaignConfig(fields, login) {
+export function buildCampaignConfig(fields: CampaignFields, login: string): CampaignConfig {
 	return {
 		schema_version: 1,
 		campaign: {
@@ -92,7 +126,7 @@ export function buildCampaignConfig(fields, login) {
 }
 
 /** Serialise a v1 config object to the canonical config.yaml text. */
-export function configToYaml(config) {
+export function configToYaml(config: CampaignConfig): string {
 	const { campaign: c, sources, validation: v, locking: l } = config;
 	const src = sources[0];
 	return (
@@ -121,7 +155,10 @@ export function configToYaml(config) {
 }
 
 /** Fill the {{TITLE}}/{{COMPOSER}}/{{LICENSE}} placeholders in the MEI template. */
-export function stampTemplate(templateText, { title, composer, license }) {
+export function stampTemplate(
+	templateText: string,
+	{ title, composer, license }: { title?: string; composer?: string; license?: string }
+): string {
 	return templateText
 		.replaceAll('{{TITLE}}', xmlEscape(title))
 		.replaceAll('{{COMPOSER}}', xmlEscape(composer))
@@ -129,7 +166,7 @@ export function stampTemplate(templateText, { title, composer, license }) {
 }
 
 /** Build the initial state table: one task T0001, encoding_required, empty vN cells. */
-export function buildStateCsv(config) {
+export function buildStateCsv(config: CampaignConfig): string {
 	const count = config.validation?.required_validations ?? 0;
 	const validationCols = Array.from({ length: count }, (_, i) => `v${i + 1}`);
 	const header = [...STATE_BASE_COLUMNS, ...validationCols];
@@ -145,6 +182,6 @@ export function buildStateCsv(config) {
 }
 
 /** Build the initial lock table: header only. */
-export function buildLocksCsv() {
+export function buildLocksCsv(): string {
 	return `${csvRow(LOCK_COLUMNS)}\n`;
 }

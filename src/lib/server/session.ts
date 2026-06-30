@@ -3,16 +3,22 @@
 // In-memory cache is local to a single process.
 
 import { getAuthenticatedUser } from './github.js';
+import type { GitHubUser } from './github.js';
+
+interface ResolvedUser {
+	user: GitHubUser;
+	scopes: string;
+}
 
 const TTL_MS = 60_000; // 1 minute
-const cache = new Map(); // token -> { value: { user, scopes }, expires }
+const cache = new Map<string, { value: ResolvedUser; expires: number }>(); // token -> { value, expires }
 
 /**
  * Resolve `{ user, scopes }` for a token, using a cached value when fresh.
  * Keyed by token, so a fresh login (which mints a new token) misses the cache
  * and resolves against GitHub immediately.
  */
-export async function resolveUser(token) {
+export async function resolveUser(token: string): Promise<ResolvedUser | null> {
 	const hit = cache.get(token);
 	if (hit && hit.expires > Date.now()) return hit.value;
 
@@ -23,6 +29,6 @@ export async function resolveUser(token) {
 }
 
 /** Drop a token from the cache (e.g. on logout). */
-export function invalidateUser(token) {
+export function invalidateUser(token: string): void {
 	cache.delete(token);
 }

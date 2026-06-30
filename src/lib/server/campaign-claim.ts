@@ -7,30 +7,40 @@
 // as `now`), never values the fork supplied.
 
 import { isFinalValidation } from './campaign-tables.js';
+import type { ParsedState, LockRow } from './campaign-tables.js';
+
+/** What a PR is trying to claim: a task and the kind of work being locked. */
+export interface ClaimIntent {
+	task_id: string;
+	kind: string;
+}
+
+export interface CheckClaimArgs {
+	tasks: ParsedState;
+	locks: LockRow[];
+	intent: ClaimIntent;
+	/** PR author's GitHub login. */
+	author: string;
+	/** Paths the PR changes. */
+	changedPaths: string[];
+	/** ISO-8601 timestamp to stamp the lock. */
+	now: string;
+}
+
+export type ClaimResult = { ok: true; lock: LockRow } | { ok: false; reason: string };
 
 const CLAIM_KINDS = ['encoding', 'validation'];
 
-const reject = (reason) => ({ ok: false, reason });
+const reject = (reason: string): ClaimResult => ({ ok: false, reason });
 
 /** True if every changed path is within the allowed set (the boundary guard). */
-export function boundaryCheck(changedPaths, allowed) {
+export function boundaryCheck(changedPaths: string[], allowed: string[]): boolean {
 	const allow = new Set(allowed);
 	return changedPaths.length > 0 && changedPaths.every((p) => allow.has(p));
 }
 
-/**
- * Decide a claim.
- *
- * @param {object}   args
- * @param {object}   args.tasks         parseStateCsv() result
- * @param {object[]} args.locks         parseLocksCsv() result
- * @param {object}   args.intent        { task_id, kind }
- * @param {string}   args.author        PR author's GitHub login
- * @param {string[]} args.changedPaths  paths the PR changes
- * @param {string}   args.now           ISO-8601 timestamp to stamp the lock
- * @returns {{ ok: true, lock: object } | { ok: false, reason: string }}
- */
-export function checkClaim({ tasks, locks, intent, author, changedPaths, now }) {
+/** Decide a claim. */
+export function checkClaim({ tasks, locks, intent, author, changedPaths, now }: CheckClaimArgs): ClaimResult {
 	// A claim may only touch the lock table.
 	if (!boundaryCheck(changedPaths, ['tracking/locks.csv'])) return reject('out_of_bounds');
 

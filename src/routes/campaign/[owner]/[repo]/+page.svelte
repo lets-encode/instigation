@@ -1,22 +1,23 @@
-<script>
+<script lang="ts">
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import type { PageProps, SubmitFunction } from './$types';
 
-	let { data, form } = $props();
+	let { data, form }: PageProps = $props();
 	let busy = $state(false);
 
 	// A bare submit handler: flips `busy`, then refreshes the result.
-	const copy = (text) => navigator.clipboard?.writeText(text).catch(() => {});
+	const copy = (text: string) => navigator.clipboard?.writeText(text).catch(() => {});
 
-	const run = () => {
+	const run: SubmitFunction = () => {
 		busy = true;
 		return async ({ result, update }) => {
 			busy = false;
-			if (result.type === 'success' && result.data?.meiFriendUrl) {
+			if (result.type === 'success' && result.data && 'meiFriendUrl' in result.data && result.data.meiFriendUrl) {
 				// "Open in mei-friend" — open the score in a new tab.
 				window.open(result.data.meiFriendUrl, '_blank', 'noopener');
 			}
-			if (result.type === 'success' && result.data?.rawUrl) {
+			if (result.type === 'success' && result.data && 'rawUrl' in result.data && result.data.rawUrl) {
 				// "Copy raw link" — best-effort copy; the banner also shows it to copy by hand.
 				copy(result.data.rawUrl);
 			}
@@ -24,9 +25,9 @@
 		};
 	};
 
-	const lockFor = (taskId, kind) =>
+	const lockFor = (taskId: string, kind: string) =>
 		data.locks.find((l) => l.task_id === taskId && l.kind === kind);
-	const myEncodingLock = (taskId) =>
+	const myEncodingLock = (taskId: string) =>
 		data.locks.find(
 			(l) => l.task_id === taskId && l.kind === 'encoding' && l.locked_by === data.viewer
 		);
@@ -49,17 +50,17 @@
 	</p>
 </header>
 
-{#if form?.error}
+{#if form && 'error' in form}
 	<div class="banner err">{form.error}</div>
-{:else if form?.ok}
+{:else if form && 'ok' in form}
 	<div class="banner ok">
 		{form.message}
-		{#if form.prUrl}
+		{#if 'prUrl' in form && form.prUrl}
 			<a href={form.prUrl} target="_blank" rel="noreferrer">View PR →</a>
 		{/if}
-		{#if form.meiFriendUrl}
+		{#if 'meiFriendUrl' in form && form.meiFriendUrl}
 			<div class="rawlink">
-				<input readonly value={form.meiFriendUrl} onfocus={(e) => e.target.select()} />
+				<input readonly value={form.meiFriendUrl} onfocus={(e) => (e.target as HTMLInputElement).select()} />
 				<button type="button" onclick={() => copy(form.meiFriendUrl)}>Copy</button>
 			</div>
 			<span class="muted">
@@ -67,9 +68,9 @@
 				(if the tab didn't open automatically)
 			</span>
 		{/if}
-		{#if form.rawUrl}
+		{#if 'rawUrl' in form && form.rawUrl}
 			<div class="rawlink">
-				<input readonly value={form.rawUrl} onfocus={(e) => e.target.select()} />
+				<input readonly value={form.rawUrl} onfocus={(e) => (e.target as HTMLInputElement).select()} />
 				<button type="button" onclick={() => copy(form.rawUrl)}>Copy</button>
 			</div>
 			{#if data.isPrivate}

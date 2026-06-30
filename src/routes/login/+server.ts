@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import type { RequestHandler } from './$types';
 
 // We request the full `repo` scope: the app needs admin on the repos it creates,
 // e.g. to set Actions workflow permissions so the campaign automation
@@ -8,7 +9,7 @@ const SCOPE = 'repo';
 
 // Kicks off the OAuth dance: redirect the browser to GitHub's authorize page
 // with a random `state` we store in a cookie to defend against CSRF.
-export function GET({ cookies, url }) {
+export const GET: RequestHandler = ({ cookies, url }) => {
 	const state = crypto.randomUUID();
 	cookies.set('oauth_state', state, {
 		path: '/',
@@ -25,4 +26,4 @@ export function GET({ cookies, url }) {
 	authorize.searchParams.set('state', state);
 
 	throw redirect(302, authorize.toString());
-}
+};
