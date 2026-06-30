@@ -1,16 +1,12 @@
 // Campaign initialisation logic — Action A, v1 `whole` strategy. See DESIGN.md §5.
 // Server-only, pure functions: strings/objects in, strings out. No filesystem
-// or network access — the create flow fetches the template, calls these to
-// produce the campaign's initial files, and commits the results.
+// or network access.
 //
-// What this produces from a filled config, for the one-note v1 case:
+// Produces, from a filled config:
 //   - config.yaml          (configToYaml)
 //   - sources/score.mei    (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}})
 //   - tracking/state.csv   (buildStateCsv: one task T0001, encoding_required)
 //   - tracking/locks.csv   (buildLocksCsv: header only)
-//
-// The output is fully determined by config + template (no timestamps), so
-// re-running before any volunteer work begins reproduces identical files.
 
 const STATE_BASE_COLUMNS = ['task_id', 'fragment', 'state', 'encoder', 'encoded_at'];
 const LOCK_COLUMNS = ['task_id', 'locked_by', 'locked_at', 'kind'];

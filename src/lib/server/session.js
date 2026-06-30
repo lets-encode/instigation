@@ -1,6 +1,6 @@
 // Short-lived in-memory cache of the GitHub user behind a token, so we don't
 // hit GitHub's /user endpoint (and its rate limit) on every single request.
-// Single-node only — fine for this app's deployment.
+// In-memory cache is local to a single process.
 
 import { getAuthenticatedUser } from './github.js';
 

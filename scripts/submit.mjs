@@ -1,7 +1,7 @@
 // Action C/D shell — submission (encoding or validation) for a
-// pull_request_target run. Mirrors claim.mjs: runs in the BASE (campaign) repo's
-// context, treats the PR as data (no fork checkout / no fork code executed), and
-// applies the Action-authored result with optimistic concurrency. See DESIGN.md §6.
+// pull_request_target run. Runs in the BASE (campaign) repo's context, treats
+// the PR as data (no fork checkout / no fork code executed), and applies the
+// Action-authored result with optimistic concurrency. See DESIGN.md §6.
 //
 // Env: GH_TOKEN, BASE_REPO ("owner/repo"), PR_NUMBER, PR_AUTHOR,
 //      HEAD_REPO ("owner/repo" of the PR head), HEAD_SHA.
@@ -19,7 +19,8 @@ import {
 	getRepoHead,
 	getPullRequestFiles,
 	commitFiles,
-	commentAndClosePr
+	commentAndClosePr,
+	deleteBranch
 } from '../src/lib/server/github.js';
 
 const token = process.env.GH_TOKEN;
@@ -28,6 +29,19 @@ const prNumber = Number(process.env.PR_NUMBER);
 const author = process.env.PR_AUTHOR;
 const [headOwner, headRepo] = (process.env.HEAD_REPO ?? '').split('/');
 const headSha = process.env.HEAD_SHA;
+const headRef = process.env.HEAD_REF;
+
+// Delete the PR's head branch once we've closed it — but only when it lives in
+// this repo (owner/collaborator PR). A volunteer's branch lives in their fork,
+// which this token can't touch; it stays harmlessly in the fork.
+async function cleanupHeadBranch() {
+	if (headOwner !== owner || headRepo !== repo || !headRef) return;
+	try {
+		await deleteBranch(token, owner, repo, headRef);
+	} catch (e) {
+		console.warn(`Branch cleanup skipped: ${e.message}`);
+	}
+}
 
 const STATE_PATH = 'tracking/state.csv';
 const LOCKS_PATH = 'tracking/locks.csv';
@@ -170,6 +184,7 @@ async function run() {
 		? `✅ Submission accepted (${kind}).`
 		: `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.`;
 	await commentAndClosePr(token, owner, repo, prNumber, body);
+	await cleanupHeadBranch();
 }
 
 run().catch((e) => {

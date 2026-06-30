@@ -100,17 +100,69 @@ export async function getRepoFile(token, owner, repo, path, ref) {
 	return Buffer.from(data.content ?? '', 'base64').toString('utf8');
 }
 
-/** Read a repo's default branch and its current head commit SHA. */
+/**
+ * Get a temporary direct-download URL for a repo file (the Contents API's
+ * `download_url`). For PRIVATE repos this is a raw.githubusercontent.com URL
+ * with a short-lived `token` embedded, so it can be fetched without auth headers
+ * — e.g. handed to an external viewer like mei-friend via `?file=`. The token
+ * expires within minutes, so use it promptly. Returns null if absent.
+ */
+export async function getRepoFileDownloadUrl(token, owner, repo, path, ref) {
+	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+	const res = await fetch(`${API}/repos/${owner}/${repo}/contents/${path}${query}`, {
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+	});
+	if (res.status === 404) return null;
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || `Failed to fetch ${path}`);
+	return data.download_url ?? null;
+}
+
+/**
+ * Read a repo's default branch, its current head commit SHA, and whether the
+ * authenticated user can push to it (drives the same-repo vs. fork PR path).
+ */
 export async function getRepoHead(token, owner, repo) {
 	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
 	const repoRes = await fetch(`${API}/repos/${owner}/${repo}`, { headers });
 	const repoData = await repoRes.json().catch(() => ({}));
-	if (!repoRes.ok) throw new Error(repoData.message || 'Failed to read repository');
+	if (!repoRes.ok) throw new Error(`${repoData.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
 	const branch = repoData.default_branch;
 	const refRes = await fetch(`${API}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers });
 	const refData = await refRes.json().catch(() => ({}));
-	if (!refRes.ok) throw new Error(refData.message || 'Failed to read branch ref');
-	return { branch, sha: refData.object.sha };
+	if (!refRes.ok) throw new Error(`${refData.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
+	return { branch, sha: refData.object.sha, canPush: Boolean(repoData.permissions?.push) };
+}
+
+/**
+ * Ensure the authenticated user has a fork of `owner/repo`, waiting until it's
+ * ready (forking is async). Returns the fork's { owner, repo }. Used when a
+ * volunteer without push access proposes work — they fork and PR upstream.
+ */
+export async function ensureFork(token, owner, repo, { attempts = 20, delayMs = 1500 } = {}) {
+	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
+	const res = await fetch(`${API}/repos/${owner}/${repo}/forks`, { method: 'POST', headers });
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(`${data.message || 'Failed to fork repository'} (${res.status} POST forks)`);
+
+	const [forkOwner, forkRepo] = data.full_name.split('/');
+	// Poll until the fork's default branch ref exists (the fork is populated).
+	for (let i = 0; i < attempts; i++) {
+		const r = await fetch(`${API}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers });
+		if (r.ok) return { owner: forkOwner, repo: forkRepo };
+		await new Promise((resolve) => setTimeout(resolve, delayMs));
+	}
+	throw new Error(`Fork ${forkOwner}/${forkRepo} was not ready in time.`);
+}
+
+/** Whether the repo is private (its raw download URLs then carry a short-lived token). */
+export async function getRepoIsPrivate(token, owner, repo) {
+	const res = await fetch(`${API}/repos/${owner}/${repo}`, {
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || 'Failed to read repository');
+	return Boolean(data.private);
 }
 
 /** List a pull request's changed files, including each file's unified-diff patch. */
@@ -164,25 +216,27 @@ export async function waitForRepoContents(token, owner, repo, path, { attempts =
  * Pass `opts.baseSha` to commit on a specific parent: the ref update is
  * non-forced, so if the branch has moved past `baseSha` (a concurrent change)
  * the update fails rather than clobbering it — optimistic concurrency for the
- * tracking tables. Omit it to commit on the current branch head.
+ * tracking tables. Omit it to commit on the current branch head. Pass
+ * `opts.branch` to target a branch other than the repo default (e.g. a feature
+ * branch being prepared for a pull request).
  * https://docs.github.com/en/rest/git
  */
-export async function commitFiles(token, owner, repo, files, message, { baseSha } = {}) {
+export async function commitFiles(token, owner, repo, files, message, { baseSha, branch } = {}) {
 	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
 	const api = `${API}/repos/${owner}/${repo}`;
 
 	const gh = async (path, init) => {
 		const res = await fetch(`${api}${path}`, { headers, ...init });
 		const data = await res.json().catch(() => ({}));
-		if (!res.ok) throw new Error(data.message || `GitHub API error on ${path}`);
+		if (!res.ok) throw new Error(`${data.message || 'GitHub API error'} (${res.status} ${init?.method ?? 'GET'} ${path})`);
 		return data;
 	};
 
-	// Resolve the default branch, and the parent commit to build on.
-	const { default_branch: branch } = await gh('');
+	// Resolve the target branch and the parent commit to build on.
+	const targetBranch = branch ?? (await gh('')).default_branch;
 	let headSha = baseSha;
 	if (!headSha) {
-		const ref = await gh(`/git/ref/heads/${branch}`);
+		const ref = await gh(`/git/ref/heads/${targetBranch}`);
 		headSha = ref.object.sha;
 	}
 	const headCommit = await gh(`/git/commits/${headSha}`);
@@ -201,12 +255,83 @@ export async function commitFiles(token, owner, repo, files, message, { baseSha 
 		body: JSON.stringify({ message, tree: tree.sha, parents: [headSha] })
 	});
 
-	await gh(`/git/refs/heads/${branch}`, {
+	await gh(`/git/refs/heads/${targetBranch}`, {
 		method: 'PATCH',
 		body: JSON.stringify({ sha: commit.sha })
 	});
 
 	return commit.sha;
+}
+
+/** Create a new branch `branch` pointing at `fromSha`. */
+export async function createBranch(token, owner, repo, branch, fromSha) {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs`, {
+		method: 'POST',
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha })
+	});
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(`${data.message || 'Failed to create branch'} (${res.status} POST git/refs)`);
+	}
+}
+
+/** Delete a branch. Treats an already-gone ref (404/422) as success. */
+export async function deleteBranch(token, owner, repo, branch) {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+		method: 'DELETE',
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+	});
+	if (!res.ok && res.status !== 404 && res.status !== 422) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(`${data.message || 'Failed to delete branch'} (${res.status} DELETE ref heads/${branch})`);
+	}
+}
+
+/** Open a pull request. Returns { number, html_url }. */
+export async function createPullRequest(token, owner, repo, { title, head, base, body }) {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls`, {
+		method: 'POST',
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ title, head, base, body })
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(`${data.message || 'Failed to open pull request'} (${res.status} POST pulls)`);
+	return { number: data.number, html_url: data.html_url };
+}
+
+/**
+ * Commit `files` onto a fresh branch and open a pull request to `owner/repo`
+ * from it — the way the campaign console stands in for a volunteer client (its
+ * PR triggers the claim/submission Actions). Returns { number, html_url }.
+ *
+ * If the user can push to the repo (owner/collaborator) the branch is made in
+ * the repo itself. Otherwise the user's fork is used and a cross-repo PR is
+ * opened upstream — the real volunteer model. Either way the branch is based on
+ * the upstream head, so the PR diff is only the change in `files`.
+ */
+export async function openChangePr(token, owner, repo, { branch, files, message, title, body }) {
+	const { branch: base, sha, canPush } = await getRepoHead(token, owner, repo);
+	const target = canPush ? { owner, repo } : await ensureFork(token, owner, repo);
+
+	await createBranch(token, target.owner, target.repo, branch, sha);
+	await commitFiles(token, target.owner, target.repo, files, message, { baseSha: sha, branch });
+
+	const head = canPush ? branch : `${target.owner}:${branch}`;
+	return createPullRequest(token, owner, repo, { title, head, base, body });
+}
+
+/** Manually trigger a workflow_dispatch run of `workflow` (a filename) on `ref`. */
+export async function dispatchWorkflow(token, owner, repo, workflow, ref) {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, {
+		method: 'POST',
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ ref })
+	});
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data.message || 'Failed to dispatch workflow');
+	}
 }
 
 /** Replace a repo's topics — used to tag repos created through this app. */

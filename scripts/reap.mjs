@@ -1,7 +1,7 @@
 // Action E shell — stale-lock reaper for a scheduled (cron) run. Reads the lock
 // table and the timeout from config.yaml, drops stale locks via the pure
-// `reapLocks`, and commits the trimmed table (only if anything changed) with the
-// same optimistic-concurrency pattern as the other shells. See DESIGN.md §5/§6.
+// `reapLocks`, and commits the trimmed table (only if anything changed) with
+// optimistic concurrency. See DESIGN.md §5/§6.
 //
 // Env: GH_TOKEN, BASE_REPO ("owner/repo").
 

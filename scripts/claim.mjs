@@ -5,10 +5,7 @@
 // API and never check out or execute anything the fork supplies. The actual
 // decision is the pure `checkClaim`; this shell only does the GitHub I/O.
 //
-// Invoked by the campaign repo's .github/workflows/claim.yml after it checks
-// this (central) repo out at a pinned ref, as:  node central/scripts/claim.mjs
-//
-// Env: GH_TOKEN, BASE_REPO ("owner/repo"), PR_NUMBER, PR_AUTHOR.
+// Env: GH_TOKEN, BASE_REPO ("owner/repo"), PR_NUMBER, PR_AUTHOR, HEAD_REPO, HEAD_REF.
 
 import { parseStateCsv, parseLocksCsv, serializeLocksCsv } from '../src/lib/server/campaign-tables.js';
 import { checkClaim } from '../src/lib/server/campaign-claim.js';
@@ -17,17 +14,32 @@ import {
 	getRepoHead,
 	getPullRequestFiles,
 	commitFiles,
-	commentAndClosePr
+	commentAndClosePr,
+	deleteBranch
 } from '../src/lib/server/github.js';
 
 const token = process.env.GH_TOKEN;
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');
 const prNumber = Number(process.env.PR_NUMBER);
 const author = process.env.PR_AUTHOR;
+const [headOwner, headRepo] = (process.env.HEAD_REPO ?? '').split('/');
+const headRef = process.env.HEAD_REF;
 
 const STATE_PATH = 'tracking/state.csv';
 const LOCKS_PATH = 'tracking/locks.csv';
 const MAX_ATTEMPTS = 3;
+
+// Delete the PR's head branch once we've closed it — but only when it lives in
+// this repo (owner/collaborator PR). A volunteer's branch lives in their fork,
+// which this token can't touch; it stays harmlessly in the fork.
+async function cleanupHeadBranch() {
+	if (headOwner !== owner || headRepo !== repo || !headRef) return;
+	try {
+		await deleteBranch(token, owner, repo, headRef);
+	} catch (e) {
+		console.warn(`Branch cleanup skipped: ${e.message}`);
+	}
+}
 
 // Pull the single added line out of a unified-diff patch. Returns null unless
 // exactly one line was added and none removed — a claim adds one lock row.
@@ -106,6 +118,7 @@ async function run() {
 		? `✅ Claim accepted — \`${verdict.lock.task_id}\` locked for @${author} (${verdict.lock.kind}).`
 		: `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
 	await commentAndClosePr(token, owner, repo, prNumber, body);
+	await cleanupHeadBranch();
 }
 
 run().catch((e) => {

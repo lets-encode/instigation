@@ -203,10 +203,11 @@ GitHub** (`npm test`):
 | `src/lib/server/campaign-claim.js` | Action B: `boundaryCheck`, `checkClaim`. |
 | `src/lib/server/campaign-submit.js` | Action C/D: `checkEncoding`, `checkValidation`. |
 | `src/lib/server/campaign-reaper.js` | Action E: `reapLocks`. |
-| `src/lib/server/github.js` | GitHub REST helpers (auth, generate, commit, PR). |
+| `src/lib/server/github.js` | GitHub REST helpers (auth, generate, commit, branch, PR, dispatch). |
 | `scripts/claim.mjs` | Action B workflow shell (impure GitHub I/O). |
 | `scripts/submit.mjs` | Action C/D workflow shell (impure GitHub I/O). |
 | `scripts/reap.mjs` | Action E workflow shell (impure GitHub I/O). |
+| `src/routes/campaign/[owner]/[repo]/` | Campaign console: drives the Actions from the GUI. |
 
 Status:
 
@@ -217,16 +218,25 @@ Status:
 - **C/D** wired end to end: `user-repo-template/.github/workflows/submit.yml` + `scripts/submit.mjs`
   (encoding well-formedness via `xmllint`; MEI schema validation still pending).
 - **E** wired: `user-repo-template/.github/workflows/reaper.yml` (scheduled) + `scripts/reap.mjs`.
+- **Campaign console** (`/campaign/[owner]/[repo]`) — a GUI page that drives B/C/E by opening
+  the same PRs a volunteer client would (claim → encode → validate) and dispatching the reaper.
+  Owners/collaborators commit on a branch in the repo directly; **anyone else forks the repo and
+  opens a cross-repo PR upstream** (the real volunteer model — needs a public repo or read access
+  to fork). Stands in for mei-friend.
 - All five Actions are **not yet live-tested** on a real campaign.
-- Not built: the **MEI schema validator** and the mei-friend client.
+- **mei-friend** already exists and can be connected to a campaign — volunteers open it via URL
+  parameters (`file=` pointing at the score, `fork=true`), so the volunteer encoding/validation
+  loop has a working editor today.
+- Not built: the **MEI schema validator** and a dedicated **WYSIWYG MEI editor** (a separate,
+  lower-friction editing surface).
 
 Convention: decision logic stays pure and tested; only the thin `*.mjs` shells touch GitHub
 (and stay untested, by preference).
 
 ## 8. Roadmap
 
-1. **Live end-to-end test** — run A–E against a real campaign repo + fork PRs (the shells are
-   statically verified but not yet exercised live). ← next
+1. **Live end-to-end test** — drive A–E against a real campaign repo via the campaign console
+   (the shells are statically verified but not yet exercised live). ← next
 2. **MEI schema validator** — wire `xmllint --relaxng` (or chosen tool) into `submit.mjs`'s
    machine-check, beyond the current well-formedness check.
 3. **Volunteer PR contract end-to-end** — scripted GitHub calls standing in for mei-friend,

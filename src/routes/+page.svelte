@@ -126,6 +126,9 @@
 						{#if repo.private}
 							<span class="badge" title="Private — only visible to its owner">🔒 Private</span>
 						{/if}
+						{#if data.user}
+							<a class="console" href={`/campaign/${repo.owner}/${repo.name}`}>Console →</a>
+						{/if}
 					</div>
 					{#if repo.description}
 						<p class="desc">{repo.description}</p>
@@ -304,6 +307,12 @@
 	}
 	.row a:hover {
 		text-decoration: underline;
+	}
+	.row a.console {
+		margin-left: auto;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: #3056d3;
 	}
 	.badge {
 		font-size: 0.72rem;
