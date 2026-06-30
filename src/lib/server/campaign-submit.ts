@@ -9,8 +9,8 @@
 // shell (it merges/commits the fork's bytes after `meiValid`); these functions
 // only produce the authoritative table changes.
 
-import { boundaryCheck } from './campaign-claim.js';
-import type { ParsedState, LockRow } from './campaign-tables.js';
+import { boundaryCheck } from './campaign-claim.ts';
+import type { ParsedState, LockRow } from './campaign-tables.ts';
 
 /** Encoding submission intent: just the task being encoded. */
 export interface EncodingIntent {

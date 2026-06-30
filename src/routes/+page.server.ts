@@ -1,4 +1,4 @@
-import { redirect, fail } from '@sveltejs/kit';
+import { redirect, fail, isRedirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import {
 	searchReposByTopic,
@@ -125,15 +125,24 @@ export const actions = {
 						{ path: 'tracking/state.csv', content: buildStateCsv(config) },
 						{ path: 'tracking/locks.csv', content: buildLocksCsv() }
 					],
-					'Initialise campaign (Action A)'
+					'Initialise campaign'
 				);
 			} catch (e) {
 				console.error('Campaign initialisation failed:', (e as Error).message);
 				initWarning = true;
 			}
 
-			return { success: true, html_url: repo.html_url, full_name: repo.full_name, initWarning };
+			// Initialisation didn't finish: stay here so the warning — and the create
+			// form, to retry — remain in view.
+			if (initWarning) {
+				return { success: true, html_url: repo.html_url, full_name: repo.full_name, initWarning };
+			}
+
+			// Clean creation: take the organiser straight to the new repo's console.
+			throw redirect(303, `/campaign/${repo.owner.login}/${repo.name}`);
 		} catch (e) {
+			// Let SvelteKit handle the redirect above; don't fold it into the 502.
+			if (isRedirect(e)) throw e;
 			console.error('Repo creation failed:', (e as Error).message);
 			return fail(502, {
 				...fields,

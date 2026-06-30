@@ -19,6 +19,16 @@
 	);
 </script>
 
+{#if submitting}
+	<div class="overlay" role="status" aria-live="polite">
+		<div class="overlay-card">
+			<div class="spinner" aria-hidden="true"></div>
+			<p class="overlay-title">Creating your repository…</p>
+			<p class="overlay-sub">Setting up the campaign files. This takes a few seconds.</p>
+		</div>
+	</div>
+{/if}
+
 <section class="hero">
 	<h1>Spin up a new repository from a template</h1>
 	<p>Log in with GitHub, fill in your campaign details, and we'll create the repository and prepare it for encoding.</p>
@@ -69,8 +79,10 @@
 			action="?/create"
 			use:enhance={() => {
 				submitting = true;
-				return async ({ update }) => {
-					submitting = false;
+				return async ({ update, result }) => {
+					// On a clean creation the action redirects to the console; keep the
+					// overlay up through navigation rather than flashing it away first.
+					if (result.type !== 'redirect') submitting = false;
 					await update();
 				};
 			}}
@@ -152,6 +164,56 @@
 </section>
 
 <style>
+	.overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(255, 255, 255, 0.75);
+		backdrop-filter: blur(2px);
+	}
+	.overlay-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.8rem;
+		padding: 2rem 2.5rem;
+		background: #fff;
+		border: 1px solid #e5e5e5;
+		border-radius: 12px;
+		box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+		text-align: center;
+	}
+	.spinner {
+		width: 38px;
+		height: 38px;
+		border: 3px solid #e5e5e5;
+		border-top-color: #1a1a1a;
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.overlay-title {
+		margin: 0;
+		font-weight: 600;
+	}
+	.overlay-sub {
+		margin: 0;
+		color: #777;
+		font-size: 0.88rem;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.spinner {
+			animation-duration: 2s;
+		}
+	}
+
 	.hero {
 		text-align: center;
 		padding-top: 2rem;

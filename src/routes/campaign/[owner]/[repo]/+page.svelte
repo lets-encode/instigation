@@ -83,7 +83,7 @@
 {#if data.notInitialised}
 	<div class="banner warn">
 		This repository has no <code>tracking/state.csv</code> / <code>tracking/locks.csv</code> yet —
-		it may not have been initialised. Create it through the home page so Action A runs.
+		it may not have been initialised. Create it through the home page to initialise it.
 	</div>
 {:else}
 	<div class="toolbar">
@@ -131,13 +131,6 @@
 							</button>
 						</form>
 
-						<form method="POST" action="?/encode" use:enhance={run}>
-							<input type="hidden" name="task_id" value={task.task_id} />
-							<button type="submit" disabled={busy || !lockFor(task.task_id, 'encoding')}>
-								Submit encoding
-							</button>
-						</form>
-
 						<form method="POST" action="?/validate" use:enhance={run}>
 							<input type="hidden" name="task_id" value={task.task_id} />
 							<button name="verdict" value="pass" disabled={busy || !lockFor(task.task_id, 'validation')}>
@@ -180,8 +173,8 @@
 		{:else}
 			from its public raw URL
 		{/if}
-		and, at the same time, opens an encoding claim PR (Action B). Saving the edit back is a separate
-		step (mei-friend's GitHub commit, or <strong>Submit encoding</strong> here).<br />
+		and, at the same time, opens an encoding claim PR. You add the content in mei-friend;
+		its GitHub commit/push opens the submission PR.<br />
 		A task's <strong>encoder cannot validate their own work</strong> (peer review): logged in as
 		<code>{data.viewer}</code>, you'll need a second GitHub account to test a passing validation.
 		Buttons enable only when the relevant state/lock allows the action.

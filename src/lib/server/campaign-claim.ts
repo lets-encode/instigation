@@ -6,8 +6,8 @@
 // row — `locked_by` is the PR author and `locked_at` is server time (passed in
 // as `now`), never values the fork supplied.
 
-import { isFinalValidation } from './campaign-tables.js';
-import type { ParsedState, LockRow } from './campaign-tables.js';
+import { isFinalValidation } from './campaign-tables.ts';
+import type { ParsedState, LockRow } from './campaign-tables.ts';
 
 /** What a PR is trying to claim: a task and the kind of work being locked. */
 export interface ClaimIntent {

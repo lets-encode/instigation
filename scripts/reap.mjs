@@ -5,9 +5,9 @@
 //
 // Env: GH_TOKEN, BASE_REPO ("owner/repo").
 
-import { parseLocksCsv, serializeLocksCsv } from '../src/lib/server/campaign-tables.js';
-import { reapLocks } from '../src/lib/server/campaign-reaper.js';
-import { getRepoFile, getRepoHead, commitFiles } from '../src/lib/server/github.js';
+import { parseLocksCsv, serializeLocksCsv } from '../src/lib/server/campaign-tables.ts';
+import { reapLocks } from '../src/lib/server/campaign-reaper.ts';
+import { getRepoFile, getRepoHead, commitFiles } from '../src/lib/server/github.ts';
 
 const token = process.env.GH_TOKEN;
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');

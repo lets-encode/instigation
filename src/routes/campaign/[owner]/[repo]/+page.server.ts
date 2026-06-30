@@ -148,36 +148,6 @@ export const actions = {
 		}
 	},
 
-	// Action C — open a PR that edits the task's fragment (a well-formed marker).
-	encode: async ({ params, request, locals }) => {
-		const { owner, repo } = params;
-		const form = await request.formData();
-		const task_id = String(form.get('task_id') ?? '');
-		try {
-			const stateCsv = await getRepoFile(locals.token!, owner, repo, STATE_PATH);
-			const task = parseStateCsv(stateCsv ?? '').rows.find((r) => r.task_id === task_id);
-			if (!task) return fail(400, { error: `Unknown task ${task_id}.` });
-
-			const current = await getRepoFile(locals.token!, owner, repo, task.fragment);
-			if (current == null) return fail(400, { error: `Fragment ${task.fragment} not found.` });
-			const marker = `  <!-- test encoding by ${locals.user!.login} (${new Date().toISOString()}) -->\n`;
-			const edited = current.includes('</mei>')
-				? current.replace('</mei>', `${marker}</mei>`)
-				: `${current}\n${marker}`;
-
-			const pr = await openChangePr(locals.token!, owner, repo, {
-				branch: `encode-${task_id}-${rand()}`,
-				files: [{ path: task.fragment, content: edited }],
-				message: `Encode ${task_id}`,
-				title: `Encode ${task_id}`,
-				body: `Submits an encoding for task ${task_id}. Opened from the campaign console (adds a marker comment to the score for testing).`
-			});
-			return { ok: true, prUrl: pr.html_url, message: `Opened encoding PR #${pr.number} for ${task_id}.` };
-		} catch (e) {
-			return fail(502, { error: `Encode failed: ${(e as Error).message}` });
-		}
-	},
-
 	// Action C — open a PR that sets the first open validation cell (pass/fail).
 	validate: async ({ params, request, locals }) => {
 		const { owner, repo } = params;

@@ -12,8 +12,8 @@ import {
 	parseLocksCsv,
 	serializeStateCsv,
 	serializeLocksCsv
-} from '../src/lib/server/campaign-tables.js';
-import { checkEncoding, checkValidation } from '../src/lib/server/campaign-submit.js';
+} from '../src/lib/server/campaign-tables.ts';
+import { checkEncoding, checkValidation } from '../src/lib/server/campaign-submit.ts';
 import {
 	getRepoFile,
 	getRepoHead,
@@ -21,7 +21,7 @@ import {
 	commitFiles,
 	commentAndClosePr,
 	deleteBranch
-} from '../src/lib/server/github.js';
+} from '../src/lib/server/github.ts';
 
 const token = process.env.GH_TOKEN;
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');

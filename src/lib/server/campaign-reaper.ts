@@ -4,7 +4,7 @@
 // are ISO-8601 strings; the comparison uses real elapsed time, so it does not
 // depend on how frequently or punctually the reaper runs. See DESIGN.md §5.
 
-import type { LockRow } from './campaign-tables.js';
+import type { LockRow } from './campaign-tables.ts';
 
 export interface ReapLocksArgs {
 	locks: LockRow[];
