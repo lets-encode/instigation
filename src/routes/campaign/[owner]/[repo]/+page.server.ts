@@ -46,8 +46,8 @@ async function openClaimPr(
 	});
 }
 
-export const load: PageServerLoad = async ({ params, locals }) => {
-	if (!locals.user) throw redirect(302, '/');
+export const load: PageServerLoad = async ({ params, locals, url }) => {
+	if (!locals.user) throw redirect(302, `/login?redirect=${encodeURIComponent(url.pathname)}`);
 	const { owner, repo } = params;
 
 	let stateCsv: string | null, locksCsv: string | null, isPrivate: boolean;

@@ -13,6 +13,10 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 
 	cookies.delete('oauth_state', { path: '/' });
 
+	// Where the user was headed before logging in (set by /login), defaulting home.
+	const returnTo = cookies.get('oauth_return') ?? '/';
+	cookies.delete('oauth_return', { path: '/' });
+
 	// User clicked "Cancel" on GitHub's consent screen (or GitHub returned an
 	// error) instead of authorizing. Send them back with a reason.
 	if (errorParam) {
@@ -44,5 +48,5 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 		maxAge: 60 * 60 * 8
 	});
 
-	throw redirect(302, '/');
+	throw redirect(302, returnTo);
 };

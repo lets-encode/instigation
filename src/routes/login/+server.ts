@@ -19,6 +19,19 @@ export const GET: RequestHandler = ({ cookies, url }) => {
 		maxAge: 600
 	});
 
+	// Remember where the user was headed so the callback can return them there.
+	// Only accept local paths (leading single slash) to avoid an open redirect.
+	const returnTo = url.searchParams.get('redirect');
+	if (returnTo && /^\/[^/\\]/.test(returnTo)) {
+		cookies.set('oauth_return', returnTo, {
+			path: '/',
+			httpOnly: true,
+			sameSite: 'lax',
+			secure: url.protocol === 'https:',
+			maxAge: 600
+		});
+	}
+
 	const authorize = new URL('https://github.com/login/oauth/authorize');
 	authorize.searchParams.set('client_id', env.GITHUB_CLIENT_ID);
 	authorize.searchParams.set('redirect_uri', env.GITHUB_OAUTH_REDIRECT_URI);

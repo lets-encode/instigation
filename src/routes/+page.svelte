@@ -212,12 +212,12 @@
 			{#each data.repos as repo (repo.full_name)}
 				<li>
 					<div class="row">
-						<a href={repo.html_url} target="_blank" rel="noreferrer">{repo.full_name}</a>
+						<a href={`/campaign/${repo.owner}/${repo.name}`}>{repo.full_name}</a>
 						{#if repo.private}
 							<span class="badge" title="Private — only visible to its owner">🔒 Private</span>
 						{/if}
 						{#if data.user}
-							<a class="console" href={`/campaign/${repo.owner}/${repo.name}`}>Console →</a>
+							<a class="gh-link" href={repo.html_url} target="_blank" rel="noreferrer">View on GitHub →</a>
 						{/if}
 					</div>
 					{#if repo.description}
@@ -461,7 +461,7 @@
 	.row a:hover {
 		text-decoration: underline;
 	}
-	.row a.console {
+	.row a.gh-link {
 		margin-left: auto;
 		font-size: 0.8rem;
 		font-weight: 600;
