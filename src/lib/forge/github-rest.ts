@@ -1,5 +1,7 @@
-// Thin wrapper around the GitHub REST API. Server-only: never import this
-// into client code, since it deals with access tokens.
+// GitHub REST adapter — the raw calls behind the ForgeClient interface (and the
+// scripts run by the campaign automation). Every function takes an access token
+// explicitly; no client secret lives here — the OAuth code→token exchange is the
+// broker's job. Browser- and Node-safe (fetch / atob / TextDecoder, no Buffer).
 
 const API = 'https://api.github.com';
 
@@ -7,6 +9,15 @@ const baseHeaders: Record<string, string> = {
 	Accept: 'application/vnd.github+json',
 	'X-GitHub-Api-Version': '2022-11-28'
 };
+
+// Decode GitHub's base64 file content to a UTF-8 string without Node's Buffer, so
+// this runs in the browser too. GitHub wraps the base64 in newlines — strip
+// whitespace before decoding.
+function decodeBase64Utf8(b64: string): string {
+	const binary = atob(b64.replace(/\s/g, ''));
+	const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+	return new TextDecoder().decode(bytes);
+}
 
 /** A text file to commit: a repo-relative path and its UTF-8 string content. */
 export interface FileChange {
@@ -47,61 +58,6 @@ export interface RepoSummary {
 
 interface ErrorResponse {
 	message?: string;
-}
-
-/** Exchange an OAuth authorization code for an access token. */
-export async function exchangeCodeForToken({
-	clientId,
-	clientSecret,
-	code,
-	redirectUri
-}: {
-	clientId: string;
-	clientSecret: string;
-	code: string;
-	redirectUri: string;
-}): Promise<string> {
-	const res = await fetch('https://github.com/login/oauth/access_token', {
-		method: 'POST',
-		headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			client_id: clientId,
-			client_secret: clientSecret,
-			code,
-			redirect_uri: redirectUri
-		})
-	});
-	const data: { access_token?: string; error?: string; error_description?: string } = await res.json();
-	if (data.error || !data.access_token) {
-		throw new Error(data.error_description || data.error || 'Token exchange failed');
-	}
-	return data.access_token;
-}
-
-/**
- * Revoke an OAuth access token so it stops working after logout.
- * Authenticated with the app's client_id/client_secret (Basic auth), not the
- * user token itself. Returns true on success (204) or if already invalid (404).
- * https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-token
- */
-export async function revokeToken({
-	clientId,
-	clientSecret,
-	token
-}: {
-	clientId: string;
-	clientSecret: string;
-	token: string;
-}): Promise<boolean> {
-	const res = await fetch(`${API}/applications/${clientId}/token`, {
-		method: 'DELETE',
-		headers: {
-			...baseHeaders,
-			Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`
-		},
-		body: JSON.stringify({ access_token: token })
-	});
-	return res.ok || res.status === 404;
 }
 
 /**
@@ -181,7 +137,7 @@ export async function getRepoFile(
 	if (res.status === 404) return null;
 	const data: { content?: string; message?: string } = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(data.message || `Failed to fetch ${path}`);
-	return Buffer.from(data.content ?? '', 'base64').toString('utf8');
+	return decodeBase64Utf8(data.content ?? '');
 }
 
 /**

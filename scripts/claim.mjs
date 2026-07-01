@@ -7,8 +7,8 @@
 //
 // Env: GH_TOKEN, BASE_REPO ("owner/repo"), PR_NUMBER, PR_AUTHOR, HEAD_REPO, HEAD_REF.
 
-import { parseStateCsv, parseLocksCsv, serializeLocksCsv } from '../src/lib/server/campaign-tables.ts';
-import { checkClaim } from '../src/lib/server/campaign-claim.ts';
+import { parseStateCsv, parseLocksCsv, serializeLocksCsv } from '../src/lib/campaign-tables.ts';
+import { checkClaim } from '../src/lib/campaign-claim.ts';
 import {
 	getRepoFile,
 	getRepoHead,
@@ -16,7 +16,7 @@ import {
 	commitFiles,
 	commentAndClosePr,
 	deleteBranch
-} from '../src/lib/server/github.ts';
+} from '../src/lib/forge/github-rest.ts';
 
 const token = process.env.GH_TOKEN;
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');

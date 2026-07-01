@@ -15,8 +15,8 @@ import {
 } from './campaign-init.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-// instigation/src/lib/server -> up 4 -> lets-encode/ -> the template repo.
-const TEMPLATE_MEI = join(HERE, '../../../../user-repo-template/templates/score.template.mei');
+// instigation/src/lib -> up 3 -> lets-encode/ -> the template repo.
+const TEMPLATE_MEI = join(HERE, '../../../user-repo-template/templates/score.template.mei');
 
 // The create-form fields for the worked example (one-note test case; DESIGN.md §6).
 const WORKED_EXAMPLE_FIELDS = {

@@ -1,22 +1,26 @@
 <script lang="ts">
-  import type { LayoutProps } from './$types';
+  import { onMount } from 'svelte';
+  import { auth, initAuth, logout } from '$lib/auth.svelte.ts';
 
-  let { data, children }: LayoutProps = $props();
+  let { children } = $props();
+
+  // Resolve any token already in sessionStorage once the app mounts (client-only).
+  onMount(() => {
+    initAuth();
+  });
 </script>
 
 <header>
   <a class="brand" href="/">
     <img src="/lets-encode.png" alt="Let's Encode" />
   </a>
-  {#if data.user}
+  {#if auth.user}
     <div class="user">
-      {#if data.user.avatar_url}
-        <img class="avatar" src={data.user.avatar_url} alt="" />
+      {#if auth.user.avatar_url}
+        <img class="avatar" src={auth.user.avatar_url} alt="" />
       {/if}
-      <span>{data.user.login}</span>
-      <form method="POST" action="/logout">
-        <button type="submit">Log out</button>
-      </form>
+      <span>{auth.user.login}</span>
+      <button type="button" onclick={() => logout()}>Log out</button>
     </div>
   {/if}
 </header>

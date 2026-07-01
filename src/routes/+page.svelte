@@ -1,28 +1,51 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { enhance } from '$app/forms';
-	import type { PageProps } from './$types';
+	import { goto } from '$app/navigation';
+	import { auth, login, forge } from '$lib/auth.svelte.ts';
+	import { provider } from '$lib/forge/config.ts';
+	import { searchReposByTopic } from '$lib/forge/github-rest.ts';
+	import type { RepoSummary } from '$lib/forge/types.ts';
+	import {
+		buildCampaignConfig,
+		configToYaml,
+		stampTemplate,
+		buildStateCsv,
+		buildLocksCsv
+	} from '$lib/campaign-init.ts';
 
-	let { data, form }: PageProps = $props();
+	const templateName = `${provider.template.owner}/${provider.template.repo}`;
 
-	// Field values echoed back after a failed submit (absent on success).
-	let fields = $derived(form && 'error' in form ? form : null);
+	// The repository listing, fetched client-side (a logged-in token also surfaces
+	// the user's private matches; anonymous sees public ones).
+	let repos = $state<RepoSummary[]>([]);
+	let listError = $state<string | null>(null);
 
-	// Seeded from the initial submit result, then toggled by the user — so these
-	// intentionally capture `form`'s initial value rather than tracking it.
-	// Open the create form once a submission has come back (success or error).
-	let showForm = $state(untrack(() => Boolean(form)));
+	$effect(() => {
+		if (auth.status === 'loading') return;
+		const token = auth.token ?? undefined;
+		searchReposByTopic(provider.repoTopic, token)
+			.then((r) => {
+				repos = r;
+				listError = null;
+			})
+			.catch((e) => {
+				listError = (e as Error).message;
+				repos = [];
+			});
+	});
+
+	// Create form state.
+	let showForm = $state(false);
 	let submitting = $state(false);
+	let error = $state<string | null>(null);
+	let created = $state<{ html_url: string; full_name: string; initWarning: boolean } | null>(null);
 
-	let visibility = $state(
-		untrack(() => (form && 'error' in form ? (form.isPrivate === false ? 'public' : 'private') : 'public'))
-	);
-
-	// Campaign name and the derived handle. The handle is auto-filled from the
-	// name until the user edits it, after which it's left alone (handleTouched).
-	let title = $state(untrack(() => (form && 'error' in form ? form.title : '') || ''));
-	let handle = $state(untrack(() => (form && 'error' in form ? form.name : '') || ''));
-	let handleTouched = $state(untrack(() => Boolean(form && 'error' in form ? form.name : '')));
+	let visibility = $state('public');
+	let title = $state('');
+	let handle = $state('');
+	let handleTouched = $state(false);
+	let description = $state('');
+	let license = $state('CC-BY-4.0');
+	let composer = $state('');
 
 	$effect(() => {
 		if (!handleTouched) handle = makeHandle(title);
@@ -73,6 +96,91 @@
 		const words = (kept.length ? kept : tokens).slice(0, 4);
 		return words.join('-').slice(0, 40).replace(/-+$/, '');
 	}
+
+	// Create the campaign repo and initialise it (Action A), entirely client-side
+	// with the user's token: generate from the template, tag it, give its Actions a
+	// write token, then commit the config, stamped score, and tracking tables.
+	async function createCampaign(e: SubmitEvent) {
+		e.preventDefault();
+		error = null;
+		created = null;
+		const user = auth.user;
+		const f = forge();
+		if (!user || !f) return;
+
+		const t = title.trim();
+		const h = handle.trim();
+		if (!t) return void (error = 'Campaign name is required.');
+		if (!h) return void (error = 'A handle is required.');
+		if (!/^[A-Za-z0-9_-]+$/.test(h)) {
+			return void (error = 'The handle may only contain letters, numbers, hyphens and underscores.');
+		}
+
+		submitting = true;
+		try {
+			const repo = await f.createRepoFromTemplate({
+				templateOwner: provider.template.owner,
+				templateRepo: provider.template.repo,
+				owner: user.login,
+				name: h,
+				description: description.trim(),
+				isPrivate: visibility === 'private'
+			});
+			const owner = repo.owner.login;
+
+			// Tag it so it shows up in the listing (non-fatal: repo already exists).
+			try {
+				await f.setRepoTopics(owner, repo.name, [provider.repoTopic]);
+			} catch (err) {
+				console.warn('Could not tag new repo with topic:', (err as Error).message);
+			}
+			// Give the campaign's Actions a read/write token (non-fatal for org limits).
+			try {
+				await f.setActionsWorkflowPermissions(owner, repo.name);
+			} catch (err) {
+				console.warn('Could not set Actions workflow permissions:', (err as Error).message);
+			}
+
+			// Initialise (Action A). The repo already exists, so on failure we surface
+			// a retry hint rather than treating creation itself as failed.
+			try {
+				const template = await f.waitForRepoContents(owner, repo.name, 'templates/score.template.mei');
+				const config = buildCampaignConfig(
+					{ title: t, description: description.trim(), license: license.trim() || undefined, composer: composer.trim() },
+					user.login
+				);
+				const mei = stampTemplate(template, {
+					title: config.campaign.title,
+					composer: config.sources[0].header.composer,
+					license: config.campaign.license
+				});
+				await f.commitFiles(
+					owner,
+					repo.name,
+					[
+						{ path: 'config.yaml', content: configToYaml(config) },
+						{ path: 'sources/score.mei', content: mei },
+						{ path: 'tracking/state.csv', content: buildStateCsv(config) },
+						{ path: 'tracking/locks.csv', content: buildLocksCsv() }
+					],
+					'Initialise campaign'
+				);
+			} catch (err) {
+				console.error('Campaign initialisation failed:', (err as Error).message);
+				created = { html_url: repo.html_url, full_name: repo.full_name, initWarning: true };
+				submitting = false;
+				return;
+			}
+
+			// Clean creation: take the organiser straight to the new repo's console.
+			// Keep the overlay up through navigation rather than flashing it away.
+			await goto(`/campaign/${owner}/${repo.name}`);
+		} catch (err) {
+			console.error('Repo creation failed:', (err as Error).message);
+			error = 'Could not create the repository. Check the handle isn’t already taken, then try again.';
+			submitting = false;
+		}
+	}
 </script>
 
 {#if submitting}
@@ -89,69 +197,50 @@
 	<h1>Spin up a new repository from a template</h1>
 	<p>Log in with GitHub, fill in your campaign details, and we'll create the repository and prepare it for encoding.</p>
 
-	{#if data.user}
+	{#if auth.user}
 		{#if !showForm}
 			<button class="cta" type="button" onclick={() => (showForm = true)}>
 				Create a new repository →
 			</button>
 		{/if}
 	{:else}
-		{#if data.denied === 'login'}
-			<div class="banner warn">
-				Login cancelled — access was declined on GitHub. We need you to authorize the app to
-				continue. Try again below.
-			</div>
-		{/if}
-		<a class="cta github" href="/login">
+		<button class="cta github" type="button" onclick={() => login()}>
 			<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="currentColor">
 				<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
 			</svg>
 			Log in with GitHub
-		</a>
+		</button>
 	{/if}
 </section>
 
-{#if data.user && showForm}
+{#if auth.user && showForm}
 	<section class="create">
 		<h2>Create a repository</h2>
-		<p class="template">From template: <code>{data.template}</code></p>
+		<p class="template">From template: <code>{templateName}</code></p>
 
-		{#if form && 'success' in form}
+		{#if created}
 			<div class="banner ok">
-				Created <a href={form.html_url} target="_blank" rel="noreferrer">{form.full_name}</a> 🎉
+				Created <a href={created.html_url} target="_blank" rel="noreferrer">{created.full_name}</a> 🎉
 			</div>
-			{#if form.initWarning}
+			{#if created.initWarning}
 				<div class="banner warn">
 					The repository was created, but setting up its campaign files didn't finish. Create it
 					again to retry, or check the repository directly.
 				</div>
 			{/if}
-		{:else if form && 'error' in form}
-			<div class="banner err">{form.error}</div>
+		{:else if error}
+			<div class="banner err">{error}</div>
 		{/if}
 
-		<form
-			method="POST"
-			action="?/create"
-			use:enhance={() => {
-				submitting = true;
-				return async ({ update, result }) => {
-					// On a clean creation the action redirects to the console; keep the
-					// overlay up through navigation rather than flashing it away first.
-					if (result.type !== 'redirect') submitting = false;
-					await update();
-				};
-			}}
-		>
+		<form onsubmit={createCampaign}>
 			<label>
 				Campaign name
-				<input name="title" bind:value={title} placeholder="e.g. Symphony No. 9 in D minor, Op. 125" required />
+				<input bind:value={title} placeholder="e.g. Symphony No. 9 in D minor, Op. 125" required />
 			</label>
 
 			<label>
 				Handle
 				<input
-					name="name"
 					bind:value={handle}
 					oninput={(e) => (handleTouched = e.currentTarget.value.trim() !== '')}
 					placeholder="symphony-9-choral"
@@ -164,7 +253,7 @@
 				<summary>Additional metadata</summary>
 				<label>
 					Composer <span class="muted">(optional)</span>
-					<input name="composer" value={fields?.composer ?? ''} placeholder="e.g. Anonymous" />
+					<input bind:value={composer} placeholder="e.g. Anonymous" />
 				</label>
 			</details>
 
@@ -172,12 +261,12 @@
 				<summary>Advanced</summary>
 				<label>
 					Description <span class="muted">(optional)</span>
-					<input name="description" value={fields?.description ?? ''} placeholder="What is this repo for?" />
+					<input bind:value={description} placeholder="What is this repo for?" />
 				</label>
 
 				<label>
 					License
-					<input name="license" value={fields?.license ?? 'CC-BY-4.0'} placeholder="e.g. CC-BY-4.0" />
+					<input bind:value={license} placeholder="e.g. CC-BY-4.0" />
 				</label>
 
 				<fieldset>
@@ -203,20 +292,20 @@
 <section class="repos">
 	<h2>Repositories created from this template</h2>
 
-	{#if data.listError}
-		<p class="muted">Couldn't load the list: {data.listError}</p>
-	{:else if data.repos.length === 0}
+	{#if listError}
+		<p class="muted">Couldn't load the list: {listError}</p>
+	{:else if repos.length === 0}
 		<p class="muted">None yet. Be the first to create one!</p>
 	{:else}
 		<ul>
-			{#each data.repos as repo (repo.full_name)}
+			{#each repos as repo (repo.full_name)}
 				<li>
 					<div class="row">
 						<a href={`/campaign/${repo.owner}/${repo.name}`}>{repo.full_name}</a>
 						{#if repo.private}
 							<span class="badge" title="Private — only visible to its owner">🔒 Private</span>
 						{/if}
-						{#if data.user}
+						{#if auth.user}
 							<a class="gh-link" href={repo.html_url} target="_blank" rel="noreferrer">View on GitHub →</a>
 						{/if}
 					</div>
@@ -226,7 +315,7 @@
 				</li>
 			{/each}
 		</ul>
-		{#if !data.user}
+		{#if !auth.user}
 			<p class="muted small">Log in to also see your own private repositories here.</p>
 		{/if}
 	{/if}
