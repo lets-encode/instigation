@@ -3,7 +3,7 @@
 	import { auth, login, forge } from '$lib/auth.svelte.ts';
 	import { provider, automation } from '$lib/forge/config.ts';
 	import { searchReposByTopic } from '$lib/forge/github-rest.ts';
-	import type { RepoSummary } from '$lib/forge/types.ts';
+	import type { FileChange, RepoSummary } from '$lib/forge/types.ts';
 	import {
 		buildCampaignConfig,
 		configToYaml,
@@ -13,6 +13,10 @@
 		buildLockCsv,
 		buildHistoryCsv
 	} from '$lib/campaign-init.ts';
+	import { buildFacsimileScore } from '$lib/mei-facsimile.ts';
+	// Type-only: erased at build, so the heavy pdf.js module it lives in is loaded
+	// (dynamically) only when a facsimile campaign is actually submitted.
+	import type { PreparedFacsimile } from '$lib/facsimile-detect.ts';
 
 	const templateName = `${provider.template.owner}/${provider.template.repo}`;
 
@@ -40,6 +44,16 @@
 	let submitting = $state(false);
 	let error = $state<string | null>(null);
 	let created = $state<{ html_url: string; full_name: string; initWarning: boolean } | null>(null);
+
+	// Score source: scaffold from uploaded page images/PDF (measure detection),
+	// start from a blank template, or (later) an existing MEI/MusicXML upload.
+	let sourceMode = $state<'facsimile' | 'blank' | 'existing'>('facsimile');
+	let sourceFiles = $state<File[]>([]);
+	let progress = $state<string | null>(null);
+
+	function onFilesChange(e: Event) {
+		sourceFiles = Array.from((e.currentTarget as HTMLInputElement).files ?? []);
+	}
 
 	let visibility = $state('public');
 	let title = $state('');
@@ -117,8 +131,36 @@
 		if (!/^[A-Za-z0-9_-]+$/.test(h)) {
 			return void (error = 'The handle may only contain letters, numbers, hyphens and underscores.');
 		}
+		if (sourceMode === 'facsimile' && sourceFiles.length === 0) {
+			return void (error = 'Add at least one page image or a PDF, or choose a different source.');
+		}
 
 		submitting = true;
+
+		// Facsimile source: render pages and detect measures BEFORE creating the
+		// repo, so a detection failure doesn't leave an orphaned repository behind.
+		let facsimile: PreparedFacsimile | null = null;
+		if (sourceMode === 'facsimile') {
+			try {
+				progress = 'Reading your upload…';
+				const { prepareFacsimile } = await import('$lib/facsimile-detect.ts');
+				facsimile = await prepareFacsimile(sourceFiles, (_done, _total, note) => (progress = note));
+			} catch (err) {
+				console.error('Facsimile preparation failed:', (err as Error).message);
+				error = `Could not process the upload: ${(err as Error).message}`;
+				submitting = false;
+				progress = null;
+				return;
+			}
+			if (facsimile.pages.every((p) => p.measures.length === 0)) {
+				error = 'No measures were detected on the uploaded pages. Check the images and try again.';
+				submitting = false;
+				progress = null;
+				return;
+			}
+			progress = null;
+		}
+
 		try {
 			const repo = await f.createRepoFromTemplate({
 				templateOwner: provider.template.owner,
@@ -160,17 +202,33 @@
 					user.login,
 					automation
 				);
-				const mei = stampTemplate(template, {
+				const header = {
 					title: config.campaign.title,
 					composer: config.sources[0].header.composer,
 					license: config.campaign.license
-				});
+				};
+
+				// The score is either a facsimile scaffold (with its committed page
+				// images) or the stamped blank template.
+				const imageFiles: FileChange[] = [];
+				let mei: string;
+				if (facsimile) {
+					mei = buildFacsimileScore(facsimile.pages, header);
+					const { blobToBase64 } = await import('$lib/facsimile-detect.ts');
+					for (const img of facsimile.images) {
+						imageFiles.push({ path: img.path, contentBase64: await blobToBase64(img.blob) });
+					}
+				} else {
+					mei = stampTemplate(template, header);
+				}
+
 				await f.commitFiles(
 					owner,
 					repo.name,
 					[
 						{ path: 'config.yaml', content: configToYaml(config) },
 						{ path: 'sources/score.mei', content: mei },
+						...imageFiles,
 						{ path: 'tracking/task.csv', content: buildTaskCsv(config) },
 						{ path: 'tracking/state.csv', content: buildStateCsv(config) },
 						{ path: 'tracking/lock.csv', content: buildLockCsv() },
@@ -182,6 +240,7 @@
 				console.error('Campaign initialisation failed:', (err as Error).message);
 				created = { html_url: repo.html_url, full_name: repo.full_name, initWarning: true };
 				submitting = false;
+				progress = null;
 				return;
 			}
 
@@ -192,6 +251,7 @@
 			console.error('Repo creation failed:', (err as Error).message);
 			error = 'Could not create the repository. Check the handle isn’t already taken, then try again.';
 			submitting = false;
+			progress = null;
 		}
 	}
 </script>
@@ -201,7 +261,7 @@
 		<div class="overlay-card">
 			<div class="spinner" aria-hidden="true"></div>
 			<p class="overlay-title">Creating your repository…</p>
-			<p class="overlay-sub">Setting up the campaign files. This takes a few seconds.</p>
+			<p class="overlay-sub">{progress ?? 'Setting up the campaign files. This takes a few seconds.'}</p>
 		</div>
 	</div>
 {/if}
@@ -261,6 +321,53 @@
 				/>
 				<span class="hint">Used in the URL and as the Git repository name. Auto-filled from the campaign name — edit it if you like.</span>
 			</label>
+
+			<fieldset class="source">
+				<legend>Score source</legend>
+
+				<label class="radio">
+					<input type="radio" name="source" value="facsimile" bind:group={sourceMode} />
+					<span>
+						Page images or PDF
+						<span class="opt-hint">Detect measures and scaffold an empty score linked to the pages.</span>
+					</span>
+				</label>
+
+				{#if sourceMode === 'facsimile'}
+					<div class="upload">
+						<input
+							type="file"
+							accept="image/png,image/jpeg,application/pdf"
+							multiple
+							onchange={onFilesChange}
+						/>
+						<span class="hint">
+							{#if sourceFiles.length}
+								{sourceFiles.length} file{sourceFiles.length === 1 ? '' : 's'} selected. A PDF is split into
+								one image per page; images are used in the order shown.
+							{:else}
+								A single PDF (one image per page), or one or more JPG/PNG page images.
+							{/if}
+						</span>
+					</div>
+				{/if}
+
+				<label class="radio">
+					<input type="radio" name="source" value="blank" bind:group={sourceMode} />
+					<span>
+						I don't have a facsimile file
+						<span class="opt-hint">Start from a blank one-measure template.</span>
+					</span>
+				</label>
+
+				<label class="radio disabled">
+					<input type="radio" name="source" value="existing" disabled />
+					<span>
+						Existing MEI / MusicXML <span class="soon">coming soon</span>
+						<span class="opt-hint">Upload a score you already have.</span>
+					</span>
+				</label>
+			</fieldset>
 
 			<details class="extra">
 				<summary>Additional metadata</summary>
@@ -468,6 +575,48 @@
 		align-items: center;
 		gap: 0.4rem;
 		font-weight: 400;
+	}
+	.create .source {
+		flex-direction: column;
+		gap: 0.7rem;
+		align-items: stretch;
+	}
+	.create .source .radio {
+		align-items: flex-start;
+		gap: 0.55rem;
+		font-weight: 600;
+	}
+	.create .source .radio input {
+		margin-top: 0.15rem;
+	}
+	.create .source .radio.disabled {
+		opacity: 0.55;
+	}
+	.create .opt-hint {
+		display: block;
+		font-weight: 400;
+		font-size: 0.8rem;
+		color: #888;
+		margin-top: 0.1rem;
+	}
+	.create .soon {
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: #8a6d00;
+		background: #fff4d6;
+		border: 1px solid #f0dca0;
+		padding: 0.05rem 0.4rem;
+		border-radius: 999px;
+	}
+	.create .upload {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		margin: -0.2rem 0 0.2rem 1.6rem;
+	}
+	.create .upload input[type='file'] {
+		font: inherit;
+		font-size: 0.85rem;
 	}
 	.create button[type='submit'] {
 		align-self: flex-start;

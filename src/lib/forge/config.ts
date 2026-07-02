@@ -38,6 +38,10 @@ export const provider: ProviderConfig = {
 /** The mei-friend instance volunteers are handed off to for editing. */
 export const meiFriendUrl = env.PUBLIC_MEI_FRIEND_URL || 'https://mei-friend.mdw.ac.at';
 
+/** The edirom measure-detector used to scaffold a score from page images. */
+export const measureDetectorUrl =
+	env.PUBLIC_MEASURE_DETECTOR_URL || 'https://measure-detector.edirom.de';
+
 /**
  * The central automation pointer written into each new campaign's config.yaml
  * (DESIGN.md §4a). The campaign's caller workflow checks out `central_repository`

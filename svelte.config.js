@@ -6,6 +6,10 @@ import { loadEnv } from 'vite';
 // config — read it from the same env files Vite gives the app.
 const env = loadEnv(process.env.NODE_ENV ?? 'production', process.cwd(), 'PUBLIC_');
 const brokerOrigin = env.PUBLIC_OAUTH_BROKER_URL ? new URL(env.PUBLIC_OAUTH_BROKER_URL).origin : '';
+// The measure-detector the campaign scaffolder POSTs page images to.
+const detectorOrigin = new URL(
+	env.PUBLIC_MEASURE_DETECTOR_URL || 'https://measure-detector.edirom.de'
+).origin;
 const dev = process.env.NODE_ENV === 'development';
 
 /** @type {import('@sveltejs/kit').Config} */
@@ -29,6 +33,7 @@ const config = {
 				'connect-src': [
 					'self',
 					'https://api.github.com',
+					detectorOrigin,
 					...(brokerOrigin ? [brokerOrigin] : []),
 					...(dev ? ['ws:'] : [])
 				],

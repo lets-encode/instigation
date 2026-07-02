@@ -19,10 +19,15 @@ function decodeBase64Utf8(b64: string): string {
 	return new TextDecoder().decode(bytes);
 }
 
-/** A text file to commit: a repo-relative path and its UTF-8 string content. */
+/**
+ * A file to commit at a repo-relative path. Provide `content` for UTF-8 text, or
+ * `contentBase64` for binary (e.g. images) — binary files are uploaded as blobs
+ * first, since the tree API only takes text inline. Exactly one must be set.
+ */
 export interface FileChange {
 	path: string;
-	content: string;
+	content?: string;
+	contentBase64?: string;
 }
 
 /** The authenticated GitHub user, as far as this app reads it. */
@@ -414,13 +419,26 @@ export async function commitFiles(
 	}
 	const headCommit = await gh<{ tree: { sha: string } }>(`/git/commits/${headSha}`);
 
-	// Build a tree off the current one, with our files as inline blobs.
+	// Text files go inline in the tree; binary files are uploaded as base64 blobs
+	// first (the tree API only accepts text inline) and referenced by SHA.
+	const treeEntries = await Promise.all(
+		files.map(async (f) => {
+			const base = { path: f.path, mode: '100644' as const, type: 'blob' as const };
+			if (f.contentBase64 != null) {
+				const blob = await gh<{ sha: string }>('/git/blobs', {
+					method: 'POST',
+					body: JSON.stringify({ content: f.contentBase64, encoding: 'base64' })
+				});
+				return { ...base, sha: blob.sha };
+			}
+			return { ...base, content: f.content ?? '' };
+		})
+	);
+
+	// Build a tree off the current one, with our files added.
 	const tree = await gh<{ sha: string }>('/git/trees', {
 		method: 'POST',
-		body: JSON.stringify({
-			base_tree: headCommit.tree.sha,
-			tree: files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }))
-		})
+		body: JSON.stringify({ base_tree: headCommit.tree.sha, tree: treeEntries })
 	});
 
 	const commit = await gh<{ sha: string }>('/git/commits', {
