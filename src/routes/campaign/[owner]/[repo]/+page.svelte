@@ -25,6 +25,7 @@
 
   type Result = {
     ok?: boolean;
+    warn?: boolean;
     error?: string;
     message?: string;
     prUrl?: string;
@@ -48,10 +49,67 @@
   const subtaskRows = $derived(rows.filter((r) => r.subtask_id !== ""));
 
   let busy = $state(false);
+  let busyMessage = $state("");
   let result = $state<Result>(null);
 
   const copy = (text: string) =>
     navigator.clipboard?.writeText(text).catch(() => {});
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  // Wait until the campaign automation has processed a PR (it closes the PR
+  // when done) and return its verdict comment. Null on timeout — the run is
+  // then still in flight, not failed.
+  async function waitForPrProcessed(
+    f: ForgeClient,
+    prNumber: number,
+  ): Promise<string | null> {
+    busyMessage = `Campaign automation is processing PR #${prNumber}…`;
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await sleep(3000);
+      if ((await f.getPullRequestState(owner, repo, prNumber)) === "closed") {
+        return f.getLastIssueComment(owner, repo, prNumber);
+      }
+    }
+    return null;
+  }
+
+  // Map the automation's verdict on a PR to a result banner: a rejection is an
+  // error (never shown as success), no verdict yet (timeout) is a warning.
+  function verdictResult(
+    verdict: string | null,
+    prNumber: number,
+    prUrl: string,
+    fallback: string,
+  ): Result {
+    if (verdict == null) {
+      return {
+        ok: true,
+        warn: true,
+        prUrl,
+        message: `${fallback} PR #${prNumber} is still being processed — refresh the tables in a moment.`,
+      };
+    }
+    if (verdict.startsWith("❌")) return { error: verdict, prUrl };
+    return { ok: true, prUrl, message: verdict };
+  }
+
+  // Mute the campaign repo's notifications for this user, once: skipped when
+  // this browser has muted it before, or when the user has an explicit
+  // subscription of their own (e.g. deliberately watching). Non-fatal — each
+  // token can only mute its own user.
+  async function muteOnce(f: ForgeClient) {
+    const key = `lets-encode:muted:${owner}/${repo}`;
+    if (localStorage.getItem(key)) return;
+    try {
+      if ((await f.getRepoSubscription(owner, repo)) == null) {
+        await f.ignoreRepoNotifications(owner, repo);
+      }
+      localStorage.setItem(key, "1");
+    } catch (e) {
+      console.warn("Could not mute repo notifications:", (e as Error).message);
+    }
+  }
 
   const lockFor = (taskId: string, subtaskId: string, kind: string) =>
     locks.find(
@@ -112,17 +170,21 @@
     if (auth.status === "authenticated" && owner && repo && !loaded) load();
   });
 
-  // Run an action: flip busy, capture its result banner, then refresh the tables.
+  // Run an action: show the busy overlay, capture its result banner, then
+  // refresh the tables.
   async function run(action: (f: ForgeClient) => Promise<Result>) {
     const f = forge();
     if (!f) return;
     busy = true;
+    busyMessage = "Working…";
     try {
       result = await action(f);
+      busyMessage = "Refreshing tables…";
+      await load();
     } finally {
       busy = false;
+      busyMessage = "";
     }
-    await load();
   }
 
   // Open a PR that adds a lock row (the Action re-authors who/when). Shared by the
@@ -133,6 +195,10 @@
     subtask_id: string,
     kind: string,
   ) {
+    // Claiming is a user's first interaction with a campaign: mute the repo's
+    // notifications for them, or the automation's PR comments would email
+    // every participant.
+    await muteOnce(f);
     const lockRows = parseLockCsv(
       (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
     );
@@ -156,12 +222,15 @@
   const claim = (task_id: string, subtask_id: string) =>
     run(async (f) => {
       try {
+        busyMessage = "Opening claim PR…";
         const pr = await openClaimPr(f, task_id, subtask_id, "validation");
-        return {
-          ok: true,
-          prUrl: pr.html_url,
-          message: `Opened claim PR #${pr.number} for ${task_id}/${subtask_id} (validation).`,
-        };
+        const verdict = await waitForPrProcessed(f, pr.number);
+        return verdictResult(
+          verdict,
+          pr.number,
+          pr.html_url,
+          `Opened claim PR #${pr.number} for ${task_id}/${subtask_id} (validation).`,
+        );
       } catch (e) {
         return { error: `Claim failed: ${(e as Error).message}` };
       }
@@ -176,6 +245,7 @@
         const task = findRow(rows, task_id, "");
         if (!fragment || !task) return { error: `Unknown task ${task_id}.` };
 
+        busyMessage = "Preparing the score for mei-friend…";
         const { sha, canPush } = await f.getRepoHead(owner, repo);
 
         // Owner/collaborator: commit on a branch in the repo itself (can't fork
@@ -223,12 +293,25 @@
         let prUrl: string | undefined;
         let message =
           "Opening the score in mei-friend. After committing there, use “Submit encoding”.";
+        window.open(url, "_blank", "noopener");
         if (task.status === "encoding_required" && !mine) {
+          busyMessage = "Opening the encoding claim PR…";
           const pr = await openClaimPr(f, task_id, "", "encoding");
           prUrl = pr.html_url;
-          message = `Opening the score in mei-friend; opened encoding claim PR #${pr.number}. After committing in mei-friend, use “Submit encoding”.`;
+          const verdict = await waitForPrProcessed(f, pr.number);
+          const res = verdictResult(
+            verdict,
+            pr.number,
+            pr.html_url,
+            `Opened encoding claim PR #${pr.number}.`,
+          );
+          if (res?.error) {
+            // The claim failed — the tab is open, but the task is not theirs.
+            return { error: `The encoding claim was rejected — ${res.error}`, prUrl };
+          }
+          message = `Opened the score in mei-friend. ${res?.message} After committing in mei-friend, use “Submit encoding”.`;
+          return { ok: true, warn: res?.warn, meiFriendUrl: url, prUrl, message };
         }
-        window.open(url, "_blank", "noopener");
         return { ok: true, meiFriendUrl: url, prUrl, message };
       } catch (e) {
         return { error: `Open in mei-friend failed: ${(e as Error).message}` };
@@ -240,6 +323,7 @@
   const submitpr = (task_id: string) =>
     run(async (f) => {
       try {
+        busyMessage = "Opening the submission PR…";
         const { branch: base, canPush } = await f.getRepoHead(owner, repo);
         let head: string;
         if (canPush) {
@@ -258,11 +342,13 @@
           base,
           body: `Submits the encoding of ${task_id} by @${viewer}, edited in mei-friend. Opened from the campaign console.`,
         });
-        return {
-          ok: true,
-          prUrl: pr.html_url,
-          message: `Opened submission PR #${pr.number} for ${task_id}.`,
-        };
+        const verdict = await waitForPrProcessed(f, pr.number);
+        return verdictResult(
+          verdict,
+          pr.number,
+          pr.html_url,
+          `Opened submission PR #${pr.number} for ${task_id}.`,
+        );
       } catch (e) {
         return { error: `Submission PR failed: ${(e as Error).message}` };
       }
@@ -274,6 +360,7 @@
       try {
         const fragment = fragmentOf(task_id);
         if (!fragment) return { error: `Unknown task ${task_id}.` };
+        busyMessage = "Fetching the raw link…";
         const rawUrl = await f.getRepoFileDownloadUrl(owner, repo, fragment);
         if (!rawUrl)
           return { error: `Could not get a raw link for ${fragment}.` };
@@ -299,6 +386,7 @@
             error: `No open validation slot on ${task_id}/${subtask_id}.`,
           };
         row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
+        busyMessage = "Opening the validation PR…";
         const pr = await f.openChangePr(owner, repo, {
           branch: `validate-${task_id}-${subtask_id}-${rand()}`,
           files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
@@ -306,28 +394,74 @@
           title: `Validate ${task_id}/${subtask_id} (${verdict})`,
           body: `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`,
         });
-        return {
-          ok: true,
-          prUrl: pr.html_url,
-          message: `Opened validation PR #${pr.number} for ${task_id}/${subtask_id} (${verdict}).`,
-        };
+        const outcome = await waitForPrProcessed(f, pr.number);
+        return verdictResult(
+          outcome,
+          pr.number,
+          pr.html_url,
+          `Opened validation PR #${pr.number} for ${task_id}/${subtask_id} (${verdict}).`,
+        );
       } catch (e) {
         return { error: `Validate failed: ${(e as Error).message}` };
       }
     });
 
-  // Manually dispatch the scheduled reaper.
+  // Manually dispatch the scheduled reaper, then wait for its run to finish
+  // (there is no PR to watch — poll the dispatched workflow run instead).
   const reaper = () =>
     run(async (f) => {
       try {
+        busyMessage = "Dispatching the stale-lock reaper…";
         const { branch } = await f.getRepoHead(owner, repo);
+        const dispatchedAt = Date.now();
         await f.dispatchWorkflow(owner, repo, "caller.yml", branch);
-        return { ok: true, message: "Triggered the stale-lock reaper." };
+        busyMessage = "Waiting for the reaper run to finish…";
+        const deadline = Date.now() + 90_000;
+        while (Date.now() < deadline) {
+          await sleep(3000);
+          const runInfo = await f.getLatestWorkflowRun(
+            owner,
+            repo,
+            "caller.yml",
+            "workflow_dispatch",
+          );
+          // Only a run created after our dispatch counts (15s clock-skew slack).
+          if (
+            runInfo &&
+            Date.parse(runInfo.created_at) >= dispatchedAt - 15_000 &&
+            runInfo.status === "completed"
+          ) {
+            if (runInfo.conclusion !== "success") {
+              return {
+                error: `The reaper run finished with "${runInfo.conclusion}" — check the repository's Actions log.`,
+              };
+            }
+            return { ok: true, message: "Stale-lock reaper finished." };
+          }
+        }
+        return {
+          ok: true,
+          warn: true,
+          message:
+            "Reaper dispatched; the run hasn't finished yet — refresh the tables in a moment.",
+        };
       } catch (e) {
         return { error: `Reaper dispatch failed: ${(e as Error).message}` };
       }
     });
 </script>
+
+{#if busy}
+  <div class="overlay" role="status" aria-live="polite">
+    <div class="overlay-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="overlay-title">{busyMessage || "Working…"}</p>
+      <p class="overlay-sub">
+        The campaign automation runs on GitHub — this can take a few seconds.
+      </p>
+    </div>
+  </div>
+{/if}
 
 <p class="back"><a href="/">← All campaigns</a></p>
 
@@ -345,9 +479,8 @@
   <p class="muted">
     Drive the campaign automation: open the score in mei-friend (which also
     claims the encoding task), submit work, validate, and run the reaper. Each
-    opens the same kind of pull request a volunteer client would. The workflows
-    run on GitHub and take a few seconds; use
-    <strong>Refresh</strong> to re-read the tables afterwards.
+    opens the same kind of pull request a volunteer client would, waits for the
+    automation to process it, and then refreshes the tables.
   </p>
 </header>
 
@@ -362,9 +495,14 @@
   </div>
 {:else}
   {#if result && result.error}
-    <div class="banner err">{result.error}</div>
+    <div class="banner err">
+      {result.error}
+      {#if result.prUrl}
+        <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+      {/if}
+    </div>
   {:else if result && result.ok}
-    <div class="banner ok">
+    <div class="banner {result.warn ? 'warn' : 'ok'}">
       {result.message}
       {#if result.prUrl}
         <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
@@ -454,7 +592,7 @@
                     )}
                   title="Opens score.mei in mei-friend; claims the encoding task if not already yours"
                 >
-                  Open in mei-friend
+                  Claim (encode)
                 </button>
                 <button
                   type="button"
@@ -563,7 +701,7 @@
     {/if}
 
     <p class="note">
-      <strong>Open in mei-friend</strong> loads the score
+      <strong>Claim (encode)</strong> loads the score in mei-friend
       {#if isPrivate}
         from a short-lived tokenised raw URL (so it works for this private repo)
         — open it promptly, the token expires within minutes
@@ -584,6 +722,56 @@
 {/if}
 
 <style>
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(2px);
+  }
+  .overlay-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 2rem 2.5rem;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+    text-align: center;
+  }
+  .spinner {
+    width: 38px;
+    height: 38px;
+    border: 3px solid #e5e5e5;
+    border-top-color: #1a1a1a;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .overlay-title {
+    margin: 0;
+    font-weight: 600;
+  }
+  .overlay-sub {
+    margin: 0;
+    color: #777;
+    font-size: 0.88rem;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 2s;
+    }
+  }
+
   .back {
     margin: 0 0 1rem;
   }

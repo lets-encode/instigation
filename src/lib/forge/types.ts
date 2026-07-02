@@ -86,4 +86,22 @@ export interface ForgeClient {
 	): Promise<ChangeRequest>;
 	/** Trigger a CI run (GitHub: workflow_dispatch) of `workflow` on `ref`. */
 	dispatchWorkflow(owner: string, repo: string, workflow: string, ref: string): Promise<void>;
+	/** The user's notification subscription for the repo, or null if none set. */
+	getRepoSubscription(
+		owner: string,
+		repo: string
+	): Promise<{ subscribed: boolean; ignored: boolean } | null>;
+	/** Mute all of the repo's notifications (web + email) for the authenticated user. */
+	ignoreRepoNotifications(owner: string, repo: string): Promise<void>;
+	/** A pull/merge request's current state: 'open' or 'closed'. */
+	getPullRequestState(owner: string, repo: string, number: number): Promise<string>;
+	/** The most recent comment on a pull/merge request, or null. */
+	getLastIssueComment(owner: string, repo: string, number: number): Promise<string | null>;
+	/** The most recent CI run of `workflow` for `event`, or null if none yet. */
+	getLatestWorkflowRun(
+		owner: string,
+		repo: string,
+		workflow: string,
+		event: string
+	): Promise<{ status: string; conclusion: string | null; created_at: string } | null>;
 }

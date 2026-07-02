@@ -24,6 +24,11 @@ export function createGitHubForge(token: string): ForgeClient {
 		fastForwardBranch: (owner, repo, branch, sha) => gh.fastForwardBranch(token, owner, repo, branch, sha),
 		createPullRequest: (owner, repo, opts) => gh.createPullRequest(token, owner, repo, opts),
 		openChangePr: (owner, repo, opts) => gh.openChangePr(token, owner, repo, opts),
-		dispatchWorkflow: (owner, repo, workflow, ref) => gh.dispatchWorkflow(token, owner, repo, workflow, ref)
+		dispatchWorkflow: (owner, repo, workflow, ref) => gh.dispatchWorkflow(token, owner, repo, workflow, ref),
+		getRepoSubscription: (owner, repo) => gh.getRepoSubscription(token, owner, repo),
+		ignoreRepoNotifications: (owner, repo) => gh.ignoreRepoNotifications(token, owner, repo),
+		getPullRequestState: (owner, repo, number) => gh.getPullRequestState(token, owner, repo, number),
+		getLastIssueComment: (owner, repo, number) => gh.getLastIssueComment(token, owner, repo, number),
+		getLatestWorkflowRun: (owner, repo, workflow, event) => gh.getLatestWorkflowRun(token, owner, repo, workflow, event)
 	};
 }

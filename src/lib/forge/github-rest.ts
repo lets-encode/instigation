@@ -239,6 +239,96 @@ export async function getPullRequestFiles(
 	}));
 }
 
+/**
+ * The authenticated user's notification subscription for a repo, or null if
+ * they have none set (the default "participating only" level).
+ */
+export async function getRepoSubscription(
+	token: string,
+	owner: string,
+	repo: string
+): Promise<{ subscribed: boolean; ignored: boolean } | null> {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/subscription`, {
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+	});
+	if (res.status === 404) return null;
+	const data: { subscribed?: boolean; ignored?: boolean; message?: string } = await res
+		.json()
+		.catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || 'Failed to read repository subscription');
+	return { subscribed: Boolean(data.subscribed), ignored: Boolean(data.ignored) };
+}
+
+/**
+ * Set the authenticated user's notification subscription for a repo to
+ * "ignored": no web or email notifications from it, including participating
+ * threads (own PRs, mentions). Affects only the token's own user.
+ */
+export async function ignoreRepoNotifications(token: string, owner: string, repo: string): Promise<void> {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/subscription`, {
+		method: 'PUT',
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ subscribed: false, ignored: true })
+	});
+	if (!res.ok) {
+		const data: ErrorResponse = await res.json().catch(() => ({}));
+		throw new Error(data.message || 'Failed to set repository subscription');
+	}
+}
+
+/** A pull request's current state: 'open' or 'closed'. */
+export async function getPullRequestState(
+	token: string,
+	owner: string,
+	repo: string,
+	number: number
+): Promise<string> {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+	});
+	const data: { state?: string; message?: string } = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
+	return data.state ?? 'open';
+}
+
+/** The body of a pull request's most recent comment, or null if none. */
+export async function getLastIssueComment(
+	token: string,
+	owner: string,
+	repo: string,
+	number: number
+): Promise<string | null> {
+	const res = await fetch(
+		`${API}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1&sort=created&direction=desc`,
+		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` } }
+	);
+	const data = await res.json().catch(() => []);
+	if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to read comments');
+	const comments = data as Array<{ body?: string }>;
+	return comments[0]?.body ?? null;
+}
+
+/** The most recent run of `workflow` for `event`, or null if none yet. */
+export async function getLatestWorkflowRun(
+	token: string,
+	owner: string,
+	repo: string,
+	workflow: string,
+	event: string
+): Promise<{ status: string; conclusion: string | null; created_at: string } | null> {
+	const res = await fetch(
+		`${API}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
+		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` } }
+	);
+	const data: {
+		workflow_runs?: Array<{ status: string; conclusion: string | null; created_at: string }>;
+		message?: string;
+	} = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || 'Failed to read workflow runs');
+	const run = data.workflow_runs?.[0];
+	return run ? { status: run.status, conclusion: run.conclusion ?? null, created_at: run.created_at } : null;
+}
+
 /** Post a comment on a pull request and then close it (used to resolve claims). */
 export async function commentAndClosePr(
 	token: string,

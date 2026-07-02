@@ -142,6 +142,14 @@
 			} catch (err) {
 				console.warn('Could not set Actions workflow permissions:', (err as Error).message);
 			}
+			// The campaign's PR/comment traffic is automation noise — mute the repo
+			// for the instigator, who auto-watches repos they create (non-fatal;
+			// a token can only mute its own user's notifications).
+			try {
+				await f.ignoreRepoNotifications(owner, repo.name);
+			} catch (err) {
+				console.warn('Could not mute repo notifications:', (err as Error).message);
+			}
 
 			// Initialise (Action A). The repo already exists, so on failure we surface
 			// a retry hint rather than treating creation itself as failed.
