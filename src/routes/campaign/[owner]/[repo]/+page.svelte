@@ -237,9 +237,11 @@
     });
 
   // Open the task's score in mei-friend; opening for editing also opens an
-  // encoding claim PR (unless you already hold the lock).
-  const editor = (task_id: string) =>
-    run(async (f) => {
+  // encoding claim PR (unless you already hold the lock). The mei-friend tab
+  // opens only after the claim has gone through — never on a rejected or
+  // still-pending claim — so it waits until the busy overlay is gone.
+  const editor = async (task_id: string) => {
+    await run(async (f) => {
       try {
         const fragment = fragmentOf(task_id);
         const task = findRow(rows, task_id, "");
@@ -293,7 +295,6 @@
         let prUrl: string | undefined;
         let message =
           "Opening the score in mei-friend. After committing there, use “Submit encoding”.";
-        window.open(url, "_blank", "noopener");
         if (task.status === "encoding_required" && !mine) {
           busyMessage = "Opening the encoding claim PR…";
           const pr = await openClaimPr(f, task_id, "", "encoding");
@@ -306,17 +307,26 @@
             `Opened encoding claim PR #${pr.number}.`,
           );
           if (res?.error) {
-            // The claim failed — the tab is open, but the task is not theirs.
             return { error: `The encoding claim was rejected — ${res.error}`, prUrl };
           }
-          message = `Opened the score in mei-friend. ${res?.message} After committing in mei-friend, use “Submit encoding”.`;
-          return { ok: true, warn: res?.warn, meiFriendUrl: url, prUrl, message };
+          if (res?.warn) {
+            // Claim not confirmed yet — surface the warning with the link
+            // instead of opening a tab for a task that may not be theirs.
+            return { ok: true, warn: true, meiFriendUrl: url, prUrl, message: `${res.message}` };
+          }
+          message = `${res?.message} Opening the score in mei-friend — after committing there, use “Submit encoding”.`;
+          return { ok: true, meiFriendUrl: url, prUrl, message };
         }
         return { ok: true, meiFriendUrl: url, prUrl, message };
       } catch (e) {
         return { error: `Open in mei-friend failed: ${(e as Error).message}` };
       }
     });
+    // Open the tab only once the claim went through and the overlay is gone.
+    if (result?.ok && !result.warn && result.meiFriendUrl) {
+      window.open(result.meiFriendUrl, "_blank", "noopener");
+    }
+  };
 
   // After committing an encoding in mei-friend (which only pushes to a branch),
   // open the submission PR that advances the task to validation.
