@@ -70,6 +70,8 @@ export interface ForgeClient {
 	): Promise<{ owner: string; repo: string }>;
 	/** Create a branch at `fromSha`. */
 	createBranch(owner: string, repo: string, branch: string, fromSha: string): Promise<void>;
+	/** Fast-forward an existing branch to `sha`; false if that isn't a fast-forward. */
+	fastForwardBranch(owner: string, repo: string, branch: string, sha: string): Promise<boolean>;
 	/** Open a pull/merge request. */
 	createPullRequest(
 		owner: string,

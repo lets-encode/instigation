@@ -160,7 +160,12 @@
           try {
             await f.createBranch(owner, repo, ref, sha);
           } catch (e) {
-            if (!/already exists|\b422\b/i.test((e as Error).message)) throw e;
+            if (!/already exists/i.test((e as Error).message)) throw e;
+            // The branch exists from an earlier open. If it's merely stale
+            // (e.g. created before the init commit), fast-forward it to the
+            // current head; a branch with its own commits — work in progress —
+            // is left untouched.
+            await f.fastForwardBranch(owner, repo, ref, sha);
           }
           meiParam = "&connect=true";
         } else {

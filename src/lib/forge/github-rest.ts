@@ -365,6 +365,26 @@ export async function createBranch(
 	}
 }
 
+/**
+ * Point an existing branch at `sha`. Non-forced, so it succeeds only when the
+ * move is a fast-forward — a branch carrying its own commits is never rolled
+ * back. Returns whether the update was applied.
+ */
+export async function fastForwardBranch(
+	token: string,
+	owner: string,
+	repo: string,
+	branch: string,
+	sha: string
+): Promise<boolean> {
+	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+		method: 'PATCH',
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ sha })
+	});
+	return res.ok;
+}
+
 /** Delete a branch. Treats an already-gone ref (404/422) as success. */
 export async function deleteBranch(token: string, owner: string, repo: string, branch: string): Promise<void> {
 	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
