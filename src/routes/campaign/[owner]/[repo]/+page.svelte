@@ -249,6 +249,7 @@
 
         busyMessage = "Preparing the score for mei-friend…";
         const { sha, canPush } = await f.getRepoHead(owner, repo);
+        console.log("[editor] task", task_id, "fragment", fragment, "mainHead", sha, "canPush", canPush);
 
         // Owner/collaborator: commit on a branch in the repo itself (can't fork
         // your own repo), bound via connect=true. Volunteer: fork=true.
@@ -258,13 +259,15 @@
           ref = `encode-${task_id}`;
           try {
             await f.createBranch(owner, repo, ref, sha);
+            console.log("[editor] created branch", ref, "at", sha);
           } catch (e) {
             if (!/already exists/i.test((e as Error).message)) throw e;
             // The branch exists from an earlier open. If it's merely stale
             // (e.g. created before the init commit), fast-forward it to the
             // current head; a branch with its own commits — work in progress —
             // is left untouched.
-            await f.fastForwardBranch(owner, repo, ref, sha);
+            const ffed = await f.fastForwardBranch(owner, repo, ref, sha);
+            console.log("[editor] branch", ref, "already existed; fast-forward to", sha, "=>", ffed);
           }
           meiParam = "&connect=true";
         } else {
@@ -277,6 +280,7 @@
           fragment,
           ref,
         );
+        console.log("[editor] downloadUrl for", fragment, "@ ref", ref ?? "(default branch)", "=>", downloadUrl);
         if (!downloadUrl)
           return {
             error: `Could not get a download URL for ${fragment}.`,

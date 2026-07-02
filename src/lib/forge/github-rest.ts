@@ -163,9 +163,13 @@ export async function getRepoFileDownloadUrl(
 	const res = await fetch(`${API}/repos/${owner}/${repo}/contents/${path}${query}`, {
 		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
 	});
-	if (res.status === 404) return null;
+	if (res.status === 404) {
+		console.log('[getRepoFileDownloadUrl] 404 (path or ref absent)', { owner, repo, path, ref });
+		return null;
+	}
 	const data: { download_url?: string | null; message?: string } = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(data.message || `Failed to fetch ${path}`);
+	console.log('[getRepoFileDownloadUrl]', path, 'ref', ref ?? '(default)', 'status', res.status, 'download_url', data.download_url);
 	return data.download_url ?? null;
 }
 
