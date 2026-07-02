@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { auth, login, forge } from '$lib/auth.svelte.ts';
-	import { provider } from '$lib/forge/config.ts';
+	import { provider, automation } from '$lib/forge/config.ts';
 	import { searchReposByTopic } from '$lib/forge/github-rest.ts';
 	import type { RepoSummary } from '$lib/forge/types.ts';
 	import {
@@ -147,7 +147,8 @@
 				const template = await f.waitForRepoContents(owner, repo.name, 'templates/score.template.mei');
 				const config = buildCampaignConfig(
 					{ title: t, description: description.trim(), license: license.trim() || undefined, composer: composer.trim() },
-					user.login
+					user.login,
+					automation
 				);
 				const mei = stampTemplate(template, {
 					title: config.campaign.title,

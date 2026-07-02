@@ -8,6 +8,13 @@
 //   - tracking/state.csv   (buildStateCsv: one task T0001, encoding_required)
 //   - tracking/locks.csv   (buildLocksCsv: header only)
 
+/** The central automation pointer the campaign's caller workflow reads (§4a). */
+export interface AutomationPointer {
+	central_repository: string;
+	ref: string;
+	path: string;
+}
+
 /** A v1 campaign config object. */
 export interface CampaignConfig {
 	schema_version: number;
@@ -18,6 +25,7 @@ export interface CampaignConfig {
 		language: string;
 		license: string;
 	};
+	automation: AutomationPointer;
 	sources: Array<{
 		id: string;
 		kind: string;
@@ -94,10 +102,15 @@ export function assertSupported(config: CampaignConfig): void {
 }
 
 /**
- * Build the v1 campaign config object from create-form fields + the instigator
- * login. Unspecified optional fields fall back to v1 defaults.
+ * Build the v1 campaign config object from create-form fields, the instigator
+ * login and the central automation pointer. Unspecified optional fields fall
+ * back to v1 defaults.
  */
-export function buildCampaignConfig(fields: CampaignFields, login: string): CampaignConfig {
+export function buildCampaignConfig(
+	fields: CampaignFields,
+	login: string,
+	automation: AutomationPointer
+): CampaignConfig {
 	return {
 		schema_version: 1,
 		campaign: {
@@ -107,6 +120,7 @@ export function buildCampaignConfig(fields: CampaignFields, login: string): Camp
 			language: fields.language ?? DEFAULTS.language,
 			license: fields.license ?? DEFAULTS.license
 		},
+		automation: { ...automation },
 		sources: [
 			{
 				id: 'src-1',
@@ -137,6 +151,10 @@ export function configToYaml(config: CampaignConfig): string {
 		`  instigator: ${yamlStr(c.instigator)}\n` +
 		`  language: ${yamlStr(c.language)}\n` +
 		`  license: ${yamlStr(c.license)}\n` +
+		`automation:\n` +
+		`  central_repository: ${yamlStr(config.automation.central_repository)}\n` +
+		`  ref: ${yamlStr(config.automation.ref)}\n` +
+		`  path: ${yamlStr(config.automation.path)}\n` +
 		`sources:\n` +
 		`  - id: ${yamlStr(src.id)}\n` +
 		`    kind: ${yamlStr(src.kind)}\n` +

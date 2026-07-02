@@ -37,3 +37,15 @@ export const provider: ProviderConfig = {
 
 /** The mei-friend instance volunteers are handed off to for editing. */
 export const meiFriendUrl = env.PUBLIC_MEI_FRIEND_URL || 'https://mei-friend.mdw.ac.at';
+
+/**
+ * The central automation pointer written into each new campaign's config.yaml
+ * (DESIGN.md §4a). The campaign's caller workflow checks out `central_repository`
+ * at `ref` and runs `path`. `ref` should be an immutable tag/SHA in production;
+ * `main` is for iteration.
+ */
+export const automation = {
+	central_repository: env.PUBLIC_AUTOMATION_REPO || 'lets-encode/instigation',
+	ref: env.PUBLIC_AUTOMATION_REF || 'main',
+	path: env.PUBLIC_AUTOMATION_PATH || 'scripts/coordinator.ts'
+};

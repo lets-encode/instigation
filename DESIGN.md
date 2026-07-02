@@ -22,10 +22,10 @@ Instigation GUI (static SPA)                         ← user's forge token, in 
 Campaign repository                                  ← data + ONE task-agnostic caller
   config.yaml · sources/score.mei · tracking/*.csv
   .github/workflows/caller.yml
-  │  on pull_request_target / schedule:
+  │  on pull_request_target / schedule / workflow_dispatch:
   │  read central pointer from config (base ref) → checkout central → run it
   ▼
-Central automation repository (e.g. lets-encode/automation)
+Central automation repository (the instigation repo doubles as this)
   one coordinator entry + pure decision modules (provider-neutral)
   │  decide + mutate tables/MEI (optimistic concurrency); attribute to the PR author
   ▼
@@ -46,9 +46,12 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 - **Campaign repository** — an independent repo stamped from the template
   (`lets-encode/user-repo-template`). Holds `config.yaml`, `sources/score.mei`, the two tracking
   tables, and a single generic `caller.yml`. The heart of the system, and deliberately logic-free.
-- **Central automation repository** (e.g. `lets-encode/automation`) — one coordinator entry plus the
-  pure, tested decision modules the caller runs. Provider-neutral. Pinned by ref from the campaign's
-  own config, so upgrading a live campaign is a config commit, not a workflow edit.
+- **Central automation repository** — one coordinator entry plus the pure, tested decision modules
+  the caller runs. Provider-neutral. Pinned by ref from the campaign's own config, so upgrading a
+  live campaign is a config commit, not a workflow edit. **The instigation repo doubles as this
+  repo** (entry: `scripts/coordinator.ts`): the coordinator and the SPA share the decision modules
+  (`src/lib/campaign-*.ts`) and the forge adapter, so nothing is duplicated. Because the pointer is
+  config data, campaigns can be repointed at a dedicated repo later without touching the template.
 - **mei-friend volunteer client** — where contributors encode/validate. External; in scope here only
   for the PR contract it relies on (§6).
 
@@ -58,9 +61,9 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 |---|---|
 | Backend | **None.** The former SvelteKit server was only a forge REST client on the user's token; it moves to the browser. Deploy as static assets. |
 | OAuth | **Token broker** — a small stateless service (a Flask app, `broker/`) holds the client secret and only swaps `code`→`token` (GitHub offers no PKCE and no CORS on its token endpoint). A *provider trait*: GitLab supports PKCE, so it needs no broker. |
-| Per-repo workflows | **One generic, task-agnostic caller** replaces any per-task workflows. Triggers: `pull_request_target` (all contributions) + `schedule` (the reaper). It forwards the event; central decides what to do. |
+| Per-repo workflows | **One generic, task-agnostic caller** replaces any per-task workflows. Triggers: `pull_request_target` (all contributions) + `schedule` (the reaper) + `workflow_dispatch` (manual reaper run from the console). It forwards the event; central decides what to do. |
 | Central location | **Read from the campaign config on the base ref** (§4) — never hardcoded, never taken from the fork. The pinned ref lives in that config. |
-| Central logic | Lives in the **central automation repo**; the campaign repo carries none. |
+| Central logic | Lives in the **central automation repo**; the campaign repo carries none. The **instigation repo doubles as the central repo** (entry: `scripts/coordinator.ts`), so the SPA and the coordinator share the pure modules. |
 | Provider independence | A **`ForgeClient` seam** + a provider-config object (API base, OAuth endpoints, raw-URL pattern, fork/PR verbs). No hardcoded hosts or paths. GitHub implemented now; GitLab/others later are a drop-in (§8). |
 | Campaign ownership | The **instigator's personal account**. Consequence: keep the `canPush` dual-path — the owner contributes via a same-repo branch (mei-friend `connect=true`); everyone else forks + PRs. |
 | Table integrity | **The Action is the sole author of all table mutations.** Fork+PR contributors have zero write access, so this holds without branch protection (§6). |
@@ -75,8 +78,9 @@ This is the crux of "no task logic in the campaign repo." The pattern follows me
 [caller-template](https://github.com/mei-friend/caller-template) → [automation](https://github.com/mei-friend/automation)
 split, **adapted for a multi-user, event-driven flow**: mei-friend's caller is triggered by
 `workflow_dispatch` and receives everything as explicit inputs (`workpackage_id`, `filepath`,
-`parameters`, `commit_message`, …); Let's Encode is triggered by `pull_request_target`/`schedule`,
-which **carry no custom inputs** — so the parameters come from two other places instead.
+`parameters`, `commit_message`, …); Let's Encode is triggered by `pull_request_target`/`schedule`
+(+ `workflow_dispatch` for a manual reaper run), which **carry no custom inputs** — so the
+parameters come from two other places instead.
 
 **(a) The central pointer — from the campaign config, on the base ref.** The caller has nothing
 hardcoded. It checks out the campaign repo (its base tree — safe; see below) and reads three fields
@@ -94,11 +98,11 @@ lives, because the fork's version of `config.yaml` is never used.
 **(b) The event context — forwarded to central as environment.** The only "parameters" the central
 entry needs are the identity of the event; it derives the rest itself.
 
-| Env var | `pull_request_target` | `schedule` |
+| Env var | `pull_request_target` | `schedule` / `workflow_dispatch` |
 |---|---|---|
 | `GH_TOKEN` | base repo's `GITHUB_TOKEN` (write) | same |
 | `BASE_REPO` | `owner/repo` | same |
-| `EVENT_NAME` | `pull_request_target` | `schedule` |
+| `EVENT_NAME` | `pull_request_target` | `schedule` / `workflow_dispatch` |
 | `PR_NUMBER`, `PR_AUTHOR` | from the PR | — |
 | `HEAD_REPO`, `HEAD_SHA`, `HEAD_REF` | the PR head (fork or same-repo) | — |
 
@@ -113,16 +117,18 @@ entry needs are the identity of the event; it derives the rest itself.
 - **Commit message** — the central entry commits via the forge API itself (for optimistic
   concurrency + PR closing), so there is no `commit_message` input.
 
-**Sketch** (`user-repo-template/.github/workflows/caller.yml`, byte-identical in every campaign):
+**Implementation** (`user-repo-template/.github/workflows/caller.yml`, byte-identical in every
+campaign) — the full file lives in the template; structurally:
 
 ```yaml
 name: Campaign automation
 on:
   pull_request_target:
     types: [opened, reopened, synchronize]
-    # optional: paths-filter to the three tracked areas to avoid firing on unrelated PRs
+    paths: [ 'tracking/**', 'sources/**' ]   # skip unrelated PRs (boundary checks still gate)
   schedule:
     - cron: '*/15 * * * *'   # reaper; coarse timing is fine (logic compares elapsed time)
+  workflow_dispatch: {}      # manual reaper run (campaign console)
 concurrency: { group: campaign-${{ github.repository }}, cancel-in-progress: false }
 permissions: { contents: write, pull-requests: write }
 jobs:
@@ -131,16 +137,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4                       # base tree ONLY (never the fork head)
       - id: cfg                                         # read central pointer from base config
-        run: |                                          # targeted reads — no yq/YAML dep required
-          echo "repo=$(sed -n 's/.*central_repository: *//p' config.yaml)" >> "$GITHUB_OUTPUT"
-          echo "ref=$(sed  -n 's/.*ref: *//p'               config.yaml)" >> "$GITHUB_OUTPUT"
-          echo "path=$(sed -n 's/.*path: *//p'              config.yaml)" >> "$GITHUB_OUTPUT"
+        run: |                                          # awk scoped to the `automation:` block
+          # (`ref:`/`path:` also appear elsewhere in config.yaml); no yq/YAML dep.
+          # Empty outputs (config.yaml not yet committed) no-op the later steps.
+          read_automation() { awk -v key="$1" '/^automation:/{f=1;next} /^[^[:space:]]/{f=0}
+            f && $1 == key":" {gsub(/"/,"",$2); print $2; exit}' config.yaml 2>/dev/null || true; }
+          echo "repo=$(read_automation central_repository)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(read_automation ref)"               >> "$GITHUB_OUTPUT"
+          echo "path=$(read_automation path)"             >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.cfg.outputs.repo != ''
         with: { repository: '${{ steps.cfg.outputs.repo }}', ref: '${{ steps.cfg.outputs.ref }}', path: central }
       - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.repo != ''
         with: { node-version: 24 }                      # bare-node type-stripping; no build step
-      - run: sudo apt-get install -y libxml2-utils       # xmllint (MEI well-formedness)
-      - env:                                            # (b) event context → central
+      - if: steps.cfg.outputs.repo != ''
+        run: sudo apt-get install -y libxml2-utils       # xmllint (MEI machine-check)
+      - if: steps.cfg.outputs.repo != ''
+        env:                                            # (b) event context → central
           GH_TOKEN:   ${{ github.token }}
           BASE_REPO:  ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
@@ -239,9 +253,11 @@ re-decide (now sees the new lock) → reject cleanly. First valid claim wins. Cl
 **closed, not merged** (the authoritative change is the Action's own commit); encoding PRs contribute
 their MEI content.
 
-**MEI machine-check.** Well-formed XML (via `xmllint`, now) + schema-valid MEI (validator still to
-choose; the template declares MEI-CMN 5.0). Musical correctness is *not* machine-checked — that is
-the human `vN` validation.
+**MEI machine-check.** `xmllint --relaxng` against the **pinned MEI-CMN 5.0 RelaxNG schema**
+(`https://music-encoding.org/schema/5.0/mei-CMN.rng` — the schema the template's `<?xml-model?>`
+declares), which covers well-formedness too. The coordinator fetches the schema once per run; a
+fetch failure fails the run loudly rather than letting content through unchecked. Musical
+correctness is *not* machine-checked — that is the human `vN` validation.
 
 **Same-repo vs fork (the `canPush` dual-path).** Because campaigns live in the instigator's personal
 account, the owner can't fork their own repo: the console commits on a same-repo `encode-<task_id>`
@@ -298,37 +314,42 @@ Two provider-touching surfaces, cleanly separated so a second forge is additive:
 
 ## 9. Status
 
-This document describes the target. **Current code is mid-migration** — the pre-restructure shape is
-still in place and is being replaced per the plan:
+**The migration described by this document is code-complete.** The target architecture above is
+what the repos now contain:
 
-- Instigation GUI still uses `adapter-node` with a real server: OAuth (`login`/`auth/callback`/
-  `logout`, httpOnly-cookie session in `hooks.server.ts`), Action A, and the console all run as
-  server `load`/actions. → move to a static SPA + `ForgeClient` + token broker (§2, §7, §8).
-- The template still ships **three** thin caller workflows (`claim.yml`, `submit.yml`, `reaper.yml`)
-  that check out `lets-encode/instigation@main` and run `scripts/{claim,submit,reap}.mjs`. → collapse
-  to the **one** generic `caller.yml` (§4) forwarding to a central automation repo.
-- Central code currently lives inside `instigation/` (`src/lib/server/campaign-*.ts` decision logic
-  with unit tests; `scripts/*.mjs` shells). → split into `lets-encode/automation`, consolidating the
-  three shells into one coordinator entry that branches on `EVENT_NAME` + changed paths and reuses the
-  pure modules.
+- **Backendless SPA** — `adapter-static`, no server routes. OAuth runs client-side against the
+  token broker (`broker/`, a small stateless Flask app); the token lives in `sessionStorage`; all
+  forge access goes through the `ForgeClient` seam (`src/lib/forge/`). A strict CSP is baked into
+  the build (`svelte.config.js`).
+- **One generic caller** — the template ships a single `caller.yml` (§4) that reads the
+  `automation:` pointer from the campaign's `config.yaml` on the base ref and runs the central
+  coordinator. The three per-task workflows and their `scripts/*.mjs` shells are gone.
+- **Central automation** — this repo doubles as the central repo: `scripts/coordinator.ts` is the
+  single entry (routes on `EVENT_NAME` + changed paths), reusing the pure decision modules
+  (`campaign-tables`, `campaign-claim`, `campaign-submit`, `campaign-reaper`) that the SPA also
+  imports. Action A (`campaign-init`) writes the `automation:` pointer into every new campaign.
 
-Reused as-is: the pure, tested decision logic (`campaign-init`, `campaign-tables`, `campaign-claim`,
-`campaign-submit`, `campaign-reaper`) — GitHub is never touched in those tests. Convention: decision
-logic stays pure and tested; only thin shells touch the forge.
+Convention preserved: decision logic stays pure and tested (GitHub is never touched in unit tests);
+only thin shells — the coordinator and the `ForgeClient` — touch the forge.
+
+**Verification.** Unit tests cover the decision modules and Action A. Still to confirm by hand:
+the browser smoke test of `generate` + a commit sequence (the load-bearing CORS assumption, §10
+phase 1), and a live end-to-end campaign run (§10 phase 2).
 
 **Runtime.** Central code is TypeScript run by bare `node` (≥23.6 type-stripping), so the caller pins
-`node-version: 24` and shell imports use real `.ts` specifiers. The SPA imports the same modules via
-Vite. No build step for the automation.
+`node-version: 24` and the coordinator imports use real `.ts` specifiers. The SPA imports the same
+modules via Vite. No build step for the automation.
 
 ## 10. Roadmap & deferred
 
 Migration order (each phase independently shippable):
 
-1. **Backendless SPA** — static adapter, `ForgeClient`(GitHub) seam, token broker; keep today's
-   single-task `whole` model working. Verify with a browser smoke test of `generate` + a commit
-   sequence against the forge API (the load-bearing CORS assumption).
-2. **One generic caller + central automation repo** — collapse the three callers; stand up
-   `lets-encode/automation`; live end-to-end (claim → encode → validate → reap) on a throwaway campaign.
+1. **Backendless SPA** — ✅ built (static adapter, `ForgeClient`(GitHub) seam, token broker).
+   Remaining verification: a browser smoke test of `generate` + a commit sequence against the forge
+   API (the load-bearing CORS assumption).
+2. **One generic caller + central automation** — ✅ built (three callers collapsed into `caller.yml`;
+   the coordinator lives in this repo, §9). Remaining verification: live end-to-end
+   (claim → encode → validate → reap) on a throwaway campaign.
 
 Deferred (designed, not built):
 
@@ -355,15 +376,18 @@ Deferred (designed, not built):
 ## 11. Before production — hardening checklist
 
 - [ ] **Pin the central ref.** `automation.ref` in each campaign's `config.yaml` must be an immutable
-  tag/SHA, not a moving branch; upgrade by committing a new ref. (Iteration may use `main`.)
-- [ ] **Central reachability** — simplest if the central automation repo is public; else the checkout
-  needs a token.
-- [ ] **Never execute fork code** — the caller checks out the base tree only; the fork is data (§4, §6).
-- [ ] **Read the central pointer from the base ref** — never from the PR head (§4a).
-- [ ] **Token handling in the SPA** — the forge token lives in `sessionStorage`/memory (no httpOnly
-  cookie), so it is XSS-reachable: ship a strict CSP, no third-party scripts, prefer `sessionStorage`.
-- [ ] **Broker** — stateless, holds only the client secret, CORS-restricted to the app origin.
+  tag/SHA, not a moving branch; upgrade by committing a new ref. (Iteration uses `main` — set
+  `PUBLIC_AUTOMATION_REF` for the production deployment.)
+- [x] **Central reachability** — the central repo (this one) is public, so the caller's checkout
+  needs no token.
+- [x] **Never execute fork code** — the caller checks out the base tree only; the fork is data (§4, §6).
+- [x] **Read the central pointer from the base ref** — never from the PR head (§4a).
+- [x] **Token handling in the SPA** — the forge token lives in `sessionStorage` (no httpOnly cookie),
+  so it is XSS-reachable: a strict CSP (scripts `'self'` only, hashed init script, allow-listed
+  `connect-src`/`img-src`) is baked into the build via `svelte.config.js`; no third-party scripts.
+- [ ] **Broker** — stateless and holds only the client secret ✓; CORS restriction is a deployment
+  setting — set `ALLOWED_ORIGIN` to the app origin (the default is `*`).
 - [ ] **Actions write permissions** — the create flow sets the repo's default workflow token to write;
   confirm for any org-owned repos.
-- [ ] **MEI schema validator** — choose + pin so the machine-check covers schema validity, not just
-  well-formedness.
+- [x] **MEI schema validator** — the machine-check runs `xmllint --relaxng` against the pinned
+  MEI-CMN 5.0 schema (§6), not just well-formedness.

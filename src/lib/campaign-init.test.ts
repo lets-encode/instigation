@@ -27,26 +27,38 @@ const WORKED_EXAMPLE_FIELDS = {
 	composer: 'Anonymous'
 };
 
+// The central automation pointer, as the deployment config would supply it.
+const AUTOMATION = {
+	central_repository: 'lets-encode/instigation',
+	ref: 'main',
+	path: 'scripts/coordinator.ts'
+};
+
 test('buildCampaignConfig: instigator comes from login; defaults fill the rest', () => {
-	const config = buildCampaignConfig({ title: 'T' }, 'weigl');
-	assert.equal(config.campaign.instigator, 'weigl');
+	const config = buildCampaignConfig({ title: 'T' }, 'test-instigator', AUTOMATION);
+	assert.equal(config.campaign.instigator, 'test-instigator');
 	assert.equal(config.campaign.license, 'CC-BY-4.0');
+	assert.equal(config.automation.central_repository, 'lets-encode/instigation');
 	assert.equal(config.validation.required_validations, 1);
 	assert.equal(config.locking.stale_after_minutes, 120);
 	assert.doesNotThrow(() => assertSupported(config));
 });
 
 test('configToYaml: matches the worked example', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'weigl');
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
 	assert.equal(
 		configToYaml(config),
 		'schema_version: 1\n' +
 			'campaign:\n' +
 			'  title: "Test Campaign — One Note"\n' +
 			'  description: "Smallest possible campaign for end-to-end testing."\n' +
-			'  instigator: "weigl"\n' +
+			'  instigator: "test-instigator"\n' +
 			'  language: "en"\n' +
 			'  license: "CC-BY-4.0"\n' +
+			'automation:\n' +
+			'  central_repository: "lets-encode/instigation"\n' +
+			'  ref: "main"\n' +
+			'  path: "scripts/coordinator.ts"\n' +
 			'sources:\n' +
 			'  - id: "src-1"\n' +
 			'    kind: "mei-template"\n' +
@@ -65,7 +77,7 @@ test('configToYaml: matches the worked example', () => {
 });
 
 test('worked example: stamped MEI is well-formed and placeholders filled', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'weigl');
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
 	const mei = stampTemplate(readFileSync(TEMPLATE_MEI, 'utf8'), {
 		title: config.campaign.title,
 		composer: config.sources[0].header.composer,
@@ -82,7 +94,7 @@ test('worked example: stamped MEI is well-formed and placeholders filled', () =>
 });
 
 test('worked example: state.csv matches the expected row exactly', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'weigl');
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
 	assert.equal(
 		buildStateCsv(config),
 		'task_id,fragment,state,encoder,encoded_at,v1\n' +
@@ -95,7 +107,7 @@ test('worked example: locks.csv is header-only', () => {
 });
 
 test('buildStateCsv: required_validations controls the vN columns', () => {
-	const config = buildCampaignConfig({ required_validations: 3 }, 'weigl');
+	const config = buildCampaignConfig({ required_validations: 3 }, 'test-instigator', AUTOMATION);
 	assert.equal(
 		buildStateCsv(config),
 		'task_id,fragment,state,encoder,encoded_at,v1,v2,v3\n' +
@@ -113,12 +125,12 @@ test('stampTemplate: substituted values are XML-escaped', () => {
 });
 
 test('configToYaml: quotes are escaped so the YAML stays valid', () => {
-	const config = buildCampaignConfig({ title: 'A "quoted" title' }, 'weigl');
+	const config = buildCampaignConfig({ title: 'A "quoted" title' }, 'test-instigator', AUTOMATION);
 	assert.match(configToYaml(config), /title: "A \\"quoted\\" title"/);
 });
 
 test('assertSupported: rejects an unsupported fragmentation strategy', () => {
-	const config = buildCampaignConfig({}, 'weigl');
+	const config = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
 	config.fragmentation.strategy = 'by_measure';
 	assert.throws(() => assertSupported(config), /fragmentation\.strategy/);
 });
