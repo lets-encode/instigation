@@ -23,14 +23,24 @@ Environment variables:
 
 The SPA points at this service via `PUBLIC_OAUTH_BROKER_URL` (its base URL).
 
+The broker loads these from its process environment. The simplest way locally is a
+`broker/.env` file (auto-loaded via python-dotenv, and gitignored):
+
+```sh
+cp .env.example .env    # then fill in the values
+```
+
+Real environment variables take precedence over `.env`, so in production you can
+set them through your service manager instead (systemd `EnvironmentFile=`,
+container env, …) and skip the file.
+
 ## Run
 
 ```sh
 pip install -r requirements.txt
 
-# development
-GITHUB_CLIENT_ID=… GITHUB_CLIENT_SECRET=… ALLOWED_ORIGIN=http://localhost:5173 \
-  flask --app app run --port 8787
+# development (reads broker/.env)
+flask --app app run --port 8787
 
 # production (behind an HTTPS reverse proxy — see below)
 gunicorn --bind 127.0.0.1:8787 app:app

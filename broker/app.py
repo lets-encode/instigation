@@ -15,9 +15,16 @@ See README.md for how to run it (and the HTTPS/CORS notes).
 """
 
 import os
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from flask import Flask, jsonify, request
+
+# Load broker/.env (next to this file) into the environment — found regardless of
+# the working directory flask/gunicorn is launched from. Real environment
+# variables take precedence, so production can set them via the service manager.
+load_dotenv(Path(__file__).with_name(".env"))
 
 app = Flask(__name__)
 

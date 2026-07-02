@@ -66,10 +66,8 @@ so it must match the callback URL registered in step 2.
 ```bash
 cd broker
 pip install -r requirements.txt
-GITHUB_CLIENT_ID=... \
-GITHUB_CLIENT_SECRET=... \
-ALLOWED_ORIGIN=http://localhost:5173 \
-  flask --app app run --port 8787
+cp .env.example .env     # then fill in GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+flask --app app run --port 8787
 ```
 
 Plain `http://localhost` is fine for local dev (browsers treat localhost as a
