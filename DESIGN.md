@@ -8,10 +8,11 @@ automation repository** and commits the result back. Two thin clients drive the 
 instigation GUI** (organiser creates/configures a campaign) and the **mei-friend volunteer client**
 (contributors encode/validate).
 
-> Single authoritative design + status document. This describes the **target** architecture of the
-> backendless restructure; §9 records what is currently migrated. Scope is **v1**: the `whole`
-> fragmentation strategy (one campaign = one task = the whole `sources/score.mei`). Coding guidelines
-> to honour are in `CLAUDE.md` (simplicity, surgical changes, goal-driven).
+> Single authoritative design + status document; §9 records the current state. Data model is
+> **schema v2** (four tables keyed by `(task_id, subtask_id)`, §5); the only fragmentation strategy
+> implemented is `whole` (one campaign = one task = the whole `sources/score.mei`, with one
+> validation subtask). Coding guidelines to honour are in `CLAUDE.md` (simplicity, surgical
+> changes, goal-driven).
 
 ## 1. Architecture at a glance
 
@@ -70,7 +71,7 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 | Generate vs fork | generate for instigation; fork for contributions. |
 | Table / config format | **CSV** tables (one cell/row per PR → minimal diffs); **YAML** config. Users never read/write them directly; the GUI presents them. |
 | Concurrency | **Optimistic** — read the branch-head SHA, decide, commit non-fast-forward, retry on conflict (§6). |
-| Ids / timestamps | zero-padded `T0001…`; ISO-8601 UTC (`…Z`). |
+| Ids / timestamps | zero-padded `T0001…` / `S0001…`; ISO-8601 UTC (`…Z`). |
 
 ## 4. The generic caller — triggers & forwarded parameters
 
@@ -109,7 +110,7 @@ entry needs are the identity of the event; it derives the rest itself.
 **What is *not* forwarded — central derives or reads it as data:**
 
 - **Which operation** (claim / encode / validate) — inferred from the PR's *changed paths*
-  (`locks.csv` → claim; `sources/**` → encoding; `state.csv` → validation). No `workpackage_id`.
+  (`lock.csv` → claim; `sources/**` → encoding; `state.csv` → validation). No `workpackage_id`.
 - **The intent values** (task id, claim kind, pass/fail verdict) — read from the PR's proposed table
   diff, treated as data (never merged verbatim; §6). No `parameters` input.
 - **Config values** (`pass_threshold`, `required_validations`, `stale_after_minutes`) — read from
@@ -171,14 +172,14 @@ jobs:
 only as data (its changed paths + the blob at `HEAD_SHA`, via the API). The caller must never check
 out the fork head.
 
-## 5. Config & table formats (v1)
+## 5. Config & table formats (schema v2)
 
 ### config.yaml
 
 Authored once at instigation. Minimal but extensible; growth points marked `(reserved)`.
 
 ```yaml
-schema_version: 1
+schema_version: 2
 campaign:      { title, description, instigator, language, license }
 automation:    { central_repository, ref, path }   # the central pointer (§4a); ref is pinned
 sources:       [ { id, kind: mei-template, path, template, header: { composer } } ]
@@ -187,22 +188,51 @@ validation:    { required_validations, pass_threshold }
 locking:       { stale_after_minutes }
 ```
 
-### state.csv — one row per task
+### The four tracking tables
 
-`task_id, fragment, state, encoder, encoded_at, v1 … vn`
+All keyed by **`(task_id, subtask_id)`**: a **task** is the unit of *encoding* (one encoder), its
+**subtasks** are the units of *validation* (reviewed in parallel, possibly split differently). A row
+with an **empty `subtask_id` addresses the whole task**; a row with one addresses a single
+validation portion. The `whole` strategy is the degenerate case: one task `T0001` (the entire
+score) with one subtask `S0001` spanning the same range.
 
-- `state`: `encoding_required` → `validation_required` → `completed`.
-- `v1…vn`: validation cells, count = `required_validations`. Each is empty or `status|user|timestamp`
-  with status ∈ `pass|fail` (pipe avoids colliding with the colons in timestamps). In-progress
-  validation is tracked by a `validation` lock, not an in-cell marker.
+**task.csv — task/subtask definitions, written at init**
 
-### locks.csv — one row per active claim (header-only after init)
+`task_id, subtask_id, fragment, locator, allowlist, blocklist`
 
-`task_id, locked_by, locked_at, kind` with `kind` ∈ `encoding|validation`. The reaper compares
-`locked_at` against `stale_after_minutes`.
+- `fragment`: the source file the row addresses (e.g. `sources/score.mei`).
+- `locator`: address *within* the fragment — an MEI `xml:id`, or a controlled-vocab term for
+  pre-tasks; empty = the whole file. Realises the reserved `by_measure`/`by_section` strategies.
+- `allowlist`/`blocklist`: per-row claim gates — present in the schema but **not yet enforced**
+  (default open, §10).
 
-> A richer data model (`task`/`lock`/`state`/`history` tables keyed by `(taskID, subtaskID)`, with
-> per-task `locator`/allowlist/blocklist and an append-only log) is designed but **deferred** — §10.
+**state.csv — live status, Action-authored**
+
+`task_id, subtask_id, status, encoder, encoded_at, validate_status_1 … validate_status_n`
+
+- Task row `status`: `encoding_required` → `validation_required` → `completed` (when every subtask
+  is completed). `encoder`/`encoded_at` are recorded here.
+- Subtask row `status`: `pending` (task not yet encoded) → `validation_required` → `completed`
+  (once `pass_threshold` passes accumulate).
+- `validate_status_1…n`: validation cells on subtask rows, count = `required_validations`. Each is
+  empty or `status|user|timestamp` with status ∈ `pass|fail` (pipe avoids colliding with the colons
+  in timestamps). In-progress validation is tracked by a `validation` lock, not an in-cell marker.
+
+**lock.csv — one row per active claim (header-only after init)**
+
+`task_id, subtask_id, user_id, timestamp, kind` with `kind` ∈ `encoding|validation` — kept because
+encoding is exclusive (one lock per task) while validation is concurrent (several validators on the
+same encoded work). Encoding locks sit on the task row key, validation locks on a subtask key. The
+reaper compares `timestamp` against `stale_after_minutes`.
+
+**history.csv — append-only audit log, Action-authored**
+
+`timestamp, task_id, subtask_id, user_id, action, outcome, detail`
+
+Every processed event appends a row — **including rejects** (attribution + audit): `action` ∈
+`claim_encoding|claim_validation|submit_encoding|submit_validation|reap`, `outcome` ∈
+`accepted|rejected|released`, `detail` = the reject reason, the validation verdict, or the reaped
+lock's kind.
 
 ## 6. Volunteer PR contract & trust
 
@@ -219,10 +249,11 @@ authoritative row/cell itself:
 
 | Field | Authoritative source |
 |---|---|
-| `locked_by` / `encoder` / validator login | the **PR author** (from the event) |
-| `locked_at` / `encoded_at` / validation time | **server time** |
+| lock `user_id` / `encoder` / validator login | the **PR author** (from the event) |
+| lock `timestamp` / `encoded_at` / validation time | **server time** |
 | validation `pass`/`fail` | the volunteer's verdict, stamped with their login + time |
 | MEI bytes | the **fork's content**, after the machine-check |
+| every `history.csv` row | the Action, describing what it just decided |
 
 Table changes are *applied by the Action*, not merged from fork bytes (a boundary check limits *which*
 cells change, not *what* goes in). MEI content is the volunteer's and is merged.
@@ -231,20 +262,28 @@ cells change, not *what* goes in). MEI content is the volunteer's and is merged.
 
 | PR | Allowed change | Carries |
 |---|---|---|
-| Claim | `tracking/locks.csv` only | task_id, kind |
+| Claim | `tracking/lock.csv` only | task_id, subtask_id, kind |
 | Encoding | the task's fragment (`sources/score.mei`) only | the MEI content |
-| Validation | `tracking/state.csv` only | pass/fail verdict |
+| Validation | `tracking/state.csv` only | subtask + pass/fail verdict |
 
 **Accept rules.**
 
-- *Claim:* task exists; for `encoding`, state is `encoding_required` and no active encoding lock; for
-  `validation`, state is `validation_required`, an open slot exists (`final cells + active validation
-  locks < required_validations`), the claimant isn't already holding one, and **isn't the encoder**
-  (no self-validation).
+- *Claim:* the addressed row exists and the key matches the kind (encoding → task row, validation →
+  subtask row). For `encoding`: status is `encoding_required` and no active encoding lock. For
+  `validation`: the subtask's status is `validation_required`, an open slot exists (`final cells +
+  active validation locks on that subtask < required_validations`), the claimant isn't already
+  holding one, and **isn't the task's encoder** (no self-validation).
 - *Encoding:* PR touches only the fragment, author holds the active encoding lock, MEI passes the
-  machine-check → set `encoder`/`encoded_at`, state → `validation_required`, drop the lock.
-- *Validation:* author holds the active validation lock → write the first open `vN` =
-  `verdict|author|now`, drop the lock; once `pass_threshold` passes accumulate, → `completed`.
+  machine-check → task row gets `encoder`/`encoded_at` and → `validation_required`, its `pending`
+  subtasks → `validation_required`, drop the lock.
+- *Validation:* author holds the subtask's active validation lock → write its first open
+  `validate_status_N` = `verdict|author|now`, drop the lock; once `pass_threshold` passes
+  accumulate the subtask → `completed`, and when every subtask is completed the task row →
+  `completed`.
+
+**History.** Every processed event — accepted or rejected — is committed as an appended
+`history.csv` row (§5). A rejected PR therefore still produces one commit (the audit entry), just
+never a table or content change.
 
 **Race arbitration (optimistic concurrency).** The forge serialises writes to `main`. The central
 entry reads the tables pinned to the branch-head SHA, decides, then commits on that exact parent with
@@ -265,15 +304,20 @@ branch and binds mei-friend with `connect=true` (open + bind, no fork). Everyone
 (`fork=true`) and the console opens a cross-repo PR upstream. Both produce a `pull_request_target`
 event the one caller handles identically.
 
-**End to end (v1, one note):**
+**End to end (`whole` strategy, one note):**
 
 ```
-init:                       T0001 … encoding_required           locks: —
-bob claims encoding                                             locks: T0001,bob,…,encoding
-bob submits encoding        encoder=bob, validation_required    locks: —   (score.mei merged)
-carol claims validation     (carol ≠ bob)                       locks: T0001,carol,…,validation
-carol submits pass          v1=pass|carol|… ; threshold → completed        locks: —
+init:                    T0001    encoding_required             locks: —
+                         └ S0001  pending
+bob claims encoding                                             locks: (T0001,–,bob,encoding)
+bob submits encoding     T0001    validation_required (encoder=bob)   locks: —   (score.mei merged)
+                         └ S0001  validation_required
+carol claims validation  (carol ≠ bob)                          locks: (T0001,S0001,carol,validation)
+carol submits pass       S0001    validate_status_1=pass|carol|… → completed   locks: —
+                         T0001    completed (all subtasks done)
 ```
+
+(Each step also appends a history.csv row.)
 
 ## 7. Instigation (Action A) — client-side
 
@@ -282,8 +326,9 @@ At creation the GUI, using the organiser's token in the browser via the `ForgeCl
 1. **generates** the campaign repo from the template into the instigator's account,
 2. sets the repo's Actions token to read/write (so the caller can commit tables + close PRs),
 3. commits, in one commit: `config.yaml` (including the `automation` pointer), the stamped
-   `sources/score.mei` (fills `{{TITLE}}`/`{{COMPOSER}}`/`{{LICENSE}}`), `state.csv` (one task
-   `T0001`, `encoding_required`, empty `vN`) and a header-only `locks.csv`.
+   `sources/score.mei` (fills `{{TITLE}}`/`{{COMPOSER}}`/`{{LICENSE}}`), and the four tracking
+   tables (§5): `task.csv` (task `T0001` + subtask `S0001`), `state.csv` (`encoding_required` /
+   `pending`), and header-only `lock.csv` and `history.csv`.
 
 Idempotent: output is fully determined by config + template, so re-running before any contribution
 reproduces identical files. Runs client-side because the organiser is in the loop; everything else
@@ -332,9 +377,19 @@ what the repos now contain:
 Convention preserved: decision logic stays pure and tested (GitHub is never touched in unit tests);
 only thin shells — the coordinator and the `ForgeClient` — touch the forge.
 
-**Verification.** Unit tests cover the decision modules and Action A. Still to confirm by hand:
-the browser smoke test of `generate` + a commit sequence (the load-bearing CORS assumption, §10
-phase 1), and a live end-to-end campaign run (§10 phase 2).
+**Data model.** The four-table schema v2 (§5) is implemented end to end: init writes all four
+tables, the decision modules and coordinator address `(task_id, subtask_id)`, every outcome —
+including rejects — appends to `history.csv`, and the console renders tasks and validation
+subtasks separately.
+
+**Verification.** Unit tests cover the decision modules and Action A. A live end-to-end run
+(2026-07-02, throwaway campaign `ohwjd/e2e-caller-test`, still on schema v1) confirmed the caller
+pipeline: claim accepted (Action-authored lock) → stale lock reaped via `workflow_dispatch` →
+re-claim → encoding accepted (schema machine-check, volunteer MEI merged with `Co-authored-by`
+attribution) → same-account validation claim rejected (`self_validation`) → PR head branches
+cleaned up. Not yet exercised live: the **schema v2 pipeline** (rerun the e2e after pushing), a
+validation *accept* (needs a second account — the no-self-validation rule blocks one-account
+testing), and the in-browser smoke test of the full console flow (§10 phase 1).
 
 **Runtime.** Central code is TypeScript run by bare `node` (≥23.6 type-stripping), so the caller pins
 `node-version: 24` and the coordinator imports use real `.ts` specifiers. The SPA imports the same
@@ -347,23 +402,17 @@ Migration order (each phase independently shippable):
 1. **Backendless SPA** — ✅ built (static adapter, `ForgeClient`(GitHub) seam, token broker).
    Remaining verification: a browser smoke test of `generate` + a commit sequence against the forge
    API (the load-bearing CORS assumption).
-2. **One generic caller + central automation** — ✅ built (three callers collapsed into `caller.yml`;
-   the coordinator lives in this repo, §9). Remaining verification: live end-to-end
-   (claim → encode → validate → reap) on a throwaway campaign.
+2. **One generic caller + central automation** — ✅ built and verified live on a throwaway campaign
+   (claim → reap → re-claim → encode → self-validation rejected; §9). Outstanding: a validation
+   *accept* end-to-end, which needs a second account.
+
+Done since: **the four-table data model** (schema v2, §5) — tables keyed by `(task_id,
+subtask_id)` with an append-only history. What remains of it: nothing *uses* `locator` yet (the
+reserved `by_measure`/`by_section` strategies will), and `allowlist`/`blocklist` are unenforced
+(below).
 
 Deferred (designed, not built):
 
-- **Richer data model** — tables keyed by `(taskID, subtaskID)`. Granularity differs by activity: a
-  **task** is the unit of *encoding* (larger portion, one encoder) and its **subtasks** are the units
-  of *validation* (smaller portions, reviewed in parallel) — hence the composite key everywhere,
-  addressing either the whole task or one sub-portion.
-  - `task`: `taskID, subtaskID, locator, allowlist, blocklist` (`locator` = an MEI `xml:id`, or a
-    controlled-vocab term for pre-tasks) — realises the reserved `by_measure`/`by_section` strategies.
-  - `state`: `taskID, subtaskID, status, validate_status_1…n`.
-  - `lock`: `taskID, subtaskID, userID, timestamp, kind`. **`kind` is kept**: encoding is exclusive
-    (no parallel editing — one encoding lock per task) while validation is concurrent (several
-    validators review the same encoded work), so `kind` tells the two apart.
-  - `history`/`log`: append-only record of all actions, including rejects (attribution + audit).
 - **Onboarding wizard + pre-tasks** — collect *what/have/validation-policy*; for PDF sources run
   measure-detection + header pre-fill and the pre-tasks (sb/pb, scoreDef, staffDef); then
   algorithmically generate the task table. Heavy compute runs in Actions, which adds a

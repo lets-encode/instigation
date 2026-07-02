@@ -1,8 +1,9 @@
 // Campaign coordinator — the single entry point the generic caller runs.
-// Consolidates the former claim/submit/reap shells: it branches on the
-// triggering event (EVENT_NAME) and, for pull requests, on the PR's changed
-// paths, then hands the decision to the pure modules and applies the result
-// with optimistic concurrency. See DESIGN.md §4 (the caller) & §6 (PR contract).
+// It branches on the triggering event (EVENT_NAME) and, for pull requests, on
+// the PR's changed paths, then hands the decision to the pure modules and
+// applies the result with optimistic concurrency. Every outcome — accepted,
+// rejected, reaped — is appended to the campaign's history table.
+// See DESIGN.md §4 (the caller) & §6 (PR contract).
 //
 // Runs in the BASE (campaign) repo's context with a write token. The pull
 // request is treated purely as DATA: we read its changed-file patches and
@@ -18,12 +19,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+	parseTaskCsv,
 	parseStateCsv,
-	parseLocksCsv,
+	parseLockCsv,
 	serializeStateCsv,
-	serializeLocksCsv
+	serializeLockCsv,
+	appendHistory,
+	findRow
 } from '../src/lib/campaign-tables.ts';
-import type { ParsedState, LockRow } from '../src/lib/campaign-tables.ts';
+import type { ParsedState, LockRow, HistoryRow } from '../src/lib/campaign-tables.ts';
 import { checkClaim } from '../src/lib/campaign-claim.ts';
 import { checkEncoding, checkValidation } from '../src/lib/campaign-submit.ts';
 import { reapLocks } from '../src/lib/campaign-reaper.ts';
@@ -35,6 +39,7 @@ import {
 	commentAndClosePr,
 	deleteBranch
 } from '../src/lib/forge/github-rest.ts';
+import type { FileChange } from '../src/lib/forge/github-rest.ts';
 
 const token = process.env.GH_TOKEN ?? '';
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');
@@ -45,8 +50,10 @@ const [headOwner, headRepo] = (process.env.HEAD_REPO ?? '').split('/');
 const headSha = process.env.HEAD_SHA ?? '';
 const headRef = process.env.HEAD_REF ?? '';
 
+const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
-const LOCKS_PATH = 'tracking/locks.csv';
+const LOCK_PATH = 'tracking/lock.csv';
+const HISTORY_PATH = 'tracking/history.csv';
 const CONFIG_PATH = 'config.yaml';
 const MAX_ATTEMPTS = 3;
 const DEFAULT_STALE_MINUTES = 120;
@@ -98,7 +105,7 @@ function numberFromConfig(configText: string | null, key: string, fallback: numb
 }
 
 // ---------------------------------------------------------------------------
-// Claim (a PR adding one row to locks.csv)
+// Claim (a PR adding one row to lock.csv)
 
 // Pull the single added line out of a unified-diff patch. Returns null unless
 // exactly one line was added and none removed — a claim adds one lock row.
@@ -116,59 +123,77 @@ function addedRowFromPatch(patch: string | undefined): string | null {
 
 async function attemptClaim(
 	changedPaths: string[],
-	intent: { task_id: string; kind: string }
+	intent: { task_id: string; subtask_id: string; kind: string } | null
 ): Promise<Verdict & { lock?: LockRow }> {
 	const { sha } = await getRepoHead(token, owner, repo);
-	const [stateCsv, locksCsv] = await Promise.all([
+	const [stateCsv, lockCsv, historyCsv] = await Promise.all([
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
-		getRepoFile(token, owner, repo, LOCKS_PATH, sha)
+		getRepoFile(token, owner, repo, LOCK_PATH, sha),
+		getRepoFile(token, owner, repo, HISTORY_PATH, sha)
 	]);
+	const locks = parseLockCsv(lockCsv ?? '');
+	const now = new Date().toISOString();
 
-	const verdict = checkClaim({
-		tasks: parseStateCsv(stateCsv ?? ''),
-		locks: parseLocksCsv(locksCsv ?? ''),
-		intent,
-		author,
-		changedPaths,
-		now: new Date().toISOString()
-	});
-	if (!verdict.ok) return verdict;
+	const verdict: Verdict & { lock?: LockRow } = intent
+		? checkClaim({
+				state: parseStateCsv(stateCsv ?? ''),
+				locks,
+				intent,
+				author,
+				changedPaths,
+				now
+			})
+		: { ok: false, reason: 'malformed_claim' };
 
-	const nextLocks = serializeLocksCsv([...parseLocksCsv(locksCsv ?? ''), verdict.lock]);
+	const history: HistoryRow = {
+		timestamp: now,
+		task_id: intent?.task_id ?? '',
+		subtask_id: intent?.subtask_id ?? '',
+		user_id: author,
+		action: `claim_${intent?.kind || 'unknown'}`,
+		outcome: verdict.ok ? 'accepted' : 'rejected',
+		detail: verdict.ok ? '' : verdict.reason!
+	};
+	const files: FileChange[] = [{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', [history]) }];
+	if (verdict.ok) files.push({ path: LOCK_PATH, content: serializeLockCsv([...locks, verdict.lock!]) });
+
+	const message = verdict.ok
+		? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && '/' + verdict.lock!.subtask_id} for ${author} (${verdict.lock!.kind})`
+		: `Reject claim by ${author} (${verdict.reason})`;
 	// Non-fast-forward update fails if `main` moved since `sha` → we retry.
-	await commitFiles(
-		token,
-		owner,
-		repo,
-		[{ path: LOCKS_PATH, content: nextLocks }],
-		`Lock ${verdict.lock.task_id} for ${author} (${verdict.lock.kind})`,
-		{ baseSha: sha }
-	);
+	await commitFiles(token, owner, repo, files, message, { baseSha: sha });
 	return verdict;
 }
 
 async function runClaim(files: Awaited<ReturnType<typeof getPullRequestFiles>>): Promise<void> {
 	const changedPaths = files.map((f) => f.filename);
-	const locksFile = files.find((f) => f.filename === LOCKS_PATH);
-	const addedRow = locksFile && addedRowFromPatch(locksFile.patch);
+	const lockFile = files.find((f) => f.filename === LOCK_PATH);
+	const addedRow = lockFile && addedRowFromPatch(lockFile.patch);
 	const cells = addedRow ? addedRow.split(',') : null;
-	const intent = cells ? { task_id: cells[0]?.trim() ?? '', kind: cells[3]?.trim() ?? '' } : null;
+	const intent = cells
+		? {
+				task_id: cells[0]?.trim() ?? '',
+				subtask_id: cells[1]?.trim() ?? '',
+				kind: cells[4]?.trim() ?? ''
+			}
+		: null;
 
 	let verdict: Verdict & { lock?: LockRow } = { ok: false, reason: 'malformed_claim' };
-	if (intent) {
-		for (let i = 0; i < MAX_ATTEMPTS; i++) {
-			try {
-				verdict = await attemptClaim(changedPaths, intent);
-				break;
-			} catch (e) {
-				if (i === MAX_ATTEMPTS - 1) throw e;
-				console.warn(`Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`);
-			}
+	for (let i = 0; i < MAX_ATTEMPTS; i++) {
+		try {
+			verdict = await attemptClaim(changedPaths, intent);
+			break;
+		} catch (e) {
+			if (i === MAX_ATTEMPTS - 1) throw e;
+			console.warn(`Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`);
 		}
 	}
 
+	const target = verdict.lock
+		? `\`${verdict.lock.task_id}${verdict.lock.subtask_id && '/' + verdict.lock.subtask_id}\``
+		: '';
 	const body = verdict.ok
-		? `✅ Claim accepted — \`${verdict.lock!.task_id}\` locked for @${author} (${verdict.lock!.kind}).`
+		? `✅ Claim accepted — ${target} locked for @${author} (${verdict.lock!.kind}).`
 		: `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
 	await commentAndClosePr(token, owner, repo, prNumber, body);
 	await cleanupHeadBranch();
@@ -178,39 +203,53 @@ async function runClaim(files: Awaited<ReturnType<typeof getPullRequestFiles>>):
 // Submission (encoding: the PR edits the task's fragment; validation: the PR
 // records a pass/fail in state.csv)
 
-// The single (task_id, column, value) that differs between two parsed state
-// tables, or null if not exactly one cell changed. Used to read a validation
-// PR's intent (which task, pass/fail) from its proposed state.csv.
+// The single ((task_id, subtask_id), column, value) that differs between two
+// parsed state tables, or null if not exactly one cell changed. Used to read a
+// validation PR's intent (which subtask, pass/fail) from its proposed state.csv.
 function singleCellDiff(
 	base: ParsedState,
 	head: ParsedState
-): { task_id: string; column: string; value: string } | null {
-	const diffs: Array<{ task_id: string; column: string; value: string }> = [];
+): { task_id: string; subtask_id: string; column: string; value: string } | null {
+	const diffs: Array<{ task_id: string; subtask_id: string; column: string; value: string }> = [];
 	for (const headRow of head.rows) {
-		const baseRow = base.rows.find((r) => r.task_id === headRow.task_id);
+		const baseRow = findRow(base.rows, headRow.task_id, headRow.subtask_id);
 		if (!baseRow) continue;
 		for (const col of head.header) {
 			if ((headRow[col] ?? '') !== (baseRow[col] ?? '')) {
-				diffs.push({ task_id: headRow.task_id, column: col, value: headRow[col] ?? '' });
+				diffs.push({
+					task_id: headRow.task_id,
+					subtask_id: headRow.subtask_id,
+					column: col,
+					value: headRow[col] ?? ''
+				});
 			}
 		}
 	}
 	return diffs.length === 1 ? diffs[0] : null;
 }
 
-async function applyEncoding(
+interface SubmitOutcome extends Verdict {
+	files: FileChange[];
+	message: string;
+	history: HistoryRow;
+}
+
+async function decideEncoding(
 	sha: string,
-	tasks: ParsedState,
+	state: ParsedState,
 	locks: LockRow[],
 	changedPaths: string[],
 	now: string
-): Promise<Verdict> {
-	const task = tasks.rows.find((r) => changedPaths.includes(r.fragment));
+): Promise<Omit<SubmitOutcome, 'files' | 'message' | 'history'> & Partial<SubmitOutcome>> {
+	const taskCsv = await getRepoFile(token, owner, repo, TASK_PATH, sha);
+	const tasks = parseTaskCsv(taskCsv ?? '');
+	const task = tasks.find((t) => t.subtask_id === '' && changedPaths.includes(t.fragment));
 	if (!task) return { ok: false, reason: 'unknown_task' };
 
 	const mei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
 	const verdict = checkEncoding({
 		tasks,
+		state,
 		locks,
 		intent: { task_id: task.task_id },
 		author,
@@ -218,33 +257,40 @@ async function applyEncoding(
 		meiValid: mei != null && (await isValidMei(mei)),
 		now
 	});
-	if (!verdict.ok) return verdict;
 
-	await commitFiles(
-		token,
-		owner,
-		repo,
-		[
+	const history: HistoryRow = {
+		timestamp: now,
+		task_id: task.task_id,
+		subtask_id: '',
+		user_id: author,
+		action: 'submit_encoding',
+		outcome: verdict.ok ? 'accepted' : 'rejected',
+		detail: verdict.ok ? '' : verdict.reason
+	};
+	if (!verdict.ok) return { ok: false, reason: verdict.reason, history };
+
+	return {
+		ok: true,
+		history,
+		files: [
 			{ path: task.fragment, content: mei! },
-			{ path: STATE_PATH, content: serializeStateCsv(verdict.tasks) },
-			{ path: LOCKS_PATH, content: serializeLocksCsv(verdict.locks) }
+			{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
+			{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
 		],
-		`Accept encoding of ${task.task_id} by ${author}\n\nCo-authored-by: ${author} <${author}@users.noreply.github.com>`,
-		{ baseSha: sha }
-	);
-	return verdict;
+		message: `Accept encoding of ${task.task_id} by ${author}\n\nCo-authored-by: ${author} <${author}@users.noreply.github.com>`
+	};
 }
 
-async function applyValidation(
+async function decideValidation(
 	sha: string,
-	tasks: ParsedState,
+	state: ParsedState,
 	locks: LockRow[],
 	changedPaths: string[],
 	now: string
-): Promise<Verdict> {
+): Promise<Omit<SubmitOutcome, 'files' | 'message' | 'history'> & Partial<SubmitOutcome>> {
 	const headStateCsv = await getRepoFile(token, headOwner, headRepo, STATE_PATH, headSha);
-	const diff = headStateCsv == null ? null : singleCellDiff(tasks, parseStateCsv(headStateCsv));
-	if (!diff || !tasks.validationColumns.includes(diff.column)) {
+	const diff = headStateCsv == null ? null : singleCellDiff(state, parseStateCsv(headStateCsv));
+	if (!diff || !state.validationColumns.includes(diff.column)) {
 		return { ok: false, reason: 'malformed_validation' };
 	}
 	const status = diff.value.startsWith('pass') ? 'pass' : diff.value.startsWith('fail') ? 'fail' : null;
@@ -252,45 +298,73 @@ async function applyValidation(
 
 	const configText = await getRepoFile(token, owner, repo, CONFIG_PATH, sha);
 	const verdict = checkValidation({
-		tasks,
+		state,
 		locks,
-		intent: { task_id: diff.task_id, verdict: status },
+		intent: { task_id: diff.task_id, subtask_id: diff.subtask_id, verdict: status },
 		author,
 		changedPaths,
-		passThreshold: numberFromConfig(configText, 'pass_threshold', tasks.validationColumns.length),
+		passThreshold: numberFromConfig(configText, 'pass_threshold', state.validationColumns.length),
 		now
 	});
-	if (!verdict.ok) return verdict;
 
-	await commitFiles(
-		token,
-		owner,
-		repo,
-		[
-			{ path: STATE_PATH, content: serializeStateCsv(verdict.tasks) },
-			{ path: LOCKS_PATH, content: serializeLocksCsv(verdict.locks) }
+	const history: HistoryRow = {
+		timestamp: now,
+		task_id: diff.task_id,
+		subtask_id: diff.subtask_id,
+		user_id: author,
+		action: 'submit_validation',
+		outcome: verdict.ok ? 'accepted' : 'rejected',
+		detail: verdict.ok ? status : verdict.reason
+	};
+	if (!verdict.ok) return { ok: false, reason: verdict.reason, history };
+
+	return {
+		ok: true,
+		history,
+		files: [
+			{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
+			{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
 		],
-		`Record ${status} validation of ${diff.task_id} by ${author}`,
-		{ baseSha: sha }
-	);
-	return verdict;
+		message: `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${author}`
+	};
 }
 
 // One decide-and-apply pass, pinned to the branch head we read. Throws only if
 // the commit races (caller retries); returns the verdict otherwise.
 async function attemptSubmit(kind: 'encoding' | 'validation', changedPaths: string[]): Promise<Verdict> {
 	const { sha } = await getRepoHead(token, owner, repo);
-	const [stateCsv, locksCsv] = await Promise.all([
+	const [stateCsv, lockCsv, historyCsv] = await Promise.all([
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
-		getRepoFile(token, owner, repo, LOCKS_PATH, sha)
+		getRepoFile(token, owner, repo, LOCK_PATH, sha),
+		getRepoFile(token, owner, repo, HISTORY_PATH, sha)
 	]);
-	const tasks = parseStateCsv(stateCsv ?? '');
-	const locks = parseLocksCsv(locksCsv ?? '');
+	const state = parseStateCsv(stateCsv ?? '');
+	const locks = parseLockCsv(lockCsv ?? '');
 	const now = new Date().toISOString();
 
-	return kind === 'validation'
-		? applyValidation(sha, tasks, locks, changedPaths, now)
-		: applyEncoding(sha, tasks, locks, changedPaths, now);
+	const outcome =
+		kind === 'validation'
+			? await decideValidation(sha, state, locks, changedPaths, now)
+			: await decideEncoding(sha, state, locks, changedPaths, now);
+
+	const history: HistoryRow = outcome.history ?? {
+		timestamp: now,
+		task_id: '',
+		subtask_id: '',
+		user_id: author,
+		action: `submit_${kind}`,
+		outcome: 'rejected',
+		detail: outcome.reason ?? 'rejected'
+	};
+	const files: FileChange[] = [
+		...(outcome.files ?? []),
+		{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', [history]) }
+	];
+	const message = outcome.ok
+		? outcome.message!
+		: `Reject ${kind} submission by ${author} (${outcome.reason})`;
+	await commitFiles(token, owner, repo, files, message, { baseSha: sha });
+	return outcome;
 }
 
 async function runSubmit(
@@ -322,26 +396,40 @@ async function runSubmit(
 
 async function attemptReap(): Promise<void> {
 	const { sha } = await getRepoHead(token, owner, repo);
-	const [locksCsv, configText] = await Promise.all([
-		getRepoFile(token, owner, repo, LOCKS_PATH, sha),
+	const [lockCsv, historyCsv, configText] = await Promise.all([
+		getRepoFile(token, owner, repo, LOCK_PATH, sha),
+		getRepoFile(token, owner, repo, HISTORY_PATH, sha),
 		getRepoFile(token, owner, repo, CONFIG_PATH, sha)
 	]);
+	const now = new Date().toISOString();
 
 	const { kept, removed } = reapLocks({
-		locks: parseLocksCsv(locksCsv ?? ''),
+		locks: parseLockCsv(lockCsv ?? ''),
 		staleAfterMinutes: numberFromConfig(configText, 'stale_after_minutes', DEFAULT_STALE_MINUTES),
-		now: new Date().toISOString()
+		now
 	});
 	if (removed.length === 0) {
 		console.log('No stale locks.');
 		return;
 	}
 
+	const history: HistoryRow[] = removed.map((l) => ({
+		timestamp: now,
+		task_id: l.task_id,
+		subtask_id: l.subtask_id,
+		user_id: l.user_id,
+		action: 'reap',
+		outcome: 'released',
+		detail: l.kind
+	}));
 	await commitFiles(
 		token,
 		owner,
 		repo,
-		[{ path: LOCKS_PATH, content: serializeLocksCsv(kept) }],
+		[
+			{ path: LOCK_PATH, content: serializeLockCsv(kept) },
+			{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', history) }
+		],
 		`Release ${removed.length} stale lock(s): ${removed.map((l) => l.task_id).join(', ')}`,
 		{ baseSha: sha }
 	);
@@ -362,7 +450,7 @@ async function runReap(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Entry: route by event, then (for PRs) by the operation the changed paths imply
-// — locks.csv → claim, state.csv → validation, anything else → encoding. The
+// — lock.csv → claim, state.csv → validation, anything else → encoding. The
 // boundary check inside each decision rejects mixed or out-of-bounds PRs.
 
 async function run(): Promise<void> {
@@ -375,7 +463,7 @@ async function run(): Promise<void> {
 
 	const files = await getPullRequestFiles(token, owner, repo, prNumber);
 	const changedPaths = files.map((f) => f.filename);
-	if (changedPaths.includes(LOCKS_PATH)) return runClaim(files);
+	if (changedPaths.includes(LOCK_PATH)) return runClaim(files);
 	return runSubmit(changedPaths.includes(STATE_PATH) ? 'validation' : 'encoding', files);
 }
 

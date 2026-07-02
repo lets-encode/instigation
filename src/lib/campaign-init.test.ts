@@ -9,8 +9,10 @@ import {
 	buildCampaignConfig,
 	configToYaml,
 	stampTemplate,
+	buildTaskCsv,
 	buildStateCsv,
-	buildLocksCsv,
+	buildLockCsv,
+	buildHistoryCsv,
 	assertSupported
 } from './campaign-init.js';
 
@@ -48,7 +50,7 @@ test('configToYaml: matches the worked example', () => {
 	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
 	assert.equal(
 		configToYaml(config),
-		'schema_version: 1\n' +
+		'schema_version: 2\n' +
 			'campaign:\n' +
 			'  title: "Test Campaign — One Note"\n' +
 			'  description: "Smallest possible campaign for end-to-end testing."\n' +
@@ -93,25 +95,38 @@ test('worked example: stamped MEI is well-formed and placeholders filled', () =>
 	assert.match(mei, /<useRestrict>CC-BY-4\.0<\/useRestrict>/);
 });
 
-test('worked example: state.csv matches the expected row exactly', () => {
+test('worked example: task.csv holds the task row and its one validation subtask', () => {
 	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
 	assert.equal(
-		buildStateCsv(config),
-		'task_id,fragment,state,encoder,encoded_at,v1\n' +
-			'T0001,sources/score.mei,encoding_required,,,\n'
+		buildTaskCsv(config),
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist\n' +
+			'T0001,,sources/score.mei,,,\n' +
+			'T0001,S0001,sources/score.mei,,,\n'
 	);
 });
 
-test('worked example: locks.csv is header-only', () => {
-	assert.equal(buildLocksCsv(), 'task_id,locked_by,locked_at,kind\n');
+test('worked example: state.csv matches the expected rows exactly', () => {
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
+	assert.equal(
+		buildStateCsv(config),
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+			'T0001,,encoding_required,,,\n' +
+			'T0001,S0001,pending,,,\n'
+	);
 });
 
-test('buildStateCsv: required_validations controls the vN columns', () => {
+test('worked example: lock.csv and history.csv are header-only', () => {
+	assert.equal(buildLockCsv(), 'task_id,subtask_id,user_id,timestamp,kind\n');
+	assert.equal(buildHistoryCsv(), 'timestamp,task_id,subtask_id,user_id,action,outcome,detail\n');
+});
+
+test('buildStateCsv: required_validations controls the validate_status columns', () => {
 	const config = buildCampaignConfig({ required_validations: 3 }, 'test-instigator', AUTOMATION);
 	assert.equal(
 		buildStateCsv(config),
-		'task_id,fragment,state,encoder,encoded_at,v1,v2,v3\n' +
-			'T0001,sources/score.mei,encoding_required,,,,,\n'
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2,validate_status_3\n' +
+			'T0001,,encoding_required,,,,,\n' +
+			'T0001,S0001,pending,,,,,\n'
 	);
 });
 

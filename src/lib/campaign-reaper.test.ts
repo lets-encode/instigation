@@ -5,10 +5,11 @@ import { reapLocks } from './campaign-reaper.js';
 import type { LockRow } from './campaign-tables.js';
 
 const NOW = '2026-06-25T12:00:00Z';
-const lock = (task_id: string, locked_at: string, kind = 'encoding'): LockRow => ({
+const lock = (task_id: string, timestamp: string, kind = 'encoding'): LockRow => ({
 	task_id,
-	locked_by: 'bob',
-	locked_at,
+	subtask_id: kind === 'validation' ? 'S0001' : '',
+	user_id: 'bob',
+	timestamp,
 	kind
 });
 

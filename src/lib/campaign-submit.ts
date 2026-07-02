@@ -1,30 +1,35 @@
-// Action C — submission validation (encoding and validation outcome), with
-// Action D (state advancement + attribution) folded in. Pure decision logic:
-// current tables + PR facts in, accept (with the mutated tables) or reject out.
-// No GitHub. See DESIGN.md §6 (volunteer PR contract).
+// Submission validation (encoding and validation outcome), with state
+// advancement + attribution folded in. Pure decision logic: current tables +
+// PR facts in, accept (with the mutated tables) or reject out. No GitHub.
+// See DESIGN.md §6 (volunteer PR contract).
 //
-// As with claims, the Action authors all table mutations: encoder/validator
-// identity is the PR author and timestamps are the injected `now`, never values
-// the fork supplied. The volunteer's MEI *content* is handled by the workflow
-// shell (it merges/commits the fork's bytes after `meiValid`); these functions
-// only produce the authoritative table changes.
+// Addressing follows the (task_id, subtask_id) convention: an encoding targets
+// the task row (empty subtask_id), a validation targets one subtask row.
+// The Action authors all table mutations: encoder/validator identity is the
+// PR author and timestamps are the injected `now`, never values the fork
+// supplied. The volunteer's MEI *content* is handled by the coordinator (it
+// merges/commits the fork's bytes after `meiValid`); these functions only
+// produce the authoritative table changes.
 
 import { boundaryCheck } from './campaign-claim.ts';
-import type { ParsedState, LockRow } from './campaign-tables.ts';
+import { findRow } from './campaign-tables.ts';
+import type { ParsedState, TaskRow, LockRow } from './campaign-tables.ts';
 
 /** Encoding submission intent: just the task being encoded. */
 export interface EncodingIntent {
 	task_id: string;
 }
 
-/** Validation submission intent: the task and the verdict being recorded. */
+/** Validation submission intent: the subtask and the verdict being recorded. */
 export interface ValidationIntent {
 	task_id: string;
+	subtask_id: string;
 	verdict: string;
 }
 
 export interface CheckEncodingArgs {
-	tasks: ParsedState;
+	tasks: TaskRow[];
+	state: ParsedState;
 	locks: LockRow[];
 	intent: EncodingIntent;
 	author: string;
@@ -34,7 +39,7 @@ export interface CheckEncodingArgs {
 }
 
 export interface CheckValidationArgs {
-	tasks: ParsedState;
+	state: ParsedState;
 	locks: LockRow[];
 	intent: ValidationIntent;
 	author: string;
@@ -44,81 +49,105 @@ export interface CheckValidationArgs {
 }
 
 export type SubmitResult =
-	| { ok: true; tasks: ParsedState; locks: LockRow[] }
+	| { ok: true; state: ParsedState; locks: LockRow[] }
 	| { ok: false; reason: string };
 
 const reject = (reason: string): SubmitResult => ({ ok: false, reason });
 
-function cloneTasks(tasks: ParsedState): ParsedState {
+function cloneState(state: ParsedState): ParsedState {
 	return {
-		header: [...tasks.header],
-		validationColumns: [...tasks.validationColumns],
-		rows: tasks.rows.map((r) => ({ ...r }))
+		header: [...state.header],
+		validationColumns: [...state.validationColumns],
+		rows: state.rows.map((r) => ({ ...r }))
 	};
 }
 
 /**
  * Encoding submission. The PR may change only the task's fragment, the author
  * must hold the active encoding lock, and the MEI must pass the machine-check
- * (`meiValid`, computed by the shell). On accept: state → validation_required
- * with encoder/encoded_at set, and the encoding lock removed.
+ * (`meiValid`, computed by the coordinator). On accept: the task row advances
+ * to validation_required with encoder/encoded_at set, its pending subtasks
+ * open for validation, and the encoding lock is removed.
  */
-export function checkEncoding({ tasks, locks, intent, author, changedPaths, meiValid, now }: CheckEncodingArgs): SubmitResult {
-	const task = tasks.rows.find((r) => r.task_id === intent.task_id);
-	if (!task) return reject('unknown_task');
+export function checkEncoding({ tasks, state, locks, intent, author, changedPaths, meiValid, now }: CheckEncodingArgs): SubmitResult {
+	const task = findRow(tasks, intent.task_id, '');
+	const row = findRow(state.rows, intent.task_id, '');
+	if (!task || !row) return reject('unknown_task');
 	if (!boundaryCheck(changedPaths, [task.fragment])) return reject('out_of_bounds');
-	if (task.state !== 'encoding_required') return reject('wrong_state');
+	if (row.status !== 'encoding_required') return reject('wrong_state');
 
 	const holdsLock = locks.some(
-		(l) => l.task_id === intent.task_id && l.kind === 'encoding' && l.locked_by === author
+		(l) => l.task_id === intent.task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === author
 	);
 	if (!holdsLock) return reject('not_lock_holder');
 	if (!meiValid) return reject('mei_invalid');
 
-	const next = cloneTasks(tasks);
-	const row = next.rows.find((r) => r.task_id === intent.task_id)!;
-	row.encoder = author;
-	row.encoded_at = now;
-	row.state = 'validation_required';
+	const next = cloneState(state);
+	for (const r of next.rows) {
+		if (r.task_id !== intent.task_id) continue;
+		if (r.subtask_id === '') {
+			r.status = 'validation_required';
+			r.encoder = author;
+			r.encoded_at = now;
+		} else if (r.status === 'pending') {
+			r.status = 'validation_required';
+		}
+	}
 
 	const nextLocks = locks.filter(
-		(l) => !(l.task_id === intent.task_id && l.kind === 'encoding' && l.locked_by === author)
+		(l) => !(l.task_id === intent.task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === author)
 	);
-	return { ok: true, tasks: next, locks: nextLocks };
+	return { ok: true, state: next, locks: nextLocks };
 }
 
 /**
  * Validation outcome. The PR may change only state.csv (as the verdict
- * vehicle), the author must hold the active validation lock, and there must be
- * an open vN slot. On accept: the first open slot becomes
- * `<verdict>|<author>|<now>`, the validation lock is removed, and — folding in
- * Action D — the task advances to `completed` once `passThreshold` pass cells
- * accumulate.
+ * vehicle), the author must hold the subtask's active validation lock, and
+ * there must be an open validate_status slot. On accept: the first open slot
+ * becomes `<verdict>|<author>|<now>` and the validation lock is removed; the
+ * subtask completes once `passThreshold` pass cells accumulate, and the task
+ * row completes once every subtask has.
  */
-export function checkValidation({ tasks, locks, intent, author, changedPaths, passThreshold, now }: CheckValidationArgs): SubmitResult {
-	const task = tasks.rows.find((r) => r.task_id === intent.task_id);
-	if (!task) return reject('unknown_task');
+export function checkValidation({ state, locks, intent, author, changedPaths, passThreshold, now }: CheckValidationArgs): SubmitResult {
+	const row = findRow(state.rows, intent.task_id, intent.subtask_id);
+	if (!row || intent.subtask_id === '') return reject('unknown_task');
 	if (!boundaryCheck(changedPaths, ['tracking/state.csv'])) return reject('out_of_bounds');
 	if (intent.verdict !== 'pass' && intent.verdict !== 'fail') return reject('invalid_verdict');
-	if (task.state !== 'validation_required') return reject('wrong_state');
+	if (row.status !== 'validation_required') return reject('wrong_state');
 
 	const holdsLock = locks.some(
-		(l) => l.task_id === intent.task_id && l.kind === 'validation' && l.locked_by === author
+		(l) =>
+			l.task_id === intent.task_id &&
+			l.subtask_id === intent.subtask_id &&
+			l.kind === 'validation' &&
+			l.user_id === author
 	);
 	if (!holdsLock) return reject('not_lock_holder');
 
-	const slot = tasks.validationColumns.find((c) => (task[c] ?? '') === '');
+	const slot = state.validationColumns.find((c) => (row[c] ?? '') === '');
 	if (!slot) return reject('no_open_validation_slot');
 
-	const next = cloneTasks(tasks);
-	const row = next.rows.find((r) => r.task_id === intent.task_id)!;
-	row[slot] = `${intent.verdict}|${author}|${now}`;
+	const next = cloneState(state);
+	const nextRow = findRow(next.rows, intent.task_id, intent.subtask_id)!;
+	nextRow[slot] = `${intent.verdict}|${author}|${now}`;
 
-	const passCount = next.validationColumns.filter((c) => (row[c] ?? '').startsWith('pass|')).length;
-	if (passCount >= passThreshold) row.state = 'completed';
+	const passCount = next.validationColumns.filter((c) => (nextRow[c] ?? '').startsWith('pass|')).length;
+	if (passCount >= passThreshold) nextRow.status = 'completed';
+
+	// The task completes when its last subtask does.
+	const subtasks = next.rows.filter((r) => r.task_id === intent.task_id && r.subtask_id !== '');
+	if (subtasks.every((r) => r.status === 'completed')) {
+		findRow(next.rows, intent.task_id, '')!.status = 'completed';
+	}
 
 	const nextLocks = locks.filter(
-		(l) => !(l.task_id === intent.task_id && l.kind === 'validation' && l.locked_by === author)
+		(l) =>
+			!(
+				l.task_id === intent.task_id &&
+				l.subtask_id === intent.subtask_id &&
+				l.kind === 'validation' &&
+				l.user_id === author
+			)
 	);
-	return { ok: true, tasks: next, locks: nextLocks };
+	return { ok: true, state: next, locks: nextLocks };
 }

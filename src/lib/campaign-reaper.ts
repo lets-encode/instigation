@@ -1,8 +1,9 @@
-// Action E — stale-lock reaper. Pure: given the current locks and the timeout,
+// Stale-lock reaper. Pure: given the current locks and the timeout,
 // split them into those still fresh and those stale (older than
-// staleAfterMinutes), so abandoned claims free up. `now` and each `locked_at`
-// are ISO-8601 strings; the comparison uses real elapsed time, so it does not
-// depend on how frequently or punctually the reaper runs. See DESIGN.md §5.
+// staleAfterMinutes), so abandoned claims free up. `now` and each lock
+// `timestamp` are ISO-8601 strings; the comparison uses real elapsed time, so
+// it does not depend on how frequently or punctually the reaper runs. See
+// DESIGN.md §5.
 
 import type { LockRow } from './campaign-tables.ts';
 
@@ -23,7 +24,7 @@ export function reapLocks({ locks, staleAfterMinutes, now }: ReapLocksArgs): Rea
 	const kept: LockRow[] = [];
 	const removed: LockRow[] = [];
 	for (const lock of locks) {
-		const lockedMs = Date.parse(lock.locked_at);
+		const lockedMs = Date.parse(lock.timestamp);
 		// A lock is stale only if we can read both times and it's past the cutoff;
 		// anything with an unparseable timestamp is kept (don't free what we can't
 		// reason about).

@@ -8,8 +8,10 @@
 		buildCampaignConfig,
 		configToYaml,
 		stampTemplate,
+		buildTaskCsv,
 		buildStateCsv,
-		buildLocksCsv
+		buildLockCsv,
+		buildHistoryCsv
 	} from '$lib/campaign-init.ts';
 
 	const templateName = `${provider.template.owner}/${provider.template.repo}`;
@@ -161,8 +163,10 @@
 					[
 						{ path: 'config.yaml', content: configToYaml(config) },
 						{ path: 'sources/score.mei', content: mei },
+						{ path: 'tracking/task.csv', content: buildTaskCsv(config) },
 						{ path: 'tracking/state.csv', content: buildStateCsv(config) },
-						{ path: 'tracking/locks.csv', content: buildLocksCsv() }
+						{ path: 'tracking/lock.csv', content: buildLockCsv() },
+						{ path: 'tracking/history.csv', content: buildHistoryCsv() }
 					],
 					'Initialise campaign'
 				);

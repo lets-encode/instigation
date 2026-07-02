@@ -1,12 +1,14 @@
-// Campaign initialisation logic — Action A, v1 `whole` strategy. See DESIGN.md §5.
-// Server-only, pure functions: strings/objects in, strings out. No filesystem
-// or network access.
+// Campaign initialisation logic — Action A, `whole` strategy, schema v2.
+// See DESIGN.md §5. Pure functions: strings/objects in, strings out. No
+// filesystem or network access.
 //
 // Produces, from a filled config:
-//   - config.yaml          (configToYaml)
-//   - sources/score.mei    (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}})
-//   - tracking/state.csv   (buildStateCsv: one task T0001, encoding_required)
-//   - tracking/locks.csv   (buildLocksCsv: header only)
+//   - config.yaml            (configToYaml)
+//   - sources/score.mei      (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}})
+//   - tracking/task.csv      (buildTaskCsv: task T0001 + one validation subtask S0001)
+//   - tracking/state.csv     (buildStateCsv: task encoding_required, subtask pending)
+//   - tracking/lock.csv      (buildLockCsv: header only)
+//   - tracking/history.csv   (buildHistoryCsv: header only)
 
 /** The central automation pointer the campaign's caller workflow reads (§4a). */
 export interface AutomationPointer {
@@ -50,8 +52,10 @@ export interface CampaignFields {
 	stale_after_minutes?: number;
 }
 
-const STATE_BASE_COLUMNS = ['task_id', 'fragment', 'state', 'encoder', 'encoded_at'];
-const LOCK_COLUMNS = ['task_id', 'locked_by', 'locked_at', 'kind'];
+const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist'];
+const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
+const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
+const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail'];
 
 // v1 defaults for fields the create form does not (yet) surface.
 const DEFAULTS = {
@@ -84,20 +88,20 @@ function yamlStr(value: unknown): string {
 	return `"${String(value ?? '').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
-// v1 implements exactly one source kind, one fragmentation strategy and one
-// schema version. Fail loudly rather than silently mis-initialising.
+// Exactly one source kind, one fragmentation strategy and one schema version
+// are implemented. Fail loudly rather than silently mis-initialising.
 export function assertSupported(config: CampaignConfig): void {
-	if (config?.schema_version !== 1) {
-		throw new Error(`Unsupported schema_version: ${config?.schema_version} (v1 expects 1).`);
+	if (config?.schema_version !== 2) {
+		throw new Error(`Unsupported schema_version: ${config?.schema_version} (expected 2).`);
 	}
 	const strategy = config.fragmentation?.strategy;
 	if (strategy !== 'whole') {
-		throw new Error(`Unsupported fragmentation.strategy: ${strategy} (v1 implements only 'whole').`);
+		throw new Error(`Unsupported fragmentation.strategy: ${strategy} (only 'whole' is implemented).`);
 	}
 	const source = config.sources?.[0];
 	if (!source) throw new Error('config.sources must contain at least one source.');
 	if (source.kind !== 'mei-template') {
-		throw new Error(`Unsupported source kind: ${source.kind} (v1 implements only 'mei-template').`);
+		throw new Error(`Unsupported source kind: ${source.kind} (only 'mei-template' is implemented).`);
 	}
 }
 
@@ -112,7 +116,7 @@ export function buildCampaignConfig(
 	automation: AutomationPointer
 ): CampaignConfig {
 	return {
-		schema_version: 1,
+		schema_version: 2,
 		campaign: {
 			title: fields.title ?? '',
 			description: fields.description ?? '',
@@ -183,23 +187,44 @@ export function stampTemplate(
 		.replaceAll('{{LICENSE}}', xmlEscape(license));
 }
 
-/** Build the initial state table: one task T0001, encoding_required, empty vN cells. */
+/**
+ * Build the task table. `whole` strategy: one task T0001 spanning the entire
+ * source (task row, empty subtask_id) with one validation subtask S0001 —
+ * empty locators address the whole file, allow/blocklists are open.
+ */
+export function buildTaskCsv(config: CampaignConfig): string {
+	const fragment = config.sources[0].path;
+	const lines = [
+		csvRow(TASK_COLUMNS),
+		csvRow(['T0001', '', fragment, '', '', '']),
+		csvRow(['T0001', 'S0001', fragment, '', '', ''])
+	];
+	return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Build the initial state table: the task row starts at encoding_required,
+ * its validation subtask at pending, with empty validate_status_1…n cells.
+ */
 export function buildStateCsv(config: CampaignConfig): string {
 	const count = config.validation?.required_validations ?? 0;
-	const validationCols = Array.from({ length: count }, (_, i) => `v${i + 1}`);
+	const validationCols = Array.from({ length: count }, (_, i) => `validate_status_${i + 1}`);
 	const header = [...STATE_BASE_COLUMNS, ...validationCols];
-	const row = [
-		'T0001',
-		config.sources[0].path,
-		'encoding_required',
-		'', // encoder
-		'', // encoded_at
-		...validationCols.map(() => '')
+	const empty = validationCols.map(() => '');
+	const lines = [
+		csvRow(header),
+		csvRow(['T0001', '', 'encoding_required', '', '', ...empty]),
+		csvRow(['T0001', 'S0001', 'pending', '', '', ...empty])
 	];
-	return `${csvRow(header)}\n${csvRow(row)}\n`;
+	return `${lines.join('\n')}\n`;
 }
 
 /** Build the initial lock table: header only. */
-export function buildLocksCsv(): string {
+export function buildLockCsv(): string {
 	return `${csvRow(LOCK_COLUMNS)}\n`;
+}
+
+/** Build the initial history table: header only. */
+export function buildHistoryCsv(): string {
+	return `${csvRow(HISTORY_COLUMNS)}\n`;
 }

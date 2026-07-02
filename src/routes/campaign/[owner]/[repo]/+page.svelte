@@ -4,15 +4,18 @@
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import {
+    parseTaskCsv,
     parseStateCsv,
-    parseLocksCsv,
+    parseLockCsv,
     serializeStateCsv,
-    serializeLocksCsv,
+    serializeLockCsv,
+    findRow,
   } from "$lib/campaign-tables.ts";
-  import type { StateRow, LockRow } from "$lib/campaign-tables.ts";
+  import type { TaskRow, StateRow, LockRow } from "$lib/campaign-tables.ts";
 
+  const TASK_PATH = "tracking/task.csv";
   const STATE_PATH = "tracking/state.csv";
-  const LOCKS_PATH = "tracking/locks.csv";
+  const LOCK_PATH = "tracking/lock.csv";
   const rand = () => crypto.randomUUID().slice(0, 8);
 
   // Guaranteed present by the [owner]/[repo] route.
@@ -34,9 +37,15 @@
   let loadError = $state<string | null>(null);
   let notInitialised = $state(false);
   let isPrivate = $state(false);
-  let tasks = $state<StateRow[]>([]);
+  let taskDefs = $state<TaskRow[]>([]);
+  let rows = $state<StateRow[]>([]);
   let validationColumns = $state<string[]>([]);
   let locks = $state<LockRow[]>([]);
+
+  // Rows with an empty subtask_id address the whole task (the encoding unit);
+  // the others are its validation subtasks.
+  const taskRows = $derived(rows.filter((r) => r.subtask_id === ""));
+  const subtaskRows = $derived(rows.filter((r) => r.subtask_id !== ""));
 
   let busy = $state(false);
   let result = $state<Result>(null);
@@ -44,13 +53,23 @@
   const copy = (text: string) =>
     navigator.clipboard?.writeText(text).catch(() => {});
 
-  const lockFor = (taskId: string, kind: string) =>
-    locks.find((l) => l.task_id === taskId && l.kind === kind);
+  const lockFor = (taskId: string, subtaskId: string, kind: string) =>
+    locks.find(
+      (l) =>
+        l.task_id === taskId && l.subtask_id === subtaskId && l.kind === kind,
+    );
   const myEncodingLock = (taskId: string) =>
     locks.find(
       (l) =>
-        l.task_id === taskId && l.kind === "encoding" && l.locked_by === viewer,
+        l.task_id === taskId &&
+        l.subtask_id === "" &&
+        l.kind === "encoding" &&
+        l.user_id === viewer,
     );
+  const encoderOf = (taskId: string) =>
+    findRow(rows, taskId, "")?.encoder ?? "";
+  const fragmentOf = (taskId: string) =>
+    findRow(taskDefs, taskId, "")?.fragment;
 
   // Read the tracking tables (and privacy) for the console. Only the first read
   // shows the loading state; refreshes update the tables in place.
@@ -60,23 +79,26 @@
     if (!loaded) loading = true;
     loadError = null;
     try {
-      const [stateCsv, locksCsv, priv] = await Promise.all([
+      const [taskCsv, stateCsv, lockCsv, priv] = await Promise.all([
+        f.getRepoFile(owner, repo, TASK_PATH),
         f.getRepoFile(owner, repo, STATE_PATH),
-        f.getRepoFile(owner, repo, LOCKS_PATH),
+        f.getRepoFile(owner, repo, LOCK_PATH),
         f.getRepoIsPrivate(owner, repo),
       ]);
       isPrivate = priv;
-      if (stateCsv == null || locksCsv == null) {
+      if (taskCsv == null || stateCsv == null || lockCsv == null) {
         notInitialised = true;
-        tasks = [];
+        taskDefs = [];
+        rows = [];
         validationColumns = [];
         locks = [];
       } else {
         notInitialised = false;
+        taskDefs = parseTaskCsv(taskCsv);
         const state = parseStateCsv(stateCsv);
-        tasks = state.rows;
+        rows = state.rows;
         validationColumns = state.validationColumns;
-        locks = parseLocksCsv(locksCsv);
+        locks = parseLockCsv(lockCsv);
       }
       loaded = true;
     } catch (e) {
@@ -105,33 +127,40 @@
 
   // Open a PR that adds a lock row (the Action re-authors who/when). Shared by the
   // claim action and "open in mei-friend" (where opening == claiming).
-  async function openClaimPr(f: ForgeClient, task_id: string, kind: string) {
-    const rows = parseLocksCsv(
-      (await f.getRepoFile(owner, repo, LOCKS_PATH)) ?? "",
+  async function openClaimPr(
+    f: ForgeClient,
+    task_id: string,
+    subtask_id: string,
+    kind: string,
+  ) {
+    const lockRows = parseLockCsv(
+      (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
     );
-    rows.push({
+    lockRows.push({
       task_id,
-      locked_by: viewer,
-      locked_at: new Date().toISOString(),
+      subtask_id,
+      user_id: viewer,
+      timestamp: new Date().toISOString(),
       kind,
     });
+    const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
     return f.openChangePr(owner, repo, {
-      branch: `claim-${task_id}-${rand()}`,
-      files: [{ path: LOCKS_PATH, content: serializeLocksCsv(rows) }],
-      message: `Claim ${task_id} (${kind})`,
-      title: `Claim ${task_id} (${kind})`,
-      body: `Reserves task ${task_id} for ${kind} work by @${viewer}. Opened from the campaign console.`,
+      branch: `claim-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
+      files: [{ path: LOCK_PATH, content: serializeLockCsv(lockRows) }],
+      message: `Claim ${target} (${kind})`,
+      title: `Claim ${target} (${kind})`,
+      body: `Reserves ${target} for ${kind} work by @${viewer}. Opened from the campaign console.`,
     });
   }
 
-  const claim = (task_id: string) =>
+  const claim = (task_id: string, subtask_id: string) =>
     run(async (f) => {
       try {
-        const pr = await openClaimPr(f, task_id, "validation");
+        const pr = await openClaimPr(f, task_id, subtask_id, "validation");
         return {
           ok: true,
           prUrl: pr.html_url,
-          message: `Opened claim PR #${pr.number} for ${task_id} (validation).`,
+          message: `Opened claim PR #${pr.number} for ${task_id}/${subtask_id} (validation).`,
         };
       } catch (e) {
         return { error: `Claim failed: ${(e as Error).message}` };
@@ -143,11 +172,9 @@
   const editor = (task_id: string) =>
     run(async (f) => {
       try {
-        const state = parseStateCsv(
-          (await f.getRepoFile(owner, repo, STATE_PATH)) ?? "",
-        );
-        const task = state.rows.find((r) => r.task_id === task_id);
-        if (!task) return { error: `Unknown task ${task_id}.` };
+        const fragment = fragmentOf(task_id);
+        const task = findRow(rows, task_id, "");
+        if (!fragment || !task) return { error: `Unknown task ${task_id}.` };
 
         const { sha, canPush } = await f.getRepoHead(owner, repo);
 
@@ -175,28 +202,29 @@
         const downloadUrl = await f.getRepoFileDownloadUrl(
           owner,
           repo,
-          task.fragment,
+          fragment,
           ref,
         );
         if (!downloadUrl)
           return {
-            error: `Could not get a download URL for ${task.fragment}.`,
+            error: `Could not get a download URL for ${fragment}.`,
           };
         const url = `${meiFriendUrl}/?file=${encodeURIComponent(downloadUrl)}${meiParam}`;
 
-        const mine = parseLocksCsv(
-          (await f.getRepoFile(owner, repo, LOCKS_PATH)) ?? "",
+        const mine = parseLockCsv(
+          (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
         ).some(
           (l) =>
             l.task_id === task_id &&
+            l.subtask_id === "" &&
             l.kind === "encoding" &&
-            l.locked_by === viewer,
+            l.user_id === viewer,
         );
         let prUrl: string | undefined;
         let message =
           "Opening the score in mei-friend. After committing there, use “Submit encoding”.";
-        if (task.state === "encoding_required" && !mine) {
-          const pr = await openClaimPr(f, task_id, "encoding");
+        if (task.status === "encoding_required" && !mine) {
+          const pr = await openClaimPr(f, task_id, "", "encoding");
           prUrl = pr.html_url;
           message = `Opening the score in mei-friend; opened encoding claim PR #${pr.number}. After committing in mei-friend, use “Submit encoding”.`;
         }
@@ -208,7 +236,7 @@
     });
 
   // After committing an encoding in mei-friend (which only pushes to a branch),
-  // open the submission PR that triggers Action C and advances to validation.
+  // open the submission PR that advances the task to validation.
   const submitpr = (task_id: string) =>
     run(async (f) => {
       try {
@@ -244,57 +272,51 @@
   const rawlink = (task_id: string) =>
     run(async (f) => {
       try {
-        const state = parseStateCsv(
-          (await f.getRepoFile(owner, repo, STATE_PATH)) ?? "",
-        );
-        const task = state.rows.find((r) => r.task_id === task_id);
-        if (!task) return { error: `Unknown task ${task_id}.` };
-        const rawUrl = await f.getRepoFileDownloadUrl(
-          owner,
-          repo,
-          task.fragment,
-        );
+        const fragment = fragmentOf(task_id);
+        if (!fragment) return { error: `Unknown task ${task_id}.` };
+        const rawUrl = await f.getRepoFileDownloadUrl(owner, repo, fragment);
         if (!rawUrl)
-          return { error: `Could not get a raw link for ${task.fragment}.` };
+          return { error: `Could not get a raw link for ${fragment}.` };
         copy(rawUrl);
-        return { ok: true, rawUrl, message: `Raw link for ${task.fragment}:` };
+        return { ok: true, rawUrl, message: `Raw link for ${fragment}:` };
       } catch (e) {
         return { error: `Raw link failed: ${(e as Error).message}` };
       }
     });
 
-  // Action C — open a PR that sets the first open validation cell (pass/fail).
-  const validate = (task_id: string, verdict: string) =>
+  // Open a PR that sets the subtask's first open validation cell (pass/fail).
+  const validate = (task_id: string, subtask_id: string, verdict: string) =>
     run(async (f) => {
       try {
         const state = parseStateCsv(
           (await f.getRepoFile(owner, repo, STATE_PATH)) ?? "",
         );
-        const task = state.rows.find((r) => r.task_id === task_id);
-        if (!task) return { error: `Unknown task ${task_id}.` };
-        const slot = state.validationColumns.find(
-          (c) => (task[c] ?? "") === "",
-        );
-        if (!slot) return { error: `No open validation slot on ${task_id}.` };
-        task[slot] = verdict; // the Action re-authors this to `verdict|user|time`
+        const row = findRow(state.rows, task_id, subtask_id);
+        if (!row) return { error: `Unknown subtask ${task_id}/${subtask_id}.` };
+        const slot = state.validationColumns.find((c) => (row[c] ?? "") === "");
+        if (!slot)
+          return {
+            error: `No open validation slot on ${task_id}/${subtask_id}.`,
+          };
+        row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
         const pr = await f.openChangePr(owner, repo, {
-          branch: `validate-${task_id}-${rand()}`,
+          branch: `validate-${task_id}-${subtask_id}-${rand()}`,
           files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
-          message: `Validate ${task_id} (${verdict})`,
-          title: `Validate ${task_id} (${verdict})`,
-          body: `Submits a ${verdict} validation for task ${task_id}. Opened from the campaign console.`,
+          message: `Validate ${task_id}/${subtask_id} (${verdict})`,
+          title: `Validate ${task_id}/${subtask_id} (${verdict})`,
+          body: `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`,
         });
         return {
           ok: true,
           prUrl: pr.html_url,
-          message: `Opened validation PR #${pr.number} for ${task_id} (${verdict}).`,
+          message: `Opened validation PR #${pr.number} for ${task_id}/${subtask_id} (${verdict}).`,
         };
       } catch (e) {
         return { error: `Validate failed: ${(e as Error).message}` };
       }
     });
 
-  // Action E — manually dispatch the scheduled reaper.
+  // Manually dispatch the scheduled reaper.
   const reaper = () =>
     run(async (f) => {
       try {
@@ -321,10 +343,10 @@
     </a>
   </p>
   <p class="muted">
-    Drive the campaign Actions: open the score in mei-friend (which also claims
-    the encoding task), submit work, validate, and run the reaper. Each opens
-    the same kind of pull request a volunteer client would. The workflows run on
-    GitHub and take a few seconds; use
+    Drive the campaign automation: open the score in mei-friend (which also
+    claims the encoding task), submit work, validate, and run the reaper. Each
+    opens the same kind of pull request a volunteer client would. The workflows
+    run on GitHub and take a few seconds; use
     <strong>Refresh</strong> to re-read the tables afterwards.
   </p>
 </header>
@@ -391,9 +413,10 @@
     <div class="banner err">{loadError}</div>
   {:else if notInitialised}
     <div class="banner warn">
-      This repository has no <code>tracking/state.csv</code> /
-      <code>tracking/locks.csv</code> yet — it may not have been initialised. Create
-      it through the home page to initialise it.
+      This repository has no tracking tables (<code>tracking/task.csv</code>,
+      <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>) yet — it
+      may not have been initialised. Create it through the home page to
+      initialise it.
     </div>
   {:else}
     <div class="toolbar">
@@ -409,19 +432,16 @@
     <table>
       <thead>
         <tr>
-          <th>Task</th><th>State</th><th>Encoder</th>
-          {#each validationColumns as v}<th>{v}</th>{/each}
+          <th>Task</th><th>Status</th><th>Encoder</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {#each tasks as task (task.task_id)}
+        {#each taskRows as task (task.task_id)}
           <tr>
             <td><code>{task.task_id}</code></td>
-            <td><span class="state {task.state}">{task.state}</span></td>
+            <td><span class="state {task.status}">{task.status}</span></td>
             <td>{task.encoder || "—"}</td>
-            {#each validationColumns as v}<td class="cell">{task[v] || "—"}</td
-              >{/each}
             <td class="actions">
               <div class="btnrow">
                 <button
@@ -429,7 +449,7 @@
                   onclick={() => editor(task.task_id)}
                   disabled={busy ||
                     !(
-                      task.state === "encoding_required" ||
+                      task.status === "encoding_required" ||
                       myEncodingLock(task.task_id)
                     )}
                   title="Opens score.mei in mei-friend; claims the encoding task if not already yours"
@@ -456,12 +476,38 @@
                   Submit encoding
                 </button>
               </div>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
 
+    <h2>Validation subtasks</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Task</th><th>Subtask</th><th>Status</th>
+          {#each validationColumns as v}<th>{v}</th>{/each}
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each subtaskRows as sub (sub.task_id + "/" + sub.subtask_id)}
+          <tr>
+            <td><code>{sub.task_id}</code></td>
+            <td><code>{sub.subtask_id}</code></td>
+            <td><span class="state {sub.status}">{sub.status}</span></td>
+            {#each validationColumns as v}<td class="cell">{sub[v] || "—"}</td
+              >{/each}
+            <td class="actions">
               <div class="btnrow">
                 <button
                   type="button"
-                  onclick={() => claim(task.task_id)}
-                  disabled={busy || task.state !== "validation_required"}
+                  onclick={() => claim(sub.task_id, sub.subtask_id)}
+                  disabled={busy ||
+                    sub.status !== "validation_required" ||
+                    encoderOf(sub.task_id) === viewer}
+                  title="Reserve this subtask for validation (the encoder cannot validate their own work)"
                 >
                   Claim (validate)
                 </button>
@@ -470,15 +516,17 @@
               <div class="btnrow">
                 <button
                   type="button"
-                  onclick={() => validate(task.task_id, "pass")}
-                  disabled={busy || !lockFor(task.task_id, "validation")}
+                  onclick={() => validate(sub.task_id, sub.subtask_id, "pass")}
+                  disabled={busy ||
+                    !lockFor(sub.task_id, sub.subtask_id, "validation")}
                 >
                   Validate: pass
                 </button>
                 <button
                   type="button"
-                  onclick={() => validate(task.task_id, "fail")}
-                  disabled={busy || !lockFor(task.task_id, "validation")}
+                  onclick={() => validate(sub.task_id, sub.subtask_id, "fail")}
+                  disabled={busy ||
+                    !lockFor(sub.task_id, sub.subtask_id, "validation")}
                 >
                   fail
                 </button>
@@ -495,15 +543,18 @@
     {:else}
       <table>
         <thead
-          ><tr><th>Task</th><th>Locked by</th><th>At</th><th>Kind</th></tr
+          ><tr
+            ><th>Task</th><th>Subtask</th><th>User</th><th>At</th><th>Kind</th
+            ></tr
           ></thead
         >
         <tbody>
           {#each locks as lock}
             <tr>
               <td><code>{lock.task_id}</code></td>
-              <td>{lock.locked_by}</td>
-              <td class="muted">{lock.locked_at}</td>
+              <td><code>{lock.subtask_id || "—"}</code></td>
+              <td>{lock.user_id}</td>
+              <td class="muted">{lock.timestamp}</td>
               <td>{lock.kind}</td>
             </tr>
           {/each}
@@ -521,8 +572,8 @@
       {/if}
       and, at the same time, opens an encoding claim PR. You add the content in mei-friend
       and commit it there (to a branch, or to your fork if you can't push); then
-      <strong>Submit encoding</strong> opens the submission PR that advances the
-      task to validation.<br />
+      <strong>Submit encoding</strong> opens the submission PR that opens its
+      subtasks for validation.<br />
       A task's <strong>encoder cannot validate their own work</strong> (peer
       review): logged in as
       <code>{viewer}</code>, you'll need a second GitHub account to test a
@@ -595,6 +646,10 @@
     padding: 0.1rem 0.4rem;
     border-radius: 999px;
     border: 1px solid #ddd;
+  }
+  .state.pending {
+    background: #f3f3f3;
+    border-color: #ddd;
   }
   .state.encoding_required {
     background: #fff4d6;

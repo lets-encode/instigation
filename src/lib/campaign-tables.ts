@@ -1,40 +1,68 @@
-// Tracking-table (de)serialisation — shared by Actions B and C. Pure functions:
-// CSV text in, plain objects out (and back). No GitHub, no filesystem.
+// Tracking-table (de)serialisation for the four v2 tables (task / state / lock
+// / history), all keyed by (task_id, subtask_id): a row with an EMPTY
+// subtask_id addresses the whole task (the unit of encoding), a row with a
+// subtask_id addresses one validation portion. Pure functions: CSV text in,
+// plain objects out (and back). No GitHub, no filesystem.
 //
-// Table layouts are defined in DESIGN.md §4 (config & formats). The five base
-// state columns are fixed; everything after them is a
-// validation cell (v1…vn), so `required_validations` is just their count.
+// Table layouts are defined in DESIGN.md §5. The five base state columns are
+// fixed; everything after them is a validation cell (validate_status_1…n), so
+// `required_validations` is just their count.
 
-/** A lock row from locks.csv. */
+/** A task-definition row from task.csv. */
+export interface TaskRow {
+	task_id: string;
+	subtask_id: string;
+	fragment: string;
+	locator: string;
+	allowlist: string;
+	blocklist: string;
+}
+
+/** A lock row from lock.csv. */
 export interface LockRow {
 	task_id: string;
-	locked_by: string;
-	locked_at: string;
+	subtask_id: string;
+	user_id: string;
+	timestamp: string;
 	kind: string;
+}
+
+/** An append-only history row from history.csv. */
+export interface HistoryRow {
+	timestamp: string;
+	task_id: string;
+	subtask_id: string;
+	user_id: string;
+	action: string;
+	outcome: string;
+	detail: string;
 }
 
 /**
  * A state.csv row, keyed by column name. The base columns are always present;
- * the validation columns (v1…vn) are reached via the index signature.
+ * the validation columns (validate_status_1…n) are reached via the index
+ * signature and are only meaningful on subtask rows.
  */
 export interface StateRow {
 	task_id: string;
-	fragment: string;
-	state: string;
+	subtask_id: string;
+	status: string;
 	encoder: string;
 	encoded_at: string;
 	[column: string]: string;
 }
 
-/** A parsed state table: the header, the v1…vn slice, and the keyed rows. */
+/** A parsed state table: the header, the validate_status_* slice, the keyed rows. */
 export interface ParsedState {
 	header: string[];
 	validationColumns: string[];
 	rows: StateRow[];
 }
 
-const STATE_BASE_COLUMNS = ['task_id', 'fragment', 'state', 'encoder', 'encoded_at'];
-const LOCK_COLUMNS = ['task_id', 'locked_by', 'locked_at', 'kind'];
+const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist'];
+const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
+const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
+const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail'];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
 function csvField(value: unknown): string {
@@ -83,9 +111,28 @@ export function parseCsv(text: string): string[][] {
 	return rows;
 }
 
+// Object rows from CSV text, keyed by the given column names.
+function parseRows<T>(text: string, columns: string[]): T[] {
+	return parseCsv(text)
+		.slice(1)
+		.map((cells) => Object.fromEntries(columns.map((col, i) => [col, cells[i] ?? ''])) as T);
+}
+
+/** Parse task.csv into task/subtask definition rows. */
+export function parseTaskCsv(text: string): TaskRow[] {
+	return parseRows<TaskRow>(text, TASK_COLUMNS);
+}
+
+/** Serialise task rows back to task.csv text. */
+export function serializeTaskCsv(rows: TaskRow[]): string {
+	const lines = [csvRow(TASK_COLUMNS), ...rows.map((r) => csvRow(TASK_COLUMNS.map((c) => r[c as keyof TaskRow])))];
+	return `${lines.join('\n')}\n`;
+}
+
 /**
  * Parse state.csv. Returns { header, validationColumns, rows } where each row
- * is an object keyed by column name. validationColumns is the v1…vn slice.
+ * is an object keyed by column name. validationColumns is the
+ * validate_status_1…n slice.
  */
 export function parseStateCsv(text: string): ParsedState {
 	const all = parseCsv(text);
@@ -97,31 +144,44 @@ export function parseStateCsv(text: string): ParsedState {
 	return { header, validationColumns, rows };
 }
 
-/** Parse locks.csv into an array of { task_id, locked_by, locked_at, kind }. */
-export function parseLocksCsv(text: string): LockRow[] {
-	return parseCsv(text)
-		.slice(1)
-		.map((cells) => ({
-			task_id: cells[0] ?? '',
-			locked_by: cells[1] ?? '',
-			locked_at: cells[2] ?? '',
-			kind: cells[3] ?? ''
-		}));
-}
-
-/** Serialise lock rows back to locks.csv text (header + one line per row). */
-export function serializeLocksCsv(rows: LockRow[]): string {
-	const lines = [csvRow(LOCK_COLUMNS), ...rows.map((r) => csvRow([r.task_id, r.locked_by, r.locked_at, r.kind]))];
-	return `${lines.join('\n')}\n`;
-}
-
 /** Serialise a parsed state table ({ header, rows }) back to state.csv text. */
 export function serializeStateCsv({ header, rows }: Pick<ParsedState, 'header' | 'rows'>): string {
 	const lines = [csvRow(header), ...rows.map((r) => csvRow(header.map((col) => r[col] ?? '')))];
 	return `${lines.join('\n')}\n`;
 }
 
-/** True if a vN cell holds a final outcome (pass/fail) rather than being open. */
+/** Parse lock.csv into lock rows. */
+export function parseLockCsv(text: string): LockRow[] {
+	return parseRows<LockRow>(text, LOCK_COLUMNS);
+}
+
+/** Serialise lock rows back to lock.csv text (header + one line per row). */
+export function serializeLockCsv(rows: LockRow[]): string {
+	const lines = [csvRow(LOCK_COLUMNS), ...rows.map((r) => csvRow(LOCK_COLUMNS.map((c) => r[c as keyof LockRow])))];
+	return `${lines.join('\n')}\n`;
+}
+
+/** Parse history.csv into history rows. */
+export function parseHistoryCsv(text: string): HistoryRow[] {
+	return parseRows<HistoryRow>(text, HISTORY_COLUMNS);
+}
+
+/** Append rows to history.csv text (append-only — existing lines are kept verbatim). */
+export function appendHistory(text: string, rows: HistoryRow[]): string {
+	const base = text === '' ? `${csvRow(HISTORY_COLUMNS)}\n` : text.endsWith('\n') ? text : `${text}\n`;
+	return base + rows.map((r) => `${csvRow(HISTORY_COLUMNS.map((c) => r[c as keyof HistoryRow]))}\n`).join('');
+}
+
+/** The row addressing (task_id, subtask_id), or undefined. */
+export function findRow<T extends { task_id: string; subtask_id: string }>(
+	rows: T[],
+	task_id: string,
+	subtask_id: string
+): T | undefined {
+	return rows.find((r) => r.task_id === task_id && r.subtask_id === subtask_id);
+}
+
+/** True if a validate_status cell holds a final outcome (pass/fail) rather than being open. */
 export function isFinalValidation(cell: string): boolean {
 	return cell.startsWith('pass|') || cell.startsWith('fail|');
 }
