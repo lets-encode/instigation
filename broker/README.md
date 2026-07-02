@@ -1,6 +1,6 @@
-# OAuth token broker
+# OAuth token broker (Flask)
 
-A tiny stateless function that lets the backend-less SPA complete GitHub OAuth.
+A tiny stateless service that lets the backend-less SPA complete GitHub OAuth.
 It holds the OAuth **client secret** and does the two things a browser can't:
 
 - `POST /token` `{ code, redirect_uri }` → `{ access_token, scope }` — swaps an
@@ -13,7 +13,7 @@ system; everything else runs in the browser or in the campaign repo's CI.
 
 ## Configure
 
-Set these as the function's environment (Worker secrets/vars):
+Environment variables:
 
 | Name | Value |
 |---|---|
@@ -21,19 +21,31 @@ Set these as the function's environment (Worker secrets/vars):
 | `GITHUB_CLIENT_SECRET` | the OAuth app's client secret (**secret**, only here) |
 | `ALLOWED_ORIGIN` | the SPA's origin, e.g. `https://lets-encode.example` (or `*`) |
 
-The SPA points at this function via `PUBLIC_OAUTH_BROKER_URL` (its base URL).
+The SPA points at this service via `PUBLIC_OAUTH_BROKER_URL` (its base URL).
 
-## Deploy (Cloudflare Workers example)
+## Run
 
+```sh
+pip install -r requirements.txt
+
+# development
+GITHUB_CLIENT_ID=… GITHUB_CLIENT_SECRET=… ALLOWED_ORIGIN=http://localhost:5173 \
+  flask --app app run --port 8787
+
+# production (behind an HTTPS reverse proxy — see below)
+gunicorn --bind 127.0.0.1:8787 app:app
 ```
-wrangler deploy broker/worker.js --name lets-encode-broker
-wrangler secret put GITHUB_CLIENT_SECRET
-wrangler secret put GITHUB_CLIENT_ID
-# ALLOWED_ORIGIN can be a plain var in wrangler.toml
-```
 
-`worker.js` is a standard `export default { fetch }` module, so it also runs on
-Deno Deploy or any equivalent with minimal changes.
+## Deployment notes
+
+- **HTTPS is required** — the OAuth `code` is sent over this connection. Put the
+  app behind a TLS-terminating reverse proxy (nginx, Caddy, …) and point
+  `PUBLIC_OAUTH_BROKER_URL` at the `https://` URL.
+- **CORS** — the app sets `Access-Control-Allow-Origin: $ALLOWED_ORIGIN` and
+  answers the `OPTIONS` preflight. Set `ALLOWED_ORIGIN` to your SPA's exact origin
+  in production (`*` is for local testing only). It allows one origin; widen it or
+  run another instance if the SPA is served from several origins.
+- **Keep the secret only here** — never in the SPA build.
 
 ## Provider note
 

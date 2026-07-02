@@ -57,7 +57,7 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 | Decision | Resolution |
 |---|---|
 | Backend | **None.** The former SvelteKit server was only a forge REST client on the user's token; it moves to the browser. Deploy as static assets. |
-| OAuth | **Token broker** — one ~20-line stateless function holds the client secret and only swaps `code`→`token` (GitHub offers no PKCE and no CORS on its token endpoint). A *provider trait*: GitLab supports PKCE, so it needs no broker. |
+| OAuth | **Token broker** — a small stateless service (a Flask app, `broker/`) holds the client secret and only swaps `code`→`token` (GitHub offers no PKCE and no CORS on its token endpoint). A *provider trait*: GitLab supports PKCE, so it needs no broker. |
 | Per-repo workflows | **One generic, task-agnostic caller** replaces any per-task workflows. Triggers: `pull_request_target` (all contributions) + `schedule` (the reaper). It forwards the event; central decides what to do. |
 | Central location | **Read from the campaign config on the base ref** (§4) — never hardcoded, never taken from the fork. The pinned ref lives in that config. |
 | Central logic | Lives in the **central automation repo**; the campaign repo carries none. |
