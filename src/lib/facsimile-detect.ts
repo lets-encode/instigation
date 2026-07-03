@@ -65,7 +65,7 @@ async function pdfToImages(file: File): Promise<Blob[]> {
 			canvas.height = Math.ceil(viewport.height);
 			const ctx = canvas.getContext('2d');
 			if (!ctx) throw new Error('Canvas 2D context unavailable.');
-			await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+			await page.render({ canvasContext: ctx, viewport }).promise;
 			blobs.push(await canvasToJpeg(canvas));
 			page.cleanup();
 		}

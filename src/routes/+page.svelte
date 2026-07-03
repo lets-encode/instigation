@@ -18,8 +18,6 @@
 	// (dynamically) only when a facsimile campaign is actually submitted.
 	import type { PreparedFacsimile } from '$lib/facsimile-detect.ts';
 
-	const templateName = `${provider.template.owner}/${provider.template.repo}`;
-
 	// The repository listing, fetched client-side (a logged-in token also surfaces
 	// the user's private matches; anonymous sees public ones).
 	let repos = $state<RepoSummary[]>([]);
@@ -467,20 +465,23 @@
 	<div class="overlay" role="status" aria-live="polite">
 		<div class="overlay-card">
 			<div class="spinner" aria-hidden="true"></div>
-			<p class="overlay-title">Creating your repository…</p>
+			<p class="overlay-title">Creating your campaign…</p>
 			<p class="overlay-sub">{progress ?? 'Setting up the campaign files. This takes a few seconds.'}</p>
 		</div>
 	</div>
 {/if}
 
 <section class="hero">
-	<h1>Spin up a new repository from a template</h1>
-	<p>Log in with GitHub, fill in your campaign details, and we'll create the repository and prepare it for encoding.</p>
+	<h1>Start a new encoding campaign</h1>
+	<p>
+		Log in with GitHub and fill in your campaign details. We'll create a GitHub repository from a
+		template — it holds your campaign's score, configuration and progress.
+	</p>
 
 	{#if auth.user}
 		{#if !showForm}
 			<button class="cta" type="button" onclick={() => (showForm = true)}>
-				Create a new repository →
+				Create a new campaign →
 			</button>
 		{/if}
 	{:else}
@@ -495,8 +496,7 @@
 
 {#if auth.user && showForm}
 	<section class="create">
-		<h2>Create a repository</h2>
-		<p class="template">From template: <code>{templateName}</code></p>
+		<h2>Create a campaign</h2>
 
 		{#if created}
 			<div class="banner ok">
@@ -629,7 +629,7 @@
 			</label>
 
 			<fieldset>
-				<legend>Visibility (status)</legend>
+				<legend>Visibility of the GitHub repository</legend>
 				<label class="radio">
 					<input type="radio" name="visibility" value="private" bind:group={visibility} />
 					Private
@@ -641,7 +641,7 @@
 			</fieldset>
 
 			<button type="submit" disabled={submitting}>
-				{submitting ? 'Creating…' : 'Create repository'}
+				{submitting ? 'Creating…' : 'Create campaign'}
 			</button>
 		</form>
 	</section>
@@ -767,15 +767,6 @@
 		margin-top: 3rem;
 		border-top: 1px solid #e5e5e5;
 		padding-top: 1.5rem;
-	}
-	.create .template {
-		color: #555;
-		margin-top: 0;
-	}
-	.create code {
-		background: #eee;
-		padding: 0.1rem 0.35rem;
-		border-radius: 4px;
 	}
 	.create form {
 		display: flex;
