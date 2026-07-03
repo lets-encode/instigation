@@ -38,6 +38,7 @@ async function adoptToken(token: string): Promise<boolean> {
 	auth.user = resolved.user;
 	auth.scope = resolved.scopes;
 	auth.status = 'authenticated';
+	console.log('[auth] logged in as', resolved.user.login, 'scope:', resolved.scopes);
 	return true;
 }
 
@@ -67,6 +68,7 @@ export function login(returnTo: string = location.pathname + location.search): v
 	authorize.searchParams.set('redirect_uri', redirectUri());
 	authorize.searchParams.set('scope', provider.scope);
 	authorize.searchParams.set('state', state);
+	console.log('[auth] starting OAuth login, returning to', returnTo);
 	location.assign(authorize.toString());
 }
 
@@ -107,6 +109,7 @@ export async function handleCallback(url: URL): Promise<string> {
 
 /** Log out: drop the token locally and best-effort revoke it at the broker. */
 export async function logout(): Promise<void> {
+	console.log('[auth] logging out');
 	const token = auth.token;
 	clear();
 	if (token && provider.brokerUrl) {

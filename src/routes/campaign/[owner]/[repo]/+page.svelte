@@ -64,13 +64,17 @@
     prNumber: number,
   ): Promise<string | null> {
     busyMessage = `Campaign automation is processing PR #${prNumber}…`;
+    console.log("[pr] waiting for automation to process PR", prNumber);
     const deadline = Date.now() + 120_000;
     while (Date.now() < deadline) {
       await sleep(3000);
       if ((await f.getPullRequestState(owner, repo, prNumber)) === "closed") {
-        return f.getLastIssueComment(owner, repo, prNumber);
+        const verdict = await f.getLastIssueComment(owner, repo, prNumber);
+        console.log("[pr] PR", prNumber, "processed; verdict:", verdict);
+        return verdict;
       }
     }
+    console.log("[pr] PR", prNumber, "not processed within 120s (still in flight)");
     return null;
   }
 
@@ -157,6 +161,12 @@
         rows = state.rows;
         validationColumns = state.validationColumns;
         locks = parseLockCsv(lockCsv);
+        console.log(
+          "[load] tables loaded:",
+          taskDefs.length, "task(s),",
+          rows.length, "state row(s),",
+          locks.length, "lock(s)",
+        );
       }
       loaded = true;
     } catch (e) {
@@ -210,6 +220,7 @@
       kind,
     });
     const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
+    console.log("[claim] opening claim PR", { task_id, subtask_id, kind, user: viewer });
     return f.openChangePr(owner, repo, {
       branch: `claim-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
       files: [{ path: LOCK_PATH, content: serializeLockCsv(lockRows) }],
@@ -224,6 +235,7 @@
       try {
         busyMessage = "Opening claim PR…";
         const pr = await openClaimPr(f, task_id, subtask_id, "validation");
+        console.log("[claim] claim PR opened", pr.number, pr.html_url);
         const verdict = await waitForPrProcessed(f, pr.number);
         return verdictResult(
           verdict,
@@ -273,13 +285,20 @@
         }
         const meiParam = "&connect=true";
 
-        const downloadUrl = await f.getRepoFileDownloadUrl(
-          workRepo.owner,
-          workRepo.repo,
-          fragment,
-          ref,
-        );
-        console.log("[editor] downloadUrl for", fragment, "@", `${workRepo.owner}/${workRepo.repo}#${ref}`, "=>", downloadUrl);
+        // The branch ref was created or moved a moment ago, and GitHub's
+        // Contents API can briefly lag ref updates — retry the lookup rather
+        // than failing on that race.
+        let downloadUrl: string | null = null;
+        for (let attempt = 1; attempt <= 5 && !downloadUrl; attempt++) {
+          if (attempt > 1) await sleep(1500);
+          downloadUrl = await f.getRepoFileDownloadUrl(
+            workRepo.owner,
+            workRepo.repo,
+            fragment,
+            ref,
+          );
+          console.log("[editor] downloadUrl attempt", attempt, "for", fragment, "@", `${workRepo.owner}/${workRepo.repo}#${ref}`, "=>", downloadUrl);
+        }
         if (!downloadUrl)
           return {
             error: `Could not get a download URL for ${fragment}.`,
@@ -301,6 +320,7 @@
         if (task.status === "encoding_required" && !mine) {
           busyMessage = "Opening the encoding claim PR…";
           const pr = await openClaimPr(f, task_id, "", "encoding");
+          console.log("[editor] encoding claim PR opened", pr.number, pr.html_url);
           prUrl = pr.html_url;
           const verdict = await waitForPrProcessed(f, pr.number);
           const res = verdictResult(
@@ -355,6 +375,7 @@
           base,
           body: `Submits the encoding of ${task_id} by @${viewer}, edited in mei-friend. Opened from the campaign console.`,
         });
+        console.log("[submitpr] submission PR opened", pr.number, pr.html_url);
         const verdict = await waitForPrProcessed(f, pr.number);
         return verdictResult(
           verdict,
@@ -374,6 +395,7 @@
         const fragment = fragmentOf(task_id);
         if (!fragment) return { error: `Unknown task ${task_id}.` };
         busyMessage = "Fetching the raw link…";
+        console.log("[rawlink] fetching raw link for", task_id, "fragment", fragment);
         const rawUrl = await f.getRepoFileDownloadUrl(owner, repo, fragment);
         if (!rawUrl)
           return { error: `Could not get a raw link for ${fragment}.` };
@@ -400,6 +422,7 @@
           };
         row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
         busyMessage = "Opening the validation PR…";
+        console.log("[validate] opening validation PR", { task_id, subtask_id, verdict, slot });
         const pr = await f.openChangePr(owner, repo, {
           branch: `validate-${task_id}-${subtask_id}-${rand()}`,
           files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
@@ -407,6 +430,7 @@
           title: `Validate ${task_id}/${subtask_id} (${verdict})`,
           body: `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`,
         });
+        console.log("[validate] validation PR opened", pr.number, pr.html_url);
         const outcome = await waitForPrProcessed(f, pr.number);
         return verdictResult(
           outcome,
@@ -427,6 +451,7 @@
         busyMessage = "Dispatching the stale-lock reaper…";
         const { branch } = await f.getRepoHead(owner, repo);
         const dispatchedAt = Date.now();
+        console.log("[reaper] dispatching caller.yml on", branch);
         await f.dispatchWorkflow(owner, repo, "caller.yml", branch);
         busyMessage = "Waiting for the reaper run to finish…";
         const deadline = Date.now() + 90_000;
@@ -444,6 +469,7 @@
             Date.parse(runInfo.created_at) >= dispatchedAt - 15_000 &&
             runInfo.status === "completed"
           ) {
+            console.log("[reaper] run finished with conclusion:", runInfo.conclusion);
             if (runInfo.conclusion !== "success") {
               return {
                 error: `The reaper run finished with "${runInfo.conclusion}" — check the repository's Actions log.`,

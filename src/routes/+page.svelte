@@ -136,6 +136,7 @@
 		}
 
 		submitting = true;
+		console.log('[create] creating campaign', { title: t, handle: h, sourceMode, visibility });
 
 		// Facsimile source: render pages and detect measures BEFORE creating the
 		// repo, so a detection failure doesn't leave an orphaned repository behind.
@@ -152,6 +153,13 @@
 				progress = null;
 				return;
 			}
+			console.log(
+				'[create] facsimile prepared:',
+				facsimile.pages.length,
+				'page(s),',
+				facsimile.pages.reduce((n, p) => n + p.measures.length, 0),
+				'measure(s) detected'
+			);
 			if (facsimile.pages.every((p) => p.measures.length === 0)) {
 				error = 'No measures were detected on the uploaded pages. Check the images and try again.';
 				submitting = false;
@@ -171,6 +179,7 @@
 				isPrivate: visibility === 'private'
 			});
 			const owner = repo.owner.login;
+			console.log('[create] repo created:', repo.full_name, repo.html_url);
 
 			// Tag it so it shows up in the listing (non-fatal: repo already exists).
 			try {
@@ -236,6 +245,7 @@
 					],
 					'Initialise campaign'
 				);
+				console.log('[create] campaign initialised: committed config, score and tracking tables');
 			} catch (err) {
 				console.error('Campaign initialisation failed:', (err as Error).message);
 				created = { html_url: repo.html_url, full_name: repo.full_name, initWarning: true };
