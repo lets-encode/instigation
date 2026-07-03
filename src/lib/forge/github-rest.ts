@@ -10,6 +10,12 @@ const baseHeaders: Record<string, string> = {
 	'X-GitHub-Api-Version': '2022-11-28'
 };
 
+// All GETs pass `cache: 'no-store'`: the API responds with
+// `Cache-Control: max-age=60`, which would otherwise let the browser serve a
+// stale cached response (e.g. an early 404 right after a ref was created, or
+// an open PR that has since closed) to the polls and retries this app relies
+// on. In runtimes without an HTTP cache (Node) the option is a no-op.
+
 // Decode GitHub's base64 file content to a UTF-8 string without Node's Buffer, so
 // this runs in the browser too. GitHub wraps the base64 in newlines — strip
 // whitespace before decoding.
@@ -74,7 +80,8 @@ export async function getAuthenticatedUser(
 	token: string
 ): Promise<{ user: GitHubUser; scopes: string } | null> {
 	const res = await fetch(`${API}/user`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	if (!res.ok) return null;
 	const user: GitHubUser = await res.json();
@@ -137,7 +144,8 @@ export async function getRepoFile(
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
 	const res = await fetch(`${API}/repos/${owner}/${repo}/contents/${path}${query}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	if (res.status === 404) return null;
 	const data: { content?: string; message?: string } = await res.json().catch(() => ({}));
@@ -161,7 +169,8 @@ export async function getRepoFileDownloadUrl(
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
 	const res = await fetch(`${API}/repos/${owner}/${repo}/contents/${path}${query}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	if (res.status === 404) {
 		console.log('[getRepoFileDownloadUrl] 404 (path or ref absent)', { owner, repo, path, ref });
@@ -183,11 +192,11 @@ export async function getRepoHead(
 	repo: string
 ): Promise<{ branch: string; sha: string; canPush: boolean }> {
 	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
-	const repoRes = await fetch(`${API}/repos/${owner}/${repo}`, { headers });
+	const repoRes = await fetch(`${API}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	const repoData: RepoData = await repoRes.json().catch(() => ({}));
 	if (!repoRes.ok) throw new Error(`${repoData.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
 	const branch = repoData.default_branch;
-	const refRes = await fetch(`${API}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers });
+	const refRes = await fetch(`${API}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers, cache: 'no-store' });
 	const refData: { object: { sha: string }; message?: string } = await refRes.json().catch(() => ({}));
 	if (!refRes.ok) throw new Error(`${refData.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
 	return { branch, sha: refData.object.sha, canPush: Boolean(repoData.permissions?.push) };
@@ -218,7 +227,7 @@ export async function ensureFork(
 	const [forkOwner, forkRepo] = data.full_name.split('/');
 	// Poll until the fork's default branch ref exists (the fork is populated).
 	for (let i = 0; i < attempts; i++) {
-		const r = await fetch(`${API}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers });
+		const r = await fetch(`${API}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
 		if (r.ok) return { owner: forkOwner, repo: forkRepo };
 		await new Promise((resolve) => setTimeout(resolve, delayMs));
 	}
@@ -229,7 +238,7 @@ export async function ensureFork(
 export async function repoExists(owner: string, repo: string, token?: string): Promise<boolean> {
 	const headers: Record<string, string> = { ...baseHeaders };
 	if (token) headers.Authorization = `Bearer ${token}`;
-	const res = await fetch(`${API}/repos/${owner}/${repo}`, { headers });
+	const res = await fetch(`${API}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	if (res.status === 404) return false;
 	if (!res.ok) {
 		const data: ErrorResponse = await res.json().catch(() => ({}));
@@ -241,7 +250,8 @@ export async function repoExists(owner: string, repo: string, token?: string): P
 /** Whether the repo is private (its raw download URLs then carry a short-lived token). */
 export async function getRepoIsPrivate(token: string, owner: string, repo: string): Promise<boolean> {
 	const res = await fetch(`${API}/repos/${owner}/${repo}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	const data: RepoData = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(data.message || 'Failed to read repository');
@@ -256,7 +266,8 @@ export async function getPullRequestFiles(
 	number: number
 ): Promise<Array<{ filename: string; status: string; patch?: string }>> {
 	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	const data = await res.json().catch(() => []);
 	if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to list pull request files');
@@ -277,7 +288,8 @@ export async function getRepoSubscription(
 	repo: string
 ): Promise<{ subscribed: boolean; ignored: boolean } | null> {
 	const res = await fetch(`${API}/repos/${owner}/${repo}/subscription`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	if (res.status === 404) return null;
 	const data: { subscribed?: boolean; ignored?: boolean; message?: string } = await res
@@ -312,7 +324,8 @@ export async function getPullRequestState(
 	number: number
 ): Promise<string> {
 	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		cache: 'no-store'
 	});
 	const data: { state?: string; message?: string } = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
@@ -328,7 +341,7 @@ export async function getLastIssueComment(
 ): Promise<string | null> {
 	const res = await fetch(
 		`${API}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1&sort=created&direction=desc`,
-		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` } }
+		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` }, cache: 'no-store' }
 	);
 	const data = await res.json().catch(() => []);
 	if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to read comments');
@@ -346,7 +359,7 @@ export async function getLatestWorkflowRun(
 ): Promise<{ status: string; conclusion: string | null; created_at: string } | null> {
 	const res = await fetch(
 		`${API}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
-		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` } }
+		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` }, cache: 'no-store' }
 	);
 	const data: {
 		workflow_runs?: Array<{ status: string; conclusion: string | null; created_at: string }>;
@@ -427,7 +440,7 @@ export async function commitFiles(
 	const api = `${API}/repos/${owner}/${repo}`;
 
 	const gh = async <T>(path: string, init?: RequestInit): Promise<T> => {
-		const res = await fetch(`${api}${path}`, { headers, ...init });
+		const res = await fetch(`${api}${path}`, { headers, cache: 'no-store', ...init });
 		const data = await res.json().catch(() => ({}));
 		if (!res.ok) throw new Error(`${(data as ErrorResponse).message || 'GitHub API error'} (${res.status} ${init?.method ?? 'GET'} ${path})`);
 		return data as T;
@@ -648,7 +661,8 @@ export async function searchReposByTopic(topic: string, token?: string): Promise
 	const headers: Record<string, string> = { ...baseHeaders };
 	if (token) headers.Authorization = `Bearer ${token}`;
 	const res = await fetch(`${API}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, {
-		headers
+		headers,
+		cache: 'no-store'
 	});
 	if (!res.ok) {
 		const data: ErrorResponse = await res.json().catch(() => ({}));
