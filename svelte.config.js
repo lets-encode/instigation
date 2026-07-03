@@ -27,7 +27,9 @@ const config = {
 			mode: 'hash',
 			directives: {
 				'default-src': ['self'],
-				'script-src': ['self'],
+				// 'wasm-unsafe-eval' permits compiling WebAssembly (the Verovio
+				// score renderer) but not JS eval().
+				'script-src': ['self', 'wasm-unsafe-eval'],
 				'style-src': ['self', 'unsafe-inline'],
 				'img-src': ['self', 'https://avatars.githubusercontent.com'],
 				'connect-src': [

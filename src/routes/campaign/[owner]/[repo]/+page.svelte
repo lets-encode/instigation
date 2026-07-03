@@ -52,6 +52,74 @@
   let busyMessage = $state("");
   let result = $state<Result>(null);
 
+  let preview = $state<{
+    taskId: string;
+    loading: boolean;
+    svg?: string;
+    error?: string;
+    page: number;
+    pageCount: number;
+  } | null>(null);
+
+  // Verovio is a ~2 MB WASM module — loaded on first preview, then reused.
+  let verovio: import("verovio/esm").VerovioToolkit | null = null;
+  async function getVerovio() {
+    if (!verovio) {
+      const [{ default: createVerovioModule }, { VerovioToolkit }] =
+        await Promise.all([import("verovio/wasm"), import("verovio/esm")]);
+      verovio = new VerovioToolkit(await createVerovioModule());
+      verovio.setOptions({
+        pageWidth: 2100,
+        pageHeight: 2970,
+        adjustPageHeight: true,
+        scale: 40,
+        footer: "none",
+        svgViewBox: true,
+      });
+    }
+    return verovio;
+  }
+
+  async function togglePreview(task_id: string) {
+    if (preview?.taskId === task_id) {
+      preview = null;
+      return;
+    }
+    const f = forge();
+    if (!f) return;
+    preview = { taskId: task_id, loading: true, page: 1, pageCount: 1 };
+    try {
+      const fragment = fragmentOf(task_id);
+      if (!fragment) throw new Error(`Unknown task ${task_id}.`);
+      const [mei, tk] = await Promise.all([
+        f.getRepoFile(owner, repo, fragment),
+        getVerovio(),
+      ]);
+      if (mei == null) throw new Error(`Could not read ${fragment}.`);
+      if (!tk.loadData(mei))
+        throw new Error(`Verovio could not parse ${fragment}.`);
+      const pageCount = tk.getPageCount();
+      const svg = tk.renderToSVG(1);
+      if (preview?.taskId === task_id)
+        preview = { taskId: task_id, loading: false, svg, page: 1, pageCount };
+    } catch (e) {
+      if (preview?.taskId === task_id)
+        preview = {
+          taskId: task_id,
+          loading: false,
+          error: `Preview failed: ${(e as Error).message}`,
+          page: 1,
+          pageCount: 1,
+        };
+    }
+  }
+
+  // Pages stay loaded in the toolkit, so flipping is a pure re-render.
+  function previewPage(page: number) {
+    if (!preview || !verovio || page < 1 || page > preview.pageCount) return;
+    preview = { ...preview, page, svg: verovio.renderToSVG(page) };
+  }
+
   const copy = (text: string) =>
     navigator.clipboard?.writeText(text).catch(() => {});
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -516,10 +584,8 @@
     </a>
   </p>
   <p class="muted">
-    Drive the campaign automation: open the score in mei-friend (which also
-    claims the encoding task), submit work, validate, and run the reaper. Each
-    opens the same kind of pull request a volunteer client would, waits for the
-    automation to process it, and then refreshes the tables.
+    Claim a task to encode it in mei-friend, submit your work when done, or
+    validate someone else's encoding. Hover a button for details.
   </p>
 </header>
 
@@ -629,15 +695,25 @@
                       task.status === "encoding_required" ||
                       myEncodingLock(task.task_id)
                     )}
-                  title="Opens score.mei in mei-friend; claims the encoding task if not already yours"
+                  title="Claims this task for you and opens the score in mei-friend. Commit your encoding there, then use “Submit encoding”. Enabled while the task needs an encoder or is already yours."
                 >
                   Claim (encode)
                 </button>
                 <button
                   type="button"
+                  onclick={() => togglePreview(task.task_id)}
+                  disabled={busy}
+                  title="Show the task's score rendered in the console (read-only)"
+                >
+                  {preview?.taskId === task.task_id ? "Hide preview" : "Preview"}
+                </button>
+                <button
+                  type="button"
                   onclick={() => rawlink(task.task_id)}
                   disabled={busy}
-                  title="Get the tokenised raw link to paste into mei-friend manually"
+                  title={isPrivate
+                    ? "Copy a direct link to the score file to paste into mei-friend manually. The link is tokenised for this private repository and expires within minutes."
+                    : "Copy a direct link to the score file to paste into mei-friend manually"}
                 >
                   Copy raw link
                 </button>
@@ -648,7 +724,7 @@
                   type="button"
                   onclick={() => submitpr(task.task_id)}
                   disabled={busy || !myEncodingLock(task.task_id)}
-                  title="After committing your encoding in mei-friend, open the submission PR (advances the task to validation)"
+                  title="After committing your encoding in mei-friend, submit it for validation. Enabled once you hold the encoding claim."
                 >
                   Submit encoding
                 </button>
@@ -658,6 +734,41 @@
         {/each}
       </tbody>
     </table>
+
+    {#if preview}
+      <div class="preview">
+        <div class="preview-head">
+          <strong>Score preview — <code>{preview.taskId}</code></strong>
+          <div class="preview-nav">
+            {#if preview.pageCount > 1}
+              <button
+                type="button"
+                onclick={() => previewPage(preview!.page - 1)}
+                disabled={preview.page <= 1}
+              >
+                ← Prev
+              </button>
+              <span class="muted">Page {preview.page} / {preview.pageCount}</span>
+              <button
+                type="button"
+                onclick={() => previewPage(preview!.page + 1)}
+                disabled={preview.page >= preview.pageCount}
+              >
+                Next →
+              </button>
+            {/if}
+            <button type="button" onclick={() => (preview = null)}>Close</button>
+          </div>
+        </div>
+        {#if preview.loading}
+          <p class="muted">Rendering the score with Verovio…</p>
+        {:else if preview.error}
+          <div class="banner err">{preview.error}</div>
+        {:else}
+          <div class="preview-svg">{@html preview.svg}</div>
+        {/if}
+      </div>
+    {/if}
 
     <h2>Validation subtasks</h2>
     <table>
@@ -684,7 +795,7 @@
                   disabled={busy ||
                     sub.status !== "validation_required" ||
                     encoderOf(sub.task_id) === viewer}
-                  title="Reserve this subtask for validation (the encoder cannot validate their own work)"
+                  title="Reserve this subtask for validation. Encoders cannot validate their own work."
                 >
                   Claim (validate)
                 </button>
@@ -696,6 +807,7 @@
                   onclick={() => validate(sub.task_id, sub.subtask_id, "pass")}
                   disabled={busy ||
                     !lockFor(sub.task_id, sub.subtask_id, "validation")}
+                  title="Record a passing verdict. Enabled once the subtask is claimed for validation."
                 >
                   Validate: pass
                 </button>
@@ -704,6 +816,7 @@
                   onclick={() => validate(sub.task_id, sub.subtask_id, "fail")}
                   disabled={busy ||
                     !lockFor(sub.task_id, sub.subtask_id, "validation")}
+                  title="Record a failing verdict — the task goes back to encoding. Enabled once the subtask is claimed for validation."
                 >
                   fail
                 </button>
@@ -739,24 +852,6 @@
       </table>
     {/if}
 
-    <p class="note">
-      <strong>Claim (encode)</strong> loads the score in mei-friend
-      {#if isPrivate}
-        from a short-lived tokenised raw URL (so it works for this private repo)
-        — open it promptly, the token expires within minutes
-      {:else}
-        from its public raw URL
-      {/if}
-      and, at the same time, opens an encoding claim PR. You add the content in mei-friend
-      and commit it there (to a branch, or to your fork if you can't push); then
-      <strong>Submit encoding</strong> opens the submission PR that opens its
-      subtasks for validation.<br />
-      A task's <strong>encoder cannot validate their own work</strong> (peer
-      review): logged in as
-      <code>{viewer}</code>, you'll need a second GitHub account to test a
-      passing validation. Buttons enable only when the relevant state/lock
-      allows the action.
-    </p>
   {/if}
 {/if}
 
@@ -912,13 +1007,30 @@
     opacity: 0.45;
     cursor: default;
   }
-  .note {
-    font-size: 0.85rem;
-    color: #6a5300;
-    background: #fff8e1;
-    border: 1px solid #f0dca0;
+  .preview {
+    border: 1px solid #e5e5e5;
     border-radius: 8px;
     padding: 0.6rem 0.8rem;
+    margin-bottom: 1.5rem;
+  }
+  .preview-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.4rem;
+  }
+  .preview-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .preview-svg {
+    overflow-x: auto;
+  }
+  .preview-svg :global(svg) {
+    max-width: 100%;
+    height: auto;
   }
   .rawlink {
     display: flex;

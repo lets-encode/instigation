@@ -57,7 +57,7 @@ const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encod
 const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
 const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail'];
 
-// v1 defaults for fields the create form does not (yet) surface.
+// v1 defaults for fields the create form does not surface.
 const DEFAULTS = {
 	language: 'en',
 	license: 'CC-BY-4.0',

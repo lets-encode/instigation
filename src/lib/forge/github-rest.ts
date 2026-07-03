@@ -205,7 +205,13 @@ export async function ensureFork(
 	{ attempts = 20, delayMs = 1500 }: { attempts?: number; delayMs?: number } = {}
 ): Promise<{ owner: string; repo: string }> {
 	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
-	const res = await fetch(`${API}/repos/${owner}/${repo}/forks`, { method: 'POST', headers });
+	const res = await fetch(`${API}/repos/${owner}/${repo}/forks`, {
+		method: 'POST',
+		headers,
+		// Only the default branch — the fork doesn't need copies of upstream's
+		// in-flight claim branches.
+		body: JSON.stringify({ default_branch_only: true })
+	});
 	const data: { full_name: string; default_branch: string; message?: string } = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(`${data.message || 'Failed to fork repository'} (${res.status} POST forks)`);
 
@@ -217,6 +223,19 @@ export async function ensureFork(
 		await new Promise((resolve) => setTimeout(resolve, delayMs));
 	}
 	throw new Error(`Fork ${forkOwner}/${forkRepo} was not ready in time.`);
+}
+
+/** Whether a repo named `repo` exists under `owner` (any visibility the token can see). */
+export async function repoExists(owner: string, repo: string, token?: string): Promise<boolean> {
+	const headers: Record<string, string> = { ...baseHeaders };
+	if (token) headers.Authorization = `Bearer ${token}`;
+	const res = await fetch(`${API}/repos/${owner}/${repo}`, { headers });
+	if (res.status === 404) return false;
+	if (!res.ok) {
+		const data: ErrorResponse = await res.json().catch(() => ({}));
+		throw new Error(data.message || 'Failed to check repository name');
+	}
+	return true;
 }
 
 /** Whether the repo is private (its raw download URLs then carry a short-lived token). */

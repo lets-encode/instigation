@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { auth, login, forge } from '$lib/auth.svelte.ts';
 	import { provider, automation } from '$lib/forge/config.ts';
-	import { searchReposByTopic } from '$lib/forge/github-rest.ts';
+	import { searchReposByTopic, repoExists } from '$lib/forge/github-rest.ts';
 	import type { FileChange, RepoSummary } from '$lib/forge/types.ts';
 	import {
 		buildCampaignConfig,
@@ -46,14 +46,84 @@
 	let created = $state<{ html_url: string; full_name: string; initWarning: boolean } | null>(null);
 
 	// Score source: scaffold from uploaded page images/PDF (measure detection),
-	// start from a blank template, or (later) an existing MEI/MusicXML upload.
+	// start from a blank template, or an existing MEI/MusicXML upload (that
+	// option is disabled in the form).
 	let sourceMode = $state<'facsimile' | 'blank' | 'existing'>('facsimile');
 	let sourceFiles = $state<File[]>([]);
 	let progress = $state<string | null>(null);
+	let dragActive = $state(false);
+	let dropNote = $state<string | null>(null);
+
+	const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'application/pdf'];
 
 	function onFilesChange(e: Event) {
 		sourceFiles = Array.from((e.currentTarget as HTMLInputElement).files ?? []);
+		dropNote = null;
 	}
+
+	function onDrop(e: DragEvent) {
+		e.preventDefault();
+		dragActive = false;
+		const dropped = Array.from(e.dataTransfer?.files ?? []);
+		const accepted = dropped.filter((f) => ACCEPTED_TYPES.includes(f.type));
+		if (accepted.length === 0) {
+			dropNote = 'Only JPG, PNG or PDF files are supported.';
+			return;
+		}
+		sourceFiles = accepted;
+		dropNote =
+			accepted.length < dropped.length
+				? `${dropped.length - accepted.length} file(s) skipped — only JPG, PNG or PDF are supported.`
+				: null;
+	}
+
+	// Creative Commons license options. Each carries a short summary of what the
+	// choice allows, shown next to the dropdown so the implications are visible
+	// before the campaign is created.
+	const LICENSES = [
+		{
+			id: 'CC0-1.0',
+			name: 'CC0 1.0 — Public domain',
+			url: 'https://creativecommons.org/publicdomain/zero/1.0/',
+			info: 'No rights reserved: anyone may copy, adapt and redistribute the encoding for any purpose, including commercially, without crediting anyone.'
+		},
+		{
+			id: 'CC-BY-4.0',
+			name: 'CC BY 4.0 — Attribution',
+			url: 'https://creativecommons.org/licenses/by/4.0/',
+			info: 'Anyone may share and adapt the encoding, including commercially, as long as they credit the campaign.'
+		},
+		{
+			id: 'CC-BY-SA-4.0',
+			name: 'CC BY-SA 4.0 — Attribution, ShareAlike',
+			url: 'https://creativecommons.org/licenses/by-sa/4.0/',
+			info: 'Like CC BY, but anything built on the encoding must be published under this same license.'
+		},
+		{
+			id: 'CC-BY-NC-4.0',
+			name: 'CC BY-NC 4.0 — Attribution, NonCommercial',
+			url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+			info: 'Sharing and adapting with credit is allowed for non-commercial purposes only. Commercial reuse (e.g. in paid publications or apps) needs separate permission.'
+		},
+		{
+			id: 'CC-BY-NC-SA-4.0',
+			name: 'CC BY-NC-SA 4.0 — Attribution, NonCommercial, ShareAlike',
+			url: 'https://creativecommons.org/licenses/by-nc-sa/4.0/',
+			info: 'Non-commercial use only, with credit, and anything built on the encoding must keep this same license.'
+		},
+		{
+			id: 'CC-BY-ND-4.0',
+			name: 'CC BY-ND 4.0 — Attribution, NoDerivatives',
+			url: 'https://creativecommons.org/licenses/by-nd/4.0/',
+			info: 'The encoding may be shared with credit, but not modified. Others cannot build corrected or extended editions on top of it.'
+		},
+		{
+			id: 'CC-BY-NC-ND-4.0',
+			name: 'CC BY-NC-ND 4.0 — Attribution, NonCommercial, NoDerivatives',
+			url: 'https://creativecommons.org/licenses/by-nc-nd/4.0/',
+			info: 'Most restrictive: the encoding may only be shared unchanged, with credit, and not for commercial purposes.'
+		}
+	];
 
 	let visibility = $state('public');
 	let title = $state('');
@@ -63,27 +133,145 @@
 	let license = $state('CC-BY-4.0');
 	let composer = $state('');
 
+	const selectedLicense = $derived(LICENSES.find((l) => l.id === license) ?? LICENSES[0]);
+
 	$effect(() => {
 		if (!handleTouched) handle = makeHandle(title);
 	});
 
+	// Live availability check for the handle: against the campaign repos already
+	// fetched (public ones of every user, plus the user's own private matches),
+	// and against the user's own account for any other repo of the same name.
+	// Debounced; a sequence number discards results of superseded checks.
+	let handleCheck = $state<
+		| { state: 'idle' }
+		| { state: 'invalid' }
+		| { state: 'checking' }
+		| { state: 'available' }
+		| { state: 'taken'; by: string }
+		| { state: 'unknown' }
+	>({ state: 'idle' });
+	let handleCheckSeq = 0;
+
+	$effect(() => {
+		const h = handle.trim();
+		const user = auth.user;
+		const token = auth.token ?? undefined;
+		const campaignRepos = repos;
+		const seq = ++handleCheckSeq;
+		if (!h || !user) {
+			handleCheck = { state: 'idle' };
+			return;
+		}
+		if (!/^[A-Za-z0-9_-]+$/.test(h)) {
+			handleCheck = { state: 'invalid' };
+			return;
+		}
+		handleCheck = { state: 'checking' };
+		const timer = setTimeout(async () => {
+			const clash = campaignRepos.find((r) => r.name.toLowerCase() === h.toLowerCase());
+			if (clash) {
+				if (seq === handleCheckSeq) handleCheck = { state: 'taken', by: clash.full_name };
+				return;
+			}
+			try {
+				const exists = await repoExists(user.login, h, token);
+				if (seq === handleCheckSeq) {
+					handleCheck = exists ? { state: 'taken', by: `${user.login}/${h}` } : { state: 'available' };
+				}
+			} catch {
+				if (seq === handleCheckSeq) handleCheck = { state: 'unknown' };
+			}
+		}, 400);
+		return () => clearTimeout(timer);
+	});
+
 	// Generic words dropped when deriving a handle, so the distinctive words of a
-	// title survive. Stop words, plus key/mode names common to many pieces.
+	// title survive. Articles, prepositions and conjunctions in the languages
+	// common to the music repertoire. Single letters (a, e, y, à…) need no entry —
+	// the lone-letter rule below drops them. Words with diacritics are listed as
+	// they arrive after transliteration (für → fuer, dièse → diese).
 	const STOP_WORDS = new Set([
-		'the', 'a', 'an', 'of', 'in', 'for', 'and', 'or', 'to', 'from', 'on', 'by', 'at', 'with',
-		'de', 'la', 'le', 'les', 'des', 'du', 'der', 'die', 'das', 'und', 'et', 'il', 'el'
+		// English
+		'the', 'an', 'of', 'in', 'for', 'and', 'or', 'to', 'from', 'on', 'by', 'at', 'with',
+		// German
+		'der', 'die', 'das', 'dem', 'den', 'des', 'ein', 'eine', 'einem', 'einen', 'einer', 'eines',
+		'und', 'oder', 'im', 'am', 'an', 'auf', 'aus', 'bei', 'mit', 'nach', 'von', 'vor', 'zu',
+		'zum', 'zur', 'fuer', 'ueber', 'unter',
+		// Italian
+		'il', 'lo', 'gli', 'le', 'un', 'uno', 'una', 'di', 'da', 'su', 'con', 'per', 'tra', 'fra',
+		'ed', 'ad', 'al', 'allo', 'alla', 'alle', 'agli', 'dal', 'dallo', 'dalla', 'dalle',
+		'del', 'dello', 'della', 'delle', 'dei', 'degli', 'nel', 'nello', 'nella', 'nelle',
+		'sul', 'sullo', 'sulla', 'sulle',
+		// French
+		'la', 'les', 'une', 'de', 'du', 'des', 'et', 'ou', 'au', 'aux', 'en',
+		'sur', 'pour', 'dans', 'par', 'avec', 'sans',
+		// Spanish
+		'el', 'los', 'las', 'unos', 'unas', 'sin', 'sobre', 'para', 'por',
+		// Latin
+		'ad', 'ab', 'cum', 'ex', 'pro', 'sub', 'super'
 	]);
-	const MODE_WORDS = new Set(['major', 'minor', 'sharp', 'flat', 'dur', 'moll']);
+	// Key designations ("Si bémol majeur", "c-Moll", "C sharp minor") are collapsed
+	// into one normalised token — note letter, s/b for sharp/flat, English mode —
+	// so the key survives in the handle as a uniform qualifier: bb-major, cs-minor.
+	const KEY_MODES: Record<string, string> = {
+		major: 'major', dur: 'major', maggiore: 'major', majeur: 'major', mayor: 'major',
+		minor: 'minor', moll: 'minor', minore: 'minor', mineur: 'minor', menor: 'minor'
+	};
+	const KEY_ACCIDENTALS: Record<string, string> = {
+		sharp: 's', diesis: 's', diese: 's', sostenido: 's',
+		flat: 'b', bemolle: 'b', bemol: 'b'
+	};
+	const SOLFEGE_NOTES: Record<string, string> = {
+		do: 'c', ut: 'c', re: 'd', mi: 'e', fa: 'f', sol: 'g', la: 'a', si: 'b'
+	};
+	// German note names carry their accidental ("Fis"), and b/h differ from the
+	// English letters: German B is B flat, H is B natural.
+	const GERMAN_NOTES: Record<string, string> = {
+		c: 'c', d: 'd', e: 'e', f: 'f', g: 'g', a: 'a', h: 'b', b: 'bb',
+		ces: 'cb', cis: 'cs', des: 'db', dis: 'ds', es: 'eb', fis: 'fs',
+		ges: 'gb', gis: 'gs', as: 'ab', ais: 'as'
+	};
+	// Key vocabulary that appears outside a parsable key designation (a stray
+	// "majeur" or "sol") is dropped rather than kept as a title word.
+	const MODE_WORDS = new Set([
+		...Object.keys(KEY_MODES),
+		...Object.keys(KEY_ACCIDENTALS),
+		...Object.keys(SOLFEGE_NOTES),
+		'ces', 'cis', 'des', 'dis', 'es', 'fis', 'ges', 'gis', 'as', 'ais'
+	]);
+
+	// Match a key designation at tokens[i]: a note, an optional accidental word,
+	// and a mode word. The note is read per the mode word's language — German
+	// Dur/Moll uses the German note names, anything else a letter or solfège.
+	// Returns the normalised token and how many tokens the designation spans.
+	function matchKey(tokens: string[], i: number): { token: string; span: number } | null {
+		for (const span of [3, 2]) {
+			const modeWord = tokens[i + span - 1] ?? '';
+			const mode = KEY_MODES[modeWord];
+			if (!mode) continue;
+			const accidental = span === 3 ? KEY_ACCIDENTALS[tokens[i + 1]] : '';
+			if (span === 3 && !accidental) continue;
+			const note =
+				modeWord === 'dur' || modeWord === 'moll'
+					? GERMAN_NOTES[tokens[i]]
+					: (SOLFEGE_NOTES[tokens[i]] ?? (/^[a-g]$/.test(tokens[i]) ? tokens[i] : undefined));
+			if (!note) continue;
+			return { token: `${note}${accidental}-${mode}`, span };
+		}
+		return null;
+	}
 	// Catalogue labels (e.g. "Op. 125", "BWV 1043"): the label and its number are
 	// both dropped, since they don't help recognise the piece by name.
-	const CATALOGUE_WITH_NUMBER = new Set(['op', 'opus', 'k', 'kv', 'bwv', 'woo', 'hob', 'rv', 'd', 's', 'l', 'wq']);
+	const CATALOGUE_WITH_NUMBER = new Set(['op', 'opus', 'k', 'kv', 'bwv', 'woo', 'hob', 'rv', 'd', 's', 'l', 'wq', 'hwv', 'twv']);
 	// Labels whose following number names the piece (Symphony No. 9): drop the
 	// label, keep the number.
-	const CATALOGUE_KEEP_NUMBER = new Set(['no', 'nr', 'number']);
+	const CATALOGUE_KEEP_NUMBER = new Set(['no', 'nr', 'num', 'number', 'nummer', 'numero']);
 
 	// Derive a short, slug-safe handle from a piece title: lowercase and strip
-	// diacritics, drop stop words and catalogue noise, then keep the first few
-	// distinctive words. Falls back to the raw words if everything was dropped.
+	// diacritics, normalise key designations, drop stop words and catalogue noise,
+	// then keep the first few distinctive words (a normalised key counts as one).
+	// Falls back to the raw words if everything was dropped.
 	function makeHandle(name: string): string {
 		const tokens = name
 			.replace(/[äÄ]/g, 'ae')
@@ -99,6 +287,12 @@
 		const kept: string[] = [];
 		for (let i = 0; i < tokens.length; i++) {
 			const t = tokens[i];
+			const key = matchKey(tokens, i);
+			if (key) {
+				kept.push(key.token);
+				i += key.span - 1;
+				continue;
+			}
 			if (CATALOGUE_WITH_NUMBER.has(t)) {
 				if (/^\d+$/.test(tokens[i + 1] ?? '')) i++; // drop the catalogue number too
 				continue;
@@ -130,6 +324,9 @@
 		if (!h) return void (error = 'A handle is required.');
 		if (!/^[A-Za-z0-9_-]+$/.test(h)) {
 			return void (error = 'The handle may only contain letters, numbers, hyphens and underscores.');
+		}
+		if (handleCheck.state === 'taken') {
+			return void (error = `The handle "${h}" is already in use by ${handleCheck.by}. Pick a different one.`);
 		}
 		if (sourceMode === 'facsimile' && sourceFiles.length === 0) {
 			return void (error = 'Add at least one page image or a PDF, or choose a different source.');
@@ -330,6 +527,17 @@
 					required
 				/>
 				<span class="hint">Used in the URL and as the Git repository name. Auto-filled from the campaign name — edit it if you like.</span>
+				{#if handleCheck.state === 'checking'}
+					<span class="hint">Checking availability…</span>
+				{:else if handleCheck.state === 'available'}
+					<span class="hint hint-ok">✓ Available</span>
+				{:else if handleCheck.state === 'taken'}
+					<span class="hint hint-err">✗ Already used by {handleCheck.by}</span>
+				{:else if handleCheck.state === 'invalid'}
+					<span class="hint hint-err">Only letters, numbers, hyphens and underscores.</span>
+				{:else if handleCheck.state === 'unknown'}
+					<span class="hint">Couldn't check availability — it will be verified when the repository is created.</span>
+				{/if}
 			</label>
 
 			<fieldset class="source">
@@ -344,7 +552,19 @@
 				</label>
 
 				{#if sourceMode === 'facsimile'}
-					<div class="upload">
+					<div
+						class="upload dropzone"
+						class:drag={dragActive}
+						role="group"
+						aria-label="File upload"
+						ondragover={(e) => {
+							e.preventDefault();
+							dragActive = true;
+						}}
+						ondragleave={() => (dragActive = false)}
+						ondrop={onDrop}
+					>
+						<span class="drop-label">Drag &amp; drop files here, or pick them:</span>
 						<input
 							type="file"
 							accept="image/png,image/jpeg,application/pdf"
@@ -359,6 +579,9 @@
 								A single PDF (one image per page), or one or more JPG/PNG page images.
 							{/if}
 						</span>
+						{#if dropNote}
+							<span class="hint hint-err">{dropNote}</span>
+						{/if}
 					</div>
 				{/if}
 
@@ -387,30 +610,35 @@
 				</label>
 			</details>
 
-			<details class="extra">
-				<summary>Advanced</summary>
-				<label>
-					Description <span class="muted">(optional)</span>
-					<input bind:value={description} placeholder="What is this repo for?" />
-				</label>
+			<label>
+				Description <span class="muted">(optional)</span>
+				<input bind:value={description} placeholder="What is this repo for?" />
+			</label>
 
-				<label>
-					License
-					<input bind:value={license} placeholder="e.g. CC-BY-4.0" />
-				</label>
+			<label>
+				License
+				<select bind:value={license}>
+					{#each LICENSES as l (l.id)}
+						<option value={l.id}>{l.name}</option>
+					{/each}
+				</select>
+				<span class="hint">
+					{selectedLicense.info}
+					<a href={selectedLicense.url} target="_blank" rel="noreferrer">Full license text →</a>
+				</span>
+			</label>
 
-				<fieldset>
-					<legend>Visibility (status)</legend>
-					<label class="radio">
-						<input type="radio" name="visibility" value="private" bind:group={visibility} />
-						Private
-					</label>
-					<label class="radio">
-						<input type="radio" name="visibility" value="public" bind:group={visibility} />
-						Public
-					</label>
-				</fieldset>
-			</details>
+			<fieldset>
+				<legend>Visibility (status)</legend>
+				<label class="radio">
+					<input type="radio" name="visibility" value="private" bind:group={visibility} />
+					Private
+				</label>
+				<label class="radio">
+					<input type="radio" name="visibility" value="public" bind:group={visibility} />
+					Public
+				</label>
+			</fieldset>
 
 			<button type="submit" disabled={submitting}>
 				{submitting ? 'Creating…' : 'Create repository'}
@@ -562,11 +790,15 @@
 		font-weight: 600;
 		font-size: 0.9rem;
 	}
-	.create input:not([type='radio']) {
+	.create input:not([type='radio']),
+	.create select {
 		font: inherit;
 		padding: 0.55rem 0.7rem;
 		border: 1px solid #d0d0d0;
 		border-radius: 6px;
+	}
+	.create select {
+		background: #fff;
 	}
 	.create fieldset {
 		border: 1px solid #e0e0e0;
@@ -628,6 +860,21 @@
 		font: inherit;
 		font-size: 0.85rem;
 	}
+	.create .dropzone {
+		border: 2px dashed #d0d0d0;
+		border-radius: 8px;
+		padding: 0.9rem 1rem;
+		background: #fafafa;
+		transition: border-color 0.15s, background 0.15s;
+	}
+	.create .dropzone.drag {
+		border-color: #1a1a1a;
+		background: #f0f0f0;
+	}
+	.create .drop-label {
+		font-weight: 600;
+		font-size: 0.85rem;
+	}
 	.create button[type='submit'] {
 		align-self: flex-start;
 		font: inherit;
@@ -651,6 +898,12 @@
 		color: #888;
 		font-weight: 400;
 		font-size: 0.8rem;
+	}
+	.create .hint-ok {
+		color: #1a7f37;
+	}
+	.create .hint-err {
+		color: #b42318;
 	}
 	.create .extra {
 		border: 1px solid #e0e0e0;
