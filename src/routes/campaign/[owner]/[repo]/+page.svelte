@@ -251,36 +251,35 @@
         const { sha, canPush } = await f.getRepoHead(owner, repo);
         console.log("[editor] task", task_id, "fragment", fragment, "mainHead", sha, "canPush", canPush);
 
-        // Owner/collaborator: commit on a branch in the repo itself (can't fork
-        // your own repo), bound via connect=true. Volunteer: fork=true.
-        let ref: string | undefined;
-        let meiParam: string;
-        if (canPush) {
-          ref = `encode-${task_id}`;
-          try {
-            await f.createBranch(owner, repo, ref, sha);
-            console.log("[editor] created branch", ref, "at", sha);
-          } catch (e) {
-            if (!/already exists/i.test((e as Error).message)) throw e;
-            // The branch exists from an earlier open. If it's merely stale
-            // (e.g. created before the init commit), fast-forward it to the
-            // current head; a branch with its own commits — work in progress —
-            // is left untouched.
-            const ffed = await f.fastForwardBranch(owner, repo, ref, sha);
-            console.log("[editor] branch", ref, "already existed; fast-forward to", sha, "=>", ffed);
-          }
-          meiParam = "&connect=true";
-        } else {
-          meiParam = "&fork=true";
+        // Both roles commit to a per-task branch `encode-<task_id>`, bound in
+        // mei-friend via connect=true: owners/collaborators get it in the
+        // campaign repo itself (you can't fork your own repo), volunteers in
+        // their fork — which they can push to, so no fork=true handoff is
+        // needed. The submission PR later names the same branch, so the two
+        // sides always agree without guessing.
+        const ref = `encode-${task_id}`;
+        const workRepo = canPush ? { owner, repo } : await f.ensureFork(owner, repo);
+        try {
+          await f.createBranch(workRepo.owner, workRepo.repo, ref, sha);
+          console.log("[editor] created branch", ref, "in", `${workRepo.owner}/${workRepo.repo}`, "at", sha);
+        } catch (e) {
+          if (!/already exists/i.test((e as Error).message)) throw e;
+          // The branch exists from an earlier open. If it's merely stale
+          // (e.g. created before the init commit), fast-forward it to the
+          // current head; a branch with its own commits — work in progress —
+          // is left untouched.
+          const ffed = await f.fastForwardBranch(workRepo.owner, workRepo.repo, ref, sha);
+          console.log("[editor] branch", ref, "already existed; fast-forward to", sha, "=>", ffed);
         }
+        const meiParam = "&connect=true";
 
         const downloadUrl = await f.getRepoFileDownloadUrl(
-          owner,
-          repo,
+          workRepo.owner,
+          workRepo.repo,
           fragment,
           ref,
         );
-        console.log("[editor] downloadUrl for", fragment, "@ ref", ref ?? "(default branch)", "=>", downloadUrl);
+        console.log("[editor] downloadUrl for", fragment, "@", `${workRepo.owner}/${workRepo.repo}#${ref}`, "=>", downloadUrl);
         if (!downloadUrl)
           return {
             error: `Could not get a download URL for ${fragment}.`,
@@ -339,17 +338,17 @@
       try {
         busyMessage = "Opening the submission PR…";
         const { branch: base, canPush } = await f.getRepoHead(owner, repo);
+        // The claim/editor flow put the encoding on `encode-<task_id>` — in the
+        // campaign repo for owners/collaborators, in the volunteer's fork
+        // otherwise — so the head is fully determined; nothing to guess.
         let head: string;
         if (canPush) {
           head = `encode-${task_id}`;
         } else {
           const fork = await f.ensureFork(owner, repo);
-          const { branch: forkBranch } = await f.getRepoHead(
-            fork.owner,
-            fork.repo,
-          );
-          head = `${fork.owner}:${forkBranch}`;
+          head = `${fork.owner}:encode-${task_id}`;
         }
+        console.log("[submitpr] opening PR", { head, base });
         const pr = await f.createPullRequest(owner, repo, {
           title: `Encoding of ${task_id}`,
           head,

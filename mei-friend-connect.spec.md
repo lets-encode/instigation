@@ -156,8 +156,12 @@ so both `connect` and `fork` work for private campaign repos.
   gets the score's `download_url` **on that branch**, and opens
   `…/?file=<rawUrlOnBranch>&connect=true`. The user commits to that branch; the console
   then opens a same-repo PR (`encode-<task_id>` → default branch).
-- **Volunteer (no push):** unchanged — `…/?file=<rawUrl>&fork=true`. The user commits to
-  their fork; the console opens a cross-repo PR (`fork:branch` → upstream default branch).
+- **Volunteer (no push):** same shape, one level removed — the console ensures the
+  volunteer's **fork**, creates `encode-<task_id>` **in the fork**, and opens
+  `…/?file=<rawUrlOnForkBranch>&connect=true` (the volunteer can push to their own fork,
+  so no `fork=true` handoff is needed). The console then opens a cross-repo PR
+  (`fork:encode-<task_id>` → upstream default branch). The per-task branch keeps a
+  volunteer's concurrent tasks from contaminating each other's PRs.
 
 In both cases mei-friend only **commits**; the **console** opens the submission PR that
 triggers the submission Action and advances the task to `validation_required`.

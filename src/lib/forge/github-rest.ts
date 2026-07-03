@@ -521,8 +521,20 @@ export async function createPullRequest(
 		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
 		body: JSON.stringify({ title, head, base, body })
 	});
-	const data: { number: number; html_url: string; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(`${data.message || 'Failed to open pull request'} (${res.status} POST pulls)`);
+	const data: {
+		number: number;
+		html_url: string;
+		message?: string;
+		errors?: Array<{ message?: string }>;
+	} = await res.json().catch(() => ({}));
+	if (!res.ok) {
+		// A 422's `message` is just "Validation Failed" — the actual reason (e.g.
+		// "No commits between X and Y") is in the errors array.
+		const detail = data.errors?.map((e) => e.message).filter(Boolean).join('; ');
+		throw new Error(
+			`${data.message || 'Failed to open pull request'}${detail ? `: ${detail}` : ''} (${res.status} POST pulls)`
+		);
+	}
 	return { number: data.number, html_url: data.html_url };
 }
 
