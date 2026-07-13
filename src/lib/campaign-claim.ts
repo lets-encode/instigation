@@ -9,7 +9,7 @@
 // as `now`), never values the fork supplied.
 
 import { findRow, isFinalValidation } from './campaign-tables.ts';
-import type { ParsedState, LockRow } from './campaign-tables.ts';
+import type { ParsedState, TaskRow, LockRow } from './campaign-tables.ts';
 
 /** What a PR is trying to claim: a task or subtask and the kind of work. */
 export interface ClaimIntent {
@@ -19,6 +19,7 @@ export interface ClaimIntent {
 }
 
 export interface CheckClaimArgs {
+	tasks: TaskRow[];
 	state: ParsedState;
 	locks: LockRow[];
 	intent: ClaimIntent;
@@ -43,7 +44,7 @@ export function boundaryCheck(changedPaths: string[], allowed: string[]): boolea
 }
 
 /** Decide a claim. */
-export function checkClaim({ state, locks, intent, author, changedPaths, now }: CheckClaimArgs): ClaimResult {
+export function checkClaim({ tasks, state, locks, intent, author, changedPaths, now }: CheckClaimArgs): ClaimResult {
 	// A claim may only touch the lock table.
 	if (!boundaryCheck(changedPaths, ['tracking/lock.csv'])) return reject('out_of_bounds');
 
@@ -54,6 +55,13 @@ export function checkClaim({ state, locks, intent, author, changedPaths, now }: 
 
 	const row = findRow(state.rows, intent.task_id, intent.subtask_id);
 	if (!row) return reject('unknown_task');
+
+	// Dependency gate: a task chained after another (task.csv depends_on) opens
+	// only once that task has completed.
+	const dependsOn = findRow(tasks, intent.task_id, '')?.depends_on;
+	if (dependsOn && findRow(state.rows, dependsOn, '')?.status !== 'completed') {
+		return reject('dependency_incomplete');
+	}
 
 	const activeSameKind = locks.filter(
 		(l) => l.task_id === intent.task_id && l.subtask_id === intent.subtask_id && l.kind === intent.kind

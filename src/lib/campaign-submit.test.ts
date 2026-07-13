@@ -18,13 +18,39 @@ const LOCK_HEADER = 'task_id,subtask_id,user_id,timestamp,kind\n';
 const STATE_HEADER = 'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n';
 
 const TASKS = parseTaskCsv(
-	'task_id,subtask_id,fragment,locator,allowlist,blocklist\n' +
-		'T0001,,sources/score.mei,,,\n' +
-		'T0001,S0001,sources/score.mei,,,\n'
+	'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+		'T0001,,sources/score.mei,,,,\n' +
+		'T0001,S0001,sources/score.mei,,,,\n'
 );
 
 const encodingState = () =>
 	parseStateCsv(STATE_HEADER + 'T0001,,encoding_required,,,\n' + 'T0001,S0001,pending,,,\n');
+
+test('a task without validation subtasks completes on its accepted submission', () => {
+	const tasks = parseTaskCsv(
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'P0002,,sources/score.mei,breaks,,,P0001\n'
+	);
+	const state = parseStateCsv(STATE_HEADER + 'P0002,,encoding_required,,,\n');
+	const locks = parseLockCsv(LOCK_HEADER + 'P0002,,bob,2026-06-25T09:00:00Z,encoding\n');
+	const v = checkEncoding({
+		tasks,
+		state,
+		locks,
+		intent: { task_id: 'P0002' },
+		author: 'bob',
+		changedPaths: ['sources/score.mei'],
+		meiValid: true,
+		now: NOW
+	});
+	assert.equal(v.ok, true);
+	if (v.ok) {
+		const row = v.state.rows[0];
+		assert.equal(row.status, 'completed');
+		assert.equal(row.encoder, 'bob');
+		assert.equal(v.locks.length, 0);
+	}
+});
 const validationState = () =>
 	parseStateCsv(
 		STATE_HEADER + 'T0001,,validation_required,bob,2026-06-25T09:00:00Z,\n' + 'T0001,S0001,validation_required,,,\n'

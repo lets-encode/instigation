@@ -67,7 +67,8 @@ function cloneState(state: ParsedState): ParsedState {
  * must hold the active encoding lock, and the MEI must pass the machine-check
  * (`meiValid`, computed by the coordinator). On accept: the task row advances
  * to validation_required with encoder/encoded_at set, its pending subtasks
- * open for validation, and the encoding lock is removed.
+ * open for validation, and the encoding lock is removed. A task with no
+ * validation subtasks completes directly on its accepted submission.
  */
 export function checkEncoding({ tasks, state, locks, intent, author, changedPaths, meiValid, now }: CheckEncodingArgs): SubmitResult {
 	const task = findRow(tasks, intent.task_id, '');
@@ -82,11 +83,12 @@ export function checkEncoding({ tasks, state, locks, intent, author, changedPath
 	if (!holdsLock) return reject('not_lock_holder');
 	if (!meiValid) return reject('mei_invalid');
 
+	const hasSubtasks = state.rows.some((r) => r.task_id === intent.task_id && r.subtask_id !== '');
 	const next = cloneState(state);
 	for (const r of next.rows) {
 		if (r.task_id !== intent.task_id) continue;
 		if (r.subtask_id === '') {
-			r.status = 'validation_required';
+			r.status = hasSubtasks ? 'validation_required' : 'completed';
 			r.encoder = author;
 			r.encoded_at = now;
 		} else if (r.status === 'pending') {

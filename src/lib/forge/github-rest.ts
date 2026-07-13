@@ -360,6 +360,22 @@ export async function getPullRequestState(
 	return data.state ?? 'open';
 }
 
+/** A pull request's body text, or null if empty. */
+export async function getPullRequestBody(
+	token: string,
+	owner: string,
+	repo: string,
+	number: number
+): Promise<string | null> {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
+		cache: 'no-store'
+	});
+	const data: { body?: string | null; message?: string } = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
+	return data.body ?? null;
+}
+
 /** The body of a pull request's most recent comment, or null if none. */
 export async function getLastIssueComment(
 	token: string,

@@ -13,7 +13,7 @@
 		buildLockCsv,
 		buildHistoryCsv
 	} from '$lib/campaign-init.ts';
-	import { buildFacsimileScore } from '$lib/mei-facsimile.ts';
+	import { initialFacsimileModel, buildFacsimileMei } from '$lib/mei-facsimile.ts';
 	// Type-only: erased at build, so the heavy pdf.js module it lives in is loaded
 	// (dynamically) only when a facsimile campaign is actually submitted.
 	import type { PreparedFacsimile } from '$lib/facsimile-detect.ts';
@@ -402,7 +402,13 @@
 			try {
 				const template = await f.waitForRepoContents(owner, repo.name, 'templates/score.template.mei');
 				const config = buildCampaignConfig(
-					{ title: t, description: description.trim(), license: license.trim() || undefined, composer: composer.trim() },
+					{
+						title: t,
+						description: description.trim(),
+						license: license.trim() || undefined,
+						composer: composer.trim(),
+						sourceKind: facsimile ? 'facsimile' : 'mei-template'
+					},
 					user.login,
 					automation
 				);
@@ -417,7 +423,9 @@
 				const imageFiles: FileChange[] = [];
 				let mei: string;
 				if (facsimile) {
-					mei = buildFacsimileScore(facsimile.pages, header);
+					// Stage A: facsimile + labelled zones only. The measure body is
+					// generated once the measure-correction pre-task validates.
+					mei = buildFacsimileMei(initialFacsimileModel(facsimile.pages, header));
 					const { blobToBase64 } = await import('$lib/facsimile-detect.ts');
 					for (const img of facsimile.images) {
 						imageFiles.push({ path: img.path, contentBase64: await blobToBase64(img.blob) });

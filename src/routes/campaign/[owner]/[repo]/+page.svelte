@@ -1,37 +1,16 @@
 <script lang="ts">
   import { page } from "$app/state";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
-  import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import {
-    parseTaskCsv,
-    parseStateCsv,
-    parseLockCsv,
-    serializeStateCsv,
-    serializeLockCsv,
-    findRow,
-  } from "$lib/campaign-tables.ts";
+  import { findRow } from "$lib/campaign-tables.ts";
   import type { TaskRow, StateRow, LockRow } from "$lib/campaign-tables.ts";
-
-  const TASK_PATH = "tracking/task.csv";
-  const STATE_PATH = "tracking/state.csv";
-  const LOCK_PATH = "tracking/lock.csv";
-  const rand = () => crypto.randomUUID().slice(0, 8);
+  import { commands, invoke } from "$lib/commands.ts";
+  import type { CommandContext, Result } from "$lib/commands.ts";
 
   // Guaranteed present by the [owner]/[repo] route.
   const owner = $derived(page.params.owner!);
   const repo = $derived(page.params.repo!);
   const viewer = $derived(auth.user?.login ?? "");
-
-  type Result = {
-    ok?: boolean;
-    warn?: boolean;
-    error?: string;
-    message?: string;
-    prUrl?: string;
-    meiFriendUrl?: string;
-    rawUrl?: string;
-  } | null;
 
   let loading = $state(false);
   let loaded = $state(false);
@@ -50,7 +29,7 @@
 
   let busy = $state(false);
   let busyMessage = $state("");
-  let result = $state<Result>(null);
+  let result = $state<Result | null>(null);
 
   let preview = $state<{
     taskId: string;
@@ -122,66 +101,6 @@
 
   const copy = (text: string) =>
     navigator.clipboard?.writeText(text).catch(() => {});
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-  // Wait until the campaign automation has processed a PR (it closes the PR
-  // when done) and return its verdict comment. Null on timeout — the run is
-  // then still in flight, not failed.
-  async function waitForPrProcessed(
-    f: ForgeClient,
-    prNumber: number,
-  ): Promise<string | null> {
-    busyMessage = `Campaign automation is processing PR #${prNumber}…`;
-    console.log("[pr] waiting for automation to process PR", prNumber);
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      await sleep(3000);
-      if ((await f.getPullRequestState(owner, repo, prNumber)) === "closed") {
-        const verdict = await f.getLastIssueComment(owner, repo, prNumber);
-        console.log("[pr] PR", prNumber, "processed; verdict:", verdict);
-        return verdict;
-      }
-    }
-    console.log("[pr] PR", prNumber, "not processed within 120s (still in flight)");
-    return null;
-  }
-
-  // Map the automation's verdict on a PR to a result banner: a rejection is an
-  // error (never shown as success), no verdict yet (timeout) is a warning.
-  function verdictResult(
-    verdict: string | null,
-    prNumber: number,
-    prUrl: string,
-    fallback: string,
-  ): Result {
-    if (verdict == null) {
-      return {
-        ok: true,
-        warn: true,
-        prUrl,
-        message: `${fallback} PR #${prNumber} is still being processed — refresh the tables in a moment.`,
-      };
-    }
-    if (verdict.startsWith("❌")) return { error: verdict, prUrl };
-    return { ok: true, prUrl, message: verdict };
-  }
-
-  // Mute the campaign repo's notifications for this user, once: skipped when
-  // this browser has muted it before, or when the user has an explicit
-  // subscription of their own (e.g. deliberately watching). Non-fatal — each
-  // token can only mute its own user.
-  async function muteOnce(f: ForgeClient) {
-    const key = `lets-encode:muted:${owner}/${repo}`;
-    if (localStorage.getItem(key)) return;
-    try {
-      if ((await f.getRepoSubscription(owner, repo)) == null) {
-        await f.ignoreRepoNotifications(owner, repo);
-      }
-      localStorage.setItem(key, "1");
-    } catch (e) {
-      console.warn("Could not mute repo notifications:", (e as Error).message);
-    }
-  }
 
   const lockFor = (taskId: string, subtaskId: string, kind: string) =>
     locks.find(
@@ -201,6 +120,32 @@
   const fragmentOf = (taskId: string) =>
     findRow(taskDefs, taskId, "")?.fragment;
 
+  // Pre-tasks carry a locator (measure-zones / breaks) and are worked on in
+  // the zone editor instead of mei-friend.
+  const locatorOf = (taskId: string) =>
+    findRow(taskDefs, taskId, "")?.locator ?? "";
+  const typeLabel = (locator: string) =>
+    locator === "measure-zones"
+      ? "Measure correction"
+      : locator === "breaks"
+        ? "Page/system breaks"
+        : "Encoding";
+  // The incomplete task this task waits for (task.csv depends_on), or null.
+  const blockedBy = (taskId: string) => {
+    const dep = findRow(taskDefs, taskId, "")?.depends_on;
+    if (!dep || findRow(rows, dep, "")?.status === "completed") return null;
+    return dep;
+  };
+
+  // The context every command runs against; progress messages feed the busy overlay.
+  const ctx = (f: ForgeClient): CommandContext => ({
+    forge: f,
+    owner,
+    repo,
+    viewer,
+    progress: (m) => (busyMessage = m),
+  });
+
   // Read the tracking tables (and privacy) for the console. Only the first read
   // shows the loading state; refreshes update the tables in place.
   async function load() {
@@ -209,26 +154,14 @@
     if (!loaded) loading = true;
     loadError = null;
     try {
-      const [taskCsv, stateCsv, lockCsv, priv] = await Promise.all([
-        f.getRepoFile(owner, repo, TASK_PATH),
-        f.getRepoFile(owner, repo, STATE_PATH),
-        f.getRepoFile(owner, repo, LOCK_PATH),
-        f.getRepoIsPrivate(owner, repo),
-      ]);
-      isPrivate = priv;
-      if (taskCsv == null || stateCsv == null || lockCsv == null) {
-        notInitialised = true;
-        taskDefs = [];
-        rows = [];
-        validationColumns = [];
-        locks = [];
-      } else {
-        notInitialised = false;
-        taskDefs = parseTaskCsv(taskCsv);
-        const state = parseStateCsv(stateCsv);
-        rows = state.rows;
-        validationColumns = state.validationColumns;
-        locks = parseLockCsv(lockCsv);
+      const tables = await invoke(commands.readTables, {}, ctx(f));
+      notInitialised = tables.notInitialised;
+      isPrivate = tables.isPrivate;
+      taskDefs = tables.taskDefs;
+      rows = tables.rows;
+      validationColumns = tables.validationColumns;
+      locks = tables.locks;
+      if (!notInitialised) {
         console.log(
           "[load] tables loaded:",
           taskDefs.length, "task(s),",
@@ -248,15 +181,15 @@
     if (auth.status === "authenticated" && owner && repo && !loaded) load();
   });
 
-  // Run an action: show the busy overlay, capture its result banner, then
+  // Run a command: show the busy overlay, capture its result banner, then
   // refresh the tables.
-  async function run(action: (f: ForgeClient) => Promise<Result>) {
+  async function run(command: (c: CommandContext) => Promise<Result>) {
     const f = forge();
     if (!f) return;
     busy = true;
     busyMessage = "Working…";
     try {
-      result = await action(f);
+      result = await command(ctx(f));
       busyMessage = "Refreshing tables…";
       await load();
     } finally {
@@ -265,297 +198,32 @@
     }
   }
 
-  // Open a PR that adds a lock row (the Action re-authors who/when). Shared by the
-  // claim action and "open in mei-friend" (where opening == claiming).
-  async function openClaimPr(
-    f: ForgeClient,
-    task_id: string,
-    subtask_id: string,
-    kind: string,
-  ) {
-    // Claiming is a user's first interaction with a campaign: mute the repo's
-    // notifications for them, or the automation's PR comments would email
-    // every participant.
-    await muteOnce(f);
-    const lockRows = parseLockCsv(
-      (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
-    );
-    lockRows.push({
-      task_id,
-      subtask_id,
-      user_id: viewer,
-      timestamp: new Date().toISOString(),
-      kind,
-    });
-    const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
-    console.log("[claim] opening claim PR", { task_id, subtask_id, kind, user: viewer });
-    return f.openChangePr(owner, repo, {
-      branch: `claim-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
-      files: [{ path: LOCK_PATH, content: serializeLockCsv(lockRows) }],
-      message: `Claim ${target} (${kind})`,
-      title: `Claim ${target} (${kind})`,
-      body: `Reserves ${target} for ${kind} work by @${viewer}. Opened from the campaign console.`,
-    });
-  }
-
   const claim = (task_id: string, subtask_id: string) =>
-    run(async (f) => {
-      try {
-        busyMessage = "Opening claim PR…";
-        const pr = await openClaimPr(f, task_id, subtask_id, "validation");
-        console.log("[claim] claim PR opened", pr.number, pr.html_url);
-        const verdict = await waitForPrProcessed(f, pr.number);
-        return verdictResult(
-          verdict,
-          pr.number,
-          pr.html_url,
-          `Opened claim PR #${pr.number} for ${task_id}/${subtask_id} (validation).`,
-        );
-      } catch (e) {
-        return { error: `Claim failed: ${(e as Error).message}` };
-      }
-    });
+    run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
 
-  // Open the task's score in mei-friend; opening for editing also opens an
-  // encoding claim PR (unless you already hold the lock). The mei-friend tab
-  // opens only after the claim has gone through — never on a rejected or
+  // Open the task's score in mei-friend (claiming it if needed). The tab opens
+  // only after the claim has gone through — never on a rejected or
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
-    await run(async (f) => {
-      try {
-        const fragment = fragmentOf(task_id);
-        const task = findRow(rows, task_id, "");
-        if (!fragment || !task) return { error: `Unknown task ${task_id}.` };
-
-        busyMessage = "Preparing the score for mei-friend…";
-        const { sha, canPush } = await f.getRepoHead(owner, repo);
-        console.log("[editor] task", task_id, "fragment", fragment, "mainHead", sha, "canPush", canPush);
-
-        // Both roles commit to a per-task branch `encode-<task_id>`, bound in
-        // mei-friend via connect=true: owners/collaborators get it in the
-        // campaign repo itself (you can't fork your own repo), volunteers in
-        // their fork — which they can push to, so no fork=true handoff is
-        // needed. The submission PR later names the same branch, so the two
-        // sides always agree without guessing.
-        const ref = `encode-${task_id}`;
-        const workRepo = canPush ? { owner, repo } : await f.ensureFork(owner, repo);
-        try {
-          await f.createBranch(workRepo.owner, workRepo.repo, ref, sha);
-          console.log("[editor] created branch", ref, "in", `${workRepo.owner}/${workRepo.repo}`, "at", sha);
-        } catch (e) {
-          if (!/already exists/i.test((e as Error).message)) throw e;
-          // The branch exists from an earlier open. If it's merely stale
-          // (e.g. created before the init commit), fast-forward it to the
-          // current head; a branch with its own commits — work in progress —
-          // is left untouched.
-          const ffed = await f.fastForwardBranch(workRepo.owner, workRepo.repo, ref, sha);
-          console.log("[editor] branch", ref, "already existed; fast-forward to", sha, "=>", ffed);
-        }
-        const meiParam = "&connect=true";
-
-        // The branch ref was created or moved a moment ago, and GitHub's
-        // Contents API can briefly lag ref updates — retry the lookup rather
-        // than failing on that race.
-        let downloadUrl: string | null = null;
-        for (let attempt = 1; attempt <= 5 && !downloadUrl; attempt++) {
-          if (attempt > 1) await sleep(1500);
-          downloadUrl = await f.getRepoFileDownloadUrl(
-            workRepo.owner,
-            workRepo.repo,
-            fragment,
-            ref,
-          );
-          console.log("[editor] downloadUrl attempt", attempt, "for", fragment, "@", `${workRepo.owner}/${workRepo.repo}#${ref}`, "=>", downloadUrl);
-        }
-        if (!downloadUrl)
-          return {
-            error: `Could not get a download URL for ${fragment}.`,
-          };
-        const url = `${meiFriendUrl}/?file=${encodeURIComponent(downloadUrl)}${meiParam}`;
-
-        const mine = parseLockCsv(
-          (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
-        ).some(
-          (l) =>
-            l.task_id === task_id &&
-            l.subtask_id === "" &&
-            l.kind === "encoding" &&
-            l.user_id === viewer,
-        );
-        let prUrl: string | undefined;
-        let message =
-          "Opening the score in mei-friend. After committing there, use “Submit encoding”.";
-        if (task.status === "encoding_required" && !mine) {
-          busyMessage = "Opening the encoding claim PR…";
-          const pr = await openClaimPr(f, task_id, "", "encoding");
-          console.log("[editor] encoding claim PR opened", pr.number, pr.html_url);
-          prUrl = pr.html_url;
-          const verdict = await waitForPrProcessed(f, pr.number);
-          const res = verdictResult(
-            verdict,
-            pr.number,
-            pr.html_url,
-            `Opened encoding claim PR #${pr.number}.`,
-          );
-          if (res?.error) {
-            return { error: `The encoding claim was rejected — ${res.error}`, prUrl };
-          }
-          if (res?.warn) {
-            // Claim not confirmed yet — surface the warning with the link
-            // instead of opening a tab for a task that may not be theirs.
-            return { ok: true, warn: true, meiFriendUrl: url, prUrl, message: `${res.message}` };
-          }
-          message = `${res?.message} Opening the score in mei-friend — after committing there, use “Submit encoding”.`;
-          return { ok: true, meiFriendUrl: url, prUrl, message };
-        }
-        return { ok: true, meiFriendUrl: url, prUrl, message };
-      } catch (e) {
-        return { error: `Open in mei-friend failed: ${(e as Error).message}` };
-      }
-    });
-    // Open the tab only once the claim went through and the overlay is gone.
+    await run((c) => invoke(commands.openEditor, { task_id }, c));
     if (result?.ok && !result.warn && result.meiFriendUrl) {
       window.open(result.meiFriendUrl, "_blank", "noopener");
     }
   };
 
-  // After committing an encoding in mei-friend (which only pushes to a branch),
-  // open the submission PR that advances the task to validation.
   const submitpr = (task_id: string) =>
-    run(async (f) => {
-      try {
-        busyMessage = "Opening the submission PR…";
-        const { branch: base, canPush } = await f.getRepoHead(owner, repo);
-        // The claim/editor flow put the encoding on `encode-<task_id>` — in the
-        // campaign repo for owners/collaborators, in the volunteer's fork
-        // otherwise — so the head is fully determined; nothing to guess.
-        let head: string;
-        if (canPush) {
-          head = `encode-${task_id}`;
-        } else {
-          const fork = await f.ensureFork(owner, repo);
-          head = `${fork.owner}:encode-${task_id}`;
-        }
-        console.log("[submitpr] opening PR", { head, base });
-        const pr = await f.createPullRequest(owner, repo, {
-          title: `Encoding of ${task_id}`,
-          head,
-          base,
-          body: `Submits the encoding of ${task_id} by @${viewer}, edited in mei-friend. Opened from the campaign console.`,
-        });
-        console.log("[submitpr] submission PR opened", pr.number, pr.html_url);
-        const verdict = await waitForPrProcessed(f, pr.number);
-        return verdictResult(
-          verdict,
-          pr.number,
-          pr.html_url,
-          `Opened submission PR #${pr.number} for ${task_id}.`,
-        );
-      } catch (e) {
-        return { error: `Submission PR failed: ${(e as Error).message}` };
-      }
-    });
+    run((c) => invoke(commands.submitEncoding, { task_id }, c));
 
-  // Just the tokenised raw URL of the score (no claim) — copied to the clipboard.
-  const rawlink = (task_id: string) =>
-    run(async (f) => {
-      try {
-        const fragment = fragmentOf(task_id);
-        if (!fragment) return { error: `Unknown task ${task_id}.` };
-        busyMessage = "Fetching the raw link…";
-        console.log("[rawlink] fetching raw link for", task_id, "fragment", fragment);
-        const rawUrl = await f.getRepoFileDownloadUrl(owner, repo, fragment);
-        if (!rawUrl)
-          return { error: `Could not get a raw link for ${fragment}.` };
-        copy(rawUrl);
-        return { ok: true, rawUrl, message: `Raw link for ${fragment}:` };
-      } catch (e) {
-        return { error: `Raw link failed: ${(e as Error).message}` };
-      }
-    });
-
-  // Open a PR that sets the subtask's first open validation cell (pass/fail).
   const validate = (task_id: string, subtask_id: string, verdict: string) =>
-    run(async (f) => {
-      try {
-        const state = parseStateCsv(
-          (await f.getRepoFile(owner, repo, STATE_PATH)) ?? "",
-        );
-        const row = findRow(state.rows, task_id, subtask_id);
-        if (!row) return { error: `Unknown subtask ${task_id}/${subtask_id}.` };
-        const slot = state.validationColumns.find((c) => (row[c] ?? "") === "");
-        if (!slot)
-          return {
-            error: `No open validation slot on ${task_id}/${subtask_id}.`,
-          };
-        row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
-        busyMessage = "Opening the validation PR…";
-        console.log("[validate] opening validation PR", { task_id, subtask_id, verdict, slot });
-        const pr = await f.openChangePr(owner, repo, {
-          branch: `validate-${task_id}-${subtask_id}-${rand()}`,
-          files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
-          message: `Validate ${task_id}/${subtask_id} (${verdict})`,
-          title: `Validate ${task_id}/${subtask_id} (${verdict})`,
-          body: `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`,
-        });
-        console.log("[validate] validation PR opened", pr.number, pr.html_url);
-        const outcome = await waitForPrProcessed(f, pr.number);
-        return verdictResult(
-          outcome,
-          pr.number,
-          pr.html_url,
-          `Opened validation PR #${pr.number} for ${task_id}/${subtask_id} (${verdict}).`,
-        );
-      } catch (e) {
-        return { error: `Validate failed: ${(e as Error).message}` };
-      }
-    });
+    run((c) => invoke(commands.submitValidation, { task_id, subtask_id, verdict }, c));
 
-  // Manually dispatch the scheduled reaper, then wait for its run to finish
-  // (there is no PR to watch — poll the dispatched workflow run instead).
-  const reaper = () =>
-    run(async (f) => {
-      try {
-        busyMessage = "Dispatching the stale-lock reaper…";
-        const { branch } = await f.getRepoHead(owner, repo);
-        const dispatchedAt = Date.now();
-        console.log("[reaper] dispatching caller.yml on", branch);
-        await f.dispatchWorkflow(owner, repo, "caller.yml", branch);
-        busyMessage = "Waiting for the reaper run to finish…";
-        const deadline = Date.now() + 90_000;
-        while (Date.now() < deadline) {
-          await sleep(3000);
-          const runInfo = await f.getLatestWorkflowRun(
-            owner,
-            repo,
-            "caller.yml",
-            "workflow_dispatch",
-          );
-          // Only a run created after our dispatch counts (15s clock-skew slack).
-          if (
-            runInfo &&
-            Date.parse(runInfo.created_at) >= dispatchedAt - 15_000 &&
-            runInfo.status === "completed"
-          ) {
-            console.log("[reaper] run finished with conclusion:", runInfo.conclusion);
-            if (runInfo.conclusion !== "success") {
-              return {
-                error: `The reaper run finished with "${runInfo.conclusion}" — check the repository's Actions log.`,
-              };
-            }
-            return { ok: true, message: "Stale-lock reaper finished." };
-          }
-        }
-        return {
-          ok: true,
-          warn: true,
-          message:
-            "Reaper dispatched; the run hasn't finished yet — refresh the tables in a moment.",
-        };
-      } catch (e) {
-        return { error: `Reaper dispatch failed: ${(e as Error).message}` };
-      }
-    });
+  // The tokenised raw URL of the score — copied to the clipboard.
+  const rawlink = async (task_id: string) => {
+    await run((c) => invoke(commands.rawLink, { task_id }, c));
+    if (result?.rawUrl) copy(result.rawUrl);
+  };
+
+  const reaper = () => run((c) => invoke(commands.runReaper, {}, c));
 </script>
 
 {#if busy}
@@ -675,60 +343,95 @@
     <table>
       <thead>
         <tr>
-          <th>Task</th><th>Status</th><th>Encoder</th>
+          <th>Task</th><th>Type</th><th>Status</th><th>Encoder</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {#each taskRows as task (task.task_id)}
+          {@const locator = locatorOf(task.task_id)}
+          {@const blocked = blockedBy(task.task_id)}
           <tr>
             <td><code>{task.task_id}</code></td>
-            <td><span class="state {task.status}">{task.status}</span></td>
+            <td>{typeLabel(locator)}</td>
+            <td>
+              <span class="state {task.status}">{task.status}</span>
+              {#if blocked}
+                <span
+                  class="muted"
+                  title={`Claims open once ${blocked} is completed.`}
+                >
+                  waiting for {blocked}
+                </span>
+              {/if}
+            </td>
             <td>{task.encoder || "—"}</td>
             <td class="actions">
-              <div class="btnrow">
-                <button
-                  type="button"
-                  onclick={() => editor(task.task_id)}
-                  disabled={busy ||
-                    !(
-                      task.status === "encoding_required" ||
-                      myEncodingLock(task.task_id)
-                    )}
-                  title="Claims this task for you and opens the score in mei-friend. Commit your encoding there, then use “Submit encoding”. Enabled while the task needs an encoder or is already yours."
-                >
-                  Claim (encode)
-                </button>
-                <button
-                  type="button"
-                  onclick={() => togglePreview(task.task_id)}
-                  disabled={busy}
-                  title="Show the task's score rendered in the console (read-only)"
-                >
-                  {preview?.taskId === task.task_id ? "Hide preview" : "Preview"}
-                </button>
-                <button
-                  type="button"
-                  onclick={() => rawlink(task.task_id)}
-                  disabled={busy}
-                  title={isPrivate
-                    ? "Copy a direct link to the score file to paste into mei-friend manually. The link is tokenised for this private repository and expires within minutes."
-                    : "Copy a direct link to the score file to paste into mei-friend manually"}
-                >
-                  Copy raw link
-                </button>
-              </div>
+              {#if locator}
+                <div class="btnrow">
+                  <a
+                    class="btnlink"
+                    class:disabled={Boolean(blocked)}
+                    href={blocked
+                      ? undefined
+                      : `/campaign/${owner}/${repo}/zones/${task.task_id}`}
+                    title={blocked
+                      ? `Enabled once ${blocked} is completed.`
+                      : locator === "breaks"
+                        ? "Mark the system beginnings on the facsimile; page breaks are added automatically."
+                        : "Correct the detected measures on the facsimile: add, delete, move, resize and renumber them."}
+                  >
+                    Open editor
+                  </a>
+                </div>
+              {:else}
+                <div class="btnrow">
+                  <button
+                    type="button"
+                    onclick={() => editor(task.task_id)}
+                    disabled={busy ||
+                      Boolean(blocked) ||
+                      !(
+                        task.status === "encoding_required" ||
+                        myEncodingLock(task.task_id)
+                      )}
+                    title={blocked
+                      ? `Enabled once ${blocked} is completed.`
+                      : "Claims this task for you and opens the score in mei-friend. Commit your encoding there, then use “Submit encoding”. Enabled while the task needs an encoder or is already yours."}
+                  >
+                    Claim (encode)
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => togglePreview(task.task_id)}
+                    disabled={busy}
+                    title="Show the task's score rendered in the console (read-only)"
+                  >
+                    {preview?.taskId === task.task_id ? "Hide preview" : "Preview"}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => rawlink(task.task_id)}
+                    disabled={busy}
+                    title={isPrivate
+                      ? "Copy a direct link to the score file to paste into mei-friend manually. The link is tokenised for this private repository and expires within minutes."
+                      : "Copy a direct link to the score file to paste into mei-friend manually"}
+                  >
+                    Copy raw link
+                  </button>
+                </div>
 
-              <div class="btnrow">
-                <button
-                  type="button"
-                  onclick={() => submitpr(task.task_id)}
-                  disabled={busy || !myEncodingLock(task.task_id)}
-                  title="After committing your encoding in mei-friend, submit it for validation. Enabled once you hold the encoding claim."
-                >
-                  Submit encoding
-                </button>
-              </div>
+                <div class="btnrow">
+                  <button
+                    type="button"
+                    onclick={() => submitpr(task.task_id)}
+                    disabled={busy || !myEncodingLock(task.task_id)}
+                    title="After committing your encoding in mei-friend, submit it for validation. Enabled once you hold the encoding claim."
+                  >
+                    Submit encoding
+                  </button>
+                </div>
+              {/if}
             </td>
           </tr>
         {/each}
@@ -1004,6 +707,20 @@
     cursor: pointer;
   }
   button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .btnlink {
+    display: inline-block;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+    color: inherit;
+    text-decoration: none;
+  }
+  .btnlink.disabled {
     opacity: 0.45;
     cursor: default;
   }

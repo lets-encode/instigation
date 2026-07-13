@@ -4,9 +4,11 @@
 //
 // Produces, from a filled config:
 //   - config.yaml            (configToYaml)
-//   - sources/score.mei      (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}})
-//   - tracking/task.csv      (buildTaskCsv: task T0001 + one validation subtask S0001)
-//   - tracking/state.csv     (buildStateCsv: task encoding_required, subtask pending)
+//   - sources/score.mei      (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}};
+//                             facsimile campaigns commit the stage-A facsimile MEI instead)
+//   - tracking/task.csv      (buildTaskCsv: task T0001 + one validation subtask S0001;
+//                             facsimile campaigns prepend the P0001/P0002 pre-tasks)
+//   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
 
@@ -47,15 +49,17 @@ export interface CampaignFields {
 	language?: string;
 	license?: string;
 	composer?: string;
+	/** 'mei-template' (blank template score) or 'facsimile' (detected page images + pre-tasks). */
+	sourceKind?: string;
 	required_validations?: number;
 	pass_threshold?: number;
 	stale_after_minutes?: number;
 }
 
-const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist'];
+const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist', 'depends_on'];
 const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
 const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
-const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail'];
+const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
 
 // v1 defaults for fields the create form does not surface.
 const DEFAULTS = {
@@ -88,8 +92,8 @@ function yamlStr(value: unknown): string {
 	return `"${String(value ?? '').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
-// Exactly one source kind, one fragmentation strategy and one schema version
-// are implemented. Fail loudly rather than silently mis-initialising.
+// Two source kinds, one fragmentation strategy and one schema version are
+// implemented. Fail loudly rather than silently mis-initialising.
 export function assertSupported(config: CampaignConfig): void {
 	if (config?.schema_version !== 2) {
 		throw new Error(`Unsupported schema_version: ${config?.schema_version} (expected 2).`);
@@ -100,8 +104,8 @@ export function assertSupported(config: CampaignConfig): void {
 	}
 	const source = config.sources?.[0];
 	if (!source) throw new Error('config.sources must contain at least one source.');
-	if (source.kind !== 'mei-template') {
-		throw new Error(`Unsupported source kind: ${source.kind} (only 'mei-template' is implemented).`);
+	if (source.kind !== 'mei-template' && source.kind !== 'facsimile') {
+		throw new Error(`Unsupported source kind: ${source.kind} (only 'mei-template' and 'facsimile' are implemented).`);
 	}
 }
 
@@ -128,7 +132,7 @@ export function buildCampaignConfig(
 		sources: [
 			{
 				id: 'src-1',
-				kind: 'mei-template',
+				kind: fields.sourceKind ?? 'mei-template',
 				path: 'sources/score.mei',
 				template: 'templates/score.template.mei',
 				header: { composer: fields.composer ?? DEFAULTS.composer }
@@ -188,31 +192,56 @@ export function stampTemplate(
 }
 
 /**
- * Build the task table. `whole` strategy: one task T0001 spanning the entire
- * source (task row, empty subtask_id) with one validation subtask S0001 —
- * empty locators address the whole file, allow/blocklists are open.
+ * Build the task table. `whole` strategy: one encoding task T0001 spanning the
+ * entire source (task row, empty subtask_id) with one validation subtask S0001
+ * — empty locators address the whole file, allow/blocklists are open.
+ *
+ * A facsimile source prepends the two pre-tasks (DESIGN.md §7a), chained by
+ * `depends_on`: P0001 corrects the measure zones (locator `measure-zones`,
+ * with a validation subtask), P0002 adds the page/system breaks (locator
+ * `breaks`, no validation subtask — it completes on its accepted submission),
+ * and the encoding task waits for P0002.
  */
 export function buildTaskCsv(config: CampaignConfig): string {
 	const fragment = config.sources[0].path;
+	const preTasks =
+		config.sources[0].kind === 'facsimile'
+			? [
+					csvRow(['P0001', '', fragment, 'measure-zones', '', '', '']),
+					csvRow(['P0001', 'S0001', fragment, 'measure-zones', '', '', '']),
+					csvRow(['P0002', '', fragment, 'breaks', '', '', 'P0001'])
+				]
+			: [];
+	const dependsOn = preTasks.length ? 'P0002' : '';
 	const lines = [
 		csvRow(TASK_COLUMNS),
-		csvRow(['T0001', '', fragment, '', '', '']),
-		csvRow(['T0001', 'S0001', fragment, '', '', ''])
+		...preTasks,
+		csvRow(['T0001', '', fragment, '', '', '', dependsOn]),
+		csvRow(['T0001', 'S0001', fragment, '', '', '', ''])
 	];
 	return `${lines.join('\n')}\n`;
 }
 
 /**
- * Build the initial state table: the task row starts at encoding_required,
- * its validation subtask at pending, with empty validate_status_1…n cells.
+ * Build the initial state table: task rows start at encoding_required,
+ * validation subtasks at pending, with empty validate_status_1…n cells.
  */
 export function buildStateCsv(config: CampaignConfig): string {
 	const count = config.validation?.required_validations ?? 0;
 	const validationCols = Array.from({ length: count }, (_, i) => `validate_status_${i + 1}`);
 	const header = [...STATE_BASE_COLUMNS, ...validationCols];
 	const empty = validationCols.map(() => '');
+	const preTasks =
+		config.sources[0].kind === 'facsimile'
+			? [
+					csvRow(['P0001', '', 'encoding_required', '', '', ...empty]),
+					csvRow(['P0001', 'S0001', 'pending', '', '', ...empty]),
+					csvRow(['P0002', '', 'encoding_required', '', '', ...empty])
+				]
+			: [];
 	const lines = [
 		csvRow(header),
+		...preTasks,
 		csvRow(['T0001', '', 'encoding_required', '', '', ...empty]),
 		csvRow(['T0001', 'S0001', 'pending', '', '', ...empty])
 	];

@@ -33,9 +33,9 @@ test('parseCsv: no trailing empty row when text ends in newline', () => {
 
 test('parseTaskCsv: task and subtask rows become keyed objects', () => {
 	const rows = parseTaskCsv(
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist\n' +
-			'T0001,,sources/score.mei,,,\n' +
-			'T0001,S0001,sources/score.mei,m-12,,\n'
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'T0001,,sources/score.mei,,,,P0002\n' +
+			'T0001,S0001,sources/score.mei,m-12,,,\n'
 	);
 	assert.equal(rows.length, 2);
 	assert.deepEqual(rows[0], {
@@ -44,7 +44,8 @@ test('parseTaskCsv: task and subtask rows become keyed objects', () => {
 		fragment: 'sources/score.mei',
 		locator: '',
 		allowlist: '',
-		blocklist: ''
+		blocklist: '',
+		depends_on: 'P0002'
 	});
 	assert.equal(rows[1].subtask_id, 'S0001');
 	assert.equal(rows[1].locator, 'm-12');
@@ -52,9 +53,9 @@ test('parseTaskCsv: task and subtask rows become keyed objects', () => {
 
 test('serializeTaskCsv: round-trips with parseTaskCsv', () => {
 	const text =
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist\n' +
-		'T0001,,sources/score.mei,,,\n' +
-		'T0001,S0001,sources/score.mei,,,\n';
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+		'T0001,,sources/score.mei,,,,\n' +
+		'T0001,S0001,sources/score.mei,,,,\n';
 	assert.equal(serializeTaskCsv(parseTaskCsv(text)), text);
 });
 
@@ -108,7 +109,7 @@ test('serializeLockCsv: empty rows yield a header-only table', () => {
 });
 
 test('appendHistory: appends rows, keeping existing lines verbatim', () => {
-	const header = 'timestamp,task_id,subtask_id,user_id,action,outcome,detail\n';
+	const header = 'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n';
 	const row = {
 		timestamp: 't1',
 		task_id: 'T0001',
@@ -119,11 +120,11 @@ test('appendHistory: appends rows, keeping existing lines verbatim', () => {
 		detail: ''
 	};
 	const once = appendHistory(header, [row]);
-	assert.equal(once, header + 't1,T0001,,bob,claim_encoding,accepted,\n');
+	assert.equal(once, header + 't1,T0001,,bob,claim_encoding,accepted,,,,\n');
 	const twice = appendHistory(once, [{ ...row, timestamp: 't2', outcome: 'rejected', detail: 'already_locked' }]);
 	assert.equal(
 		twice,
-		header + 't1,T0001,,bob,claim_encoding,accepted,\n' + 't2,T0001,,bob,claim_encoding,rejected,already_locked\n'
+		header + 't1,T0001,,bob,claim_encoding,accepted,,,,\n' + 't2,T0001,,bob,claim_encoding,rejected,already_locked,,,\n'
 	);
 	assert.equal(parseHistoryCsv(twice).length, 2);
 });
@@ -132,7 +133,33 @@ test('appendHistory: creates the header when the table is missing', () => {
 	const out = appendHistory('', [
 		{ timestamp: 't', task_id: 'T1', subtask_id: '', user_id: 'u', action: 'reap', outcome: 'released', detail: 'encoding' }
 	]);
-	assert.match(out, /^timestamp,task_id,subtask_id,user_id,action,outcome,detail\n/);
+	assert.match(out, /^timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n/);
+});
+
+test('appendHistory: command columns and their JSON input round-trip through CSV quoting', () => {
+	const row = {
+		timestamp: '2026-07-13T10:00:00Z',
+		task_id: 'T0001',
+		subtask_id: 'S0001',
+		user_id: 'alice',
+		action: 'claim_validation',
+		outcome: 'accepted',
+		detail: '',
+		command: 'campaign.claimValidation',
+		version: '1',
+		input: '{"task_id":"T0001","subtask_id":"S0001"}'
+	};
+	const out = appendHistory('', [row]);
+	assert.deepEqual(parseHistoryCsv(out), [row]);
+});
+
+test('appendHistory: rows without command columns serialise them empty', () => {
+	const out = appendHistory('', [
+		{ timestamp: 't', task_id: 'T1', subtask_id: '', user_id: 'u', action: 'reap', outcome: 'released', detail: 'encoding' }
+	]);
+	const [row] = parseHistoryCsv(out);
+	assert.equal(row.command, '');
+	assert.equal(row.input, '');
 });
 
 test('findRow: distinguishes the task row from subtask rows', () => {

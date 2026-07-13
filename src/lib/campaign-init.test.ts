@@ -99,9 +99,35 @@ test('worked example: task.csv holds the task row and its one validation subtask
 	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
 	assert.equal(
 		buildTaskCsv(config),
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist\n' +
-			'T0001,,sources/score.mei,,,\n' +
-			'T0001,S0001,sources/score.mei,,,\n'
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'T0001,,sources/score.mei,,,,\n' +
+			'T0001,S0001,sources/score.mei,,,,\n'
+	);
+});
+
+test('facsimile campaign: task.csv chains the pre-tasks before the encoding task', () => {
+	const config = buildCampaignConfig(
+		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
+		'test-instigator',
+		AUTOMATION
+	);
+	assert.equal(
+		buildTaskCsv(config),
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'P0001,,sources/score.mei,measure-zones,,,\n' +
+			'P0001,S0001,sources/score.mei,measure-zones,,,\n' +
+			'P0002,,sources/score.mei,breaks,,,P0001\n' +
+			'T0001,,sources/score.mei,,,,P0002\n' +
+			'T0001,S0001,sources/score.mei,,,,\n'
+	);
+	assert.equal(
+		buildStateCsv(config),
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+			'P0001,,encoding_required,,,\n' +
+			'P0001,S0001,pending,,,\n' +
+			'P0002,,encoding_required,,,\n' +
+			'T0001,,encoding_required,,,\n' +
+			'T0001,S0001,pending,,,\n'
 	);
 });
 
@@ -117,7 +143,10 @@ test('worked example: state.csv matches the expected rows exactly', () => {
 
 test('worked example: lock.csv and history.csv are header-only', () => {
 	assert.equal(buildLockCsv(), 'task_id,subtask_id,user_id,timestamp,kind\n');
-	assert.equal(buildHistoryCsv(), 'timestamp,task_id,subtask_id,user_id,action,outcome,detail\n');
+	assert.equal(
+		buildHistoryCsv(),
+		'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n'
+	);
 });
 
 test('buildStateCsv: required_validations controls the validate_status columns', () => {

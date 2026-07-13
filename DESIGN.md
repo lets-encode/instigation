@@ -9,7 +9,7 @@ instigation GUI** (organiser creates/configures a campaign) and the **mei-friend
 (contributors encode/validate).
 
 > Single authoritative design + status document; §9 records the current state. Data model is
-> **schema v2** (four tables keyed by `(task_id, subtask_id)`, §5); the only fragmentation strategy
+> **schema v2** (four tables keyed by `(task_id, subtask_id)` plus the command log, §5); the only fragmentation strategy
 > implemented is `whole` (one campaign = one task = the whole `sources/score.mei`, with one
 > validation subtask). Coding guidelines to honour are in `CLAUDE.md` (simplicity, surgical
 > changes, goal-driven).
@@ -199,20 +199,25 @@ score) with one subtask `S0001` spanning the same range.
 
 **task.csv — task/subtask definitions, written at init**
 
-`task_id, subtask_id, fragment, locator, allowlist, blocklist`
+`task_id, subtask_id, fragment, locator, allowlist, blocklist, depends_on`
 
 - `fragment`: the source file the row addresses (e.g. `sources/score.mei`).
 - `locator`: address *within* the fragment — an MEI `xml:id`, or a controlled-vocab term for
-  pre-tasks; empty = the whole file. Realises the reserved `by_measure`/`by_section` strategies.
+  pre-tasks (`measure-zones`, `breaks`; §7a); empty = the whole file. Realises the reserved
+  `by_measure`/`by_section` strategies.
 - `allowlist`/`blocklist`: per-row claim gates — present in the schema but **not yet enforced**
   (default open, §10).
+- `depends_on`: a task_id that must be `completed` before this task can be claimed; empty = none.
+  Enforced in the claim accept rules (`dependency_incomplete`). Chains the pre-tasks before the
+  encoding work (§7a).
 
 **state.csv — live status, Action-authored**
 
 `task_id, subtask_id, status, encoder, encoded_at, validate_status_1 … validate_status_n`
 
 - Task row `status`: `encoding_required` → `validation_required` → `completed` (when every subtask
-  is completed). `encoder`/`encoded_at` are recorded here.
+  is completed). `encoder`/`encoded_at` are recorded here. A task with **no** validation subtasks
+  (e.g. the `breaks` pre-task) goes `encoding_required` → `completed` on its accepted submission.
 - Subtask row `status`: `pending` (task not yet encoded) → `validation_required` → `completed`
   (once `pass_threshold` passes accumulate).
 - `validate_status_1…n`: validation cells on subtask rows, count = `required_validations`. Each is
@@ -226,14 +231,30 @@ encoding is exclusive (one lock per task) while validation is concurrent (severa
 same encoded work). Encoding locks sit on the task row key, validation locks on a subtask key. The
 reaper compares `timestamp` against `stale_after_minutes`.
 
-**history.csv — append-only audit log, Action-authored**
+**history.csv — append-only audit log**
 
-`timestamp, task_id, subtask_id, user_id, action, outcome, detail`
+`timestamp, task_id, subtask_id, user_id, action, outcome, detail, command, version, input`
 
 Every processed event appends a row — **including rejects** (attribution + audit): `action` ∈
-`claim_encoding|claim_validation|submit_encoding|submit_validation|reap`, `outcome` ∈
+`claim_encoding|claim_validation|submit_encoding|submit_validation|reap|dispatch`, `outcome` ∈
 `accepted|rejected|released`, `detail` = the reject reason, the validation verdict, or the reaped
 lock's kind.
+
+The last three columns record the **console command** behind the event, when there was one —
+`command`/`version` identify it, `input` is its input as JSON — so user actions are replayable as
+data. Every console operation is a named, versioned command in a registry (`src/lib/commands.ts`)
+run through one dispatcher; how the columns get filled follows the trust model (§6):
+
+- Commands whose mutation travels as a PR (claim, encode-claim via the editor, submit encoding,
+  submit validation, the pre-task submissions) embed a **command envelope**
+  (`src/lib/command-envelope.ts`) in the PR body as data; **the Action authors the row**, taking
+  `command`/`version`/`input` from the envelope but `user_id`/`timestamp`/`outcome` from the event
+  and its own decision — volunteers never write to the campaign repo. Events without an envelope
+  (hand-opened PRs, scheduled reaps) leave the command columns empty.
+- Commands that mutate without a PR (the reaper dispatch, `action: dispatch`) require push access,
+  so the console commits the row itself (best-effort: a lost log row is reported, never fails the
+  command).
+- Reads (`readTables`, `rawLink`) are commands too, but are not logged.
 
 ## 6. Volunteer PR contract & trust
 
@@ -254,7 +275,7 @@ authoritative row/cell itself:
 | lock `timestamp` / `encoded_at` / validation time | **server time** |
 | validation `pass`/`fail` | the volunteer's verdict, stamped with their login + time |
 | MEI bytes | the **fork's content**, after the machine-check |
-| every `history.csv` row | the Action, describing what it just decided |
+| every `history.csv` row | the Action, describing what it just decided; the command columns come from the PR body's envelope, never the fork's tables (§5) |
 
 Table changes are *applied by the Action*, not merged from fork bytes (a boundary check limits *which*
 cells change, not *what* goes in). MEI content is the volunteer's and is merged.
@@ -266,6 +287,12 @@ cells change, not *what* goes in). MEI content is the volunteer's and is merged.
 | Claim | `tracking/lock.csv` only | task_id, subtask_id, kind |
 | Encoding | the task's fragment (`sources/score.mei`) only | the MEI content |
 | Validation | `tracking/state.csv` only | subtask + pass/fail verdict |
+
+The pre-task submissions (§7a) are ordinary *encoding-type* PRs — they rewrite the fragment.
+Because several tasks can share one fragment, an encoding-type PR's **task** is resolved from the
+PR's own data: the command envelope's task_id, the `encode-<task_id>` branch name, or the author's
+single active encoding lock among the candidate tasks (in that order; a lone candidate needs no
+tie-break).
 
 **Accept rules.**
 
@@ -335,6 +362,37 @@ Idempotent: output is fully determined by config + template, so re-running befor
 reproduces identical files. Runs client-side because the organiser is in the loop; everything else
 runs in the campaign repo's caller.
 
+## 7a. Facsimile pre-tasks
+
+A campaign created from page images / a PDF (source kind `facsimile`) does not start at encoding:
+the detector's measure boxes are provisional, so the score is built in three stages
+(`src/lib/mei-facsimile.ts`, one model — `buildFacsimileMei` / `parseFacsimileMei`):
+
+| Stage | Content of `sources/score.mei` | Written by |
+|---|---|---|
+| A | `<facsimile>` only: surfaces, graphics, one labelled `<zone type="measure" n="…">` per box; empty section | init; rewritten by P0001 submissions |
+| B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | the coordinator, when P0001's validation completes |
+| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure | P0002's submission |
+
+All three stages validate against the pinned MEI-CMN 5.0 schema, so the ordinary machine-check
+applies to every submission.
+
+The task table chains the work via `depends_on` (§5): **P0001** (`locator: measure-zones`, one
+validation subtask) → **P0002** (`locator: breaks`, no subtask — completes on acceptance) →
+**T0001** (the encoding). Pre-tasks are ordinary crowd tasks: claimed (encoding-kind lock),
+submitted as encoding-type PRs, validated through the normal machinery.
+
+The **zone editor** (`/campaign/[owner]/[repo]/zones/[task]`) is the volunteer interface for both
+pre-tasks, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`,
+`submitBreaks`):
+
+- *Measure correction* (P0001): add (drag on the page), delete, move and resize boxes over the page
+  image. Numbering follows reading order automatically; a per-measure label override (e.g.
+  `10a`/`10b` for voltas) interrupts the sequence and numbering continues from its integer prefix.
+  Validators review the same view read-only and pass/fail from the console.
+- *Breaks* (P0002): page breaks are automatic (one per surface); the volunteer toggles which
+  measures start a system, pre-suggested from the detected row grouping.
+
 ## 8. Provider-agnostic design
 
 Two provider-touching surfaces, cleanly separated so a second forge is additive:
@@ -383,6 +441,13 @@ tables, the decision modules and coordinator address `(task_id, subtask_id)`, ev
 including rejects — appends to `history.csv`, and the console renders tasks and validation
 subtasks separately.
 
+**Command layer.** Every console operation is a named, versioned command (`src/lib/commands.ts`)
+run through one dispatcher, and every mutating command fills the command columns of a
+`history.csv` row (§5): PR-flow commands via the envelope in the PR body (Action-authored row,
+`scripts/coordinator.ts` + `src/lib/command-envelope.ts`), the reaper dispatch via a direct
+client commit. The console page is one caller of the registry; the command-log pipeline has not
+yet been exercised live.
+
 **Verification.** Unit tests cover the decision modules and Action A. A live end-to-end run
 (2026-07-02, throwaway campaign `ohwjd/e2e-caller-test`, still on schema v1) confirmed the caller
 pipeline: claim accepted (Action-authored lock) → stale lock reaped via `workflow_dispatch` →
@@ -408,17 +473,19 @@ Migration order (each phase independently shippable):
    *accept* end-to-end, which needs a second account.
 
 Done since: **the four-table data model** (schema v2, §5) — tables keyed by `(task_id,
-subtask_id)` with an append-only history. What remains of it: nothing *uses* `locator` yet (the
-reserved `by_measure`/`by_section` strategies will), and `allowlist`/`blocklist` are unenforced
-(below).
+subtask_id)` with an append-only history; **the facsimile pre-tasks** (§7a) — staged score,
+`depends_on` chaining, the zone editor, and coordinator-side measure generation (`locator` is now
+used by the pre-tasks; the reserved `by_measure`/`by_section` strategies still aren't). Not yet
+exercised live: the full pre-task pipeline (zones submit → validate → generate → breaks submit →
+encoding unblocked). `allowlist`/`blocklist` remain unenforced (below).
 
 Deferred (designed, not built):
 
-- **Onboarding wizard + pre-tasks** — collect *what/have/validation-policy*; for PDF sources run
-  measure-detection + header pre-fill and the pre-tasks (sb/pb, scoreDef, staffDef); then
-  algorithmically generate the task table. Heavy compute runs in Actions, which adds a
-  `workflow_dispatch` path to the caller carrying mei-friend-style inputs (`workpackage_id`,
-  `filepath`, `parameters`) — the dispatch counterpart to §4's event path.
+- **Onboarding wizard** — collect *what/have/validation-policy*; header pre-fill (scoreDef,
+  staffDef pre-tasks); algorithmically generate the task table for the reserved fragmentation
+  strategies. If heavy compute moves off the client, a `workflow_dispatch` path to the caller
+  carrying mei-friend-style inputs (`workpackage_id`, `filepath`, `parameters`) is the dispatch
+  counterpart to §4's event path.
 - **Allow/blocklist enforcement** — an optional per-task gate in the accept logic; **default open**
   (anyone can claim).
 - **GitLab (and other) `ForgeClient`** implementations behind the §8 seam.

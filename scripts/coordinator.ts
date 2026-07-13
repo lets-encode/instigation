@@ -28,6 +28,10 @@ import {
 	findRow
 } from '../src/lib/campaign-tables.ts';
 import type { ParsedState, LockRow, HistoryRow } from '../src/lib/campaign-tables.ts';
+import { envelopeFromPrBody, envelopeColumns } from '../src/lib/command-envelope.ts';
+import type { CommandEnvelope } from '../src/lib/command-envelope.ts';
+import { parseFacsimileMei, buildFacsimileMei } from '../src/lib/mei-facsimile.ts';
+import type { TaskRow } from '../src/lib/campaign-tables.ts';
 import { checkClaim } from '../src/lib/campaign-claim.ts';
 import { checkEncoding, checkValidation } from '../src/lib/campaign-submit.ts';
 import { reapLocks } from '../src/lib/campaign-reaper.ts';
@@ -35,6 +39,7 @@ import {
 	getRepoFile,
 	getRepoHead,
 	getPullRequestFiles,
+	getPullRequestBody,
 	commitFiles,
 	commentAndClosePr,
 	deleteBranch
@@ -123,10 +128,12 @@ function addedRowFromPatch(patch: string | undefined): string | null {
 
 async function attemptClaim(
 	changedPaths: string[],
-	intent: { task_id: string; subtask_id: string; kind: string } | null
+	intent: { task_id: string; subtask_id: string; kind: string } | null,
+	envelope: CommandEnvelope | null
 ): Promise<Verdict & { lock?: LockRow }> {
 	const { sha } = await getRepoHead(token, owner, repo);
-	const [stateCsv, lockCsv, historyCsv] = await Promise.all([
+	const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
+		getRepoFile(token, owner, repo, TASK_PATH, sha),
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
 		getRepoFile(token, owner, repo, LOCK_PATH, sha),
 		getRepoFile(token, owner, repo, HISTORY_PATH, sha)
@@ -136,6 +143,7 @@ async function attemptClaim(
 
 	const verdict: Verdict & { lock?: LockRow } = intent
 		? checkClaim({
+				tasks: parseTaskCsv(taskCsv ?? ''),
 				state: parseStateCsv(stateCsv ?? ''),
 				locks,
 				intent,
@@ -152,7 +160,8 @@ async function attemptClaim(
 		user_id: author,
 		action: `claim_${intent?.kind || 'unknown'}`,
 		outcome: verdict.ok ? 'accepted' : 'rejected',
-		detail: verdict.ok ? '' : verdict.reason!
+		detail: verdict.ok ? '' : verdict.reason!,
+		...envelopeColumns(envelope)
 	};
 	const files: FileChange[] = [{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', [history]) }];
 	if (verdict.ok) files.push({ path: LOCK_PATH, content: serializeLockCsv([...locks, verdict.lock!]) });
@@ -165,7 +174,10 @@ async function attemptClaim(
 	return verdict;
 }
 
-async function runClaim(files: Awaited<ReturnType<typeof getPullRequestFiles>>): Promise<void> {
+async function runClaim(
+	files: Awaited<ReturnType<typeof getPullRequestFiles>>,
+	envelope: CommandEnvelope | null
+): Promise<void> {
 	const changedPaths = files.map((f) => f.filename);
 	const lockFile = files.find((f) => f.filename === LOCK_PATH);
 	const addedRow = lockFile && addedRowFromPatch(lockFile.patch);
@@ -181,7 +193,7 @@ async function runClaim(files: Awaited<ReturnType<typeof getPullRequestFiles>>):
 	let verdict: Verdict & { lock?: LockRow } = { ok: false, reason: 'malformed_claim' };
 	for (let i = 0; i < MAX_ATTEMPTS; i++) {
 		try {
-			verdict = await attemptClaim(changedPaths, intent);
+			verdict = await attemptClaim(changedPaths, intent, envelope);
 			break;
 		} catch (e) {
 			if (i === MAX_ATTEMPTS - 1) throw e;
@@ -234,16 +246,43 @@ interface SubmitOutcome extends Verdict {
 	history: HistoryRow;
 }
 
+// Which task an encoding-type submission addresses. Several tasks can share a
+// fragment (the pre-tasks and the encoding task all live on the score), so the
+// fragment alone no longer identifies the task; the tie is broken by the PR's
+// own data — the command envelope's task_id, the `encode-<task_id>` branch
+// name, or the author's single active encoding lock among the candidates.
+function resolveEncodingTask(
+	tasks: TaskRow[],
+	locks: LockRow[],
+	changedPaths: string[],
+	envelope: CommandEnvelope | null
+): TaskRow | undefined {
+	const candidates = tasks.filter((t) => t.subtask_id === '' && changedPaths.includes(t.fragment));
+	if (candidates.length <= 1) return candidates[0];
+
+	const claimed = String(envelope?.input?.task_id ?? '');
+	const byEnvelope = candidates.find((t) => t.task_id === claimed);
+	if (byEnvelope) return byEnvelope;
+
+	const byBranch = candidates.find((t) => headRef === `encode-${t.task_id}`);
+	if (byBranch) return byBranch;
+
+	const held = candidates.filter((t) =>
+		locks.some((l) => l.task_id === t.task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === author)
+	);
+	return held.length === 1 ? held[0] : undefined;
+}
+
 async function decideEncoding(
 	sha: string,
+	tasks: TaskRow[],
 	state: ParsedState,
 	locks: LockRow[],
 	changedPaths: string[],
+	envelope: CommandEnvelope | null,
 	now: string
 ): Promise<Omit<SubmitOutcome, 'files' | 'message' | 'history'> & Partial<SubmitOutcome>> {
-	const taskCsv = await getRepoFile(token, owner, repo, TASK_PATH, sha);
-	const tasks = parseTaskCsv(taskCsv ?? '');
-	const task = tasks.find((t) => t.subtask_id === '' && changedPaths.includes(t.fragment));
+	const task = resolveEncodingTask(tasks, locks, changedPaths, envelope);
 	if (!task) return { ok: false, reason: 'unknown_task' };
 
 	const mei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
@@ -283,6 +322,7 @@ async function decideEncoding(
 
 async function decideValidation(
 	sha: string,
+	tasks: TaskRow[],
 	state: ParsedState,
 	locks: LockRow[],
 	changedPaths: string[],
@@ -318,43 +358,66 @@ async function decideValidation(
 	};
 	if (!verdict.ok) return { ok: false, reason: verdict.reason, history };
 
-	return {
-		ok: true,
-		history,
-		files: [
-			{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
-			{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
-		],
-		message: `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${author}`
-	};
+	const files: FileChange[] = [
+		{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
+		{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
+	];
+	let message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${author}`;
+
+	// Completing the measure-correction pre-task generates the score body: one
+	// numbered measure per validated zone (stage B; the breaks pre-task adds
+	// <pb/>/<sb/> on top of this).
+	const taskDef = findRow(tasks, diff.task_id, '');
+	const taskCompleted = findRow(verdict.state.rows, diff.task_id, '')?.status === 'completed';
+	if (taskCompleted && taskDef?.locator === 'measure-zones') {
+		const mei = await getRepoFile(token, owner, repo, taskDef.fragment, sha);
+		if (mei != null) {
+			files.push({
+				path: taskDef.fragment,
+				content: buildFacsimileMei(parseFacsimileMei(mei), { withMeasures: true })
+			});
+			message += `; generate measures from the validated zones`;
+		}
+	}
+
+	return { ok: true, history, files, message };
 }
 
 // One decide-and-apply pass, pinned to the branch head we read. Throws only if
 // the commit races (caller retries); returns the verdict otherwise.
-async function attemptSubmit(kind: 'encoding' | 'validation', changedPaths: string[]): Promise<Verdict> {
+async function attemptSubmit(
+	kind: 'encoding' | 'validation',
+	changedPaths: string[],
+	envelope: CommandEnvelope | null
+): Promise<Verdict> {
 	const { sha } = await getRepoHead(token, owner, repo);
-	const [stateCsv, lockCsv, historyCsv] = await Promise.all([
+	const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
+		getRepoFile(token, owner, repo, TASK_PATH, sha),
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
 		getRepoFile(token, owner, repo, LOCK_PATH, sha),
 		getRepoFile(token, owner, repo, HISTORY_PATH, sha)
 	]);
+	const tasks = parseTaskCsv(taskCsv ?? '');
 	const state = parseStateCsv(stateCsv ?? '');
 	const locks = parseLockCsv(lockCsv ?? '');
 	const now = new Date().toISOString();
 
 	const outcome =
 		kind === 'validation'
-			? await decideValidation(sha, state, locks, changedPaths, now)
-			: await decideEncoding(sha, state, locks, changedPaths, now);
+			? await decideValidation(sha, tasks, state, locks, changedPaths, now)
+			: await decideEncoding(sha, tasks, state, locks, changedPaths, envelope, now);
 
-	const history: HistoryRow = outcome.history ?? {
-		timestamp: now,
-		task_id: '',
-		subtask_id: '',
-		user_id: author,
-		action: `submit_${kind}`,
-		outcome: 'rejected',
-		detail: outcome.reason ?? 'rejected'
+	const history: HistoryRow = {
+		...(outcome.history ?? {
+			timestamp: now,
+			task_id: '',
+			subtask_id: '',
+			user_id: author,
+			action: `submit_${kind}`,
+			outcome: 'rejected',
+			detail: outcome.reason ?? 'rejected'
+		}),
+		...envelopeColumns(envelope)
 	};
 	const files: FileChange[] = [
 		...(outcome.files ?? []),
@@ -369,14 +432,15 @@ async function attemptSubmit(kind: 'encoding' | 'validation', changedPaths: stri
 
 async function runSubmit(
 	kind: 'encoding' | 'validation',
-	files: Awaited<ReturnType<typeof getPullRequestFiles>>
+	files: Awaited<ReturnType<typeof getPullRequestFiles>>,
+	envelope: CommandEnvelope | null
 ): Promise<void> {
 	const changedPaths = files.map((f) => f.filename);
 
 	let verdict: Verdict = { ok: false, reason: 'no_changes' };
 	for (let i = 0; i < MAX_ATTEMPTS; i++) {
 		try {
-			verdict = await attemptSubmit(kind, changedPaths);
+			verdict = await attemptSubmit(kind, changedPaths, envelope);
 			break;
 		} catch (e) {
 			if (i === MAX_ATTEMPTS - 1) throw e;
@@ -461,10 +525,16 @@ async function run(): Promise<void> {
 		throw new Error(`Unsupported event: ${eventName}`);
 	}
 
-	const files = await getPullRequestFiles(token, owner, repo, prNumber);
+	const [files, prBody] = await Promise.all([
+		getPullRequestFiles(token, owner, repo, prNumber),
+		getPullRequestBody(token, owner, repo, prNumber)
+	]);
+	// The PR body may carry the console command's envelope; treated as data,
+	// it feeds the command columns of the history row this run authors.
+	const envelope = envelopeFromPrBody(prBody);
 	const changedPaths = files.map((f) => f.filename);
-	if (changedPaths.includes(LOCK_PATH)) return runClaim(files);
-	return runSubmit(changedPaths.includes(STATE_PATH) ? 'validation' : 'encoding', files);
+	if (changedPaths.includes(LOCK_PATH)) return runClaim(files, envelope);
+	return runSubmit(changedPaths.includes(STATE_PATH) ? 'validation' : 'encoding', files, envelope);
 }
 
 run().catch((e) => {

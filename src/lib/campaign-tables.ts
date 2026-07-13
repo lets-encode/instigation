@@ -16,6 +16,8 @@ export interface TaskRow {
 	locator: string;
 	allowlist: string;
 	blocklist: string;
+	/** task_id that must be completed before this task can be claimed; empty = none. */
+	depends_on: string;
 }
 
 /** A lock row from lock.csv. */
@@ -27,7 +29,12 @@ export interface LockRow {
 	kind: string;
 }
 
-/** An append-only history row from history.csv. */
+/**
+ * An append-only history row from history.csv. The last three columns record
+ * the console command behind the event, when there was one: the command's id,
+ * its version, and its input as JSON. They stay empty for events that arrived
+ * without a command envelope (hand-opened PRs, scheduled reaps).
+ */
 export interface HistoryRow {
 	timestamp: string;
 	task_id: string;
@@ -36,6 +43,9 @@ export interface HistoryRow {
 	action: string;
 	outcome: string;
 	detail: string;
+	command?: string;
+	version?: string;
+	input?: string;
 }
 
 /**
@@ -59,10 +69,10 @@ export interface ParsedState {
 	rows: StateRow[];
 }
 
-const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist'];
+const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist', 'depends_on'];
 const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
 const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
-const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail'];
+const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
 function csvField(value: unknown): string {

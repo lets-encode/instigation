@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseStateCsv, parseLockCsv } from './campaign-tables.js';
+import { parseTaskCsv, parseStateCsv, parseLockCsv } from './campaign-tables.js';
 import type { LockRow } from './campaign-tables.js';
 import { boundaryCheck, checkClaim } from './campaign-claim.js';
 import type { CheckClaimArgs } from './campaign-claim.js';
@@ -13,6 +13,11 @@ type ClaimView = { ok: boolean; reason?: string; lock?: LockRow };
 const NOW = '2026-06-25T10:00:00Z';
 const LOCK_HEADER = 'task_id,subtask_id,user_id,timestamp,kind\n';
 const STATE_HEADER = 'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n';
+const TASK_HEADER = 'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n';
+
+const TASKS = parseTaskCsv(
+	TASK_HEADER + 'T0001,,sources/score.mei,,,,\n' + 'T0001,S0001,sources/score.mei,,,,\n'
+);
 
 // State builders for the scenarios under test. Encoding targets the task row
 // (empty subtask_id); validation targets the S0001 subtask row.
@@ -28,6 +33,7 @@ const validationTwoSlots = parseStateCsv(
 
 const claim = (over: Partial<CheckClaimArgs> = {}): ClaimView =>
 	checkClaim({
+		tasks: TASKS,
 		state: encodingRequired,
 		locks: [],
 		intent: { task_id: 'T0001', subtask_id: '', kind: 'encoding' },
@@ -38,6 +44,32 @@ const claim = (over: Partial<CheckClaimArgs> = {}): ClaimView =>
 	});
 
 const validationIntent = { task_id: 'T0001', subtask_id: 'S0001', kind: 'validation' };
+
+test('dependency gate: a claim on a task whose depends_on is not completed is rejected', () => {
+	const tasks = parseTaskCsv(
+		TASK_HEADER +
+			'P0001,,sources/score.mei,measure-zones,,,\n' +
+			'P0002,,sources/score.mei,breaks,,,P0001\n'
+	);
+	const state = parseStateCsv(
+		STATE_HEADER + 'P0001,,encoding_required,,,\n' + 'P0002,,encoding_required,,,\n'
+	);
+	const v = claim({ tasks, state, intent: { task_id: 'P0002', subtask_id: '', kind: 'encoding' } });
+	assert.deepEqual(v, { ok: false, reason: 'dependency_incomplete' });
+});
+
+test('dependency gate: the claim opens once the depended-on task is completed', () => {
+	const tasks = parseTaskCsv(
+		TASK_HEADER +
+			'P0001,,sources/score.mei,measure-zones,,,\n' +
+			'P0002,,sources/score.mei,breaks,,,P0001\n'
+	);
+	const state = parseStateCsv(
+		STATE_HEADER + 'P0001,,completed,alice,2026-06-25T09:00:00Z,\n' + 'P0002,,encoding_required,,,\n'
+	);
+	const v = claim({ tasks, state, intent: { task_id: 'P0002', subtask_id: '', kind: 'encoding' } });
+	assert.equal(v.ok, true);
+});
 
 test('boundaryCheck: only allowed paths, and at least one change', () => {
 	assert.equal(boundaryCheck(['tracking/lock.csv'], ['tracking/lock.csv']), true);
