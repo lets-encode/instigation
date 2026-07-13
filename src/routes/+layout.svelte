@@ -4,7 +4,7 @@
 
   let { children } = $props();
 
-  // Resolve any token already in sessionStorage once the app mounts (client-only).
+  // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
     initAuth();
   });
@@ -26,6 +26,12 @@
 </header>
 
 <main>
+  {#if auth.error}
+    <p class="auth-error" role="alert">
+      Sign-in failed: {auth.error}
+      <button type="button" onclick={() => (auth.error = null)}>Dismiss</button>
+    </p>
+  {/if}
   {@render children()}
 </main>
 
@@ -62,6 +68,17 @@
     width: 28px;
     height: 28px;
     border-radius: 50%;
+  }
+  .auth-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid #e0b4b4;
+    border-radius: 6px;
+    background: #fdf2f2;
+    color: #9f3a38;
   }
   main {
     max-width: 640px;

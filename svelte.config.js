@@ -2,10 +2,10 @@ import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { loadEnv } from 'vite';
 
-// The CSP must allow fetches to the token broker, whose URL is deployment
-// config — read it from the same env files Vite gives the app.
+// Hosts the app talks to are deployment config — read them from the same env
+// files Vite gives the app. The OAuth session broker needs no CSP entry: it is
+// mounted on the SPA's own origin, covered by 'self'.
 const env = loadEnv(process.env.NODE_ENV ?? 'production', process.cwd(), 'PUBLIC_');
-const brokerOrigin = env.PUBLIC_OAUTH_BROKER_URL ? new URL(env.PUBLIC_OAUTH_BROKER_URL).origin : '';
 // The measure-detector the campaign scaffolder POSTs page images to.
 const detectorOrigin = new URL(
 	env.PUBLIC_MEASURE_DETECTOR_URL || 'https://measure-detector.edirom.de'
@@ -19,10 +19,11 @@ const config = {
 		// Static SPA: all routes are client-rendered and served via the fallback,
 		// so the dynamic /campaign/[owner]/[repo] route resolves without a server.
 		adapter: adapter({ fallback: 'index.html' }),
-		// Strict CSP: the forge token lives in sessionStorage, so it is reachable
-		// from any script that runs on the page — allow only our own scripts and
-		// the exact hosts the app talks to. `hash` mode works on static pages
-		// (nonces need a server). `ws:` is for Vite's dev-server HMR socket only.
+		// Strict CSP as defence in depth: the forge token lives server-side in
+		// the broker session, but scripts on the page could still act through
+		// the authenticated proxy — allow only our own scripts and the exact
+		// hosts the app talks to. `hash` mode works on static pages (nonces
+		// need a server). `ws:` is for Vite's dev-server HMR socket only.
 		csp: {
 			mode: 'hash',
 			directives: {
@@ -36,7 +37,6 @@ const config = {
 					'self',
 					'https://api.github.com',
 					detectorOrigin,
-					...(brokerOrigin ? [brokerOrigin] : []),
 					...(dev ? ['ws:'] : [])
 				],
 				'base-uri': ['self'],

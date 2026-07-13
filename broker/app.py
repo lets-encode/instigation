@@ -1,25 +1,40 @@
 """
-Stateless OAuth token broker for the instigation SPA (Flask).
+OAuth session broker for the instigation SPA (Flask).
 
-The browser can't complete GitHub's OAuth flow itself: the code->token exchange
-needs the client secret, and GitHub's token endpoint sends no CORS headers. This
-app does only those two things -- swap a code for a token, and revoke a token on
-logout -- holding the client secret. No storage, no sessions, no user data.
+The GitHub OAuth token never reaches the browser. The full OAuth flow runs
+server-side (/login -> GitHub -> /authorize), the token is stored in a
+server-side session, and the browser holds only an opaque httpOnly session
+cookie. All authenticated GitHub API traffic from the SPA flows through
+/proxy/<url>, which attaches the token from the session.
 
-Config (environment variables):
+The broker must be served under the SAME origin as the SPA (e.g. mounted at
+/oauth by nginx in production, or by the Vite dev proxy) so the session cookie
+is first-party and CORS never comes into play.
+
+Config (environment variables, loaded from broker/.env if present):
   GITHUB_CLIENT_ID       the OAuth app's client id
   GITHUB_CLIENT_SECRET   the OAuth app's client secret (secret; only here)
-  ALLOWED_ORIGIN         the SPA's origin, e.g. https://lets-encode.example (or *)
+  FLASK_SECRET           key that signs the session cookie (secret; generate one)
+  REDIRECT_URL           the OAuth callback as the browser reaches it, e.g.
+                         https://your-domain.example/oauth/authorize
+  SESSION_DIR            where session files live (default: instance/sessions)
+  FLASK_ENV              set to "development" to allow the cookie over plain HTTP
 
-See README.md for how to run it (and the HTTPS/CORS notes).
+See README.md for setup, and deploy/nginx.conf for the production mount.
 """
 
-import os
+import sys
+from os import getenv, makedirs, chmod, path
 from pathlib import Path
 
 import requests
+from authlib.integrations.flask_client import OAuth
+from cachelib.file import FileSystemCache
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request, session
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_session import Session
 
 # Load broker/.env (next to this file) into the environment — found regardless of
 # the working directory flask/gunicorn is launched from. Real environment
@@ -27,68 +42,186 @@ from flask import Flask, jsonify, request
 load_dotenv(Path(__file__).with_name(".env"))
 
 app = Flask(__name__)
+app.secret_key = getenv("FLASK_SECRET")
+if not app.secret_key:
+    sys.exit("FLASK_SECRET is not set; refusing to start with unsigned sessions.")
 
-GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
+# Server-side sessions: session data (including the GitHub OAuth token) is kept
+# on the server; the browser only holds an opaque session ID. With Flask's
+# default client-side sessions the cookie itself would contain the token in
+# base64-readable (signed, but not encrypted) form.
+# The filesystem cache is shared between gunicorn workers on the same host and
+# lives in the (gitignored, never-served) Flask instance folder by default, so
+# sessions survive restarts and deployments without external setup. Set
+# SESSION_DIR to override. No fallback on failure: refusing to start is better
+# than silently landing somewhere volatile and losing all sessions later.
+session_dir = getenv("SESSION_DIR") or path.join(app.instance_path, "sessions")
+try:
+    makedirs(session_dir, mode=0o700, exist_ok=True)
+    if not getenv("SESSION_DIR"):
+        # session files contain OAuth tokens: keep the default directory
+        # private to the service user (an explicit SESSION_DIR is presumed
+        # provisioned with intentional permissions, so leave those alone)
+        chmod(session_dir, 0o700)
+except OSError as e:
+    sys.exit("Cannot create session directory {}: {}".format(session_dir, e))
+app.config["SESSION_TYPE"] = "cachelib"
+app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir=session_dir, threshold=1000)
+# Session cookie hygiene. Secure requires HTTPS, so switch it off for local
+# development by setting FLASK_ENV=development.
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = getenv("FLASK_ENV") != "development"
+Session(app)
+
+limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
+
+oauth = OAuth(app)
+github = oauth.register(
+    name="github",
+    client_id=getenv("GITHUB_CLIENT_ID"),
+    client_secret=getenv("GITHUB_CLIENT_SECRET"),
+    access_token_url="https://github.com/login/oauth/access_token",
+    authorize_url="https://github.com/login/oauth/authorize",
+    api_base_url="https://api.github.com/",
+    client_kwargs={"scope": "repo"},
+)
+
 GITHUB_API = "https://api.github.com"
-
-CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
-CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
+# The proxy relays only GitHub REST API calls (the SPA does no git smart-HTTP).
+ALLOWED_DOMAINS = ["api.github.com"]
 
 
-@app.after_request
-def add_cors(resp):
-    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
-    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    resp.headers["Vary"] = "Origin"
-    return resp
+def oauth_callback_url() -> str:
+    # Behind the /oauth mount the prefix and scheme are invisible to Flask, so
+    # url_for can't reconstruct the externally reachable callback; REDIRECT_URL
+    # states it explicitly (it must match the OAuth app's registered callback).
+    return getenv("REDIRECT_URL") or request.host_url.rstrip("/") + "/authorize"
 
 
-@app.route("/token", methods=["POST", "OPTIONS"])
-def token():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    body = request.get_json(silent=True) or {}
-    code = body.get("code")
-    if not code:
-        return jsonify(error="missing_code"), 400
-    r = requests.post(
-        GITHUB_TOKEN_URL,
-        headers={"Accept": "application/json"},
-        json={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "code": code,
-            "redirect_uri": body.get("redirect_uri"),
-        },
-        timeout=10,
-    )
-    data = r.json() if r.ok else {}
-    if data.get("error") or not data.get("access_token"):
-        reason = data.get("error_description") or data.get("error") or "exchange_failed"
-        return jsonify(error=reason), 502
-    return jsonify(access_token=data["access_token"], scope=data.get("scope", ""))
+def safe_return_path(value):
+    # Only same-origin absolute paths — reject full URLs and scheme-relative
+    # ("//host") values so the post-login redirect can't leave the SPA.
+    if value and value.startswith("/") and not value.startswith("//"):
+        return value
+    return "/"
 
 
-@app.route("/revoke", methods=["POST", "OPTIONS"])
-def revoke():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    body = request.get_json(silent=True) or {}
-    tok = body.get("token")
-    if not tok:
-        return jsonify(error="missing_token"), 400
-    # Authenticated with the app's client_id/client_secret (Basic auth), not the
-    # user token. 204 = revoked, 404 = already invalid; both count as success.
-    r = requests.delete(
-        f"{GITHUB_API}/applications/{CLIENT_ID}/token",
-        headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
-        auth=(CLIENT_ID, CLIENT_SECRET),
-        json={"access_token": tok},
-        timeout=10,
-    )
-    return jsonify(ok=r.ok or r.status_code == 404)
+@app.route("/login")
+def login():
+    # Remember where the SPA wants the user back, then hand off to GitHub.
+    # authlib generates and session-stores the OAuth `state` parameter.
+    session["return_to"] = safe_return_path(request.args.get("return_to"))
+    return github.authorize_redirect(oauth_callback_url())
+
+
+@app.route("/authorize")
+def authorize():
+    return_to = session.pop("return_to", "/")
+    try:
+        token = github.authorize_access_token()
+    except Exception as e:
+        # Denied grant, stale/invalid state, or a failed exchange. Surface it to
+        # the SPA rather than failing silently.
+        return redirect(return_to + "?auth_error=" + requests.utils.quote(str(e)))
+    resp = github.get("user", token=token)
+    if not resp.ok:
+        return redirect(return_to + "?auth_error=" + requests.utils.quote("Could not resolve the GitHub user."))
+    session["githubToken"] = token["access_token"]
+    session["userLogin"] = resp.json().get("login", "")
+    return redirect(return_to)
+
+
+def revoke_github_token(token):
+    # Ask GitHub to invalidate the OAuth token so it cannot be reused after
+    # logout. OAuth App tokens do not expire on their own, so without this a
+    # leaked token stays valid indefinitely. Best-effort: never let a failure
+    # here block the user from logging out.
+    client_id = getenv("GITHUB_CLIENT_ID")
+    client_secret = getenv("GITHUB_CLIENT_SECRET")
+    if not (token and client_id and client_secret):
+        return
+    try:
+        # 204 = revoked, 404 = already invalid; both leave the token unusable.
+        requests.delete(
+            "{}/applications/{}/token".format(GITHUB_API, client_id),
+            auth=(client_id, client_secret),
+            json={"access_token": token},
+            headers={"Accept": "application/vnd.github+json"},
+            timeout=5,
+        )
+    except requests.RequestException as e:
+        print("Could not revoke GitHub token on logout:", e)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    revoke_github_token(session.get("githubToken"))
+    session.clear()
+    return jsonify(ok=True)
+
+
+@app.route("/proxy/<path:url>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+# All authenticated GitHub traffic flows through here, and the SPA polls
+# (workflow runs, fork readiness), so bursts exceed the default limit. Key by
+# user login so users behind a shared institutional NAT don't throttle each
+# other.
+@limiter.limit("30 per second", key_func=lambda: session.get("userLogin") or get_remote_address())
+def proxy(url):
+    # Only logged-in users may use the proxy: it exists to attach the session's
+    # token, and gating it prevents abuse as an open relay. Anonymous reads
+    # (e.g. the public campaign listing) go directly to the API from the
+    # browser instead.
+    if "githubToken" not in session:
+        return jsonify(error="Authentication required"), 401
+    url = requests.utils.unquote(url)
+    if not url.startswith("http"):
+        url = "https://" + url
+    from urllib.parse import urlparse
+
+    if urlparse(url).netloc not in ALLOWED_DOMAINS:
+        return jsonify(error="Domain not allowed"), 400
+    if request.query_string:
+        url += "?" + request.query_string.decode()
+
+    # Drop hop-by-hop and identity-bearing headers: never forward our own
+    # session cookie upstream, let requests set its own Host, and ignore any
+    # client-supplied Authorization — credentials are attached server-side from
+    # the session so that the OAuth token never needs to be present in the
+    # browser.
+    excluded_request_headers = {"host", "cookie", "authorization"}
+    headers = {
+        key: value for key, value in request.headers if key.lower() not in excluded_request_headers
+    }
+    headers["Authorization"] = "token " + session["githubToken"]
+
+    # Timeout protects gunicorn workers from being parked indefinitely by a
+    # hung upstream connection: 10s to connect, 60s between reads.
+    try:
+        response = requests.request(
+            request.method, url, headers=headers, data=request.get_data(), timeout=(10, 60)
+        )
+    except requests.Timeout:
+        return jsonify(error="Upstream request timed out"), 504
+
+    # 'date' and 'server' must not be passed through: our own HTTP layer adds
+    # its own, and duplicate Date headers are joined by browsers into a string
+    # that parses as Invalid Date. Upstream caching headers must not be
+    # forwarded either: these are per-request, per-user authenticated relays,
+    # and any shared cache in front of us could serve a stale response — or one
+    # user's response to another — on the same /proxy path. Force no-store.
+    excluded_response_headers = {
+        "content-encoding", "content-length", "transfer-encoding", "connection",
+        "www-authenticate", "date", "server",
+        "cache-control", "expires", "pragma", "etag", "last-modified", "age",
+    }
+    out_headers = [
+        (name, value)
+        for name, value in response.raw.headers.items()
+        if name.lower() not in excluded_response_headers
+    ]
+    out_headers.append(("Cache-Control", "no-store"))
+    return (response.content, response.status_code, out_headers)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ instigation GUI** (organiser creates/configures a campaign) and the **mei-friend
 ## 1. Architecture at a glance
 
 ```
-Instigation GUI (static SPA)                         ← user's forge token, in the browser
+Instigation GUI (static SPA)                         ← forge token held server-side by the session broker
   │  create campaign (generate + commit) · read tables · open contribution PRs
   ▼
 Campaign repository                                  ← data + ONE task-agnostic caller
@@ -39,9 +39,10 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 
 ## 2. The components
 
-- **Instigation GUI** (`instigation/`, a SvelteKit **static** app, `adapter-static`) — no backend.
-  The organiser logs in with the forge (OAuth via a stateless token broker, §8), then the browser
-  uses a **`ForgeClient`** (the user's token, direct to the forge API) to: create the campaign repo
+- **Instigation GUI** (`instigation/`, a SvelteKit **static** app, `adapter-static`) — no app backend.
+  The organiser logs in with the forge (OAuth run server-side by the session broker, §8), then the
+  browser uses a **`ForgeClient`** (authenticated calls relayed through the broker, which attaches
+  the user's token from its session) to: create the campaign repo
   from the template and initialise it (Action A, §7), read the tracking tables, and open the
   contribution PRs that drive the automation (the campaign console).
 - **Campaign repository** — an independent repo stamped from the template
@@ -60,8 +61,8 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 
 | Decision | Resolution |
 |---|---|
-| Backend | **None.** The former SvelteKit server was only a forge REST client on the user's token; it moves to the browser. Deploy as static assets. |
-| OAuth | **Token broker** — a small stateless service (a Flask app, `broker/`) holds the client secret and only swaps `code`→`token` (GitHub offers no PKCE and no CORS on its token endpoint). A *provider trait*: GitLab supports PKCE, so it needs no broker. |
+| Backend | **The session broker only.** The SPA is static assets; its one server-side dependency is the OAuth session broker, which holds the token and relays the authenticated forge calls. |
+| OAuth | **Session broker** — a small stateful service (a Flask app, `broker/`) runs the whole OAuth flow, holds the client secret and the user's token in a server-side session (the browser gets only an httpOnly cookie), and proxies the SPA's authenticated API calls. The token is never present in the page, so script injection cannot read it. A *provider trait*: a GitLab deployment could run PKCE in the browser instead, trading that protection for a serverless setup. |
 | Per-repo workflows | **One generic, task-agnostic caller** replaces any per-task workflows. Triggers: `pull_request_target` (all contributions) + `schedule` (the reaper) + `workflow_dispatch` (manual reaper run from the console). It forwards the event; central decides what to do. |
 | Central location | **Read from the campaign config on the base ref** (§4) — never hardcoded, never taken from the fork. The pinned ref lives in that config. |
 | Central logic | Lives in the **central automation repo**; the campaign repo carries none. The **instigation repo doubles as the central repo** (entry: `scripts/coordinator.ts`), so the SPA and the coordinator share the pure modules. |
@@ -321,7 +322,7 @@ carol submits pass       S0001    validate_status_1=pass|carol|… → completed
 
 ## 7. Instigation (Action A) — client-side
 
-At creation the GUI, using the organiser's token in the browser via the `ForgeClient`:
+At creation the GUI, acting as the organiser via the `ForgeClient` (token attached by the broker):
 
 1. **generates** the campaign repo from the template into the instigator's account,
 2. sets the repo's Actions token to read/write (so the caller can commit tables + close PRs),
@@ -342,7 +343,7 @@ Two provider-touching surfaces, cleanly separated so a second forge is additive:
   branch, list, **fork + open change-request**, raw-file URL, and CI-trigger. A `GitHubForge` implements
   it now; all specifics (API base, OAuth endpoints, raw-URL pattern, fork/PR verbs, auth strategy)
   live in a per-provider **config object** — **no hardcoded hosts or paths anywhere**. Auth is a
-  provider trait: GitHub → token broker; GitLab → PKCE (no broker).
+  provider trait: GitHub → session broker (token server-side); GitLab → PKCE possible (no broker).
 - **Automation logic is provider-neutral by construction** — the coordinator + decision modules read
   and mutate files via the `ForgeClient`. The only provider-specific artefact is the **caller**
   itself (GitHub Actions YAML now; a structurally identical GitLab CI job later — fork MR event →
@@ -362,10 +363,10 @@ Two provider-touching surfaces, cleanly separated so a second forge is additive:
 **The migration described by this document is code-complete.** The target architecture above is
 what the repos now contain:
 
-- **Backendless SPA** — `adapter-static`, no server routes. OAuth runs client-side against the
-  token broker (`broker/`, a small stateless Flask app); the token lives in `sessionStorage`; all
-  forge access goes through the `ForgeClient` seam (`src/lib/forge/`). A strict CSP is baked into
-  the build (`svelte.config.js`).
+- **Static SPA + session broker** — `adapter-static`, no server routes. OAuth runs server-side in
+  the session broker (`broker/`, Flask), which holds the token and relays authenticated forge
+  calls; all forge access goes through the `ForgeClient` seam (`src/lib/forge/`). A strict CSP is
+  baked into the build (`svelte.config.js`).
 - **One generic caller** — the template ships a single `caller.yml` (§4) that reads the
   `automation:` pointer from the campaign's `config.yaml` on the base ref and runs the central
   coordinator. The three per-task workflows and their `scripts/*.mjs` shells are gone.
@@ -399,7 +400,7 @@ modules via Vite. No build step for the automation.
 
 Migration order (each phase independently shippable):
 
-1. **Backendless SPA** — ✅ built (static adapter, `ForgeClient`(GitHub) seam, token broker).
+1. **Static SPA + session broker** — ✅ built (static adapter, `ForgeClient`(GitHub) seam, session broker).
    Remaining verification: a browser smoke test of `generate` + a commit sequence against the forge
    API (the load-bearing CORS assumption).
 2. **One generic caller + central automation** — ✅ built and verified live on a throwaway campaign
@@ -431,11 +432,14 @@ Deferred (designed, not built):
   needs no token.
 - [x] **Never execute fork code** — the caller checks out the base tree only; the fork is data (§4, §6).
 - [x] **Read the central pointer from the base ref** — never from the PR head (§4a).
-- [x] **Token handling in the SPA** — the forge token lives in `sessionStorage` (no httpOnly cookie),
-  so it is XSS-reachable: a strict CSP (scripts `'self'` only, hashed init script, allow-listed
-  `connect-src`/`img-src`) is baked into the build via `svelte.config.js`; no third-party scripts.
-- [ ] **Broker** — stateless and holds only the client secret ✓; CORS restriction is a deployment
-  setting — set `ALLOWED_ORIGIN` to the app origin (the default is `*`).
+- [x] **Token handling** — the forge token never reaches the browser: it lives in the broker's
+  server-side session, the page holds only an httpOnly session cookie, and authenticated API calls
+  are relayed through the broker's login-gated proxy. The strict CSP (scripts `'self'` only, hashed
+  init script, allow-listed `connect-src`/`img-src`) baked into the build via `svelte.config.js`
+  remains as defence in depth.
+- [x] **Broker** — holds the client secret and the session tokens; same-origin mount only (no CORS
+  surface); revokes the token at GitHub on logout; proxy is allowlisted to `api.github.com`,
+  login-gated, and rate-limited.
 - [ ] **Actions write permissions** — the create flow sets the repo's default workflow token to write;
   confirm for any org-owned repos.
 - [x] **MEI schema validator** — the machine-check runs `xmllint --relaxng` against the pinned

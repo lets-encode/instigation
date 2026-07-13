@@ -1,20 +1,18 @@
 // Per-deployment forge configuration, read from public (client-visible) env.
-// Everything here is non-secret: the OAuth client_id is public, and the client
-// secret lives only in the token broker. Values intrinsic to a provider (e.g.
-// api.github.com) live in that provider's module, not here.
+// Everything here is non-secret: OAuth credentials and the user's token live
+// only in the broker. Values intrinsic to a provider (e.g. api.github.com)
+// live in that provider's module, not here.
 
 import { env } from '$env/dynamic/public';
 
 export interface ProviderConfig {
 	/** Which ForgeClient implementation to use (see forge/index.ts). */
 	id: string;
-	/** OAuth client id (public). */
-	clientId: string;
-	/** OAuth scope requested at login. */
-	scope: string;
-	/** The provider's OAuth authorize endpoint. */
-	authorizeUrl: string;
-	/** Stateless token broker that swaps an OAuth code for an access token. */
+	/**
+	 * The OAuth session broker, as a same-origin path (it must share the SPA's
+	 * origin so its session cookie is first-party). It runs the OAuth flow,
+	 * holds the user's token server-side, and proxies authenticated API calls.
+	 */
 	brokerUrl: string;
 	/** The campaign template this deployment stamps new repos from. */
 	template: { owner: string; repo: string };
@@ -24,10 +22,7 @@ export interface ProviderConfig {
 
 export const provider: ProviderConfig = {
 	id: env.PUBLIC_FORGE || 'github',
-	clientId: env.PUBLIC_GITHUB_CLIENT_ID || '',
-	scope: 'repo',
-	authorizeUrl: 'https://github.com/login/oauth/authorize',
-	brokerUrl: env.PUBLIC_OAUTH_BROKER_URL || '',
+	brokerUrl: env.PUBLIC_OAUTH_BROKER_URL || '/oauth',
 	template: {
 		owner: env.PUBLIC_TEMPLATE_OWNER || '',
 		repo: env.PUBLIC_TEMPLATE_REPO || ''

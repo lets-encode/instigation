@@ -1,9 +1,38 @@
 // GitHub REST adapter — the raw calls behind the ForgeClient interface (and the
 // scripts run by the campaign automation). Every function takes an access token
-// explicitly; no client secret lives here — the OAuth code→token exchange is the
-// broker's job. Browser- and Node-safe (fetch / atob / TextDecoder, no Buffer).
+// explicitly; no client secret lives here. In the browser the real OAuth token
+// never exists: pass the SESSION sentinel instead and calls are routed through
+// the broker's /proxy, which attaches the token server-side from the session
+// cookie. A real token (CI scripts) or no token (anonymous public reads) goes
+// straight to the API. Browser- and Node-safe (fetch / atob / TextDecoder).
 
 const API = 'https://api.github.com';
+
+/**
+ * Token sentinel: authenticate via the broker session instead of a bearer
+ * token. Requests are sent to the base registered with routeSessionVia() and
+ * carry the (same-origin, httpOnly) session cookie; no Authorization header.
+ */
+export const SESSION = '@session';
+
+let sessionApiBase: string | null = null;
+
+/** Register the broker proxy base (e.g. `/oauth/proxy/api.github.com`) that SESSION calls go to. */
+export function routeSessionVia(base: string): void {
+	sessionApiBase = base;
+}
+
+function apiRoot(token?: string): string {
+	if (token === SESSION) {
+		if (!sessionApiBase) throw new Error('SESSION used before routeSessionVia() was called.');
+		return sessionApiBase;
+	}
+	return API;
+}
+
+function authHeaders(token?: string): Record<string, string> {
+	return token && token !== SESSION ? { Authorization: `Bearer ${token}` } : {};
+}
 
 const baseHeaders: Record<string, string> = {
 	Accept: 'application/vnd.github+json',
@@ -79,8 +108,8 @@ interface ErrorResponse {
 export async function getAuthenticatedUser(
 	token: string
 ): Promise<{ user: GitHubUser; scopes: string } | null> {
-	const res = await fetch(`${API}/user`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/user`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	if (!res.ok) return null;
@@ -111,9 +140,9 @@ export async function createRepoFromTemplate(
 		owner: string;
 	}
 ): Promise<RepoData> {
-	const res = await fetch(`${API}/repos/${templateOwner}/${templateRepo}/generate`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${templateOwner}/${templateRepo}/generate`, {
 		method: 'POST',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({
 			owner, // account/org the new repo is created under
 			name,
@@ -143,8 +172,8 @@ export async function getRepoFile(
 	ref?: string
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-	const res = await fetch(`${API}/repos/${owner}/${repo}/contents/${path}${query}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	if (res.status === 404) return null;
@@ -168,8 +197,8 @@ export async function getRepoFileDownloadUrl(
 	ref?: string
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-	const res = await fetch(`${API}/repos/${owner}/${repo}/contents/${path}${query}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	if (res.status === 404) {
@@ -191,12 +220,12 @@ export async function getRepoHead(
 	owner: string,
 	repo: string
 ): Promise<{ branch: string; sha: string; canPush: boolean }> {
-	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
-	const repoRes = await fetch(`${API}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
+	const headers = { ...baseHeaders, ...authHeaders(token) };
+	const repoRes = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	const repoData: RepoData = await repoRes.json().catch(() => ({}));
 	if (!repoRes.ok) throw new Error(`${repoData.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
 	const branch = repoData.default_branch;
-	const refRes = await fetch(`${API}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers, cache: 'no-store' });
+	const refRes = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers, cache: 'no-store' });
 	const refData: { object: { sha: string }; message?: string } = await refRes.json().catch(() => ({}));
 	if (!refRes.ok) throw new Error(`${refData.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
 	return { branch, sha: refData.object.sha, canPush: Boolean(repoData.permissions?.push) };
@@ -213,8 +242,8 @@ export async function ensureFork(
 	repo: string,
 	{ attempts = 20, delayMs = 1500 }: { attempts?: number; delayMs?: number } = {}
 ): Promise<{ owner: string; repo: string }> {
-	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
-	const res = await fetch(`${API}/repos/${owner}/${repo}/forks`, {
+	const headers = { ...baseHeaders, ...authHeaders(token) };
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/forks`, {
 		method: 'POST',
 		headers,
 		// Only the default branch — the fork doesn't need copies of upstream's
@@ -227,7 +256,7 @@ export async function ensureFork(
 	const [forkOwner, forkRepo] = data.full_name.split('/');
 	// Poll until the fork's default branch ref exists (the fork is populated).
 	for (let i = 0; i < attempts; i++) {
-		const r = await fetch(`${API}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
+		const r = await fetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
 		if (r.ok) return { owner: forkOwner, repo: forkRepo };
 		await new Promise((resolve) => setTimeout(resolve, delayMs));
 	}
@@ -236,9 +265,8 @@ export async function ensureFork(
 
 /** Whether a repo named `repo` exists under `owner` (any visibility the token can see). */
 export async function repoExists(owner: string, repo: string, token?: string): Promise<boolean> {
-	const headers: Record<string, string> = { ...baseHeaders };
-	if (token) headers.Authorization = `Bearer ${token}`;
-	const res = await fetch(`${API}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
+	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	if (res.status === 404) return false;
 	if (!res.ok) {
 		const data: ErrorResponse = await res.json().catch(() => ({}));
@@ -249,8 +277,8 @@ export async function repoExists(owner: string, repo: string, token?: string): P
 
 /** Whether the repo is private (its raw download URLs then carry a short-lived token). */
 export async function getRepoIsPrivate(token: string, owner: string, repo: string): Promise<boolean> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	const data: RepoData = await res.json().catch(() => ({}));
@@ -265,8 +293,8 @@ export async function getPullRequestFiles(
 	repo: string,
 	number: number
 ): Promise<Array<{ filename: string; status: string; patch?: string }>> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	const data = await res.json().catch(() => []);
@@ -287,8 +315,8 @@ export async function getRepoSubscription(
 	owner: string,
 	repo: string
 ): Promise<{ subscribed: boolean; ignored: boolean } | null> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/subscription`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/subscription`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	if (res.status === 404) return null;
@@ -305,9 +333,9 @@ export async function getRepoSubscription(
  * threads (own PRs, mentions). Affects only the token's own user.
  */
 export async function ignoreRepoNotifications(token: string, owner: string, repo: string): Promise<void> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/subscription`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/subscription`, {
 		method: 'PUT',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ subscribed: false, ignored: true })
 	});
 	if (!res.ok) {
@@ -323,8 +351,8 @@ export async function getPullRequestState(
 	repo: string,
 	number: number
 ): Promise<string> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
 	const data: { state?: string; message?: string } = await res.json().catch(() => ({}));
@@ -340,8 +368,8 @@ export async function getLastIssueComment(
 	number: number
 ): Promise<string | null> {
 	const res = await fetch(
-		`${API}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1&sort=created&direction=desc`,
-		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` }, cache: 'no-store' }
+		`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1&sort=created&direction=desc`,
+		{ headers: { ...baseHeaders, ...authHeaders(token) }, cache: 'no-store' }
 	);
 	const data = await res.json().catch(() => []);
 	if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to read comments');
@@ -358,8 +386,8 @@ export async function getLatestWorkflowRun(
 	event: string
 ): Promise<{ status: string; conclusion: string | null; created_at: string } | null> {
 	const res = await fetch(
-		`${API}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
-		{ headers: { ...baseHeaders, Authorization: `Bearer ${token}` }, cache: 'no-store' }
+		`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
+		{ headers: { ...baseHeaders, ...authHeaders(token) }, cache: 'no-store' }
 	);
 	const data: {
 		workflow_runs?: Array<{ status: string; conclusion: string | null; created_at: string }>;
@@ -378,13 +406,13 @@ export async function commentAndClosePr(
 	number: number,
 	body: string
 ): Promise<void> {
-	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
-	await fetch(`${API}/repos/${owner}/${repo}/issues/${number}/comments`, {
+	const headers = { ...baseHeaders, ...authHeaders(token) };
+	await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments`, {
 		method: 'POST',
 		headers,
 		body: JSON.stringify({ body })
 	});
-	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
 		method: 'PATCH',
 		headers,
 		body: JSON.stringify({ state: 'closed' })
@@ -436,8 +464,8 @@ export async function commitFiles(
 	message: string,
 	{ baseSha, branch }: { baseSha?: string; branch?: string } = {}
 ): Promise<string> {
-	const headers = { ...baseHeaders, Authorization: `Bearer ${token}` };
-	const api = `${API}/repos/${owner}/${repo}`;
+	const headers = { ...baseHeaders, ...authHeaders(token) };
+	const api = `${apiRoot(token)}/repos/${owner}/${repo}`;
 
 	const gh = async <T>(path: string, init?: RequestInit): Promise<T> => {
 		const res = await fetch(`${api}${path}`, { headers, cache: 'no-store', ...init });
@@ -498,9 +526,9 @@ export async function createBranch(
 	branch: string,
 	fromSha: string
 ): Promise<void> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs`, {
 		method: 'POST',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha })
 	});
 	if (!res.ok) {
@@ -521,9 +549,9 @@ export async function fastForwardBranch(
 	branch: string,
 	sha: string
 ): Promise<boolean> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
 		method: 'PATCH',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ sha })
 	});
 	return res.ok;
@@ -531,9 +559,9 @@ export async function fastForwardBranch(
 
 /** Delete a branch. Treats an already-gone ref (404/422) as success. */
 export async function deleteBranch(token: string, owner: string, repo: string, branch: string): Promise<void> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
 		method: 'DELETE',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` }
+		headers: { ...baseHeaders, ...authHeaders(token) }
 	});
 	if (!res.ok && res.status !== 404 && res.status !== 422) {
 		const data: ErrorResponse = await res.json().catch(() => ({}));
@@ -548,9 +576,9 @@ export async function createPullRequest(
 	repo: string,
 	{ title, head, base, body }: { title: string; head: string; base: string; body: string }
 ): Promise<{ number: number; html_url: string }> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/pulls`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls`, {
 		method: 'POST',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ title, head, base, body })
 	});
 	const data: {
@@ -604,9 +632,9 @@ export async function dispatchWorkflow(
 	workflow: string,
 	ref: string
 ): Promise<void> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, {
 		method: 'POST',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ ref })
 	});
 	if (!res.ok) {
@@ -622,9 +650,9 @@ export async function setRepoTopics(
 	repo: string,
 	names: string[]
 ): Promise<unknown> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/topics`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/topics`, {
 		method: 'PUT',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ names })
 	});
 	if (!res.ok) {
@@ -640,9 +668,9 @@ export async function setRepoTopics(
  * claim/submission PRs) have the access they need. Requires admin on the repo.
  */
 export async function setActionsWorkflowPermissions(token: string, owner: string, repo: string): Promise<void> {
-	const res = await fetch(`${API}/repos/${owner}/${repo}/actions/permissions/workflow`, {
+	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/permissions/workflow`, {
 		method: 'PUT',
-		headers: { ...baseHeaders, Authorization: `Bearer ${token}` },
+		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ default_workflow_permissions: 'write' })
 	});
 	if (!res.ok) {
@@ -658,9 +686,8 @@ export async function setActionsWorkflowPermissions(token: string, owner: string
  */
 export async function searchReposByTopic(topic: string, token?: string): Promise<RepoSummary[]> {
 	const q = encodeURIComponent(`topic:${topic}`);
-	const headers: Record<string, string> = { ...baseHeaders };
-	if (token) headers.Authorization = `Bearer ${token}`;
-	const res = await fetch(`${API}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, {
+	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
+	const res = await fetch(`${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, {
 		headers,
 		cache: 'no-store'
 	});
