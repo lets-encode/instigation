@@ -1,0 +1,78 @@
+
+
+- node (im Sinn von Knoten) based workflow where single elements are chained after one another
+- visualisierung, welche steps passieren nacheinander
+- n8n inspo
+
+- mit klick auf die node geht zB. mei-friend auf oder eine andere app und man kann's bearbeiten
+
+- graph based übersicht von den task, wenn manche sachen aufeinander aufbauen
+und modular
+
+- und nicht nur die Visualisierung, sondern auch quasi im Backend muss das passieren
+n8n logic ist open source
+forken und das verwenden lassen von der KI
+
+
+- von anfang an api für alles schreiben, damit die sachen gut kommunizieren können
+- alle interfaces vom user zum programm sollen api basiert sein
+für reproduzierbarkeit wichtig, und logging
+- append-only log mit allen user actions (reproduzierbarkeit)
+
+- nochmal KI fragen wie so eine Architektur noch verbessert werden kann
+
+- api gut für modularität und automatisierung (dass agenten dass verwenden können)
+
+- mensch nur kontrollfunktion eventuell in Zukunft 
+
+- nodes in container zusammenfassen, um details zu hiden
+- von links nach rechts, input, output
+
+- wissen, welche nodes blocken, die von vorigen abhängig sind
+	- von personen abhängig, von KI, vom backend während das passiert blocken
+	- brauchen jeweils metadaten, also wer wann ausgeführt hat (n8n: wenn man was ändert, dann werden die folgenden invalid)
+	- priorisieren, wie wichtig grid-based n8n oder free-flow sein soll (handy, tablet form-faktor, handy: top-down statt links-rechts (quasi spiegeln um 90grad)
+- UI-state sharen
+	- central repo ist source of truth die den state speichert
+	- dort liegt state des workflows
+	- nodes brauchen versionsnummern und ID (node registry, um art der node und version woher zu holen, und label), weil components modular sind, deswegen können auch alte versionen wo verwendet um API shape, broken versionen müssen erlaubt sein
+	- deprecation functionality (alte versionen als potentiell sicherheitsgefährdet kennzeichnen, outdated aber working, total broken)
+	- state nach jeder node execution auch speichern, so wie n8n, für nachvollziehbarkeit
+		output von vorheriger node referenzieren und dann output nach node execution
+		- wieder reproducibility trace usw.
+	- und zb. node neu zwischen zwei bestehende einfügen
+	- history bzw. state von vorheriger node prominent darstellen, aber auch state von nodes davor zugreifbar machen
+- viewer könnte entweder eigene node sein oder nach einer output node kommen 
+
+- node registry, um art der node und version woher zu holen, und label
+	- jede node hat autor, weil das auch kollaborativ sein kann (like npm, bzw. literally use npm)
+	- labels mit verschiedenen sprachen
+	- ID (ändert sich nicht)
+	- versionsnummer (und state der version: deprecated, etc.)
+	- flags für/gegen KI, dass leute wissen, welche node ki generiert ist oder Ki verwendet
+		- kollaborativ, also abhängig von anderen actors (meistens menschen)
+	- zugangsdaten, welche und ob (github, KI apis und andere APIs (Gitlab etc))
+		- file input/output, dropbox, nextcloud
+	- input/output shape/API
+	- wie viele nodes rein/raus connecten
+
+- zB. encoding node mit standardmäßig verification und gewissen automatische validierung eingeschaltet, sollte aber in den meta-einstellungen der node abdrehbar sein
+	- inspo von ableton, effekte können in serie geschalten und customized werden und nach jedem schritt ist zB. lautstärke sichtbar, also gewisse info über die änderungen in einem einzelnen step
+	- aber eventuell auch via checkboxen (wie n8n)
+
+
+- nodes machen, die nicht von github abhängen (state nur lokal im browser gespeichert)
+und man kanns lokal verwenden
+
+- und nodes, die ohne GitHub laufen, zB. KI basiert, (zugangsdaten, oAuth tokens)
+
+
+- node templates
+- nodes können auch gelocked werden, sodass sie auf jeden fall ausgeführt werden
+
+- je nach einschätzung des users über eigenes können/vorwissen werden verschiedene Baukästen mit mehr oder weniger nodes angezeigt (und templates) (draw.io, n8n)
+
+
+
+- blacksmith for fast github actions!!
+

@@ -1,8 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { auth, initAuth, logout } from '$lib/auth.svelte.ts';
 
   let { children } = $props();
+
+  // The zone editor is a full-width tool; every other route keeps the narrow
+  // reading column.
+  const wide = $derived(page.url.pathname.includes('/zones/'));
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
@@ -25,7 +30,7 @@
   {/if}
 </header>
 
-<main>
+<main class:wide={wide}>
   {#if auth.error}
     <p class="auth-error" role="alert">
       Sign-in failed: {auth.error}
@@ -84,6 +89,10 @@
     max-width: 640px;
     margin: 0 auto;
     padding: 2.5rem 1.5rem;
+  }
+  main.wide {
+    max-width: 1600px;
+    padding: 1.5rem 2rem;
   }
   button {
     cursor: pointer;

@@ -457,8 +457,19 @@
 				return;
 			}
 
-			// Clean creation: take the organiser straight to the new repo's console.
-			// Keep the overlay up through navigation rather than flashing it away.
+			// Some pages the detector couldn't process were left out (creation still
+			// succeeded on the rest). Carry the skipped list to the console so it can
+			// warn there, then navigate as for a clean creation.
+			if (facsimile && facsimile.skipped.length) {
+				console.warn('[create] pages skipped (detector error):', facsimile.skipped.join(', '));
+				sessionStorage.setItem(
+					`facsimile-skipped:${owner}/${repo.name}`,
+					JSON.stringify(facsimile.skipped)
+				);
+			}
+
+			// Take the organiser straight to the new repo's console. Keep the overlay
+			// up through navigation rather than flashing it away.
 			await goto(`/campaign/${owner}/${repo.name}`);
 		} catch (err) {
 			console.error('Repo creation failed:', (err as Error).message);

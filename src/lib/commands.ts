@@ -595,27 +595,37 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // Open the PR carrying a rewritten score, wait for the automation's verdict.
 // Shared by the two pre-task submissions; the current file's <meiHead> is
 // carried over verbatim.
+//
+// Each pre-task advances the score by one stage (measure correction → stage B
+// with generated measures; breaks → stage C with pb/sb), so the submitted
+// content always differs from the file in the repo — even when the volunteer
+// changed nothing, since the new stage adds elements the previous one lacked.
+// That guaranteed diff is what makes the caller's path-filtered
+// pull_request_target trigger; an identical file would open an empty PR that
+// never runs the automation.
 async function submitFacsimile(
 	ctx: CommandContext,
 	task_id: string,
 	pages: PageModel[],
 	envelope: CommandEnvelope | null,
-	opts: { withBreaks: boolean }
+	build: { withMeasures?: boolean; withBreaks?: boolean },
+	what: 'zones' | 'breaks'
 ): Promise<Result> {
 	const { forge: f, owner, repo } = ctx;
-	const what = opts.withBreaks ? 'breaks' : 'zones';
 	try {
 		const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
 		const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
 		if (!fragment) return { error: `Unknown task ${task_id}.` };
 		const current = await f.getRepoFile(owner, repo, fragment);
 		if (current == null) return { error: `Could not read ${fragment}.` };
-		const content = buildFacsimileMei(
-			{ headXml: parseFacsimileMei(current).headXml, pages },
-			opts.withBreaks ? { withBreaks: true } : {}
-		);
+		const content = buildFacsimileMei({ headXml: parseFacsimileMei(current).headXml, pages }, build);
+		// A no-op would open an empty PR the path-filtered caller never runs;
+		// guard against that rather than leaving the console polling forever.
+		if (content === current) {
+			return { ok: true, warn: true, message: 'Nothing to submit — the score already matches this step.' };
+		}
 		ctx.progress(`Opening the ${what} PR…`);
-		const title = opts.withBreaks
+		const title = what === 'breaks'
 			? `Add page/system breaks (${task_id})`
 			: `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
@@ -635,6 +645,9 @@ async function submitFacsimile(
 	}
 }
 
+// Measure correction: submit stage B — the corrected zones plus one generated
+// measure per zone (numbered from the zone labels), which the validation
+// subtask then reviews.
 const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> = {
 	id: 'campaign.submitZones',
 	version: 1,
@@ -644,9 +657,11 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 		measures: pages.reduce((n, p) => n + p.zones.length, 0)
 	}),
 	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: false })
+		submitFacsimile(ctx, task_id, pages, envelope, { withMeasures: true }, 'zones')
 };
 
+// Breaks: submit stage C — the measures plus a <pb/> per page and an <sb/>
+// before each measure flagged as starting a system.
 const submitBreaks: CommandDef<{ task_id: string; pages: PageModel[] }, Result> = {
 	id: 'campaign.submitBreaks',
 	version: 1,
@@ -656,7 +671,7 @@ const submitBreaks: CommandDef<{ task_id: string; pages: PageModel[] }, Result> 
 		systems: pages.reduce((n, p) => n + p.zones.filter((z) => z.sb).length, 0)
 	}),
 	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true })
+		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true }, 'breaks')
 };
 
 /** The console command registry. */

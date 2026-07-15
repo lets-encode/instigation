@@ -370,12 +370,18 @@ the detector's measure boxes are provisional, so the score is built in three sta
 
 | Stage | Content of `sources/score.mei` | Written by |
 |---|---|---|
-| A | `<facsimile>` only: surfaces, graphics, one labelled `<zone type="measure" n="…">` per box; empty section | init; rewritten by P0001 submissions |
-| B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | the coordinator, when P0001's validation completes |
-| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure | P0002's submission |
+| A | `<facsimile>` only: surfaces, graphics, one labelled `<zone type="measure" n="…">` per box; empty section | init |
+| B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | P0001's submission (`submitZones`) |
+| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure | P0002's submission (`submitBreaks`) |
 
 All three stages validate against the pinned MEI-CMN 5.0 schema, so the ordinary machine-check
 applies to every submission.
+
+Each pre-task submission advances the score by one stage, so its content always differs from the
+file already in the repo — even when the volunteer changed nothing, because the new stage adds
+elements (measures, then breaks) the previous stage lacked. That guaranteed diff matters: the
+caller's `pull_request_target` is `paths`-filtered (§4), so an identical file would open an empty
+PR that never triggers the automation and leaves the console polling forever.
 
 The task table chains the work via `depends_on` (§5): **P0001** (`locator: measure-zones`, one
 validation subtask) → **P0002** (`locator: breaks`, no subtask — completes on acceptance) →

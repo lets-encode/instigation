@@ -181,6 +181,24 @@
     if (auth.status === "authenticated" && owner && repo && !loaded) load();
   });
 
+  // Pages the measure detector couldn't process during campaign creation, handed
+  // over via sessionStorage by the create flow. Read once and clear, so the
+  // notice shows on arrival but not on a later reload.
+  let skippedPages = $state<string[]>([]);
+  $effect(() => {
+    const key = `facsimile-skipped:${owner}/${repo}`;
+    const raw = sessionStorage.getItem(key);
+    if (raw) {
+      sessionStorage.removeItem(key);
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) skippedPages = parsed;
+      } catch {
+        // Malformed hand-off: nothing to show.
+      }
+    }
+  });
+
   // Run a command: show the busy overlay, capture its result banner, then
   // refresh the tables.
   async function run(command: (c: CommandContext) => Promise<Result>) {
@@ -267,6 +285,12 @@
     to drive this campaign.
   </div>
 {:else}
+  {#if skippedPages.length}
+    <div class="banner warn">
+      The measure detector couldn't process {skippedPages.length} page(s) ({skippedPages.join(", ")})
+      during creation, so they were left out of the score. Everything else is ready below.
+    </div>
+  {/if}
   {#if result && result.error}
     <div class="banner err">
       {result.error}

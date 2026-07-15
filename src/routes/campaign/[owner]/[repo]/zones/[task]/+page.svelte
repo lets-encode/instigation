@@ -26,6 +26,9 @@
     width: number;
     height: number;
     url: string;
+    // The background facsimile failed to load (empty download URL, or the
+    // browser refused the request — e.g. a CSP img-src that omits the raw host).
+    failed: boolean;
     zones: EditZone[];
   };
 
@@ -38,6 +41,67 @@
   let busy = $state(false);
   let busyMessage = $state("");
   let result = $state<Result | null>(null);
+
+  // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
+  // canvas; above 1 the page overflows and its container scrolls horizontally.
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 4;
+  const ZOOM_STEP = 0.25;
+  let zoom = $state(1);
+  const zoomBy = (d: number) =>
+    (zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((zoom + d) * 100) / 100)));
+
+  // Book-style paging: show one spread at a time rather than every page.
+  // `view` is one or two pages per spread; `firstOnRight` places page 1 as a
+  // right-hand page (recto), so a two-up view pairs 2|3, 4|5, … the way a
+  // score opens — the printed page number's side can't be read without OCR, so
+  // this convention (with the toggle) stands in for it.
+  let view = $state<"single" | "double">("single");
+  let firstOnRight = $state(true);
+  // The lowest page index currently shown; the anchor navigation moves. Keeping
+  // an anchor (not a spread index) preserves the visible page across view/side
+  // toggles, which re-slice the spreads.
+  let firstVisible = $state(0);
+
+  interface Spread {
+    pages: number[];
+    lonelySide?: "left" | "right";
+  }
+  function buildSpreads(n: number, v: "single" | "double", rectoFirst: boolean): Spread[] {
+    const spreads: Spread[] = [];
+    if (v === "single") {
+      for (let i = 0; i < n; i++) spreads.push({ pages: [i] });
+      return spreads;
+    }
+    let i = 0;
+    if (rectoFirst && n > 0) {
+      spreads.push({ pages: [0], lonelySide: "right" });
+      i = 1;
+    }
+    for (; i < n; i += 2) {
+      if (i + 1 < n) spreads.push({ pages: [i, i + 1] });
+      else spreads.push({ pages: [i], lonelySide: "left" });
+    }
+    return spreads;
+  }
+
+  const spreads = $derived(buildSpreads(pages.length, view, firstOnRight));
+  const spreadIndex = $derived(
+    Math.max(0, spreads.findIndex((s) => s.pages.includes(firstVisible))),
+  );
+  const spread = $derived(spreads[spreadIndex] ?? { pages: [] });
+  const spreadLabel = $derived(
+    spread.pages.length === 2
+      ? `Pages ${spread.pages[0] + 1}–${spread.pages[1] + 1} of ${pages.length}`
+      : `Page ${(spread.pages[0] ?? 0) + 1} of ${pages.length}`,
+  );
+
+  function go(delta: number) {
+    const next = spreads[spreadIndex + delta];
+    if (!next) return;
+    firstVisible = next.pages[0];
+    selected = null;
+  }
 
   // 'zones' (correct measure boxes) or 'breaks' (mark system starts), from the
   // task's locator.
@@ -82,6 +146,7 @@
     loading = true;
     loadError = null;
     selected = null;
+    firstVisible = 0;
     try {
       data = await invoke(commands.readFacsimile, { task_id: taskId }, ctx(f));
       pages = data.model.pages.map((pg, i) => ({
@@ -89,6 +154,7 @@
         width: pg.width,
         height: pg.height,
         url: data!.imageUrls[i],
+        failed: !data!.imageUrls[i],
         zones: pg.zones.map((z) => ({
           box: { ...z.box },
           override: null,
@@ -265,9 +331,14 @@
   }
 
   function keydown(e: KeyboardEvent) {
-    if ((e.key === "Delete" || e.key === "Backspace") && selected && (e.target as HTMLElement).tagName !== "INPUT") {
+    if ((e.target as HTMLElement).tagName === "INPUT") return;
+    if ((e.key === "Delete" || e.key === "Backspace") && selected) {
       e.preventDefault();
       deleteSelected();
+    } else if (e.key === "ArrowRight") {
+      go(1);
+    } else if (e.key === "ArrowLeft") {
+      go(-1);
     }
   }
 
@@ -311,20 +382,6 @@
   <p class="repo">
     <a href={`https://github.com/${owner}/${repo}`} target="_blank" rel="noreferrer">{owner}/{repo}</a>
   </p>
-  {#if mode === "breaks"}
-    <p class="muted">
-      Click a measure to mark it as the start of a system. Page breaks are set
-      automatically at each page's first measure. Submit when the systems match
-      the facsimile.
-    </p>
-  {:else}
-    <p class="muted">
-      Drag a box to move it, drag its corner handle to resize, drag on the page
-      to add a measure, select a box and press Delete to remove it. Numbers
-      follow reading order; type a label (e.g. 10a) on a selected measure to
-      override.
-    </p>
-  {/if}
 </header>
 
 {#if auth.status === "loading"}
@@ -352,113 +409,186 @@
   {:else if loadError}
     <div class="banner err">{loadError}</div>
   {:else if data}
-    {#if !canEdit}
-      <div class="banner warn">
-        {#if data.status === "completed"}
-          This task is completed — the view is read-only.
-        {:else if data.status !== "encoding_required"}
-          This task has been submitted and is awaiting validation — the view is read-only.
-        {:else if !data.holdsLock}
-          Claim this task to edit.
-          <button type="button" onclick={() => claim()} disabled={busy}>Claim task</button>
-        {/if}
-      </div>
-    {/if}
-
-    <div class="toolbar">
-      <span class="muted">{measureCount} measure{measureCount === 1 ? "" : "s"}</span>
-      {#if selected && mode === "zones"}
-        <label class="labeledit">
-          Measure label
-          <input
-            value={pages[selected.p].zones[selected.z].override ?? pages[selected.p].zones[selected.z].label}
-            oninput={(e) => setOverride((e.target as HTMLInputElement).value)}
-            disabled={!canEdit}
-            title="Override the automatic number, e.g. 10a — numbering continues after it"
-          />
-        </label>
-        <button type="button" onclick={() => deleteSelected()} disabled={!canEdit} title="Remove the selected measure (Delete)">
-          Delete measure
-        </button>
-      {/if}
-      <button
-        type="button"
-        class="primary"
-        onclick={() => submit()}
-        disabled={busy || !canEdit}
-        title={mode === "breaks"
-          ? "Submit the page/system breaks — the task completes when the automation accepts them"
-          : "Submit the corrected measures for validation"}
-      >
-        {mode === "breaks" ? "Submit breaks" : "Submit corrections"}
-      </button>
-    </div>
-
-    {#each pages as pg, p (pg.image)}
-      <div class="page">
-        <p class="pagehead">
-          Page {p + 1}
-          {#if mode === "breaks"}<span class="pb-badge" title="A page break is written before this page's first measure">pb</span>{/if}
-        </p>
-        <svg
-          bind:this={svgEls[p]}
-          viewBox={`0 0 ${pg.width} ${pg.height}`}
-          role="application"
-          aria-label={`Page ${p + 1} measures`}
-          onpointerdown={(e) => backgroundPointerDown(e, p)}
-        >
-          <image href={pg.url} width={pg.width} height={pg.height} />
-          {#if mode === "breaks"}
-            {@const systems = systemIndices(pg)}
-            {#each pg.zones as zone, z}
-              <rect
-                class="zone sys{systems[z] % 2}"
-                class:sysstart={z === 0 || zone.sb}
-                role="button"
-                tabindex={0}
-                aria-label={`Measure ${zone.label}: toggle system start`}
-                x={zone.box.ulx}
-                y={zone.box.uly}
-                width={zone.box.lrx - zone.box.ulx}
-                height={zone.box.lry - zone.box.uly}
-                onpointerdown={(e) => zonePointerDown(e, p, z)}
-              />
-              <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>
-                {(z === 0 ? "⤓ " : zone.sb ? "↵ " : "") + zone.label}
-              </text>
-            {/each}
-          {:else}
-            {#each pg.zones as zone, z}
-              <rect
-                class="zone"
-                class:selected={selected?.p === p && selected?.z === z}
-                role="button"
-                tabindex={0}
-                aria-label={`Measure ${zone.label}: select or drag`}
-                x={zone.box.ulx}
-                y={zone.box.uly}
-                width={zone.box.lrx - zone.box.ulx}
-                height={zone.box.lry - zone.box.uly}
-                onpointerdown={(e) => zonePointerDown(e, p, z)}
-              />
-              <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>{zone.label}</text>
-              {#if canEdit && selected?.p === p && selected?.z === z}
-                <circle
-                  class="handle"
-                  role="button"
-                  tabindex={0}
-                  aria-label={`Measure ${zone.label}: resize`}
-                  cx={zone.box.lrx}
-                  cy={zone.box.lry}
-                  r={Math.max(8, pg.width / 120)}
-                  onpointerdown={(e) => handlePointerDown(e, p, z)}
+    <div class="editor">
+      <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
+        {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
+        {#each spread.pages as p (p)}
+          {@const pg = pages[p]}
+          <div class="page">
+            <p class="pagehead">
+              Page {p + 1}
+              {#if mode === "breaks"}<span class="pb-badge" title="A page break is written before this page's first measure">pb</span>{/if}
+            </p>
+            {#if pg.failed}
+              <div class="banner err">
+                The page facsimile for page {p + 1} could not be loaded. The zones
+                are shown without their reference image.
+              </div>
+            {/if}
+            <svg
+              bind:this={svgEls[p]}
+              viewBox={`0 0 ${pg.width} ${pg.height}`}
+              role="application"
+              aria-label={`Page ${p + 1} measures`}
+              onpointerdown={(e) => backgroundPointerDown(e, p)}
+            >
+              {#if pg.url}
+                <image
+                  href={pg.url}
+                  width={pg.width}
+                  height={pg.height}
+                  onerror={() => (pages[p].failed = true)}
                 />
               {/if}
-            {/each}
-          {/if}
-        </svg>
+              {#if mode === "breaks"}
+                {@const systems = systemIndices(pg)}
+                {#each pg.zones as zone, z}
+                  <rect
+                    class="zone sys{systems[z] % 2}"
+                    class:sysstart={z === 0 || zone.sb}
+                    role="button"
+                    tabindex={0}
+                    aria-label={`Measure ${zone.label}: toggle system start`}
+                    x={zone.box.ulx}
+                    y={zone.box.uly}
+                    width={zone.box.lrx - zone.box.ulx}
+                    height={zone.box.lry - zone.box.uly}
+                    onpointerdown={(e) => zonePointerDown(e, p, z)}
+                  />
+                  <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>
+                    {(z === 0 ? "⤓ " : zone.sb ? "↵ " : "") + zone.label}
+                  </text>
+                {/each}
+              {:else}
+                {#each pg.zones as zone, z}
+                  <rect
+                    class="zone"
+                    class:selected={selected?.p === p && selected?.z === z}
+                    role="button"
+                    tabindex={0}
+                    aria-label={`Measure ${zone.label}: select or drag`}
+                    x={zone.box.ulx}
+                    y={zone.box.uly}
+                    width={zone.box.lrx - zone.box.ulx}
+                    height={zone.box.lry - zone.box.uly}
+                    onpointerdown={(e) => zonePointerDown(e, p, z)}
+                  />
+                  <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>{zone.label}</text>
+                  {#if canEdit && selected?.p === p && selected?.z === z}
+                    <circle
+                      class="handle"
+                      role="button"
+                      tabindex={0}
+                      aria-label={`Measure ${zone.label}: resize`}
+                      cx={zone.box.lrx}
+                      cy={zone.box.lry}
+                      r={Math.max(8, pg.width / 120)}
+                      onpointerdown={(e) => handlePointerDown(e, p, z)}
+                    />
+                  {/if}
+                {/each}
+              {/if}
+            </svg>
+          </div>
+        {/each}
+        {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
       </div>
-    {/each}
+
+      <aside class="sidebar">
+        {#if !canEdit}
+          <div class="banner warn">
+            {#if data.status === "completed"}
+              This task is completed — the view is read-only.
+            {:else if data.status !== "encoding_required"}
+              This task has been submitted and is awaiting validation — the view is read-only.
+            {:else if !data.holdsLock}
+              Claim this task to edit.
+              <button type="button" onclick={() => claim()} disabled={busy}>Claim task</button>
+            {/if}
+          </div>
+        {/if}
+
+        <div class="panel">
+          <p class="panel-title">Pages</p>
+          <div class="nav">
+            <button type="button" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page">‹</button>
+            <span class="nav-label">{spreadLabel}</span>
+            <button type="button" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page">›</button>
+          </div>
+          <div class="viewmode">
+            <button type="button" class:on={view === "single"} onclick={() => (view = "single")}>1 page</button>
+            <button type="button" class:on={view === "double"} onclick={() => (view = "double")}>2 pages</button>
+          </div>
+          {#if view === "double"}
+            <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
+              <input type="checkbox" bind:checked={firstOnRight} />
+              Page 1 on the right
+            </label>
+          {/if}
+        </div>
+
+        <div class="panel">
+          <p class="panel-title">How to</p>
+          {#if mode === "breaks"}
+            <p class="hint">
+              Click a measure to mark it as the start of a system. Page breaks
+              are set automatically at each page's first measure.
+            </p>
+          {:else}
+            <p class="hint">
+              Drag a box to move it, its corner handle to resize, or drag on the
+              page to add one. Select a box and press Delete to remove it.
+              Numbers follow reading order; type a label (e.g. 10a) to override.
+            </p>
+          {/if}
+        </div>
+
+        <div class="panel">
+          <p class="panel-title">Zoom</p>
+          <div class="zoom">
+            <button type="button" onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out">−</button>
+            <span class="zoom-val">{Math.round(zoom * 100)}%</span>
+            <button type="button" onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in">+</button>
+            <button type="button" class="zoom-reset" onclick={() => (zoom = 1)} disabled={zoom === 1} title="Fit page to width">Fit</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <p class="panel-title">Selection</p>
+          <p class="count">{measureCount} measure{measureCount === 1 ? "" : "s"}</p>
+          {#if mode === "zones"}
+            {#if selected}
+              <label class="labeledit">
+                Measure label
+                <input
+                  value={pages[selected.p].zones[selected.z].override ?? pages[selected.p].zones[selected.z].label}
+                  oninput={(e) => setOverride((e.target as HTMLInputElement).value)}
+                  disabled={!canEdit}
+                  title="Override the automatic number, e.g. 10a — numbering continues after it"
+                />
+              </label>
+              <button type="button" onclick={() => deleteSelected()} disabled={!canEdit} title="Remove the selected measure (Delete)">
+                Delete measure
+              </button>
+            {:else}
+              <p class="hint">No measure selected.</p>
+            {/if}
+          {/if}
+        </div>
+
+        <button
+          type="button"
+          class="primary"
+          onclick={() => submit()}
+          disabled={busy || !canEdit}
+          title={mode === "breaks"
+            ? "Submit the page/system breaks — the task completes when the automation accepts them"
+            : "Submit the corrected measures for validation"}
+        >
+          {mode === "breaks" ? "Submit breaks" : "Submit corrections"}
+        </button>
+      </aside>
+    </div>
   {/if}
 {/if}
 
@@ -543,25 +673,138 @@
     cursor: pointer;
     text-decoration: underline;
   }
-  .toolbar {
+  /* Canvas (scrolling pages) beside a sticky tools sidebar. */
+  .editor {
     display: flex;
-    gap: 0.6rem;
-    align-items: center;
-    margin: 1.2rem 0;
-    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1.5rem;
   }
-  .labeledit {
+  .pages {
+    flex: 1;
+    min-width: 0;
+  }
+  /* Two-up view: the spread's pages (and any empty-half spacer) share the row. */
+  .pages.double {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  .pages.double .page,
+  .page-spacer {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .sidebar {
+    position: sticky;
+    top: 1rem;
+    flex: 0 0 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+  .panel {
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    background: #fff;
+  }
+  .panel-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #999;
+  }
+  .hint {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #666;
+    line-height: 1.4;
+  }
+  .count {
+    margin: 0 0 0.6rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .nav {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    margin-bottom: 0.6rem;
+  }
+  .nav button {
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0.2rem 0.6rem;
+  }
+  .nav-label {
+    flex: 1;
+    text-align: center;
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .viewmode {
+    display: flex;
+    gap: 0.3rem;
+  }
+  .viewmode button {
+    flex: 1;
+  }
+  .viewmode button.on {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+  }
+  .checkline {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    font-size: 0.82rem;
+    color: #666;
+  }
+  .zoom {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .zoom-val {
+    min-width: 3rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
     font-size: 0.85rem;
+  }
+  .zoom-reset {
+    margin-left: auto;
+  }
+  .labeledit {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.82rem;
+    color: #666;
   }
   .labeledit input {
     font: inherit;
-    width: 5rem;
-    padding: 0.25rem 0.4rem;
+    padding: 0.3rem 0.4rem;
     border: 1px solid #ccc;
     border-radius: 6px;
+  }
+  /* Narrow screens: stack the tools above the pages instead of beside them. */
+  @media (max-width: 720px) {
+    .editor {
+      flex-direction: column-reverse;
+    }
+    .sidebar {
+      position: static;
+      flex-basis: auto;
+      width: 100%;
+      max-height: none;
+    }
   }
   button {
     font: inherit;
@@ -580,7 +823,8 @@
     background: #1a1a1a;
     color: #fff;
     border-color: #1a1a1a;
-    margin-left: auto;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.85rem;
   }
   .banner {
     padding: 0.7rem 1rem;
@@ -602,11 +846,15 @@
 
   .page {
     margin-bottom: 1.5rem;
+    /* Above 100% zoom the page overflows this box and scrolls horizontally. */
+    overflow-x: auto;
   }
   .pagehead {
     margin: 0 0 0.3rem;
     font-weight: 600;
     font-size: 0.9rem;
+    position: sticky;
+    left: 0;
   }
   .pb-badge {
     display: inline-block;
@@ -620,7 +868,11 @@
   }
   svg {
     display: block;
-    width: 100%;
+    /* border-box so the 1px border stays within 100% and the page doesn't
+       overflow its container by a couple of pixels at 100% zoom. */
+    box-sizing: border-box;
+    width: calc(100% * var(--zoom, 1));
+    max-width: none;
     height: auto;
     border: 1px solid #e5e5e5;
     border-radius: 8px;

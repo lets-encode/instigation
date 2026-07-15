@@ -32,7 +32,15 @@ const config = {
 				// score renderer) but not JS eval().
 				'script-src': ['self', 'wasm-unsafe-eval'],
 				'style-src': ['self', 'unsafe-inline'],
-				'img-src': ['self', 'https://avatars.githubusercontent.com'],
+				// avatars: the signed-in user's avatar. raw.githubusercontent.com:
+				// repo file contents by URL (the Contents API download_url) — the
+				// page facsimiles the zone editor renders as a background, tokenised
+				// for private repos.
+				'img-src': [
+					'self',
+					'https://avatars.githubusercontent.com',
+					'https://raw.githubusercontent.com'
+				],
 				'connect-src': [
 					'self',
 					'https://api.github.com',

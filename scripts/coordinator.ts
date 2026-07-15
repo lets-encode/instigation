@@ -27,11 +27,9 @@ import {
 	appendHistory,
 	findRow
 } from '../src/lib/campaign-tables.ts';
-import type { ParsedState, LockRow, HistoryRow } from '../src/lib/campaign-tables.ts';
+import type { ParsedState, TaskRow, LockRow, HistoryRow } from '../src/lib/campaign-tables.ts';
 import { envelopeFromPrBody, envelopeColumns } from '../src/lib/command-envelope.ts';
 import type { CommandEnvelope } from '../src/lib/command-envelope.ts';
-import { parseFacsimileMei, buildFacsimileMei } from '../src/lib/mei-facsimile.ts';
-import type { TaskRow } from '../src/lib/campaign-tables.ts';
 import { checkClaim } from '../src/lib/campaign-claim.ts';
 import { checkEncoding, checkValidation } from '../src/lib/campaign-submit.ts';
 import { reapLocks } from '../src/lib/campaign-reaper.ts';
@@ -322,7 +320,6 @@ async function decideEncoding(
 
 async function decideValidation(
 	sha: string,
-	tasks: TaskRow[],
 	state: ParsedState,
 	locks: LockRow[],
 	changedPaths: string[],
@@ -362,23 +359,7 @@ async function decideValidation(
 		{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
 		{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
 	];
-	let message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${author}`;
-
-	// Completing the measure-correction pre-task generates the score body: one
-	// numbered measure per validated zone (stage B; the breaks pre-task adds
-	// <pb/>/<sb/> on top of this).
-	const taskDef = findRow(tasks, diff.task_id, '');
-	const taskCompleted = findRow(verdict.state.rows, diff.task_id, '')?.status === 'completed';
-	if (taskCompleted && taskDef?.locator === 'measure-zones') {
-		const mei = await getRepoFile(token, owner, repo, taskDef.fragment, sha);
-		if (mei != null) {
-			files.push({
-				path: taskDef.fragment,
-				content: buildFacsimileMei(parseFacsimileMei(mei), { withMeasures: true })
-			});
-			message += `; generate measures from the validated zones`;
-		}
-	}
+	const message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${author}`;
 
 	return { ok: true, history, files, message };
 }
@@ -404,7 +385,7 @@ async function attemptSubmit(
 
 	const outcome =
 		kind === 'validation'
-			? await decideValidation(sha, tasks, state, locks, changedPaths, now)
+			? await decideValidation(sha, state, locks, changedPaths, now)
 			: await decideEncoding(sha, tasks, state, locks, changedPaths, envelope, now);
 
 	const history: HistoryRow = {
