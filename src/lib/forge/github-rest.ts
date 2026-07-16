@@ -44,6 +44,77 @@ const baseHeaders: Record<string, string> = {
 // stale cached response (e.g. an early 404 right after a ref was created, or
 // an open PR that has since closed) to the polls and retries this app relies
 // on. In runtimes without an HTTP cache (Node) the option is a no-op.
+//
+// Freshness is instead kept by conditional requests: ghGet() remembers each
+// URL's ETag and sends `If-None-Match` on the next read. An unchanged resource
+// answers 304 Not Modified — served from the remembered body, and NOT counted
+// against the API rate limit — so repeated reads and "nothing changed yet"
+// polls are free. The store lives in the app, not in any HTTP cache, so
+// `no-store` still holds and no shared cache is involved.
+
+/**
+ * Thrown when GitHub reports the request rate limit is exhausted (HTTP 403/429
+ * with no remaining quota). Carries the reset time so callers can tell the user
+ * when to retry.
+ */
+export class RateLimitError extends Error {
+	/** Unix epoch seconds when the limit resets, or null if not reported. */
+	readonly resetAt: number | null;
+	constructor(resetAt: number | null) {
+		const when = resetAt ? new Date(resetAt * 1000).toLocaleTimeString() : 'shortly';
+		super(`GitHub API rate limit exceeded — it resets at ${when}. Try again then.`);
+		this.name = 'RateLimitError';
+		this.resetAt = resetAt;
+	}
+}
+
+// A depleted quota answers 403 (primary limit) or 429 (secondary), both with
+// `X-RateLimit-Remaining: 0`. A 403 for other reasons (e.g. permissions) leaves
+// a non-zero remaining and is left to the caller's normal error handling.
+function throwIfRateLimited(res: Response): void {
+	if ((res.status === 403 || res.status === 429) && res.headers.get('X-RateLimit-Remaining') === '0') {
+		const reset = Number(res.headers.get('X-RateLimit-Reset'));
+		throw new RateLimitError(Number.isFinite(reset) && reset > 0 ? reset : null);
+	}
+}
+
+// ETag store for conditional GETs, keyed by full request URL. Only cacheable
+// JSON GETs add entries; it grows with the number of distinct URLs read in a
+// session. Never used for responses whose bodies carry short-lived tokens (see
+// getRepoFileDownloadUrl / getDirDownloadUrls), which pass `cache: false`.
+const etagCache = new Map<string, { etag: string; body: string }>();
+
+/**
+ * A GitHub JSON GET with ETag conditional-request caching and rate-limit
+ * detection. On 304 the remembered body is returned (status normalised to 200);
+ * on a fresh 200 the response ETag and body are stored. Throws RateLimitError
+ * when the quota is exhausted. Returns the HTTP status and parsed JSON (null on
+ * an empty or non-JSON body). Pass `cache: false` to skip the ETag store while
+ * keeping the rate-limit guard.
+ */
+async function ghGet<T>(
+	url: string,
+	token?: string,
+	{ cache = true }: { cache?: boolean } = {}
+): Promise<{ status: number; ok: boolean; data: T }> {
+	const cached = cache ? etagCache.get(url) : undefined;
+	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
+	if (cached) headers['If-None-Match'] = cached.etag;
+	const res = await fetch(url, { headers, cache: 'no-store' });
+	if (res.status === 304 && cached) return { status: 200, ok: true, data: JSON.parse(cached.body) as T };
+	throwIfRateLimited(res);
+	const text = await res.text();
+	const etag = res.headers.get('ETag');
+	if (cache && res.ok && etag) etagCache.set(url, { etag, body: text });
+	else if (res.status === 404) etagCache.delete(url);
+	let data: unknown = null;
+	try {
+		data = text ? JSON.parse(text) : null;
+	} catch {
+		data = null;
+	}
+	return { status: res.status, ok: res.ok, data: data as T };
+}
 
 // Decode GitHub's base64 file content to a UTF-8 string without Node's Buffer, so
 // this runs in the browser too. GitHub wraps the base64 in newlines — strip
@@ -172,14 +243,13 @@ export async function getRepoFile(
 	ref?: string
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	if (res.status === 404) return null;
-	const data: { content?: string; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || `Failed to fetch ${path}`);
-	return decodeBase64Utf8(data.content ?? '');
+	const { status, ok, data } = await ghGet<{ content?: string; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`,
+		token
+	);
+	if (status === 404) return null;
+	if (!ok) throw new Error(data?.message || `Failed to fetch ${path}`);
+	return decodeBase64Utf8(data?.content ?? '');
 }
 
 /**
@@ -197,18 +267,52 @@ export async function getRepoFileDownloadUrl(
 	ref?: string
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	if (res.status === 404) {
+	// Not ETag-cached: for private repos the download_url carries a short-lived
+	// token, so a 304-served body would hand back an expired URL.
+	const { status, ok, data } = await ghGet<{ download_url?: string | null; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`,
+		token,
+		{ cache: false }
+	);
+	if (status === 404) {
 		console.log('[getRepoFileDownloadUrl] 404 (path or ref absent)', { owner, repo, path, ref });
 		return null;
 	}
-	const data: { download_url?: string | null; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || `Failed to fetch ${path}`);
-	console.log('[getRepoFileDownloadUrl]', path, 'ref', ref ?? '(default)', 'status', res.status, 'download_url', data.download_url);
-	return data.download_url ?? null;
+	if (!ok) throw new Error(data?.message || `Failed to fetch ${path}`);
+	console.log('[getRepoFileDownloadUrl]', path, 'ref', ref ?? '(default)', 'status', status, 'download_url', data?.download_url);
+	return data?.download_url ?? null;
+}
+
+/**
+ * List a repo directory's files with each file's temporary download URL, in a
+ * single Contents API call — so a facsimile's page images resolve with one
+ * request instead of one per image. URLs are tokenised for private repos (see
+ * getRepoFileDownloadUrl); use them promptly. Returns a map of file name →
+ * download URL (files without one are omitted); empty if the directory is
+ * absent.
+ */
+export async function getDirDownloadUrls(
+	token: string,
+	owner: string,
+	repo: string,
+	dir: string,
+	ref?: string
+): Promise<Record<string, string>> {
+	const cleanDir = dir.replace(/\/+$/, '');
+	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+	// Not ETag-cached: the per-file download_url values carry short-lived tokens.
+	const { status, ok, data } = await ghGet<Array<{ name: string; download_url?: string | null }> & ErrorResponse>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/contents/${cleanDir}${query}`,
+		token,
+		{ cache: false }
+	);
+	if (status === 404) return {};
+	if (!ok) throw new Error(data?.message || `Failed to list ${dir}`);
+	const urls: Record<string, string> = {};
+	for (const file of Array.isArray(data) ? data : []) {
+		if (file.download_url) urls[file.name] = file.download_url;
+	}
+	return urls;
 }
 
 /**
@@ -277,13 +381,9 @@ export async function repoExists(owner: string, repo: string, token?: string): P
 
 /** Whether the repo is private (its raw download URLs then carry a short-lived token). */
 export async function getRepoIsPrivate(token: string, owner: string, repo: string): Promise<boolean> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	const data: RepoData = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || 'Failed to read repository');
-	return Boolean(data.private);
+	const { ok, data } = await ghGet<RepoData>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
+	if (!ok) throw new Error(data?.message || 'Failed to read repository');
+	return Boolean(data?.private);
 }
 
 /** List a pull request's changed files, including each file's unified-diff patch. */
@@ -351,13 +451,12 @@ export async function getPullRequestState(
 	repo: string,
 	number: number
 ): Promise<string> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	const data: { state?: string; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
-	return data.state ?? 'open';
+	const { ok, data } = await ghGet<{ state?: string; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`,
+		token
+	);
+	if (!ok) throw new Error(data?.message || 'Failed to read pull request');
+	return data?.state ?? 'open';
 }
 
 /** A pull request's body text, or null if empty. */
@@ -383,14 +482,12 @@ export async function getLastIssueComment(
 	repo: string,
 	number: number
 ): Promise<string | null> {
-	const res = await fetch(
+	const { ok, data } = await ghGet<Array<{ body?: string }>>(
 		`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1&sort=created&direction=desc`,
-		{ headers: { ...baseHeaders, ...authHeaders(token) }, cache: 'no-store' }
+		token
 	);
-	const data = await res.json().catch(() => []);
-	if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to read comments');
-	const comments = data as Array<{ body?: string }>;
-	return comments[0]?.body ?? null;
+	if (!ok) throw new Error((data as unknown as ErrorResponse)?.message || 'Failed to read comments');
+	return (Array.isArray(data) ? data : [])[0]?.body ?? null;
 }
 
 /** The most recent run of `workflow` for `event`, or null if none yet. */
@@ -401,16 +498,15 @@ export async function getLatestWorkflowRun(
 	workflow: string,
 	event: string
 ): Promise<{ status: string; conclusion: string | null; created_at: string } | null> {
-	const res = await fetch(
-		`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
-		{ headers: { ...baseHeaders, ...authHeaders(token) }, cache: 'no-store' }
-	);
-	const data: {
+	const { ok, data } = await ghGet<{
 		workflow_runs?: Array<{ status: string; conclusion: string | null; created_at: string }>;
 		message?: string;
-	} = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || 'Failed to read workflow runs');
-	const run = data.workflow_runs?.[0];
+	}>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
+		token
+	);
+	if (!ok) throw new Error(data?.message || 'Failed to read workflow runs');
+	const run = data?.workflow_runs?.[0];
 	return run ? { status: run.status, conclusion: run.conclusion ?? null, created_at: run.created_at } : null;
 }
 
@@ -702,16 +798,7 @@ export async function setActionsWorkflowPermissions(token: string, owner: string
  */
 export async function searchReposByTopic(topic: string, token?: string): Promise<RepoSummary[]> {
 	const q = encodeURIComponent(`topic:${topic}`);
-	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
-	const res = await fetch(`${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, {
-		headers,
-		cache: 'no-store'
-	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Repo search failed');
-	}
-	const data: {
+	const { ok, data } = await ghGet<{
 		items?: Array<{
 			full_name: string;
 			name: string;
@@ -721,8 +808,10 @@ export async function searchReposByTopic(topic: string, token?: string): Promise
 			description: string | null;
 			updated_at: string;
 		}>;
-	} = await res.json();
-	return (data.items || []).map((r) => ({
+		message?: string;
+	}>(`${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, token);
+	if (!ok) throw new Error(data?.message || 'Repo search failed');
+	return (data?.items || []).map((r) => ({
 		full_name: r.full_name,
 		name: r.name,
 		owner: r.owner?.login,

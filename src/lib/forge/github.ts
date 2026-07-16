@@ -17,6 +17,7 @@ export function createGitHubForge(token: string): ForgeClient {
 		commitFiles: (owner, repo, files, message, opts) => gh.commitFiles(token, owner, repo, files, message, opts),
 		getRepoFile: (owner, repo, path, ref) => gh.getRepoFile(token, owner, repo, path, ref),
 		getRepoFileDownloadUrl: (owner, repo, path, ref) => gh.getRepoFileDownloadUrl(token, owner, repo, path, ref),
+		getDirDownloadUrls: (owner, repo, dir, ref) => gh.getDirDownloadUrls(token, owner, repo, dir, ref),
 		getRepoHead: (owner, repo) => gh.getRepoHead(token, owner, repo),
 		getRepoIsPrivate: (owner, repo) => gh.getRepoIsPrivate(token, owner, repo),
 		ensureFork: (owner, repo, opts) => gh.ensureFork(token, owner, repo, opts),

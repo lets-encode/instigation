@@ -58,6 +58,8 @@ export interface ForgeClient {
 	getRepoFile(owner: string, repo: string, path: string, ref?: string): Promise<string | null>;
 	/** A temporary direct-download URL for a repo file (tokenised for private repos). */
 	getRepoFileDownloadUrl(owner: string, repo: string, path: string, ref?: string): Promise<string | null>;
+	/** A repo directory's files mapped to their temporary download URLs, in one request. */
+	getDirDownloadUrls(owner: string, repo: string, dir: string, ref?: string): Promise<Record<string, string>>;
 	/** The repo's default branch head + whether the user can push. */
 	getRepoHead(owner: string, repo: string): Promise<RepoHead>;
 	/** Whether the repo is private. */
