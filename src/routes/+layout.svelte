@@ -5,9 +5,10 @@
 
   let { children } = $props();
 
-  // The zone editor is a full-width tool; every other route keeps the narrow
-  // reading column.
+  // The zone editor is a full-width tool; the campaign console is a full-bleed,
+  // full-height surface; every other route keeps the narrow reading column.
   const wide = $derived(page.url.pathname.includes('/zones/'));
+  const full = $derived(/^\/campaign\/[^/]+\/[^/]+\/?$/.test(page.url.pathname));
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
@@ -30,7 +31,7 @@
   {/if}
 </header>
 
-<main class:wide={wide}>
+<main class:wide={wide} class:full={full}>
   {#if auth.error}
     <p class="auth-error" role="alert">
       Sign-in failed: {auth.error}
@@ -43,6 +44,10 @@
 <style>
   :global(body) {
     margin: 0;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
     font-family:
       ui-sans-serif,
       system-ui,
@@ -52,6 +57,7 @@
     background: #fafafa;
   }
   header {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -86,13 +92,25 @@
     color: #9f3a38;
   }
   main {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    width: 100%;
     max-width: 640px;
     margin: 0 auto;
     padding: 2.5rem 1.5rem;
+    box-sizing: border-box;
   }
   main.wide {
     max-width: 1600px;
     padding: 1.5rem 2rem;
+  }
+  main.full {
+    max-width: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   button {
     cursor: pointer;

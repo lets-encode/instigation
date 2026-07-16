@@ -365,39 +365,42 @@ runs in the campaign repo's caller.
 ## 7a. Facsimile pre-tasks
 
 A campaign created from page images / a PDF (source kind `facsimile`) does not start at encoding:
-the detector's measure boxes are provisional, so the score is built in three stages
+the detector's measure boxes are provisional, so the score is built in stages
 (`src/lib/mei-facsimile.ts`, one model — `buildFacsimileMei` / `parseFacsimileMei`):
 
 | Stage | Content of `sources/score.mei` | Written by |
 |---|---|---|
-| A | `<facsimile>` only: surfaces, graphics, one labelled `<zone type="measure" n="…">` per box; empty section | init |
-| B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | P0001's submission (`submitZones`) |
-| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure | P0002's submission (`submitBreaks`) |
+| A | `<facsimile>` only: surfaces, graphics, one labelled `<zone type="measure" n="…">` per box; one empty `<mdiv>` | init |
+| B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | (intermediate form; still parsed) |
+| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure, and one `<mdiv>` per movement/section/piece | P0001's submission (`submitZones`) |
 
-All three stages validate against the pinned MEI-CMN 5.0 schema, so the ordinary machine-check
+All stages validate against the pinned MEI-CMN 5.0 schema, so the ordinary machine-check
 applies to every submission.
 
-Each pre-task submission advances the score by one stage, so its content always differs from the
-file already in the repo — even when the volunteer changed nothing, because the new stage adds
-elements (measures, then breaks) the previous stage lacked. That guaranteed diff matters: the
+The pre-task submission advances the score from stage A to stage C, so its content always differs
+from the file already in the repo — even when the volunteer changed nothing, because the new stage
+adds elements (measures, breaks, movements) stage A lacked. That guaranteed diff matters: the
 caller's `pull_request_target` is `paths`-filtered (§4), so an identical file would open an empty
 PR that never triggers the automation and leaves the console polling forever.
 
 The task table chains the work via `depends_on` (§5): **P0001** (`locator: measure-zones`, one
-validation subtask) → **P0002** (`locator: breaks`, no subtask — completes on acceptance) →
-**T0001** (the encoding). Pre-tasks are ordinary crowd tasks: claimed (encoding-kind lock),
-submitted as encoding-type PRs, validated through the normal machinery.
+validation subtask) → **T0001** (the encoding). The pre-task is an ordinary crowd task: claimed
+(encoding-kind lock), submitted as an encoding-type PR, validated through the normal machinery.
 
-The **zone editor** (`/campaign/[owner]/[repo]/zones/[task]`) is the volunteer interface for both
-pre-tasks, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`,
-`submitBreaks`):
+The **zone editor** (`/campaign/[owner]/[repo]/zones/[task]`) is the volunteer interface for the
+pre-task, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`). It has two
+steps within the one task, submitted together:
 
-- *Measure correction* (P0001): add (drag on the page), delete, move and resize boxes over the page
+- *Step 1 — Measures*: add (drag on the page), delete, move and resize boxes over the page
   image. Numbering follows reading order automatically; a per-measure label override (e.g.
   `10a`/`10b` for voltas) interrupts the sequence and numbering continues from its integer prefix.
   Validators review the same view read-only and pass/fail from the console.
-- *Breaks* (P0002): page breaks are automatic (one per surface); the volunteer toggles which
-  measures start a system, pre-suggested from the detected row grouping.
+- *Step 2 — Breaks & movements*: page breaks are automatic (one per surface); the volunteer clicks
+  measures to toggle system starts (pre-suggested from the detected row grouping) and shift-clicks
+  to mark a measure as the start of a movement, section or piece — each becomes its own `<mdiv>`.
+
+(Repos created before the merge may still carry a separate `breaks` pre-task — `locator: breaks`,
+no subtask, submitted via `submitBreaks`; the editor and coordinator still accept it.)
 
 ## 8. Provider-agnostic design
 

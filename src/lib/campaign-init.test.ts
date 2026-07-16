@@ -105,7 +105,7 @@ test('worked example: task.csv holds the task row and its one validation subtask
 	);
 });
 
-test('facsimile campaign: task.csv chains the pre-tasks before the encoding task', () => {
+test('facsimile campaign: task.csv chains the pre-task before the encoding task', () => {
 	const config = buildCampaignConfig(
 		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
 		'test-instigator',
@@ -116,8 +116,7 @@ test('facsimile campaign: task.csv chains the pre-tasks before the encoding task
 		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
 			'P0001,,sources/score.mei,measure-zones,,,\n' +
 			'P0001,S0001,sources/score.mei,measure-zones,,,\n' +
-			'P0002,,sources/score.mei,breaks,,,P0001\n' +
-			'T0001,,sources/score.mei,,,,P0002\n' +
+			'T0001,,sources/score.mei,,,,P0001\n' +
 			'T0001,S0001,sources/score.mei,,,,\n'
 	);
 	assert.equal(
@@ -125,7 +124,6 @@ test('facsimile campaign: task.csv chains the pre-tasks before the encoding task
 		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
 			'P0001,,encoding_required,,,\n' +
 			'P0001,S0001,pending,,,\n' +
-			'P0002,,encoding_required,,,\n' +
 			'T0001,,encoding_required,,,\n' +
 			'T0001,S0001,pending,,,\n'
 	);

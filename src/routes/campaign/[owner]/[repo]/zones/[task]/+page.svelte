@@ -6,6 +6,7 @@
   import type { CommandContext, Result, FacsimileTaskData } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
+  import { buildSpreads } from "$lib/page-spreads.ts";
 
   // Guaranteed present by the [owner]/[repo]/zones/[task] route.
   const owner = $derived(page.params.owner!);
@@ -14,12 +15,13 @@
   const viewer = $derived(auth.user?.login ?? "");
 
   // Editor-side zone: the box, the label override (null = automatic), the
-  // computed label, and the system flag (breaks mode).
+  // computed label, and the break flags (structure step).
   type EditZone = {
     box: MeasureBox;
     override: string | null;
     label: string;
     sb: boolean;
+    mdiv: boolean;
   };
   type EditPage = {
     image: string;
@@ -63,28 +65,6 @@
   // toggles, which re-slice the spreads.
   let firstVisible = $state(0);
 
-  interface Spread {
-    pages: number[];
-    lonelySide?: "left" | "right";
-  }
-  function buildSpreads(n: number, v: "single" | "double", rectoFirst: boolean): Spread[] {
-    const spreads: Spread[] = [];
-    if (v === "single") {
-      for (let i = 0; i < n; i++) spreads.push({ pages: [i] });
-      return spreads;
-    }
-    let i = 0;
-    if (rectoFirst && n > 0) {
-      spreads.push({ pages: [0], lonelySide: "right" });
-      i = 1;
-    }
-    for (; i < n; i += 2) {
-      if (i + 1 < n) spreads.push({ pages: [i, i + 1] });
-      else spreads.push({ pages: [i], lonelySide: "left" });
-    }
-    return spreads;
-  }
-
   const spreads = $derived(buildSpreads(pages.length, view, firstOnRight));
   const spreadIndex = $derived(
     Math.max(0, spreads.findIndex((s) => s.pages.includes(firstVisible))),
@@ -103,9 +83,15 @@
     selected = null;
   }
 
-  // 'zones' (correct measure boxes) or 'breaks' (mark system starts), from the
-  // task's locator.
-  const mode = $derived(data?.locator === "breaks" ? "breaks" : "zones");
+  // The measure-correction task has two steps in one session: step 1 corrects
+  // the measure boxes and numbers, step 2 marks system starts and movement
+  // boundaries. One submission carries both. Legacy tasks with a `breaks`
+  // locator get only the structure step.
+  let step = $state<"measures" | "structure">("measures");
+  const legacyBreaks = $derived(data?.locator === "breaks");
+  // 'zones' (edit measure boxes) or 'breaks' (toggle break/movement flags) —
+  // what the pointer interactions do right now.
+  const mode = $derived(legacyBreaks || step === "structure" ? "breaks" : "zones");
   const canEdit = $derived(
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
@@ -160,6 +146,7 @@
           override: null,
           label: z.label,
           sb: z.sb,
+          mdiv: z.mdiv,
         })),
       }));
       // A label that differs from what automatic numbering would produce is an
@@ -201,19 +188,54 @@
   const claim = () =>
     run((c) => invoke(commands.claimTask, { task_id: taskId }, c));
 
+  // The review happens here too: the same claim/pass/fail the console offers,
+  // against the task's validation subtask.
+  const validation = $derived(data?.validation ?? null);
+  const submitted = $derived(
+    data?.status === "validation_required" || data?.status === "completed",
+  );
+  const holdsValidation = $derived(
+    viewer !== "" && validation?.lockUser === viewer,
+  );
+  const selfValidation = $derived(
+    !!data && data.encoder !== "" && data.encoder === viewer,
+  );
+  const canClaimValidation = $derived(
+    !!validation &&
+      validation.status === "validation_required" &&
+      !validation.lockUser &&
+      !selfValidation,
+  );
+  const claimValidation = () =>
+    run((c) =>
+      invoke(
+        commands.claimValidation,
+        { task_id: taskId, subtask_id: validation!.subtask_id },
+        c,
+      ),
+    );
+  const validate = (verdict: string) =>
+    run((c) =>
+      invoke(
+        commands.submitValidation,
+        { task_id: taskId, subtask_id: validation!.subtask_id, verdict },
+        c,
+      ),
+    );
+
   function toPageModels(): PageModel[] {
     return pages.map((pg) => ({
       image: pg.image,
       width: pg.width,
       height: pg.height,
-      zones: pg.zones.map((z) => ({ box: { ...z.box }, label: z.label, sb: z.sb })),
+      zones: pg.zones.map((z) => ({ box: { ...z.box }, label: z.label, sb: z.sb, mdiv: z.mdiv })),
     }));
   }
 
   const submit = () =>
     run((c) =>
       invoke(
-        mode === "breaks" ? commands.submitBreaks : commands.submitZones,
+        legacyBreaks ? commands.submitBreaks : commands.submitZones,
         { task_id: taskId, pages: toPageModels() },
         c,
       ),
@@ -246,8 +268,15 @@
 
   function zonePointerDown(e: PointerEvent, p: number, z: number) {
     if (mode === "breaks") {
+      if (!canEdit) return;
+      // Shift-click toggles the movement flag (structure step only). The
+      // score's first measure always opens the first movement.
+      if (e.shiftKey && !legacyBreaks) {
+        if (p > 0 || z > 0) pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+        return;
+      }
       // Toggle the system flag; a page's first measure is covered by its <pb/>.
-      if (canEdit && z > 0) {
+      if (z > 0) {
         pages[p].zones[z].sb = !pages[p].zones[z].sb;
       }
       return;
@@ -276,6 +305,7 @@
       override: null,
       label: "",
       sb: false,
+      mdiv: false,
     });
     const z = pages[p].zones.length - 1;
     selected = { p, z };
@@ -358,7 +388,30 @@
     });
   }
 
+  // Paint order for a page's zones (zones mode): the selected zone is moved to
+  // the end so it renders on top. SVG has no z-index, so an earlier zone would
+  // otherwise sit under a later overlapping one and steal its pointer events.
+  function paintOrder(pg: EditPage, p: number): { zone: EditZone; z: number }[] {
+    const entries = pg.zones.map((zone, z) => ({ zone, z }));
+    if (selected?.p === p) {
+      const i = entries.findIndex((e) => e.z === selected!.z);
+      if (i >= 0) entries.push(entries.splice(i, 1)[0]);
+    }
+    return entries;
+  }
+
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
+  const movementCount = $derived(
+    1 +
+      pages.reduce(
+        (n, pg, p) => n + pg.zones.filter((z, i) => z.mdiv && (p > 0 || i > 0)).length,
+        0,
+      ),
+  );
+  // Whether a zone starts a movement in the emitted MEI (the very first
+  // measure always opens the first one).
+  const startsMovement = (p: number, z: number) =>
+    (p === 0 && z === 0) || (pages[p].zones[z].mdiv && (p > 0 || z > 0));
 </script>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
@@ -378,7 +431,7 @@
 <p class="back"><a href={`/campaign/${owner}/${repo}`}>← Campaign console</a></p>
 
 <header>
-  <h1>{mode === "breaks" ? "Page & system breaks" : "Measure correction"} — <code>{taskId}</code></h1>
+  <h1>{legacyBreaks ? "Page & system breaks" : "Measure correction"} — <code>{taskId}</code></h1>
   <p class="repo">
     <a href={`https://github.com/${owner}/${repo}`} target="_blank" rel="noreferrer">{owner}/{repo}</a>
   </p>
@@ -446,9 +499,12 @@
                   <rect
                     class="zone sys{systems[z] % 2}"
                     class:sysstart={z === 0 || zone.sb}
+                    class:mdivstart={startsMovement(p, z)}
                     role="button"
                     tabindex={0}
-                    aria-label={`Measure ${zone.label}: toggle system start`}
+                    aria-label={legacyBreaks
+                      ? `Measure ${zone.label}: toggle system start`
+                      : `Measure ${zone.label}: click toggles system start, shift-click toggles movement start`}
                     x={zone.box.ulx}
                     y={zone.box.uly}
                     width={zone.box.lrx - zone.box.ulx}
@@ -456,11 +512,12 @@
                     onpointerdown={(e) => zonePointerDown(e, p, z)}
                   />
                   <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>
-                    {(z === 0 ? "⤓ " : zone.sb ? "↵ " : "") + zone.label}
+                    {(startsMovement(p, z) ? "§ " : z === 0 ? "⤓ " : zone.sb ? "↵ " : "") +
+                      zone.label}
                   </text>
                 {/each}
               {:else}
-                {#each pg.zones as zone, z}
+                {#each paintOrder(pg, p) as { zone, z } (z)}
                   <rect
                     class="zone"
                     class:selected={selected?.p === p && selected?.z === z}
@@ -495,6 +552,19 @@
       </div>
 
       <aside class="sidebar">
+        {#if !legacyBreaks}
+          <div class="panel">
+            <p class="panel-title">Steps</p>
+            <div class="viewmode">
+              <button type="button" class:on={step === "measures"} onclick={() => (step = "measures")}>
+                1 · Measures
+              </button>
+              <button type="button" class:on={step === "structure"} onclick={() => (step = "structure")}>
+                2 · Breaks & movements
+              </button>
+            </div>
+          </div>
+        {/if}
         {#if !canEdit}
           <div class="banner warn">
             {#if data.status === "completed"}
@@ -505,6 +575,53 @@
               Claim this task to edit.
               <button type="button" onclick={() => claim()} disabled={busy}>Claim task</button>
             {/if}
+          </div>
+        {/if}
+
+        {#if validation && submitted}
+          <div class="panel">
+            <p class="panel-title">Validation</p>
+            {#if validation.status === "completed"}
+              <p class="hint">This task's validation is complete.</p>
+            {:else if validation.lockUser}
+              <p class="hint">
+                {holdsValidation
+                  ? "You hold this validation lock — review the pages, then pass or fail."
+                  : `Being reviewed by @${validation.lockUser}.`}
+              </p>
+            {:else if selfValidation}
+              <p class="hint">You submitted this work — no self-validation.</p>
+            {:else}
+              <p class="hint">Review the submitted measures, breaks and movements.</p>
+            {/if}
+            <div class="vbtns">
+              <button
+                type="button"
+                onclick={() => claimValidation()}
+                disabled={busy || !canClaimValidation}
+                title="Reserve this subtask for validation. Encoders cannot validate their own work."
+              >
+                Claim (validate)
+              </button>
+              <button
+                type="button"
+                class="vpass"
+                onclick={() => validate("pass")}
+                disabled={busy || !holdsValidation}
+                title="Record a passing verdict."
+              >
+                Validate: pass
+              </button>
+              <button
+                type="button"
+                class="vfail"
+                onclick={() => validate("fail")}
+                disabled={busy || !holdsValidation}
+                title="Record a failing verdict — the task goes back to encoding."
+              >
+                Validate: fail
+              </button>
+            </div>
           </div>
         {/if}
 
@@ -533,6 +650,11 @@
             <p class="hint">
               Click a measure to mark it as the start of a system. Page breaks
               are set automatically at each page's first measure.
+              {#if !legacyBreaks}
+                Shift-click a measure to mark it as the start of a movement,
+                section or piece (§) — each becomes its own &lt;mdiv&gt; in the
+                MEI.
+              {/if}
             </p>
           {:else}
             <p class="hint">
@@ -555,7 +677,10 @@
 
         <div class="panel">
           <p class="panel-title">Selection</p>
-          <p class="count">{measureCount} measure{measureCount === 1 ? "" : "s"}</p>
+          <p class="count">
+            {measureCount} measure{measureCount === 1 ? "" : "s"}{#if !legacyBreaks}
+              &nbsp;· {movementCount} movement{movementCount === 1 ? "" : "s"}{/if}
+          </p>
           {#if mode === "zones"}
             {#if selected}
               <label class="labeledit">
@@ -581,11 +706,11 @@
           class="primary"
           onclick={() => submit()}
           disabled={busy || !canEdit}
-          title={mode === "breaks"
+          title={legacyBreaks
             ? "Submit the page/system breaks — the task completes when the automation accepts them"
-            : "Submit the corrected measures for validation"}
+            : "Submit the corrected measures, breaks and movements for validation"}
         >
-          {mode === "breaks" ? "Submit breaks" : "Submit corrections"}
+          {legacyBreaks ? "Submit breaks" : "Submit corrections"}
         </button>
       </aside>
     </div>
@@ -819,6 +944,17 @@
     opacity: 0.45;
     cursor: default;
   }
+  .vbtns {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .vbtns .vpass {
+    color: #1a7f37;
+  }
+  .vbtns .vfail {
+    color: #b42318;
+  }
   button.primary {
     background: #1a1a1a;
     color: #fff;
@@ -899,6 +1035,11 @@
   }
   .zone.sysstart {
     stroke-width: 4;
+  }
+  .zone.mdivstart {
+    stroke: rgba(139, 95, 191, 0.9);
+    fill: rgba(139, 95, 191, 0.14);
+    stroke-width: 5;
   }
   .zonelabel {
     font-family: ui-monospace, monospace;

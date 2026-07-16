@@ -19,6 +19,7 @@ import {
 	parseTaskCsv,
 	parseStateCsv,
 	parseLockCsv,
+	parseHistoryCsv,
 	serializeStateCsv,
 	serializeLockCsv,
 	appendHistory,
@@ -132,15 +133,17 @@ async function logDirect(ctx: CommandContext, envelope: CommandEnvelope, result:
 const rand = () => crypto.randomUUID().slice(0, 8);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Mute the campaign repo's notifications for this user, once: skipped when
-// this browser has muted it before, or when the user has an explicit
-// subscription of their own (e.g. deliberately watching). Non-fatal — each
+// Mute the campaign repo's notifications for this user, once per browser:
+// skipped when this browser has muted it before, or when the repo is already
+// ignored server-side. GitHub auto-subscribes users to repos they own or are
+// mentioned in, so a plain subscription is not treated as a deliberate opt-in
+// to watch — only an existing "ignored" state is left alone. Non-fatal — each
 // token can only mute its own user.
 async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<void> {
 	const key = `lets-encode:muted:${owner}/${repo}`;
 	if (localStorage.getItem(key)) return;
 	try {
-		if ((await f.getRepoSubscription(owner, repo)) == null) {
+		if (!(await f.getRepoSubscription(owner, repo))?.ignored) {
 			await f.ignoreRepoNotifications(owner, repo);
 		}
 		localStorage.setItem(key, '1');
@@ -222,7 +225,7 @@ async function openClaimPr(
 // ---------------------------------------------------------------------------
 // The commands
 
-/** The parsed campaign tables (and privacy) the console renders. */
+/** The parsed campaign tables (and privacy/config) the console renders. */
 export interface CampaignTables {
 	notInitialised: boolean;
 	isPrivate: boolean;
@@ -230,6 +233,11 @@ export interface CampaignTables {
 	rows: StateRow[];
 	validationColumns: string[];
 	locks: LockRow[];
+	history: HistoryRow[];
+	/** campaign.title from config.yaml; '' when unreadable. */
+	title: string;
+	/** validation.pass_threshold from config.yaml; 1 when unreadable. */
+	passThreshold: number;
 }
 
 const readTables: CommandDef<Record<string, never>, CampaignTables> = {
@@ -238,12 +246,16 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 	log: 'none',
 	async run(_input, ctx) {
 		const { forge: f, owner, repo } = ctx;
-		const [taskCsv, stateCsv, lockCsv, isPrivate] = await Promise.all([
+		const [taskCsv, stateCsv, lockCsv, historyCsv, configYaml, isPrivate] = await Promise.all([
 			f.getRepoFile(owner, repo, TASK_PATH),
 			f.getRepoFile(owner, repo, STATE_PATH),
 			f.getRepoFile(owner, repo, LOCK_PATH),
+			f.getRepoFile(owner, repo, HISTORY_PATH),
+			f.getRepoFile(owner, repo, 'config.yaml'),
 			f.getRepoIsPrivate(owner, repo)
 		]);
+		const title = configYaml?.match(/^\s*title:\s*(?:"([^"]*)"|([^#\n]+))/m);
+		const passThreshold = configYaml?.match(/^\s*pass_threshold:\s*(\d+)/m);
 		if (taskCsv == null || stateCsv == null || lockCsv == null) {
 			return {
 				notInitialised: true,
@@ -251,7 +263,10 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 				taskDefs: [],
 				rows: [],
 				validationColumns: [],
-				locks: []
+				locks: [],
+				history: [],
+				title: '',
+				passThreshold: 1
 			};
 		}
 		const state = parseStateCsv(stateCsv);
@@ -261,7 +276,10 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			taskDefs: parseTaskCsv(taskCsv),
 			rows: state.rows,
 			validationColumns: state.validationColumns,
-			locks: parseLockCsv(lockCsv)
+			locks: parseLockCsv(lockCsv),
+			history: historyCsv ? parseHistoryCsv(historyCsv) : [],
+			title: (title?.[1] ?? title?.[2] ?? '').trim(),
+			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1
 		};
 	}
 };
@@ -536,6 +554,15 @@ export interface FacsimileTaskData {
 	status: string;
 	/** Whether the viewer holds the task's active encoding lock (may edit/submit). */
 	holdsLock: boolean;
+	/** Who submitted the task's work ('' while unsubmitted). Encoders cannot validate it. */
+	encoder: string;
+	/** The task's validation subtask, so the editor can drive the review too. */
+	validation: {
+		subtask_id: string;
+		status: string;
+		/** Who holds the subtask's active validation lock ('' when unclaimed). */
+		lockUser: string;
+	} | null;
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -559,16 +586,33 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 		const imageUrls = await Promise.all(
 			model.pages.map((p) => f.getRepoFileDownloadUrl(owner, repo, dir + p.image).then((u) => u ?? ''))
 		);
-		const holdsLock = parseLockCsv(lockCsv ?? '').some(
+		const locks = parseLockCsv(lockCsv ?? '');
+		const holdsLock = locks.some(
 			(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === viewer
 		);
+		const stateRows = parseStateCsv(stateCsv ?? '').rows;
+		const taskState = findRow(stateRows, task_id, '');
+		const subRow = stateRows.find((r) => r.task_id === task_id && r.subtask_id !== '');
+		const validation = subRow
+			? {
+					subtask_id: subRow.subtask_id,
+					status: subRow.status,
+					lockUser:
+						locks.find(
+							(l) =>
+								l.task_id === task_id && l.subtask_id === subRow.subtask_id && l.kind === 'validation'
+						)?.user_id ?? ''
+				}
+			: null;
 		return {
 			model,
 			imageUrls,
 			fragment: task.fragment,
 			locator: task.locator,
-			status: findRow(parseStateCsv(stateCsv ?? '').rows, task_id, '')?.status ?? '',
-			holdsLock
+			status: taskState?.status ?? '',
+			holdsLock,
+			encoder: taskState?.encoder ?? '',
+			validation
 		};
 	}
 };
@@ -593,16 +637,16 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 };
 
 // Open the PR carrying a rewritten score, wait for the automation's verdict.
-// Shared by the two pre-task submissions; the current file's <meiHead> is
-// carried over verbatim.
+// Shared by the pre-task submissions; the current file's <meiHead> is carried
+// over verbatim.
 //
-// Each pre-task advances the score by one stage (measure correction → stage B
-// with generated measures; breaks → stage C with pb/sb), so the submitted
-// content always differs from the file in the repo — even when the volunteer
-// changed nothing, since the new stage adds elements the previous one lacked.
-// That guaranteed diff is what makes the caller's path-filtered
-// pull_request_target trigger; an identical file would open an empty PR that
-// never runs the automation.
+// Each pre-task advances the score by at least one stage (measure correction →
+// stage C with generated measures, breaks and movements; the legacy breaks
+// task → stage C from stage B), so the submitted content always differs from
+// the file in the repo — even when the volunteer changed nothing, since the
+// new stage adds elements the previous one lacked. That guaranteed diff is
+// what makes the caller's path-filtered pull_request_target trigger; an
+// identical file would open an empty PR that never runs the automation.
 async function submitFacsimile(
 	ctx: CommandContext,
 	task_id: string,
@@ -645,19 +689,21 @@ async function submitFacsimile(
 	}
 }
 
-// Measure correction: submit stage B — the corrected zones plus one generated
-// measure per zone (numbered from the zone labels), which the validation
-// subtask then reviews.
+// Measure correction: submit stage C — the corrected zones with one generated
+// measure per zone (numbered from the zone labels), the page/system breaks,
+// and one <mdiv> per marked movement. The validation subtask reviews all of it.
 const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> = {
 	id: 'campaign.submitZones',
-	version: 1,
+	version: 2,
 	log: 'pr',
 	envelopeInput: ({ task_id, pages }) => ({
 		task_id,
-		measures: pages.reduce((n, p) => n + p.zones.length, 0)
+		measures: pages.reduce((n, p) => n + p.zones.length, 0),
+		systems: pages.reduce((n, p) => n + p.zones.filter((z) => z.sb).length, 0),
+		movements: 1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0)
 	}),
 	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, { withMeasures: true }, 'zones')
+		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true }, 'zones')
 };
 
 // Breaks: submit stage C — the measures plus a <pb/> per page and an <sb/>

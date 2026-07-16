@@ -196,11 +196,10 @@ export function stampTemplate(
  * entire source (task row, empty subtask_id) with one validation subtask S0001
  * — empty locators address the whole file, allow/blocklists are open.
  *
- * A facsimile source prepends the two pre-tasks (DESIGN.md §7a), chained by
- * `depends_on`: P0001 corrects the measure zones (locator `measure-zones`,
- * with a validation subtask), P0002 adds the page/system breaks (locator
- * `breaks`, no validation subtask — it completes on its accepted submission),
- * and the encoding task waits for P0002.
+ * A facsimile source prepends one pre-task (DESIGN.md §7a): P0001 corrects the
+ * detected measures (locator `measure-zones`, with a validation subtask) —
+ * measure boxes and numbers, page/system breaks, and movement boundaries in
+ * one task. The encoding task waits for it.
  */
 export function buildTaskCsv(config: CampaignConfig): string {
 	const fragment = config.sources[0].path;
@@ -208,11 +207,10 @@ export function buildTaskCsv(config: CampaignConfig): string {
 		config.sources[0].kind === 'facsimile'
 			? [
 					csvRow(['P0001', '', fragment, 'measure-zones', '', '', '']),
-					csvRow(['P0001', 'S0001', fragment, 'measure-zones', '', '', '']),
-					csvRow(['P0002', '', fragment, 'breaks', '', '', 'P0001'])
+					csvRow(['P0001', 'S0001', fragment, 'measure-zones', '', '', ''])
 				]
 			: [];
-	const dependsOn = preTasks.length ? 'P0002' : '';
+	const dependsOn = preTasks.length ? 'P0001' : '';
 	const lines = [
 		csvRow(TASK_COLUMNS),
 		...preTasks,
@@ -235,8 +233,7 @@ export function buildStateCsv(config: CampaignConfig): string {
 		config.sources[0].kind === 'facsimile'
 			? [
 					csvRow(['P0001', '', 'encoding_required', '', '', ...empty]),
-					csvRow(['P0001', 'S0001', 'pending', '', '', ...empty]),
-					csvRow(['P0002', '', 'encoding_required', '', '', ...empty])
+					csvRow(['P0001', 'S0001', 'pending', '', '', ...empty])
 				]
 			: [];
 	const lines = [
