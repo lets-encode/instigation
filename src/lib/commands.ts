@@ -148,7 +148,14 @@ async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<vo
 		}
 		localStorage.setItem(key, '1');
 	} catch (e) {
-		console.warn('Could not mute repo notifications:', (e as Error).message);
+		// Non-fatal, but the user will then receive the automation's PR/comment
+		// emails. The repo-subscription API requires the OAuth 'notifications'
+		// scope; a 403/404 here usually means the token was granted without it.
+		console.warn(
+			`Could not mute ${owner}/${repo} notifications — this user may receive the ` +
+				`campaign automation's emails (the OAuth 'notifications' scope is required): ` +
+				(e as Error).message
+		);
 	}
 }
 
