@@ -54,6 +54,14 @@ const STATUS_LABELS: Record<StatusKey, string> = {
 /** The pill label for a status key. */
 export const statusLabel = (key: StatusKey): string => STATUS_LABELS[key];
 
+/**
+ * The pill label for a status key, aware of measure-correction (pre) tasks:
+ * an unclaimed pre-task reads as "action required" rather than "encoding
+ * required", since no encoding happens at that stage.
+ */
+export const statusPill = (key: StatusKey, pre = false): string =>
+	pre && key === 'encoding_required' ? 'action required' : STATUS_LABELS[key];
+
 // Geometry constants of the flow layout (all px). The CSS section heights in
 // the console must match HEAD_H / SLOTS_HEAD / SLOT_H, since node heights are
 // computed here and set explicitly on the boxes.
@@ -61,7 +69,7 @@ const G = {
 	nodeW: 240,
 	headH: 86,
 	basePad: 10,
-	slotsHead: 28,
+	slotsHead: 34,
 	slotH: 30,
 	slotsPad: 8,
 	gapX: 110,
@@ -190,9 +198,14 @@ function slotState(d: GraphData, row: StateRow, slot: number): SlotState {
 		return { key: 'review', sub: `@${lock.user_id} · in review`, running: true, user: lock.user_id };
 	}
 	const waiting = !isEncoded(taskState(d, row.task_id)?.status ?? '');
+	const pre = !!taskDef(d, row.task_id)?.locator;
 	return {
 		key: 'open',
-		sub: waiting ? 'waiting for encoding' : 'open — claim to review',
+		sub: waiting
+			? pre
+				? 'waiting for measure correction'
+				: 'waiting for encoding'
+			: 'open — claim to review',
 		running: false,
 		user: ''
 	};
@@ -495,7 +508,7 @@ export function buildPanel(
 	const statusKey = mainStatusKey(d, sel.task);
 	const subRows = subRowsOf(d, sel.task);
 	const pills: Array<{ key: StatusKey; text: string }> = [
-		{ key: statusKey, text: statusLabel(statusKey) }
+		{ key: statusKey, text: statusPill(statusKey, def.locator !== '') }
 	];
 	if (encoded && subRows.length) {
 		const validated = subRows.every((r) => r.status === 'completed');
@@ -520,7 +533,7 @@ export function buildPanel(
 	if (def.locator !== '') {
 		actions.push({
 			id: 'zone-editor',
-			label: 'Open editor',
+			label: 'Claim correction task',
 			primary: true,
 			disabled: !!blocked,
 			title: blocked

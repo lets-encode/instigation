@@ -6,7 +6,7 @@
   import type { TaskRow, StateRow, LockRow, HistoryRow } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { buildGraph, buildPanel, statusLabel } from "$lib/campaign-graph.ts";
+  import { buildGraph, buildPanel, statusPill } from "$lib/campaign-graph.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
@@ -615,7 +615,9 @@
                       </span>
                     </span>
                     <span class="nmeta">
-                      <span class="pill s-{n.statusKey}">{statusLabel(n.statusKey)}</span>
+                      <span class="pill s-{n.statusKey}"
+                        >{statusPill(n.statusKey, n.kind === "pre")}</span
+                      >
                       {#if n.running}{@render lockIcon()}{/if}
                       <span class="mono nmeta-text">{n.meta}</span>
                     </span>
@@ -1348,8 +1350,9 @@
     stroke-dasharray: 5 5;
   }
 
-  /* Section heights (86 / 28 / 24) must match the layout constants in
-     campaign-graph.ts, which computes node heights from them. */
+  /* Section heights must match the layout constants in campaign-graph.ts,
+     which computes node heights from them: headH 86, slotsHead 34 (the 28px
+     header band plus its 6px bottom margin), slotH 30. */
   .node {
     position: absolute;
     display: flex;
@@ -1486,6 +1489,7 @@
   }
   .nslots-head {
     height: 28px;
+    margin-bottom: 6px;
     display: flex;
     align-items: center;
     justify-content: space-between;
