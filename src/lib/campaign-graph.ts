@@ -28,6 +28,7 @@ export type StatusKey =
 	| 'completed'
 	| 'encoding_required'
 	| 'encoding'
+	| 'claimed'
 	| 'validation_required'
 	| 'pending'
 	| 'blocked'
@@ -40,6 +41,7 @@ const STATUS_LABELS: Record<StatusKey, string> = {
 	completed: '✓ completed',
 	encoding_required: 'encoding required',
 	encoding: '● encoding',
+	claimed: '● claimed',
 	validation_required: 'validation',
 	pending: 'pending',
 	blocked: 'blocked',
@@ -121,12 +123,10 @@ export interface Graph {
 /** The task's human type from its locator. */
 export function typeLabel(locator: string): string {
 	if (locator === 'measure-zones') return 'Measure correction';
-	if (locator === 'breaks') return 'Page/system breaks';
 	return 'Encoding';
 }
 
-const iconFor = (locator: string): string =>
-	locator === 'measure-zones' ? 'M' : locator === 'breaks' ? 'B' : 'E';
+const iconFor = (locator: string): string => (locator === 'measure-zones' ? 'M' : 'E');
 
 // ---------------------------------------------------------------------------
 // Table lookups
@@ -156,11 +156,15 @@ const passesOf = (d: GraphData, row: StateRow) =>
 	cellsOf(d, row).filter((c) => c.startsWith('pass|')).length;
 
 // The main node's status key: blocked wins, then a held encoding lock, then
-// the state.csv status itself.
+// the state.csv status itself. A claimed facsimile pre-task (measure
+// correction) reads as 'claimed' rather than 'encoding' — the work is a
+// correction on the facsimile, not an encoding pass.
 function mainStatusKey(d: GraphData, task: string): StatusKey {
 	if (blockedBy(d, task)) return 'blocked';
 	const status = taskState(d, task)?.status ?? 'pending';
-	if (status === 'encoding_required' && encodingLock(d, task)) return 'encoding';
+	if (status === 'encoding_required' && encodingLock(d, task)) {
+		return taskDef(d, task)?.locator ? 'claimed' : 'encoding';
+	}
 	if (status in STATUS_LABELS) return status as StatusKey;
 	return 'pending';
 }
@@ -183,7 +187,7 @@ function slotState(d: GraphData, row: StateRow, slot: number): SlotState {
 	}
 	const lock = validationLock(d, row.task_id, row.subtask_id);
 	if (slot === finalsOf(d, row) && lock) {
-		return { key: 'review', sub: `🔒 @${lock.user_id}`, running: true, user: lock.user_id };
+		return { key: 'review', sub: `@${lock.user_id} · in review`, running: true, user: lock.user_id };
 	}
 	const waiting = !isEncoded(taskState(d, row.task_id)?.status ?? '');
 	return {
@@ -237,7 +241,7 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 		if (blocked) meta = `waiting for ${blocked}`;
 		else if (encoded && state?.encoder) meta = `@${state.encoder} · encoded`;
 		else if (state?.status === 'completed') meta = '✓ done';
-		else if (lock) meta = lock.user_id === viewer ? '🔒 yours' : `🔒 @${lock.user_id}`;
+		else if (lock) meta = lock.user_id === viewer ? 'claimed by you' : `claimed by @${lock.user_id}`;
 
 		const slots: NodeSlot[] = subRows.flatMap((row) =>
 			Array.from({ length: reqVal }, (_, slot) => {
@@ -281,7 +285,8 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 			title: typeLabel(def.locator),
 			subtitle: task,
 			statusKey,
-			running: !!lock && !encoded,
+			// Drives the node's lock marker: only while the meta line shows the claim.
+			running: !!lock && !encoded && !blocked,
 			meta,
 			hasIn: i > 0,
 			hasOut: i < defs.length - 1,
@@ -504,10 +509,11 @@ export function buildPanel(
 	if (blocked) meta = `Waits for ${blocked} — claims open once it is completed.`;
 	else if (encoded && state.encoder)
 		meta = `encoded by @${state.encoder}${state.encoded_at ? ` · ${state.encoded_at}` : ''}`;
+	else if (statusKey === 'claimed') meta = 'Waiting for correction.';
 	const lockText = lock
 		? mine
 			? 'You hold this claim'
-			: `🔒 claimed by @${lock.user_id}`
+			: `Claimed by @${lock.user_id}`
 		: '';
 
 	const actions: PanelAction[] = [];
@@ -519,9 +525,7 @@ export function buildPanel(
 			disabled: !!blocked,
 			title: blocked
 				? `Enabled once ${blocked} is completed.`
-				: def.locator === 'breaks'
-					? 'Mark the system beginnings on the facsimile; page breaks are added automatically.'
-					: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
+				: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
 		});
 	} else {
 		const otherLock = lock && !mine;

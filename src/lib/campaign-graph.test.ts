@@ -31,12 +31,12 @@ const state = (
 	validate_status_2: vals[1] ?? ''
 });
 
-// A facsimile campaign as initialised by buildTaskCsv/buildStateCsv: two
-// pre-tasks (P0001 with a validation subtask, P0002 without) and one encoding
-// task with one validation subtask, two validation slots.
+// A facsimile campaign: a measure-correction pre-task P0001 (with a validation
+// subtask), a subtask-less task P0002 depending on it, and one encoding task
+// with one validation subtask, two validation slots.
 function facsimileData(): GraphData {
 	return {
-		taskDefs: [task('P0001', 'measure-zones'), subDef('P0001'), task('P0002', 'breaks', 'P0001'), task('T0001', '', 'P0002'), subDef('T0001')],
+		taskDefs: [task('P0001', 'measure-zones'), subDef('P0001'), task('P0002', '', 'P0001'), task('T0001', '', 'P0002'), subDef('T0001')],
 		rows: [
 			state('P0001', '', 'completed', 'alice'),
 			state('P0001', 'S0001', 'completed', '', ['pass|carol|2026-07-14T06:44:00Z']),
@@ -78,7 +78,7 @@ test('buildGraph: full type names, no abbreviations', () => {
 	const g = buildGraph(facsimileData());
 	assert.deepEqual(
 		g.nodes.map((n) => n.title),
-		['Measure correction', 'Page/system breaks', 'Encoding']
+		['Measure correction', 'Encoding', 'Encoding']
 	);
 });
 
@@ -165,8 +165,10 @@ test('buildPanel: open slot claimable by a non-encoder; verdicts need the lock',
 
 test('buildPanel: pre-task uses the zone editor, blocked until its dependency completes', () => {
 	const d = facsimileData();
+	// Give the measure-correction pre-task an unmet dependency.
+	d.taskDefs[0] = task('P0001', 'measure-zones', 'P0000');
 	d.rows[0] = state('P0001', '', 'encoding_required');
-	const p = buildPanel(d, noHistory, { task: 'P0002', sub: '', slot: null }, 'you', false);
+	const p = buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, 'you', false);
 	const act = p?.actions.find((a) => a.id === 'zone-editor');
 	assert.ok(act);
 	assert.equal(act.disabled, true);

@@ -49,7 +49,7 @@ test('dependency gate: a claim on a task whose depends_on is not completed is re
 	const tasks = parseTaskCsv(
 		TASK_HEADER +
 			'P0001,,sources/score.mei,measure-zones,,,\n' +
-			'P0002,,sources/score.mei,breaks,,,P0001\n'
+			'P0002,,sources/score.mei,,,,P0001\n'
 	);
 	const state = parseStateCsv(
 		STATE_HEADER + 'P0001,,encoding_required,,,\n' + 'P0002,,encoding_required,,,\n'
@@ -62,7 +62,7 @@ test('dependency gate: the claim opens once the depended-on task is completed', 
 	const tasks = parseTaskCsv(
 		TASK_HEADER +
 			'P0001,,sources/score.mei,measure-zones,,,\n' +
-			'P0002,,sources/score.mei,breaks,,,P0001\n'
+			'P0002,,sources/score.mei,,,,P0001\n'
 	);
 	const state = parseStateCsv(
 		STATE_HEADER + 'P0001,,completed,alice,2026-06-25T09:00:00Z,\n' + 'P0002,,encoding_required,,,\n'

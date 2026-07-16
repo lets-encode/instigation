@@ -644,23 +644,20 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 };
 
 // Open the PR carrying a rewritten score, wait for the automation's verdict.
-// Shared by the pre-task submissions; the current file's <meiHead> is carried
-// over verbatim.
+// The current file's <meiHead> is carried over verbatim.
 //
-// Each pre-task advances the score by at least one stage (measure correction →
-// stage C with generated measures, breaks and movements; the legacy breaks
-// task → stage C from stage B), so the submitted content always differs from
-// the file in the repo — even when the volunteer changed nothing, since the
-// new stage adds elements the previous one lacked. That guaranteed diff is
-// what makes the caller's path-filtered pull_request_target trigger; an
-// identical file would open an empty PR that never runs the automation.
+// The submission advances the score to stage C (generated measures, breaks and
+// movements), so the submitted content always differs from the file in the
+// repo — even when the volunteer changed nothing, since the new stage adds
+// elements the previous one lacked. That guaranteed diff is what makes the
+// caller's path-filtered pull_request_target trigger; an identical file would
+// open an empty PR that never runs the automation.
 async function submitFacsimile(
 	ctx: CommandContext,
 	task_id: string,
 	pages: PageModel[],
 	envelope: CommandEnvelope | null,
-	build: { withMeasures?: boolean; withBreaks?: boolean },
-	what: 'zones' | 'breaks'
+	build: { withMeasures?: boolean; withBreaks?: boolean }
 ): Promise<Result> {
 	const { forge: f, owner, repo } = ctx;
 	try {
@@ -675,20 +672,18 @@ async function submitFacsimile(
 		if (content === current) {
 			return { ok: true, warn: true, message: 'Nothing to submit — the score already matches this step.' };
 		}
-		ctx.progress(`Opening the ${what} PR…`);
-		const title = what === 'breaks'
-			? `Add page/system breaks (${task_id})`
-			: `Correct measure zones (${task_id})`;
+		ctx.progress('Opening the correction PR…');
+		const title = `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
-		console.log(`[${what}] opening PR`, { task_id });
+		console.log('[zones] opening PR', { task_id });
 		const pr = await f.openChangePr(owner, repo, {
-			branch: `${what}-${task_id}-${rand()}`,
+			branch: `zones-${task_id}-${rand()}`,
 			files: [{ path: fragment, content }],
 			message: title,
 			title,
 			body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 		});
-		console.log(`[${what}] PR opened`, pr.number, pr.html_url);
+		console.log('[zones] PR opened', pr.number, pr.html_url);
 		const verdict = await waitForPrProcessed(ctx, pr.number);
 		return verdictResult(verdict, pr.number, pr.html_url, `Opened submission PR #${pr.number} for ${task_id}.`);
 	} catch (e) {
@@ -710,21 +705,7 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 		movements: 1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0)
 	}),
 	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true }, 'zones')
-};
-
-// Breaks: submit stage C — the measures plus a <pb/> per page and an <sb/>
-// before each measure flagged as starting a system.
-const submitBreaks: CommandDef<{ task_id: string; pages: PageModel[] }, Result> = {
-	id: 'campaign.submitBreaks',
-	version: 1,
-	log: 'pr',
-	envelopeInput: ({ task_id, pages }) => ({
-		task_id,
-		systems: pages.reduce((n, p) => n + p.zones.filter((z) => z.sb).length, 0)
-	}),
-	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true }, 'breaks')
+		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true })
 };
 
 /** The console command registry. */
@@ -738,6 +719,5 @@ export const commands = {
 	runReaper,
 	readFacsimile,
 	claimTask,
-	submitZones,
-	submitBreaks
+	submitZones
 };

@@ -85,13 +85,11 @@
 
   // The measure-correction task has two steps in one session: step 1 corrects
   // the measure boxes and numbers, step 2 marks system starts and movement
-  // boundaries. One submission carries both. Legacy tasks with a `breaks`
-  // locator get only the structure step.
+  // boundaries. One submission carries both.
   let step = $state<"measures" | "structure">("measures");
-  const legacyBreaks = $derived(data?.locator === "breaks");
   // 'zones' (edit measure boxes) or 'breaks' (toggle break/movement flags) —
   // what the pointer interactions do right now.
-  const mode = $derived(legacyBreaks || step === "structure" ? "breaks" : "zones");
+  const mode = $derived(step === "structure" ? "breaks" : "zones");
   const canEdit = $derived(
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
@@ -188,6 +186,26 @@
   const claim = () =>
     run((c) => invoke(commands.claimTask, { task_id: taskId }, c));
 
+  // Opening the editor claims the task, the same way opening a score in
+  // mei-friend does — a read-only look is served by the console's score
+  // preview, so reaching the editor means intent to edit. Fire once per task:
+  // if the claim is rejected (already held by someone else) the banner and the
+  // manual button remain as the fallback, and we don't re-open a doomed PR on
+  // every reload.
+  let autoClaimedFor = $state<string | null>(null);
+  $effect(() => {
+    if (
+      data &&
+      !busy &&
+      autoClaimedFor !== taskId &&
+      data.status === "encoding_required" &&
+      !data.holdsLock
+    ) {
+      autoClaimedFor = taskId;
+      claim();
+    }
+  });
+
   // The review happens here too: the same claim/pass/fail the console offers,
   // against the task's validation subtask.
   const validation = $derived(data?.validation ?? null);
@@ -235,7 +253,7 @@
   const submit = () =>
     run((c) =>
       invoke(
-        legacyBreaks ? commands.submitBreaks : commands.submitZones,
+        commands.submitZones,
         { task_id: taskId, pages: toPageModels() },
         c,
       ),
@@ -271,7 +289,7 @@
       if (!canEdit) return;
       // Shift-click toggles the movement flag (structure step only). The
       // score's first measure always opens the first movement.
-      if (e.shiftKey && !legacyBreaks) {
+      if (e.shiftKey) {
         if (p > 0 || z > 0) pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
         return;
       }
@@ -431,7 +449,7 @@
 <p class="back"><a href={`/campaign/${owner}/${repo}`}>← Campaign console</a></p>
 
 <header>
-  <h1>{legacyBreaks ? "Page & system breaks" : "Measure correction"} — <code>{taskId}</code></h1>
+  <h1>Measure correction — <code>{taskId}</code></h1>
   <p class="repo">
     <a href={`https://github.com/${owner}/${repo}`} target="_blank" rel="noreferrer">{owner}/{repo}</a>
   </p>
@@ -502,9 +520,7 @@
                     class:mdivstart={startsMovement(p, z)}
                     role="button"
                     tabindex={0}
-                    aria-label={legacyBreaks
-                      ? `Measure ${zone.label}: toggle system start`
-                      : `Measure ${zone.label}: click toggles system start, shift-click toggles movement start`}
+                    aria-label={`Measure ${zone.label}: click toggles system start, shift-click toggles movement start`}
                     x={zone.box.ulx}
                     y={zone.box.uly}
                     width={zone.box.lrx - zone.box.ulx}
@@ -552,19 +568,17 @@
       </div>
 
       <aside class="sidebar">
-        {#if !legacyBreaks}
-          <div class="panel">
-            <p class="panel-title">Steps</p>
-            <div class="viewmode">
-              <button type="button" class:on={step === "measures"} onclick={() => (step = "measures")}>
-                1 · Measures
-              </button>
-              <button type="button" class:on={step === "structure"} onclick={() => (step = "structure")}>
-                2 · Breaks & movements
-              </button>
-            </div>
+        <div class="panel">
+          <p class="panel-title">Steps</p>
+          <div class="viewmode">
+            <button type="button" class:on={step === "measures"} onclick={() => (step = "measures")}>
+              1 · Measures
+            </button>
+            <button type="button" class:on={step === "structure"} onclick={() => (step = "structure")}>
+              2 · Breaks & movements
+            </button>
           </div>
-        {/if}
+        </div>
         {#if !canEdit}
           <div class="banner warn">
             {#if data.status === "completed"}
@@ -649,12 +663,9 @@
           {#if mode === "breaks"}
             <p class="hint">
               Click a measure to mark it as the start of a system. Page breaks
-              are set automatically at each page's first measure.
-              {#if !legacyBreaks}
-                Shift-click a measure to mark it as the start of a movement,
-                section or piece (§) — each becomes its own &lt;mdiv&gt; in the
-                MEI.
-              {/if}
+              are set automatically at each page's first measure. Shift-click a
+              measure to mark it as the start of a movement, section or piece
+              (§) — each becomes its own &lt;mdiv&gt; in the MEI.
             </p>
           {:else}
             <p class="hint">
@@ -678,8 +689,8 @@
         <div class="panel">
           <p class="panel-title">Selection</p>
           <p class="count">
-            {measureCount} measure{measureCount === 1 ? "" : "s"}{#if !legacyBreaks}
-              &nbsp;· {movementCount} movement{movementCount === 1 ? "" : "s"}{/if}
+            {measureCount} measure{measureCount === 1 ? "" : "s"}
+            &nbsp;· {movementCount} movement{movementCount === 1 ? "" : "s"}
           </p>
           {#if mode === "zones"}
             {#if selected}
@@ -706,11 +717,9 @@
           class="primary"
           onclick={() => submit()}
           disabled={busy || !canEdit}
-          title={legacyBreaks
-            ? "Submit the page/system breaks — the task completes when the automation accepts them"
-            : "Submit the corrected measures, breaks and movements for validation"}
+          title="Submit the corrected measures, breaks and movements for validation"
         >
-          {legacyBreaks ? "Submit breaks" : "Submit corrections"}
+          Submit corrections
         </button>
       </aside>
     </div>

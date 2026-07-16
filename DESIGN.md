@@ -203,7 +203,7 @@ score) with one subtask `S0001` spanning the same range.
 
 - `fragment`: the source file the row addresses (e.g. `sources/score.mei`).
 - `locator`: address *within* the fragment — an MEI `xml:id`, or a controlled-vocab term for
-  pre-tasks (`measure-zones`, `breaks`; §7a); empty = the whole file. Realises the reserved
+  pre-tasks (`measure-zones`; §7a); empty = the whole file. Realises the reserved
   `by_measure`/`by_section` strategies.
 - `allowlist`/`blocklist`: per-row claim gates — present in the schema but **not yet enforced**
   (default open, §10).
@@ -217,7 +217,7 @@ score) with one subtask `S0001` spanning the same range.
 
 - Task row `status`: `encoding_required` → `validation_required` → `completed` (when every subtask
   is completed). `encoder`/`encoded_at` are recorded here. A task with **no** validation subtasks
-  (e.g. the `breaks` pre-task) goes `encoding_required` → `completed` on its accepted submission.
+  goes `encoding_required` → `completed` on its accepted submission.
 - Subtask row `status`: `pending` (task not yet encoded) → `validation_required` → `completed`
   (once `pass_threshold` passes accumulate).
 - `validate_status_1…n`: validation cells on subtask rows, count = `required_validations`. Each is
@@ -399,9 +399,6 @@ steps within the one task, submitted together:
   measures to toggle system starts (pre-suggested from the detected row grouping) and shift-clicks
   to mark a measure as the start of a movement, section or piece — each becomes its own `<mdiv>`.
 
-(Repos created before the merge may still carry a separate `breaks` pre-task — `locator: breaks`,
-no subtask, submitted via `submitBreaks`; the editor and coordinator still accept it.)
-
 ## 8. Provider-agnostic design
 
 Two provider-touching surfaces, cleanly separated so a second forge is additive:
@@ -485,8 +482,8 @@ Done since: **the four-table data model** (schema v2, §5) — tables keyed by `
 subtask_id)` with an append-only history; **the facsimile pre-tasks** (§7a) — staged score,
 `depends_on` chaining, the zone editor, and coordinator-side measure generation (`locator` is now
 used by the pre-tasks; the reserved `by_measure`/`by_section` strategies still aren't). Not yet
-exercised live: the full pre-task pipeline (zones submit → validate → generate → breaks submit →
-encoding unblocked). `allowlist`/`blocklist` remain unenforced (below).
+exercised live: the full pre-task pipeline (zones submit → validate → generate → encoding
+unblocked). `allowlist`/`blocklist` remain unenforced (below).
 
 Deferred (designed, not built):
 

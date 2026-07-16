@@ -680,7 +680,21 @@
 					<div class="row">
 						<a href={`/campaign/${repo.owner}/${repo.name}`}>{repo.full_name}</a>
 						{#if repo.private}
-							<span class="badge" title="Private — only visible to its owner">🔒 Private</span>
+							<span class="badge" title="Private — only visible to its owner">
+								<svg
+									class="badge-lock"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2.2"
+									stroke-linecap="round"
+									aria-hidden="true"
+								>
+									<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"></rect>
+									<path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"></path>
+								</svg>
+								Private
+							</span>
 						{/if}
 						{#if auth.user}
 							<a class="gh-link" href={repo.html_url} target="_blank" rel="noreferrer">View on GitHub →</a>
@@ -992,6 +1006,9 @@
 		color: #3056d3;
 	}
 	.badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
 		font-size: 0.72rem;
 		font-weight: 600;
 		color: #8a6d00;
@@ -999,6 +1016,10 @@
 		border: 1px solid #f0dca0;
 		padding: 0.1rem 0.45rem;
 		border-radius: 999px;
+	}
+	.badge-lock {
+		width: 11px;
+		height: 11px;
 	}
 	.desc {
 		margin: 0.35rem 0 0;

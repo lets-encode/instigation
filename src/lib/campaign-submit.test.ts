@@ -29,7 +29,7 @@ const encodingState = () =>
 test('a task without validation subtasks completes on its accepted submission', () => {
 	const tasks = parseTaskCsv(
 		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-			'P0002,,sources/score.mei,breaks,,,P0001\n'
+			'P0002,,sources/score.mei,,,,P0001\n'
 	);
 	const state = parseStateCsv(STATE_HEADER + 'P0002,,encoding_required,,,\n');
 	const locks = parseLockCsv(LOCK_HEADER + 'P0002,,bob,2026-06-25T09:00:00Z,encoding\n');

@@ -31,7 +31,7 @@
   {/if}
 </header>
 
-<main class:wide={wide} class:full={full}>
+{#snippet body()}
   {#if auth.error}
     <p class="auth-error" role="alert">
       Sign-in failed: {auth.error}
@@ -39,6 +39,16 @@
     </p>
   {/if}
   {@render children()}
+{/snippet}
+
+<main class:wide={wide} class:full={full}>
+  {#if wide || full}
+    {@render body()}
+  {:else}
+    <div class="column">
+      {@render body()}
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -96,13 +106,19 @@
     min-height: 0;
     overflow: auto;
     width: 100%;
-    max-width: 640px;
+    box-sizing: border-box;
+  }
+  /* Default reading pages scroll on <main> (full width) so the scrollbar sits
+     at the window edge, while the content stays in a centred, readable column. */
+  .column {
+    max-width: 760px;
     margin: 0 auto;
     padding: 2.5rem 1.5rem;
     box-sizing: border-box;
   }
   main.wide {
     max-width: 1600px;
+    margin: 0 auto;
     padding: 1.5rem 2rem;
   }
   main.full {

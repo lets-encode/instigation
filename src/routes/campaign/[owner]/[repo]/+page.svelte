@@ -43,19 +43,6 @@
   let selected = $state<Selection | null>(null);
   let expert = $state(false);
 
-  const graphData = $derived({ taskDefs, rows, validationColumns, locks, passThreshold });
-  const graph = $derived(buildGraph(graphData, viewer));
-  const panel = $derived(
-    buildPanel(
-      graphData,
-      history,
-      selected,
-      viewer,
-      selected != null && preview?.taskId === selected.task,
-    ),
-  );
-  const tasksDone = $derived(taskRows.filter((r) => r.status === "completed").length);
-
   /** One facsimile page in the preview: image plus its measure zones. */
   type PreviewPage = {
     url: string;
@@ -74,6 +61,19 @@
     /** Rendered encoding pages, filled lazily per spread (1-based). */
     svgs: Record<number, string>;
   } | null>(null);
+
+  const graphData = $derived({ taskDefs, rows, validationColumns, locks, passThreshold });
+  const graph = $derived(buildGraph(graphData, viewer));
+  const panel = $derived(
+    buildPanel(
+      graphData,
+      history,
+      selected,
+      viewer,
+      selected != null && preview?.taskId === selected.task,
+    ),
+  );
+  const tasksDone = $derived(taskRows.filter((r) => r.status === "completed").length);
 
   // Preview display state: book-style paging shared by both panes, per-pane
   // zoom, and the zone overlay toggle.
@@ -373,6 +373,36 @@
   onpointerup={() => (resizing = null)}
 />
 
+{#snippet lockIcon()}
+  <svg
+    class="icon-lock"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2.2"
+    stroke-linecap="round"
+    aria-hidden="true"
+  >
+    <rect x="4.5" y="10.5" width="15" height="10" rx="2.5"></rect>
+    <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"></path>
+  </svg>
+{/snippet}
+
+{#snippet reviewIcon()}
+  <svg
+    class="icon-review"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2.6"
+    stroke-linecap="round"
+    aria-hidden="true"
+  >
+    <circle cx="10.5" cy="10.5" r="6"></circle>
+    <path d="m15.2 15.2 5.3 5.3"></path>
+  </svg>
+{/snippet}
+
 {#if busy}
   <div class="overlay" role="status" aria-live="polite">
     <div class="overlay-card">
@@ -586,6 +616,7 @@
                     </span>
                     <span class="nmeta">
                       <span class="pill s-{n.statusKey}">{statusLabel(n.statusKey)}</span>
+                      {#if n.running}{@render lockIcon()}{/if}
                       <span class="mono nmeta-text">{n.meta}</span>
                     </span>
                   </button>
@@ -606,7 +637,7 @@
                         onclick={() => select(n.task, s.sub, s.slot)}
                       >
                         {#if s.key === "review"}
-                          <span class="mark review">◔</span>
+                          <span class="mark review">{@render reviewIcon()}</span>
                         {:else if s.key === "pass"}
                           <span class="mark pass">✓</span>
                         {:else if s.key === "fail"}
@@ -856,7 +887,7 @@
               </div>
               {#if panel.lockText}
                 <div class="lockstrip">
-                  <span aria-hidden="true">🔒</span>
+                  {@render lockIcon()}
                   <span class="mono">{panel.lockText}</span>
                 </div>
               {/if}
@@ -901,7 +932,7 @@
                   {#each v.slots as s, i (i)}
                     <div class="valslot">
                       {#if s.state.key === "review"}
-                        <span class="mark review">◔</span>
+                        <span class="mark review">{@render reviewIcon()}</span>
                       {:else if s.state.key === "pass"}
                         <span class="mark pass">✓</span>
                       {:else if s.state.key === "fail"}
@@ -1331,7 +1362,8 @@
   .node.s-completed {
     border-color: #b6e2c1;
   }
-  .node.s-encoding {
+  .node.s-encoding,
+  .node.s-claimed {
     border-color: #f0dca0;
   }
   .node.s-blocked {
@@ -1499,9 +1531,8 @@
     font-weight: 500;
   }
   .nslot .mark {
-    width: 13px;
-    height: 13px;
-    font-size: 8px;
+    width: 16px;
+    height: 16px;
   }
   .nslot-id {
     color: #555;
@@ -1545,7 +1576,8 @@
     color: #1a7f37;
   }
   .pill.s-encoding_required,
-  .pill.s-encoding {
+  .pill.s-encoding,
+  .pill.s-claimed {
     background: #fff4d6;
     border-color: #f0dca0;
     color: #8a6d00;
@@ -1693,6 +1725,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    margin-top: 6px;
   }
   .act {
     font-size: 11.5px;
@@ -1768,12 +1801,13 @@
   }
   .mark {
     flex: none;
-    width: 15px;
-    height: 15px;
+    width: 16px;
+    height: 16px;
     border-radius: 5px;
     display: grid;
     place-items: center;
-    font-size: 9px;
+    font-size: 10px;
+    line-height: 1;
   }
   .mark.pass {
     background: #e8f7ec;
@@ -1790,6 +1824,23 @@
   .mark.review {
     background: #e8f1fd;
     color: #2c5aa0;
+  }
+  .icon-review {
+    width: 10px;
+    height: 10px;
+    display: block;
+  }
+  .icon-lock {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    display: block;
+    color: #888;
+  }
+  .lockstrip .icon-lock {
+    width: 14px;
+    height: 14px;
+    color: #3056d3;
   }
   .slotid {
     color: #777;
