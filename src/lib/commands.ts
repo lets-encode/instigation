@@ -590,9 +590,8 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 		const model = parseFacsimileMei(mei);
 		// graphic @target is resolved relative to the score file (MEI spec).
 		const dir = task.fragment.replace(/[^/]*$/, '');
-		const imageUrls = await Promise.all(
-			model.pages.map((p) => f.getRepoFileDownloadUrl(owner, repo, dir + p.image).then((u) => u ?? ''))
-		);
+		const dirUrls = await f.getDirDownloadUrls(owner, repo, dir);
+		const imageUrls = model.pages.map((p) => dirUrls[p.image] ?? '');
 		const locks = parseLockCsv(lockCsv ?? '');
 		const holdsLock = locks.some(
 			(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === viewer

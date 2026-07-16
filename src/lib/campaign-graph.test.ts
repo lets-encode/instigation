@@ -174,6 +174,28 @@ test('buildPanel: pre-task uses the zone editor, blocked until its dependency co
 	assert.equal(act.disabled, true);
 });
 
+test('buildPanel: a measure-correction task claimed by the viewer opens the editor', () => {
+	const d = facsimileData();
+	d.rows[0] = state('P0001', '', 'encoding_required');
+	d.locks.push({ task_id: 'P0001', subtask_id: '', user_id: 'you', timestamp: '', kind: 'encoding' });
+	const act = buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, 'you', false)?.actions.find(
+		(a) => a.id === 'zone-editor'
+	);
+	assert.equal(act?.label, 'Correct measures in editor');
+	assert.equal(act?.disabled, false);
+});
+
+test('buildPanel: a measure-correction task claimed by someone else is disabled', () => {
+	const d = facsimileData();
+	d.rows[0] = state('P0001', '', 'encoding_required');
+	d.locks.push({ task_id: 'P0001', subtask_id: '', user_id: 'alice', timestamp: '', kind: 'encoding' });
+	const act = buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, 'you', false)?.actions.find(
+		(a) => a.id === 'zone-editor'
+	);
+	assert.equal(act?.label, 'Claim correction task');
+	assert.equal(act?.disabled, true);
+});
+
 test('buildPanel: a pre-task validation slot links to the zone editor for review', () => {
 	const d = facsimileData();
 	const p = buildPanel(d, noHistory, { task: 'P0001', sub: 'S0001', slot: 1 }, 'you', false);

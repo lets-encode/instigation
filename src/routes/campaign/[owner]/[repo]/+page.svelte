@@ -185,13 +185,9 @@
       if (parsed.pages.length) {
         // graphic @target is resolved relative to the score file (MEI spec).
         const dir = fragment.replace(/[^/]*$/, "");
-        const urls = await Promise.all(
-          parsed.pages.map((pg) =>
-            f.getRepoFileDownloadUrl(owner, repo, dir + pg.image).then((u) => u ?? ""),
-          ),
-        );
-        facs = parsed.pages.map((pg, i) => ({
-          url: urls[i],
+        const urls = await f.getDirDownloadUrls(owner, repo, dir);
+        facs = parsed.pages.map((pg) => ({
+          url: urls[pg.image] ?? "",
           w: pg.width,
           h: pg.height,
           zones: pg.zones.map((z) => ({ box: z.box, label: z.label })),
@@ -904,7 +900,8 @@
                       <span class="act disabled" title={a.title}>{a.label}</span>
                     {:else}
                       <a
-                        class="act primary"
+                        class="act"
+                        class:primary={a.primary}
                         href={`/campaign/${owner}/${repo}/zones/${selected.task}`}
                         title={a.title}>{a.label}</a
                       >

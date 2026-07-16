@@ -66,7 +66,7 @@ export const statusPill = (key: StatusKey, pre = false): string =>
 // the console must match HEAD_H / SLOTS_HEAD / SLOT_H, since node heights are
 // computed here and set explicitly on the boxes.
 const G = {
-	nodeW: 240,
+	nodeW: 300,
 	headH: 86,
 	basePad: 10,
 	slotsHead: 34,
@@ -431,22 +431,27 @@ export function buildPanel(
 		let lockText = '';
 		let meta = '';
 		// Facsimile pre-tasks are reviewed in the zone editor (read-only view).
-		if (def.locator !== '') {
-			actions.push({
-				id: 'zone-editor',
-				label: 'Open editor',
-				primary: false,
-				disabled: false,
-				title: 'Review the submitted work on the facsimile (read-only). Pass or fail from there or from this panel.'
-			});
-		}
+		const openEditor: PanelAction | null =
+			def.locator !== ''
+				? {
+						id: 'zone-editor',
+						label: 'Open editor',
+						primary: false,
+						disabled: false,
+						title: 'Review the submitted work on the facsimile (read-only). Pass or fail from there or from this panel.'
+					}
+				: null;
 		if (isFinalValidation(cell)) {
 			const [, user, ts] = cell.split('|');
 			meta = `by @${user}${ts ? ` · ${ts}` : ''}`;
+			if (openEditor) actions.push(openEditor);
+			actions.push(previewAction(false));
 		} else if (s.key === 'review') {
 			lockText = mine ? 'You hold this validation lock' : `Being reviewed by @${lock!.user_id}`;
+			if (openEditor) actions.push(openEditor);
+			actions.push(previewAction(false));
 			if (mine) {
-				actions.push(previewAction(true), {
+				actions.push({
 					id: 'validate-pass',
 					label: 'Validate: pass',
 					primary: false,
@@ -479,6 +484,8 @@ export function buildPanel(
 					? 'Encoders cannot validate their own work.'
 					: 'Reserve this subtask for validation.'
 			});
+			actions.push(previewAction(false));
+			if (openEditor) actions.push(openEditor);
 		}
 		actions.push(rawLinkAction);
 		return {
@@ -530,18 +537,20 @@ export function buildPanel(
 		: '';
 
 	const actions: PanelAction[] = [];
+	const otherLock = lock && !mine;
 	if (def.locator !== '') {
 		actions.push({
 			id: 'zone-editor',
-			label: 'Claim correction task',
+			label: mine ? 'Correct measures in editor' : 'Claim correction task',
 			primary: true,
-			disabled: !!blocked,
+			disabled: !!blocked || !!otherLock,
 			title: blocked
 				? `Enabled once ${blocked} is completed.`
-				: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
+				: otherLock
+					? `Already claimed by @${lock.user_id}.`
+					: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
 		});
 	} else {
-		const otherLock = lock && !mine;
 		const claimable = !blocked && !otherLock && (state.status === 'encoding_required' || mine);
 		actions.push({
 			id: 'open-editor',

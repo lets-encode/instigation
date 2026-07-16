@@ -206,14 +206,18 @@ def proxy(url):
 
     # 'date' and 'server' must not be passed through: our own HTTP layer adds
     # its own, and duplicate Date headers are joined by browsers into a string
-    # that parses as Invalid Date. Upstream caching headers must not be
-    # forwarded either: these are per-request, per-user authenticated relays,
-    # and any shared cache in front of us could serve a stale response — or one
-    # user's response to another — on the same /proxy path. Force no-store.
+    # that parses as Invalid Date. Cache-directive headers must not be forwarded
+    # either: these are per-request, per-user authenticated relays, and any
+    # shared cache in front of us could serve a stale response — or one user's
+    # response to another — on the same /proxy path. Force no-store.
+    # ETag/Last-Modified ARE forwarded: the SPA stores them and sends
+    # `If-None-Match` on the next read, so unchanged resources answer 304 (which
+    # GitHub does not count against the API rate limit). The SPA keeps those
+    # validators itself, so no shared or HTTP cache is involved.
     excluded_response_headers = {
         "content-encoding", "content-length", "transfer-encoding", "connection",
         "www-authenticate", "date", "server",
-        "cache-control", "expires", "pragma", "etag", "last-modified", "age",
+        "cache-control", "expires", "pragma", "age",
     }
     out_headers = [
         (name, value)
