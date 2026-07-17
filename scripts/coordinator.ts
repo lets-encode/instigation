@@ -14,6 +14,7 @@
 //      HEAD_REPO ("owner/repo" of the PR head), HEAD_SHA, HEAD_REF.
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +38,7 @@ import {
 	getRepoFile,
 	getRepoHead,
 	getPullRequestFiles,
-	getPullRequestBody,
+	getPullRequestDetails,
 	commitFiles,
 	commentAndClosePr,
 	deleteBranch
@@ -64,6 +65,7 @@ const DEFAULT_STALE_MINUTES = 120;
 // The machine-check schema, pinned to the version the campaign template
 // declares in its <?xml-model?> processing instruction.
 const MEI_SCHEMA_URL = 'https://music-encoding.org/schema/5.0/mei-CMN.rng';
+const MEI_SCHEMA_SHA256 = 'fa2081b4e0c858e1dcde339b1b733b8e6350212a46c0db50b94cc71bbe68ca4c';
 
 type Verdict = { ok: boolean; reason?: string };
 
@@ -91,8 +93,13 @@ async function isValidMei(content: string): Promise<boolean> {
 	if (!schemaPath) {
 		const res = await fetch(MEI_SCHEMA_URL);
 		if (!res.ok) throw new Error(`Failed to fetch MEI schema (${res.status} ${MEI_SCHEMA_URL})`);
+		const schema = new Uint8Array(await res.arrayBuffer());
+		const digest = createHash('sha256').update(schema).digest('hex');
+		if (digest !== MEI_SCHEMA_SHA256) {
+			throw new Error(`MEI schema integrity check failed (expected ${MEI_SCHEMA_SHA256}, received ${digest})`);
+		}
 		const path = join(tmpdir(), 'mei-schema.rng');
-		await writeFile(path, await res.text());
+		await writeFile(path, schema);
 		schemaPath = path;
 	}
 	const r = spawnSync('xmllint', ['--noout', '--relaxng', schemaPath, '-'], { input: content });
@@ -130,14 +137,19 @@ async function attemptClaim(
 	envelope: CommandEnvelope | null
 ): Promise<Verdict & { lock?: LockRow }> {
 	const { sha } = await getRepoHead(token, owner, repo);
-	const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
+	const [taskCsv, stateCsv, lockCsv, historyCsv, configText] = await Promise.all([
 		getRepoFile(token, owner, repo, TASK_PATH, sha),
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
 		getRepoFile(token, owner, repo, LOCK_PATH, sha),
-		getRepoFile(token, owner, repo, HISTORY_PATH, sha)
+		getRepoFile(token, owner, repo, HISTORY_PATH, sha),
+		getRepoFile(token, owner, repo, CONFIG_PATH, sha)
 	]);
-	const locks = parseLockCsv(lockCsv ?? '');
 	const now = new Date().toISOString();
+	const { kept: locks, removed } = reapLocks({
+		locks: parseLockCsv(lockCsv ?? ''),
+		staleAfterMinutes: numberFromConfig(configText, 'stale_after_minutes', DEFAULT_STALE_MINUTES),
+		now
+	});
 
 	const verdict: Verdict & { lock?: LockRow } = intent
 		? checkClaim({
@@ -151,6 +163,15 @@ async function attemptClaim(
 			})
 		: { ok: false, reason: 'malformed_claim' };
 
+	const reapedHistory: HistoryRow[] = removed.map((lock) => ({
+		timestamp: now,
+		task_id: lock.task_id,
+		subtask_id: lock.subtask_id,
+		user_id: lock.user_id,
+		action: 'reap',
+		outcome: 'released',
+		detail: lock.kind
+	}));
 	const history: HistoryRow = {
 		timestamp: now,
 		task_id: intent?.task_id ?? '',
@@ -161,8 +182,15 @@ async function attemptClaim(
 		detail: verdict.ok ? '' : verdict.reason!,
 		...envelopeColumns(envelope)
 	};
-	const files: FileChange[] = [{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', [history]) }];
-	if (verdict.ok) files.push({ path: LOCK_PATH, content: serializeLockCsv([...locks, verdict.lock!]) });
+	const files: FileChange[] = [
+		{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', [...reapedHistory, history]) }
+	];
+	if (verdict.ok || removed.length) {
+		files.push({
+			path: LOCK_PATH,
+			content: serializeLockCsv(verdict.ok ? [...locks, verdict.lock!] : locks)
+		});
+	}
 
 	const message = verdict.ok
 		? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && '/' + verdict.lock!.subtask_id} for ${author} (${verdict.lock!.kind})`
@@ -203,7 +231,7 @@ async function runClaim(
 		? `\`${verdict.lock.task_id}${verdict.lock.subtask_id && '/' + verdict.lock.subtask_id}\``
 		: '';
 	const body = verdict.ok
-		? `✅ Claim accepted — ${target} locked for @${author} (${verdict.lock!.kind}).`
+		? `✅ Claim accepted — ${target} locked for ${author} (${verdict.lock!.kind}).`
 		: `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
 	await commentAndClosePr(token, owner, repo, prNumber, body);
 	await cleanupHeadBranch();
@@ -506,13 +534,11 @@ async function run(): Promise<void> {
 		throw new Error(`Unsupported event: ${eventName}`);
 	}
 
-	const [files, prBody] = await Promise.all([
-		getPullRequestFiles(token, owner, repo, prNumber),
-		getPullRequestBody(token, owner, repo, prNumber)
-	]);
+	const details = await getPullRequestDetails(token, owner, repo, prNumber);
+	const files = await getPullRequestFiles(token, owner, repo, prNumber, details.changedFiles);
 	// The PR body may carry the console command's envelope; treated as data,
 	// it feeds the command columns of the history row this run authors.
-	const envelope = envelopeFromPrBody(prBody);
+	const envelope = envelopeFromPrBody(details.body);
 	const changedPaths = files.map((f) => f.filename);
 	if (changedPaths.includes(LOCK_PATH)) return runClaim(files, envelope);
 	return runSubmit(changedPaths.includes(STATE_PATH) ? 'validation' : 'encoding', files, envelope);

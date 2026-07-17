@@ -12,7 +12,9 @@ session, and the browser holds only an opaque httpOnly session cookie.
   attaching the session's token server-side. Login-gated and rate-limited.
 
 Sessions are files under `instance/sessions` (gitignored, `0700`), shared
-between gunicorn workers on the same host; set `SESSION_DIR` to override.
+between gunicorn workers on the same host; set `SESSION_DIR` to override. The
+session ID is rotated after OAuth login and server-side sessions expire after
+12 hours.
 
 ## Same-origin requirement
 
@@ -34,7 +36,7 @@ Environment variables:
 | `GITHUB_CLIENT_ID` | the OAuth app's client id |
 | `GITHUB_CLIENT_SECRET` | the OAuth app's client secret (**secret**, only here) |
 | `FLASK_SECRET` | signs the session cookie (**secret**; e.g. `python3 -c "import secrets; print(secrets.token_hex(32))"`) |
-| `REDIRECT_URL` | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/oauth/authorize` — must match the OAuth app's registered callback |
+| `REDIRECT_URL` | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/oauth/authorize` — required outside development and must match the OAuth app's registered callback |
 | `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
 | `SESSION_DIR` | optional: session file directory |
 

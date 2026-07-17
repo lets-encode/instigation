@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { auth, login, forge } from '$lib/auth.svelte.ts';
-	import { provider, automation } from '$lib/forge/config.ts';
+	import { provider, automation, automationRefPinned, measureDetectorUrl } from '$lib/forge/config.ts';
 	import { searchReposByTopic, repoExists } from '$lib/forge/github-rest.ts';
 	import type { FileChange, RepoSummary } from '$lib/forge/types.ts';
 	import {
@@ -42,6 +42,21 @@
 	let submitting = $state(false);
 	let error = $state<string | null>(null);
 	let created = $state<{ html_url: string; full_name: string; initWarning: boolean } | null>(null);
+	let retryInitialisation = $state<(() => Promise<void>) | null>(null);
+
+	async function retryCreatedCampaign() {
+		if (!created || !retryInitialisation) return;
+		submitting = true;
+		error = null;
+		try {
+			await retryInitialisation();
+			const [owner, repo] = created.full_name.split('/');
+			await goto(`/campaign/${owner}/${repo}`);
+		} catch (err) {
+			error = `Campaign initialisation still failed: ${(err as Error).message}`;
+			submitting = false;
+		}
+	}
 
 	// Score source: scaffold from uploaded page images/PDF (measure detection),
 	// start from a blank template, or an existing MEI/MusicXML upload (that
@@ -109,18 +124,6 @@
 			url: 'https://creativecommons.org/licenses/by-nc-sa/4.0/',
 			info: 'Non-commercial use only, with credit, and anything built on the encoding must keep this same license.'
 		},
-		{
-			id: 'CC-BY-ND-4.0',
-			name: 'CC BY-ND 4.0 — Attribution, NoDerivatives',
-			url: 'https://creativecommons.org/licenses/by-nd/4.0/',
-			info: 'The encoding may be shared with credit, but not modified. Others cannot build corrected or extended editions on top of it.'
-		},
-		{
-			id: 'CC-BY-NC-ND-4.0',
-			name: 'CC BY-NC-ND 4.0 — Attribution, NonCommercial, NoDerivatives',
-			url: 'https://creativecommons.org/licenses/by-nc-nd/4.0/',
-			info: 'Most restrictive: the encoding may only be shared unchanged, with credit, and not for commercial purposes.'
-		}
 	];
 
 	let visibility = $state('public');
@@ -312,6 +315,7 @@
 		e.preventDefault();
 		error = null;
 		created = null;
+		retryInitialisation = null;
 		const user = auth.user;
 		const f = forge();
 		if (!user || !f) return;
@@ -388,18 +392,9 @@
 			} catch (err) {
 				console.warn('Could not set Actions workflow permissions:', (err as Error).message);
 			}
-			// The campaign's PR/comment traffic is automation noise — mute the repo
-			// for the instigator, who auto-watches repos they create (non-fatal;
-			// a token can only mute its own user's notifications).
-			try {
-				await f.ignoreRepoNotifications(owner, repo.name);
-			} catch (err) {
-				console.warn('Could not mute repo notifications:', (err as Error).message);
-			}
-
 			// Initialise (Action A). The repo already exists, so on failure we surface
 			// a retry hint rather than treating creation itself as failed.
-			try {
+			const initialise = async () => {
 				const template = await f.waitForRepoContents(owner, repo.name, 'templates/score.template.mei');
 				const config = buildCampaignConfig(
 					{
@@ -449,9 +444,14 @@
 					'Initialise campaign'
 				);
 				console.log('[create] campaign initialised: committed config, score and tracking tables');
+			};
+			try {
+				await initialise();
 			} catch (err) {
 				console.error('Campaign initialisation failed:', (err as Error).message);
 				created = { html_url: repo.html_url, full_name: repo.full_name, initWarning: true };
+				retryInitialisation = initialise;
+				error = `Campaign initialisation failed: ${(err as Error).message}`;
 				submitting = false;
 				progress = null;
 				return;
@@ -516,6 +516,12 @@
 {#if auth.user && showForm}
 	<section class="create">
 		<h2>Create a campaign</h2>
+		{#if !automationRefPinned}
+			<div class="banner warn">
+				Development mode: new campaigns will follow the moving automation ref <code>{automation.ref}</code>.
+				Pin <code>PUBLIC_AUTOMATION_REF</code> to a commit SHA before a production release.
+			</div>
+		{/if}
 
 		{#if created}
 			<div class="banner ok">
@@ -523,9 +529,11 @@
 			</div>
 			{#if created.initWarning}
 				<div class="banner warn">
-					The repository was created, but setting up its campaign files didn't finish. Create it
-					again to retry, or check the repository directly.
+					The repository was created, but setting up its campaign files didn't finish.
+					<button type="button" class="linkish" onclick={retryCreatedCampaign}>Retry initialisation</button>
+					without creating another repository.
 				</div>
+				{#if error}<div class="banner err">{error}</div>{/if}
 			{/if}
 		{:else if error}
 			<div class="banner err">{error}</div>
@@ -601,6 +609,10 @@
 						{#if dropNote}
 							<span class="hint hint-err">{dropNote}</span>
 						{/if}
+						<span class="hint">
+							Page images are sent to <a href={measureDetectorUrl} target="_blank" rel="noreferrer">the configured measure detector</a>
+							before the campaign repository is created.
+						</span>
 					</div>
 				{/if}
 

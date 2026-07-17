@@ -1,6 +1,8 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
+  import { createForge } from "$lib/forge/index.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type { TaskRow, StateRow, LockRow, HistoryRow } from "$lib/campaign-tables.ts";
@@ -8,6 +10,7 @@
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { buildGraph, buildPanel, statusPill } from "$lib/campaign-graph.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
+  import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import type { Selection, PanelAction } from "$lib/campaign-graph.ts";
@@ -22,12 +25,14 @@
   let loadError = $state<string | null>(null);
   let notInitialised = $state(false);
   let isPrivate = $state(false);
+  let canPush = $state(false);
   let taskDefs = $state<TaskRow[]>([]);
   let rows = $state<StateRow[]>([]);
   let validationColumns = $state<string[]>([]);
   let locks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
   let title = $state("");
+  let license = $state("");
   let passThreshold = $state(1);
 
   // Rows with an empty subtask_id address the whole task (the encoding unit);
@@ -170,8 +175,7 @@
       preview = null;
       return;
     }
-    const f = forge();
-    if (!f) return;
+    const f = readForge();
     preview = { taskId: task_id, loading: true, pageCount: 0, svgs: {} };
     pvFirstVisible = 0;
     try {
@@ -183,11 +187,15 @@
 
       let facs: PreviewPage[] | undefined;
       if (parsed.pages.length) {
-        // graphic @target is resolved relative to the score file (MEI spec).
-        const dir = fragment.replace(/[^/]*$/, "");
-        const urls = await f.getDirDownloadUrls(owner, repo, dir);
-        facs = parsed.pages.map((pg) => ({
-          url: urls[pg.image] ?? "",
+        const urls = await resolveFacsimileImageUrls(
+          f,
+          owner,
+          repo,
+          fragment,
+          parsed.pages.map((page) => page.image),
+        );
+        facs = parsed.pages.map((pg, index) => ({
+          url: urls[index],
           w: pg.width,
           h: pg.height,
           zones: pg.zones.map((z) => ({ box: z.box, label: z.label })),
@@ -229,6 +237,8 @@
   const fragmentOf = (taskId: string) =>
     findRow(taskDefs, taskId, "")?.fragment;
 
+  const readForge = () => forge() ?? createForge("");
+
   // The context every command runs against; progress messages feed the busy overlay.
   const ctx = (f: ForgeClient): CommandContext => ({
     forge: f,
@@ -241,20 +251,21 @@
   // Read the tracking tables (and privacy/config) for the console. Only the
   // first read shows the loading state; refreshes update the tables in place.
   async function load() {
-    const f = forge();
-    if (!f) return;
+    const f = readForge();
     if (!loaded) loading = true;
     loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
+      canPush = tables.canPush;
       taskDefs = tables.taskDefs;
       rows = tables.rows;
       validationColumns = tables.validationColumns;
       locks = tables.locks;
       history = tables.history;
       title = tables.title;
+      license = tables.license;
       passThreshold = tables.passThreshold;
       if (!notInitialised) {
         console.log(
@@ -273,7 +284,7 @@
   }
 
   $effect(() => {
-    if (auth.status === "authenticated" && owner && repo && !loaded) load();
+    if (auth.status !== "loading" && owner && repo && !loaded) load();
   });
 
   // Pages the measure detector couldn't process during campaign creation, handed
@@ -296,15 +307,17 @@
 
   // Run a command: show the busy overlay, capture its result banner, then
   // refresh the tables.
-  async function run(command: (c: CommandContext) => Promise<Result>) {
+  async function run(command: (c: CommandContext) => Promise<Result>, refresh = true) {
     const f = forge();
     if (!f) return;
     busy = true;
     busyMessage = "Working…";
     try {
       result = await command(ctx(f));
-      busyMessage = "Refreshing tables…";
-      await load();
+      if (refresh) {
+        busyMessage = "Refreshing tables…";
+        await load();
+      }
     } finally {
       busy = false;
       busyMessage = "";
@@ -313,6 +326,20 @@
 
   const claim = (task_id: string, subtask_id: string) =>
     run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
+
+  // Facsimile tasks are validated in the zone editor, so claiming one opens it
+  // — but only on a clean claim, so a rejected claim leaves you on the console
+  // rather than in a read-only editor. Encoding tasks review in the preview and
+  // just claim in place.
+  const claimValidate = async (task_id: string, subtask_id: string) => {
+    await claim(task_id, subtask_id);
+    const locator = taskDefs.find(
+      (t) => t.task_id === task_id && t.subtask_id === "",
+    )?.locator;
+    if (locator && result?.ok && !result.warn) {
+      await goto(`/campaign/${owner}/${repo}/zones/${task_id}`);
+    }
+  };
 
   // Open the task's score in mei-friend (claiming it if needed). The tab opens
   // only after the claim has gone through — never on a rejected or
@@ -332,7 +359,7 @@
 
   // The tokenised raw URL of the score — copied to the clipboard.
   const rawlink = async (task_id: string) => {
-    await run((c) => invoke(commands.rawLink, { task_id }, c));
+    await run((c) => invoke(commands.rawLink, { task_id }, c), false);
     if (result?.rawUrl) copy(result.rawUrl);
   };
 
@@ -348,7 +375,7 @@
     const { task, sub } = selected;
     if (a.id === "open-editor") editor(task);
     else if (a.id === "submit-encoding") submitpr(task);
-    else if (a.id === "claim-validation") claim(task, sub);
+    else if (a.id === "claim-validation") claimValidate(task, sub);
     else if (a.id === "validate-pass") validate(task, sub, "pass");
     else if (a.id === "validate-fail") validate(task, sub, "fail");
     else if (a.id === "toggle-preview") togglePreview(task);
@@ -437,13 +464,15 @@
       disabled={busy || loading}
       title="Re-read the tracking tables">↻ Refresh</button
     >
-    <button
-      type="button"
-      class="hbtn"
-      onclick={() => reaper()}
-      disabled={busy}
-      title="Release claims that have gone stale">Run reaper</button
-    >
+    {#if auth.user && canPush}
+      <button
+        type="button"
+        class="hbtn"
+        onclick={() => reaper()}
+        disabled={busy}
+        title="Release claims that have gone stale">Run reaper</button
+      >
+    {/if}
     <div class="tabs">
       <button
         type="button"
@@ -460,22 +489,28 @@
 
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
-  {:else if !auth.user}
-    <div class="banner warn">
-      <span>
-        Please <button type="button" class="linkish" onclick={() => login()}
-          >log in with GitHub</button
-        >
-        to drive this campaign.
-      </span>
-    </div>
   {:else}
+    {#if !auth.user}
+      <div class="banner warn">
+        <span>
+          Viewing this public campaign read-only. <button type="button" class="linkish" onclick={() => login()}
+            >Log in with GitHub</button
+          >
+          to contribute.
+        </span>
+      </div>
+    {/if}
     {#if skippedPages.length}
       <div class="banner warn">
         <span>
           The measure detector couldn't process {skippedPages.length} page(s) ({skippedPages.join(", ")})
           during creation, so they were left out of the score. Everything else is ready below.
         </span>
+      </div>
+    {/if}
+    {#if license}
+      <div class="banner info">
+        Contributions to this campaign are published under <strong>{license}</strong>.
       </div>
     {/if}
     {#if result && result.error}
@@ -514,6 +549,11 @@
               >
               (if the tab didn't open automatically)
             </span>
+            {#if isPrivate}
+              <span class="muted">
+                Opening mei-friend shares a short-lived, read-capable GitHub URL with that external service.
+              </span>
+            {/if}
           {/if}
           {#if result.rawUrl}
             <div class="rawlink">

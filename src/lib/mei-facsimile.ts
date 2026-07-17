@@ -172,17 +172,17 @@ export function initialFacsimileModel(pages: FacsimilePage[], meta: ScoreMeta = 
 }
 
 /**
- * Emit the model as MEI. Stage A (`{}`), B (`{ withMeasures: true }`) or
- * C (`{ withMeasures: true, withBreaks: true }`); breaks imply measures.
+ * Emit the model as MEI. Stage A (`{}`) contains facsimile zones only; stage C
+ * (`{ withBreaks: true }`) adds measures, page/system breaks and movements.
  * xml:ids are deterministic (surface-1, zone-1-2, measure-3, …) so rebuilds
  * are stable and diffable.
  */
 export function buildFacsimileMei(
 	model: FacsimileModel,
-	opts: { withMeasures?: boolean; withBreaks?: boolean } = {}
+	opts: { withBreaks?: boolean } = {}
 ): string {
-	const withMeasures = Boolean(opts.withMeasures || opts.withBreaks);
 	const withBreaks = Boolean(opts.withBreaks);
+	const withMeasures = withBreaks;
 	const surfaces: string[] = [];
 	// Section content grouped per movement: mdivParts[k] holds <mdiv> k+1's lines.
 	const mdivParts: string[][] = [[]];

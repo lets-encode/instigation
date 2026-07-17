@@ -24,6 +24,7 @@ See README.md for setup, and deploy/nginx.conf for the production mount.
 """
 
 import sys
+from datetime import timedelta
 from os import getenv, makedirs, chmod, path
 from pathlib import Path
 
@@ -42,9 +43,12 @@ from flask_session import Session
 load_dotenv(Path(__file__).with_name(".env"))
 
 app = Flask(__name__)
+development = getenv("FLASK_ENV") == "development"
 app.secret_key = getenv("FLASK_SECRET")
 if not app.secret_key:
     sys.exit("FLASK_SECRET is not set; refusing to start with unsigned sessions.")
+if not development and not getenv("REDIRECT_URL"):
+    sys.exit("REDIRECT_URL is not set; production OAuth callbacks must be explicit.")
 
 # Server-side sessions: session data (including the GitHub OAuth token) is kept
 # on the server; the browser only holds an opaque session ID. With Flask's
@@ -71,7 +75,11 @@ app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir=session_dir, threshol
 # development by setting FLASK_ENV=development.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = getenv("FLASK_ENV") != "development"
+app.config["SESSION_COOKIE_SECURE"] = not development
+app.config["SESSION_COOKIE_NAME"] = "lets_encode_session" if development else "__Host-lets_encode_session"
+app.config["SESSION_COOKIE_PATH"] = "/"
+app.config["SESSION_PERMANENT"] = False
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 Session(app)
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
@@ -84,7 +92,7 @@ github = oauth.register(
     access_token_url="https://github.com/login/oauth/access_token",
     authorize_url="https://github.com/login/oauth/authorize",
     api_base_url="https://api.github.com/",
-    client_kwargs={"scope": "repo notifications"},
+    client_kwargs={"scope": "repo"},
 )
 
 GITHUB_API = "https://api.github.com"
@@ -127,6 +135,9 @@ def authorize():
     resp = github.get("user", token=token)
     if not resp.ok:
         return redirect(return_to + "?auth_error=" + requests.utils.quote("Could not resolve the GitHub user."))
+    # Replace the pre-login session ID after authentication so an ID fixed by
+    # an attacker cannot become an authenticated session.
+    app.session_interface.regenerate(session)
     session["githubToken"] = token["access_token"]
     session["userLogin"] = resp.json().get("login", "")
     return redirect(return_to)
@@ -179,7 +190,8 @@ def proxy(url):
         url = "https://" + url
     from urllib.parse import urlparse
 
-    if urlparse(url).netloc not in ALLOWED_DOMAINS:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc not in ALLOWED_DOMAINS:
         return jsonify(error="Domain not allowed"), 400
     if request.query_string:
         url += "?" + request.query_string.decode()
@@ -203,6 +215,8 @@ def proxy(url):
         )
     except requests.Timeout:
         return jsonify(error="Upstream request timed out"), 504
+    except requests.RequestException:
+        return jsonify(error="Upstream request failed"), 502
 
     # 'date' and 'server' must not be passed through: our own HTTP layer adds
     # its own, and duplicate Date headers are joined by browsers into a string

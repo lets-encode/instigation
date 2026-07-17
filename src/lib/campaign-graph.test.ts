@@ -196,8 +196,33 @@ test('buildPanel: a measure-correction task claimed by someone else is disabled'
 	assert.equal(act?.disabled, true);
 });
 
-test('buildPanel: a pre-task validation slot links to the zone editor for review', () => {
+test('buildPanel: an open validation slot leads with the claim button, then preview', () => {
+	const p = buildPanel(facsimileData(), noHistory, { task: 'P0001', sub: 'S0001', slot: 1 }, 'you', false);
+	const ids = p!.actions.map((a) => a.id);
+	const claim = ids.indexOf('claim-validation');
+	const preview = ids.indexOf('toggle-preview');
+	assert.ok(claim >= 0 && preview > claim, 'claim-validation comes before toggle-preview');
+	assert.equal(p!.actions[claim].primary, true);
+	assert.equal(p!.actions[preview].primary, false);
+	// Claiming opens the editor, so there is no separate editor button here.
+	assert.equal(ids.includes('zone-editor'), false);
+});
+
+test('buildPanel: the preview action is present in every validation-slot state', () => {
+	const hasPreview = (task: string, slot: number) =>
+		buildPanel(facsimileData(), noHistory, { task, sub: 'S0001', slot }, 'you', false)?.actions.some(
+			(a) => a.id === 'toggle-preview'
+		);
+	// P0001 slot 1: open; P0001 slot 0: a recorded pass (final); T0001 slot 1: under review.
+	assert.equal(hasPreview('P0001', 1), true);
+	assert.equal(hasPreview('P0001', 0), true);
+	assert.equal(hasPreview('T0001', 1), true);
+});
+
+test('buildPanel: a claimed pre-task validation slot links to the zone editor for review', () => {
 	const d = facsimileData();
+	// Hold the validation lock so slot 1 is under review.
+	d.locks.push({ task_id: 'P0001', subtask_id: 'S0001', user_id: 'you', timestamp: '', kind: 'validation' });
 	const p = buildPanel(d, noHistory, { task: 'P0001', sub: 'S0001', slot: 1 }, 'you', false);
 	assert.ok(p?.actions.some((a) => a.id === 'zone-editor'));
 	// Encoding tasks review in the score preview instead — no editor link.
@@ -226,4 +251,13 @@ test('buildPanel: history is filtered to the selected task, newest first', () =>
 test('buildPanel: null on empty or unknown selection', () => {
 	assert.equal(buildPanel(facsimileData(), noHistory, null, 'you', false), null);
 	assert.equal(buildPanel(facsimileData(), noHistory, { task: 'NOPE', sub: '', slot: null }, 'you', false), null);
+});
+
+test('anonymous viewers can inspect the graph but cannot claim work', () => {
+	const d = facsimileData();
+	const graph = buildGraph(d, '');
+	assert.equal(graph.nodes.some((node) => node.nextUp), false);
+	assert.equal(graph.nodes.flatMap((node) => node.slots).some((slot) => slot.claimable), false);
+	const panel = buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, '', false);
+	assert.equal(panel?.actions.find((action) => action.id === 'zone-editor')?.disabled, true);
 });

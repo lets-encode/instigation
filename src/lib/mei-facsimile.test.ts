@@ -43,19 +43,6 @@ test('stage A: surfaces, graphics and labelled zones — no measures, no breaks'
 	assert.ok(mei.includes('<zone xml:id="zone-2-1" type="measure" n="3"'));
 });
 
-test('stage B: one empty measure per zone, labels from the zones, no breaks', () => {
-	const mei = buildFacsimileMei(model(), { withMeasures: true });
-	assert.equal((mei.match(/<measure /g) ?? []).length, 3);
-	assert.equal((mei.match(/<mRest\/>/g) ?? []).length, 3);
-	assert.equal((mei.match(/<pb /g) ?? []).length, 0);
-	assert.ok(mei.includes('<measure xml:id="measure-1" n="1" facs="#zone-1-1">'));
-	assert.ok(mei.includes('<measure xml:id="measure-3" n="3" facs="#zone-2-1">'));
-	// Every facs target has a matching zone id.
-	for (const [, id] of mei.matchAll(/facs="#(zone-[^"]+)"/g)) {
-		assert.ok(mei.includes(`<zone xml:id="${id}"`), `missing ${id}`);
-	}
-});
-
 test('stage C: a pb per page, an sb per flagged measure (except page starts)', () => {
 	const m = model();
 	// Page 1's two boxes are two systems (stacked), so its second measure is a
@@ -71,11 +58,11 @@ test('volta labels: an override interrupts the numbering and it continues after'
 	m.pages[0].zones[1].label = '1a';
 	// Automatic numbering derives the next label from the previous one.
 	assert.equal(nextLabel('1a'), '2');
-	const mei = buildFacsimileMei(m, { withMeasures: true });
+	const mei = buildFacsimileMei(m, { withBreaks: true });
 	assert.ok(mei.includes('n="1a" facs="#zone-1-2"'));
 });
 
-test('parseFacsimileMei round-trips the model through every stage', () => {
+test('parseFacsimileMei round-trips the model through both active stages', () => {
 	const m = model();
 	m.pages[0].zones[1].label = '1a';
 

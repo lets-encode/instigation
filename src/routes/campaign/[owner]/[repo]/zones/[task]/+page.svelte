@@ -314,6 +314,57 @@
     drag = { kind: "resize", p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false };
   }
 
+  function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (mode === "breaks" && canEdit) {
+        if (e.shiftKey) {
+          if (p > 0 || z > 0) pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+        } else if (z > 0) {
+          pages[p].zones[z].sb = !pages[p].zones[z].sb;
+        }
+      } else {
+        selected = { p, z };
+      }
+      return;
+    }
+    if (mode === "breaks" || !canEdit || !e.key.startsWith("Arrow")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    selected = { p, z };
+    const box = pages[p].zones[z].box;
+    const pg = pages[p];
+    const step = e.shiftKey ? 10 : 2;
+    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+    const w = box.lrx - box.ulx;
+    const h = box.lry - box.uly;
+    box.ulx = Math.max(0, Math.min(pg.width - w, box.ulx + dx));
+    box.uly = Math.max(0, Math.min(pg.height - h, box.uly + dy));
+    box.lrx = box.ulx + w;
+    box.lry = box.uly + h;
+    const zone = pages[p].zones[z];
+    resort(p);
+    selected = { p, z: pages[p].zones.indexOf(zone) };
+  }
+
+  function handleKeydown(e: KeyboardEvent, p: number, z: number) {
+    if (!canEdit || !e.key.startsWith("Arrow")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const box = pages[p].zones[z].box;
+    const pg = pages[p];
+    const step = e.shiftKey ? 10 : 2;
+    if (e.key === "ArrowLeft") box.lrx = Math.max(box.ulx + 5, box.lrx - step);
+    if (e.key === "ArrowRight") box.lrx = Math.min(pg.width, box.lrx + step);
+    if (e.key === "ArrowUp") box.lry = Math.max(box.uly + 5, box.lry - step);
+    if (e.key === "ArrowDown") box.lry = Math.min(pg.height, box.lry + step);
+    const zone = pages[p].zones[z];
+    resort(p);
+    selected = { p, z: pages[p].zones.indexOf(zone) };
+  }
+
   function backgroundPointerDown(e: PointerEvent, p: number) {
     selected = null;
     if (mode === "breaks" || !canEdit) return;
@@ -526,6 +577,7 @@
                     width={zone.box.lrx - zone.box.ulx}
                     height={zone.box.lry - zone.box.uly}
                     onpointerdown={(e) => zonePointerDown(e, p, z)}
+                    onkeydown={(e) => zoneKeydown(e, p, z)}
                   />
                   <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>
                     {(startsMovement(p, z) ? "§ " : z === 0 ? "⤓ " : zone.sb ? "↵ " : "") +
@@ -545,6 +597,7 @@
                     width={zone.box.lrx - zone.box.ulx}
                     height={zone.box.lry - zone.box.uly}
                     onpointerdown={(e) => zonePointerDown(e, p, z)}
+                    onkeydown={(e) => zoneKeydown(e, p, z)}
                   />
                   <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>{zone.label}</text>
                   {#if canEdit && selected?.p === p && selected?.z === z}
@@ -557,6 +610,7 @@
                       cy={zone.box.lry}
                       r={Math.max(8, pg.width / 120)}
                       onpointerdown={(e) => handlePointerDown(e, p, z)}
+                      onkeydown={(e) => handleKeydown(e, p, z)}
                     />
                   {/if}
                 {/each}

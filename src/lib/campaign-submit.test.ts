@@ -190,10 +190,16 @@ test('validation: the task stays open while another subtask is unfinished', () =
 	assert.equal(findRow(v.state!.rows, 'T0001', '')!.status, 'validation_required');
 });
 
-test('validation: a fail records the cell but does not complete', () => {
+test('validation: a fail returns the task to encoding and clears stale review state', () => {
+	const locks = parseLockCsv(
+		LOCK_HEADER +
+			'T0001,S0001,carol,2026-06-25T09:30:00Z,validation\n' +
+			'T0001,S0002,dave,2026-06-25T09:35:00Z,validation\n' +
+			'T0002,,erin,2026-06-25T09:40:00Z,encoding\n'
+	);
 	const v = val({
 		state: validationState(),
-		locks: validationLock,
+		locks,
 		intent: { task_id: 'T0001', subtask_id: 'S0001', verdict: 'fail' },
 		author: 'carol',
 		changedPaths: ['tracking/state.csv'],
@@ -201,9 +207,14 @@ test('validation: a fail records the cell but does not complete', () => {
 		now: NOW
 	});
 	const row = findRow(v.state!.rows, 'T0001', 'S0001')!;
-	assert.equal(row.status, 'validation_required');
-	assert.equal(row.validate_status_1, `fail|carol|${NOW}`);
-	assert.equal(findRow(v.state!.rows, 'T0001', '')!.status, 'validation_required');
+	const task = findRow(v.state!.rows, 'T0001', '')!;
+	assert.equal(row.status, 'pending');
+	assert.equal(row.validate_status_1, '');
+	assert.equal(task.status, 'encoding_required');
+	assert.equal(task.encoder, '');
+	assert.equal(task.encoded_at, '');
+	assert.equal(v.locks!.some((lock) => lock.task_id === 'T0001'), false);
+	assert.equal(v.locks!.some((lock) => lock.task_id === 'T0002'), true);
 });
 
 test('validation: below threshold stays validation_required, writing the next open slot', () => {

@@ -43,8 +43,11 @@ export const measureDetectorUrl =
  * at `ref` and runs `path`. `ref` should be an immutable tag/SHA in production;
  * `main` is for iteration.
  */
+const configuredAutomationRef = env.PUBLIC_AUTOMATION_REF || '';
+export const automationRefPinned = /^[0-9a-f]{40}$/i.test(configuredAutomationRef);
+
 export const automation = {
 	central_repository: env.PUBLIC_AUTOMATION_REPO || 'lets-encode/instigation',
-	ref: env.PUBLIC_AUTOMATION_REF || 'main',
+	ref: configuredAutomationRef || 'main',
 	path: env.PUBLIC_AUTOMATION_PATH || 'scripts/coordinator.ts'
 };

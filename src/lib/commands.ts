@@ -30,6 +30,7 @@ import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
 import { parseFacsimileMei, buildFacsimileMei } from './mei-facsimile.ts';
 import type { PageModel, ParsedFacsimile } from './mei-facsimile.ts';
+import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 
 const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
@@ -133,12 +134,12 @@ async function logDirect(ctx: CommandContext, envelope: CommandEnvelope, result:
 const rand = () => crypto.randomUUID().slice(0, 8);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Mute the campaign repo's notifications for this user, once per browser:
-// skipped when this browser has muted it before, or when the repo is already
-// ignored server-side. GitHub auto-subscribes users to repos they own or are
-// mentioned in, so a plain subscription is not treated as a deliberate opt-in
-// to watch — only an existing "ignored" state is left alone. Non-fatal — each
-// token can only mute its own user.
+// Mute the repo's notifications for this user before they author their first PR
+// against it. GitHub auto-subscribes a PR's author, so the automation's
+// comment-and-close on each claim/submission PR would otherwise email them
+// ("you authored the thread"). Skipped when this browser already muted the repo
+// or when it is already ignored server-side. Non-fatal — a token can only mute
+// its own user, and only when granted the OAuth 'notifications' scope.
 async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<void> {
 	const key = `lets-encode:muted:${owner}/${repo}`;
 	if (localStorage.getItem(key)) return;
@@ -148,9 +149,8 @@ async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<vo
 		}
 		localStorage.setItem(key, '1');
 	} catch (e) {
-		// Non-fatal, but the user will then receive the automation's PR/comment
-		// emails. The repo-subscription API requires the OAuth 'notifications'
-		// scope; a 403/404 here usually means the token was granted without it.
+		// The repo-subscription API requires the OAuth 'notifications' scope; a
+		// 403/404 here usually means the token was granted without it.
 		console.warn(
 			`Could not mute ${owner}/${repo} notifications — this user may receive the ` +
 				`campaign automation's emails (the OAuth 'notifications' scope is required): ` +
@@ -166,16 +166,18 @@ async function waitForPrProcessed(ctx: CommandContext, prNumber: number): Promis
 	const { forge: f, owner, repo } = ctx;
 	ctx.progress(`Campaign automation is processing PR #${prNumber}…`);
 	console.log('[pr] waiting for automation to process PR', prNumber);
-	const deadline = Date.now() + 120_000;
+	const deadline = Date.now() + 90_000;
+	let delayMs = 2_000;
 	while (Date.now() < deadline) {
-		await sleep(3000);
+		await sleep(delayMs);
 		if ((await f.getPullRequestState(owner, repo, prNumber)) === 'closed') {
 			const verdict = await f.getLastIssueComment(owner, repo, prNumber);
 			console.log('[pr] PR', prNumber, 'processed; verdict:', verdict);
 			return verdict;
 		}
+		delayMs = Math.min(10_000, Math.ceil(delayMs * 1.5));
 	}
-	console.log('[pr] PR', prNumber, 'not processed within 120s (still in flight)');
+	console.log('[pr] PR', prNumber, 'not processed within 90s (still in flight)');
 	return null;
 }
 
@@ -205,9 +207,6 @@ async function openClaimPr(
 	envelope: CommandEnvelope | null
 ) {
 	const { forge: f, owner, repo, viewer } = ctx;
-	// Claiming is a user's first interaction with a campaign: mute the repo's
-	// notifications for them, or the automation's PR comments would email
-	// every participant.
 	await muteOnce(f, owner, repo);
 	const lockRows = parseLockCsv((await f.getRepoFile(owner, repo, LOCK_PATH)) ?? '');
 	lockRows.push({
@@ -218,7 +217,7 @@ async function openClaimPr(
 		kind
 	});
 	const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
-	const body = `Reserves ${target} for ${kind} work by @${viewer}. Opened from the campaign console.`;
+	const body = `Reserves ${target} for ${kind} work by ${viewer}. Opened from the campaign console.`;
 	console.log('[claim] opening claim PR', { task_id, subtask_id, kind, user: viewer });
 	return f.openChangePr(owner, repo, {
 		branch: `claim-${task_id}${subtask_id ? '-' + subtask_id : ''}-${rand()}`,
@@ -236,6 +235,7 @@ async function openClaimPr(
 export interface CampaignTables {
 	notInitialised: boolean;
 	isPrivate: boolean;
+	canPush: boolean;
 	taskDefs: TaskRow[];
 	rows: StateRow[];
 	validationColumns: string[];
@@ -243,6 +243,8 @@ export interface CampaignTables {
 	history: HistoryRow[];
 	/** campaign.title from config.yaml; '' when unreadable. */
 	title: string;
+	/** campaign.license from config.yaml; '' when unreadable. */
+	license: string;
 	/** validation.pass_threshold from config.yaml; 1 when unreadable. */
 	passThreshold: number;
 }
@@ -253,39 +255,44 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 	log: 'none',
 	async run(_input, ctx) {
 		const { forge: f, owner, repo } = ctx;
-		const [taskCsv, stateCsv, lockCsv, historyCsv, configYaml, isPrivate] = await Promise.all([
+		const [taskCsv, stateCsv, lockCsv, historyCsv, configYaml, access] = await Promise.all([
 			f.getRepoFile(owner, repo, TASK_PATH),
 			f.getRepoFile(owner, repo, STATE_PATH),
 			f.getRepoFile(owner, repo, LOCK_PATH),
 			f.getRepoFile(owner, repo, HISTORY_PATH),
 			f.getRepoFile(owner, repo, 'config.yaml'),
-			f.getRepoIsPrivate(owner, repo)
+			f.getRepoAccess(owner, repo)
 		]);
 		const title = configYaml?.match(/^\s*title:\s*(?:"([^"]*)"|([^#\n]+))/m);
+		const license = configYaml?.match(/^\s*license:\s*(?:"([^"]*)"|([^#\n]+))/m);
 		const passThreshold = configYaml?.match(/^\s*pass_threshold:\s*(\d+)/m);
 		if (taskCsv == null || stateCsv == null || lockCsv == null) {
 			return {
 				notInitialised: true,
-				isPrivate,
+				isPrivate: access.isPrivate,
+				canPush: access.canPush,
 				taskDefs: [],
 				rows: [],
 				validationColumns: [],
 				locks: [],
 				history: [],
 				title: '',
+				license: '',
 				passThreshold: 1
 			};
 		}
 		const state = parseStateCsv(stateCsv);
 		return {
 			notInitialised: false,
-			isPrivate,
+			isPrivate: access.isPrivate,
+			canPush: access.canPush,
 			taskDefs: parseTaskCsv(taskCsv),
 			rows: state.rows,
 			validationColumns: state.validationColumns,
 			locks: parseLockCsv(lockCsv),
 			history: historyCsv ? parseHistoryCsv(historyCsv) : [],
 			title: (title?.[1] ?? title?.[2] ?? '').trim(),
+			license: (license?.[1] ?? license?.[2] ?? '').trim(),
 			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1
 		};
 	}
@@ -365,7 +372,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			for (let attempt = 1; attempt <= 5 && !downloadUrl; attempt++) {
 				if (attempt > 1) await sleep(1500);
 				downloadUrl = await f.getRepoFileDownloadUrl(workRepo.owner, workRepo.repo, fragment, ref);
-				console.log('[editor] downloadUrl attempt', attempt, 'for', fragment, '@', `${workRepo.owner}/${workRepo.repo}#${ref}`, '=>', downloadUrl);
+				console.log('[editor] download URL attempt', { attempt, fragment, ref, available: Boolean(downloadUrl) });
 			}
 			if (!downloadUrl) {
 				return { error: `Could not get a download URL for ${fragment}.` };
@@ -411,6 +418,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 	async run({ task_id }, ctx, envelope) {
 		const { forge: f, owner, repo, viewer } = ctx;
 		try {
+			await muteOnce(f, owner, repo);
 			ctx.progress('Opening the submission PR…');
 			const { branch: base, canPush } = await f.getRepoHead(owner, repo);
 			// The claim/editor flow put the encoding on `encode-<task_id>` — in the
@@ -423,7 +431,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				const fork = await f.ensureFork(owner, repo);
 				head = `${fork.owner}:encode-${task_id}`;
 			}
-			const body = `Submits the encoding of ${task_id} by @${viewer}, edited in mei-friend. Opened from the campaign console.`;
+			const body = `Submits the encoding of ${task_id} by ${viewer}, edited in mei-friend. Opened from the campaign console.`;
 			console.log('[submitpr] opening PR', { head, base });
 			const pr = await f.createPullRequest(owner, repo, {
 				title: `Encoding of ${task_id}`,
@@ -448,6 +456,7 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 	async run({ task_id, subtask_id, verdict }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
 		try {
+			await muteOnce(f, owner, repo);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
 			const row = findRow(state.rows, task_id, subtask_id);
 			if (!row) return { error: `Unknown subtask ${task_id}/${subtask_id}.` };
@@ -588,10 +597,13 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 		const mei = await f.getRepoFile(owner, repo, task.fragment);
 		if (mei == null) throw new Error(`Could not read ${task.fragment}.`);
 		const model = parseFacsimileMei(mei);
-		// graphic @target is resolved relative to the score file (MEI spec).
-		const dir = task.fragment.replace(/[^/]*$/, '');
-		const dirUrls = await f.getDirDownloadUrls(owner, repo, dir);
-		const imageUrls = model.pages.map((p) => dirUrls[p.image] ?? '');
+		const imageUrls = await resolveFacsimileImageUrls(
+			f,
+			owner,
+			repo,
+			task.fragment,
+			model.pages.map((page) => page.image)
+		);
 		const locks = parseLockCsv(lockCsv ?? '');
 		const holdsLock = locks.some(
 			(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === viewer
@@ -655,17 +667,20 @@ async function submitFacsimile(
 	ctx: CommandContext,
 	task_id: string,
 	pages: PageModel[],
-	envelope: CommandEnvelope | null,
-	build: { withMeasures?: boolean; withBreaks?: boolean }
+	envelope: CommandEnvelope | null
 ): Promise<Result> {
 	const { forge: f, owner, repo } = ctx;
 	try {
+		await muteOnce(f, owner, repo);
 		const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
 		const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
 		if (!fragment) return { error: `Unknown task ${task_id}.` };
 		const current = await f.getRepoFile(owner, repo, fragment);
 		if (current == null) return { error: `Could not read ${fragment}.` };
-		const content = buildFacsimileMei({ headXml: parseFacsimileMei(current).headXml, pages }, build);
+		const content = buildFacsimileMei(
+			{ headXml: parseFacsimileMei(current).headXml, pages },
+			{ withBreaks: true }
+		);
 		// A no-op would open an empty PR the path-filtered caller never runs;
 		// guard against that rather than leaving the console polling forever.
 		if (content === current) {
@@ -704,7 +719,7 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 		movements: 1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0)
 	}),
 	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, { withBreaks: true })
+		submitFacsimile(ctx, task_id, pages, envelope)
 };
 
 /** The console command registry. */

@@ -106,9 +106,12 @@ export function checkEncoding({ tasks, state, locks, intent, author, changedPath
  * Validation outcome. The PR may change only state.csv (as the verdict
  * vehicle), the author must hold the subtask's active validation lock, and
  * there must be an open validate_status slot. On accept: the first open slot
- * becomes `<verdict>|<author>|<now>` and the validation lock is removed; the
- * subtask completes once `passThreshold` pass cells accumulate, and the task
- * row completes once every subtask has.
+ * becomes `<verdict>|<author>|<now>` and the validation lock is removed. A
+ * failure invalidates the encoding: the task returns to encoding_required,
+ * its subtasks return to pending, stale validation cells and attribution are
+ * cleared, and all locks for the task are released. On passes, the subtask
+ * completes once `passThreshold` pass cells accumulate, and the task row
+ * completes once every subtask has.
  */
 export function checkValidation({ state, locks, intent, author, changedPaths, passThreshold, now }: CheckValidationArgs): SubmitResult {
 	const row = findRow(state.rows, intent.task_id, intent.subtask_id);
@@ -132,6 +135,25 @@ export function checkValidation({ state, locks, intent, author, changedPaths, pa
 	const next = cloneState(state);
 	const nextRow = findRow(next.rows, intent.task_id, intent.subtask_id)!;
 	nextRow[slot] = `${intent.verdict}|${author}|${now}`;
+
+	if (intent.verdict === 'fail') {
+		for (const r of next.rows) {
+			if (r.task_id !== intent.task_id) continue;
+			if (r.subtask_id === '') {
+				r.status = 'encoding_required';
+				r.encoder = '';
+				r.encoded_at = '';
+			} else {
+				r.status = 'pending';
+			}
+			for (const column of next.validationColumns) r[column] = '';
+		}
+		return {
+			ok: true,
+			state: next,
+			locks: locks.filter((l) => l.task_id !== intent.task_id)
+		};
+	}
 
 	const passCount = next.validationColumns.filter((c) => (nextRow[c] ?? '').startsWith('pass|')).length;
 	if (passCount >= passThreshold) nextRow.status = 'completed';

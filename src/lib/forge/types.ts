@@ -62,8 +62,8 @@ export interface ForgeClient {
 	getDirDownloadUrls(owner: string, repo: string, dir: string, ref?: string): Promise<Record<string, string>>;
 	/** The repo's default branch head + whether the user can push. */
 	getRepoHead(owner: string, repo: string): Promise<RepoHead>;
-	/** Whether the repo is private. */
-	getRepoIsPrivate(owner: string, repo: string): Promise<boolean>;
+	/** The current user's repository access and the repository visibility. */
+	getRepoAccess(owner: string, repo: string): Promise<{ isPrivate: boolean; canPush: boolean }>;
 	/** Ensure the user has a fork, waiting until it's ready. */
 	ensureFork(
 		owner: string,
@@ -88,13 +88,6 @@ export interface ForgeClient {
 	): Promise<ChangeRequest>;
 	/** Trigger a CI run (GitHub: workflow_dispatch) of `workflow` on `ref`. */
 	dispatchWorkflow(owner: string, repo: string, workflow: string, ref: string): Promise<void>;
-	/** The user's notification subscription for the repo, or null if none set. */
-	getRepoSubscription(
-		owner: string,
-		repo: string
-	): Promise<{ subscribed: boolean; ignored: boolean } | null>;
-	/** Mute all of the repo's notifications (web + email) for the authenticated user. */
-	ignoreRepoNotifications(owner: string, repo: string): Promise<void>;
 	/** A pull/merge request's current state: 'open' or 'closed'. */
 	getPullRequestState(owner: string, repo: string, number: number): Promise<string>;
 	/** The most recent comment on a pull/merge request, or null. */

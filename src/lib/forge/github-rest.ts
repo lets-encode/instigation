@@ -60,22 +60,38 @@ const baseHeaders: Record<string, string> = {
 export class RateLimitError extends Error {
 	/** Unix epoch seconds when the limit resets, or null if not reported. */
 	readonly resetAt: number | null;
-	constructor(resetAt: number | null) {
-		const when = resetAt ? new Date(resetAt * 1000).toLocaleTimeString() : 'shortly';
-		super(`GitHub API rate limit exceeded — it resets at ${when}. Try again then.`);
+	readonly retryAfterSeconds: number | null;
+	constructor(resetAt: number | null, retryAfterSeconds: number | null) {
+		const when = retryAfterSeconds
+			? `in about ${retryAfterSeconds} seconds`
+			: resetAt
+				? `at ${new Date(resetAt * 1000).toLocaleTimeString()}`
+				: 'shortly';
+		super(`GitHub API rate limit exceeded — retry ${when}.`);
 		this.name = 'RateLimitError';
 		this.resetAt = resetAt;
+		this.retryAfterSeconds = retryAfterSeconds;
 	}
 }
 
-// A depleted quota answers 403 (primary limit) or 429 (secondary), both with
-// `X-RateLimit-Remaining: 0`. A 403 for other reasons (e.g. permissions) leaves
-// a non-zero remaining and is left to the caller's normal error handling.
-function throwIfRateLimited(res: Response): void {
-	if ((res.status === 403 || res.status === 429) && res.headers.get('X-RateLimit-Remaining') === '0') {
-		const reset = Number(res.headers.get('X-RateLimit-Reset'));
-		throw new RateLimitError(Number.isFinite(reset) && reset > 0 ? reset : null);
-	}
+async function githubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+	const res = await fetch(input, init);
+	if (res.status !== 403 && res.status !== 429) return res;
+	const remaining = res.headers.get('X-RateLimit-Remaining');
+	const retryAfterHeader = res.headers.get('Retry-After');
+	const retryAfter = retryAfterHeader == null ? Number.NaN : Number(retryAfterHeader);
+	const message = await res.clone().text().catch(() => '');
+	const limited =
+		remaining === '0' ||
+		Number.isFinite(retryAfter) ||
+		/secondary rate limit|rate limit exceeded|abuse detection/i.test(message);
+	if (!limited) return res;
+	const resetHeader = res.headers.get('X-RateLimit-Reset');
+	const reset = resetHeader == null ? Number.NaN : Number(resetHeader);
+	throw new RateLimitError(
+		Number.isFinite(reset) && reset > 0 ? reset : null,
+		Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : null
+	);
 }
 
 // ETag store for conditional GETs, keyed by full request URL. Only cacheable
@@ -100,9 +116,8 @@ async function ghGet<T>(
 	const cached = cache ? etagCache.get(url) : undefined;
 	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
 	if (cached) headers['If-None-Match'] = cached.etag;
-	const res = await fetch(url, { headers, cache: 'no-store' });
+	const res = await githubFetch(url, { headers, cache: 'no-store' });
 	if (res.status === 304 && cached) return { status: 200, ok: true, data: JSON.parse(cached.body) as T };
-	throwIfRateLimited(res);
 	const text = await res.text();
 	const etag = res.headers.get('ETag');
 	if (cache && res.ok && etag) etagCache.set(url, { etag, body: text });
@@ -179,7 +194,7 @@ interface ErrorResponse {
 export async function getAuthenticatedUser(
 	token: string
 ): Promise<{ user: GitHubUser; scopes: string } | null> {
-	const res = await fetch(`${apiRoot(token)}/user`, {
+	const res = await githubFetch(`${apiRoot(token)}/user`, {
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
@@ -211,7 +226,7 @@ export async function createRepoFromTemplate(
 		owner: string;
 	}
 ): Promise<RepoData> {
-	const res = await fetch(`${apiRoot(token)}/repos/${templateOwner}/${templateRepo}/generate`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${templateOwner}/${templateRepo}/generate`, {
 		method: 'POST',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({
@@ -275,11 +290,11 @@ export async function getRepoFileDownloadUrl(
 		{ cache: false }
 	);
 	if (status === 404) {
-		console.log('[getRepoFileDownloadUrl] 404 (path or ref absent)', { owner, repo, path, ref });
+		console.log('[getRepoFileDownloadUrl] path or ref absent', { owner, repo, path, ref });
 		return null;
 	}
 	if (!ok) throw new Error(data?.message || `Failed to fetch ${path}`);
-	console.log('[getRepoFileDownloadUrl]', path, 'ref', ref ?? '(default)', 'status', status, 'download_url', data?.download_url);
+	console.log('[getRepoFileDownloadUrl] temporary URL available', { path, ref: ref ?? '(default)', status });
 	return data?.download_url ?? null;
 }
 
@@ -325,11 +340,11 @@ export async function getRepoHead(
 	repo: string
 ): Promise<{ branch: string; sha: string; canPush: boolean }> {
 	const headers = { ...baseHeaders, ...authHeaders(token) };
-	const repoRes = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
+	const repoRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	const repoData: RepoData = await repoRes.json().catch(() => ({}));
 	if (!repoRes.ok) throw new Error(`${repoData.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
 	const branch = repoData.default_branch;
-	const refRes = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers, cache: 'no-store' });
+	const refRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers, cache: 'no-store' });
 	const refData: { object: { sha: string }; message?: string } = await refRes.json().catch(() => ({}));
 	if (!refRes.ok) throw new Error(`${refData.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
 	return { branch, sha: refData.object.sha, canPush: Boolean(repoData.permissions?.push) };
@@ -347,7 +362,7 @@ export async function ensureFork(
 	{ attempts = 20, delayMs = 1500 }: { attempts?: number; delayMs?: number } = {}
 ): Promise<{ owner: string; repo: string }> {
 	const headers = { ...baseHeaders, ...authHeaders(token) };
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/forks`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/forks`, {
 		method: 'POST',
 		headers,
 		// Only the default branch — the fork doesn't need copies of upstream's
@@ -360,7 +375,7 @@ export async function ensureFork(
 	const [forkOwner, forkRepo] = data.full_name.split('/');
 	// Poll until the fork's default branch ref exists (the fork is populated).
 	for (let i = 0; i < attempts; i++) {
-		const r = await fetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
+		const r = await githubFetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
 		if (r.ok) return { owner: forkOwner, repo: forkRepo };
 		await new Promise((resolve) => setTimeout(resolve, delayMs));
 	}
@@ -370,7 +385,7 @@ export async function ensureFork(
 /** Whether a repo named `repo` exists under `owner` (any visibility the token can see). */
 export async function repoExists(owner: string, repo: string, token?: string): Promise<boolean> {
 	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	if (res.status === 404) return false;
 	if (!res.ok) {
 		const data: ErrorResponse = await res.json().catch(() => ({}));
@@ -379,69 +394,72 @@ export async function repoExists(owner: string, repo: string, token?: string): P
 	return true;
 }
 
-/** Whether the repo is private (its raw download URLs then carry a short-lived token). */
-export async function getRepoIsPrivate(token: string, owner: string, repo: string): Promise<boolean> {
+/** Repository visibility and whether the current authenticated user can push. */
+export async function getRepoAccess(
+	token: string,
+	owner: string,
+	repo: string
+): Promise<{ isPrivate: boolean; canPush: boolean }> {
 	const { ok, data } = await ghGet<RepoData>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
 	if (!ok) throw new Error(data?.message || 'Failed to read repository');
-	return Boolean(data?.private);
+	return { isPrivate: Boolean(data?.private), canPush: Boolean(data?.permissions?.push) };
 }
 
-/** List a pull request's changed files, including each file's unified-diff patch. */
-export async function getPullRequestFiles(
+/** Read the PR fields needed before its complete changed-file list is fetched. */
+export async function getPullRequestDetails(
 	token: string,
 	owner: string,
 	repo: string,
 	number: number
-): Promise<Array<{ filename: string; status: string; patch?: string }>> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`, {
+): Promise<{ body: string | null; changedFiles: number }> {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		cache: 'no-store'
 	});
-	const data = await res.json().catch(() => []);
-	if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to list pull request files');
-	return (data as Array<{ filename: string; status: string; patch?: string }>).map((f) => ({
+	const data: { body?: string | null; changed_files?: number; message?: string } = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
+	return { body: data.body ?? null, changedFiles: data.changed_files ?? 0 };
+}
+
+/**
+ * List every changed file in a pull request, including each file's unified-diff
+ * patch. GitHub paginates this endpoint at 100 files and exposes at most 3,000;
+ * a mismatch is rejected so the coordinator never validates a partial view.
+ */
+export async function getPullRequestFiles(
+	token: string,
+	owner: string,
+	repo: string,
+	number: number,
+	expectedChangedFiles: number
+): Promise<Array<{ filename: string; status: string; patch?: string }>> {
+	if (!Number.isInteger(expectedChangedFiles) || expectedChangedFiles < 0) {
+		throw new Error('Pull request reported an invalid changed-file count.');
+	}
+	if (expectedChangedFiles > 3000) {
+		throw new Error('Pull request changes more than GitHub’s 3,000-file inspection limit.');
+	}
+
+	const files: Array<{ filename: string; status: string; patch?: string }> = [];
+	const pages = Math.max(1, Math.ceil(expectedChangedFiles / 100));
+	for (let page = 1; page <= pages; page++) {
+		const res = await githubFetch(
+			`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
+			{ headers: { ...baseHeaders, ...authHeaders(token) }, cache: 'no-store' }
+		);
+		const data = await res.json().catch(() => []);
+		if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to list pull request files');
+		if (!Array.isArray(data)) throw new Error('GitHub returned an invalid pull-request file list.');
+		files.push(...(data as Array<{ filename: string; status: string; patch?: string }>));
+	}
+	if (files.length !== expectedChangedFiles) {
+		throw new Error(`Incomplete pull-request file list: expected ${expectedChangedFiles}, received ${files.length}.`);
+	}
+	return files.map((f) => ({
 		filename: f.filename,
 		status: f.status,
 		patch: f.patch
 	}));
-}
-
-/**
- * The authenticated user's notification subscription for a repo, or null if
- * they have none set (the default "participating only" level).
- */
-export async function getRepoSubscription(
-	token: string,
-	owner: string,
-	repo: string
-): Promise<{ subscribed: boolean; ignored: boolean } | null> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/subscription`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	if (res.status === 404) return null;
-	const data: { subscribed?: boolean; ignored?: boolean; message?: string } = await res
-		.json()
-		.catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || 'Failed to read repository subscription');
-	return { subscribed: Boolean(data.subscribed), ignored: Boolean(data.ignored) };
-}
-
-/**
- * Set the authenticated user's notification subscription for a repo to
- * "ignored": no web or email notifications from it, including participating
- * threads (own PRs, mentions). Affects only the token's own user.
- */
-export async function ignoreRepoNotifications(token: string, owner: string, repo: string): Promise<void> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/subscription`, {
-		method: 'PUT',
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		body: JSON.stringify({ subscribed: false, ignored: true })
-	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to set repository subscription');
-	}
 }
 
 /** A pull request's current state: 'open' or 'closed'. */
@@ -457,22 +475,6 @@ export async function getPullRequestState(
 	);
 	if (!ok) throw new Error(data?.message || 'Failed to read pull request');
 	return data?.state ?? 'open';
-}
-
-/** A pull request's body text, or null if empty. */
-export async function getPullRequestBody(
-	token: string,
-	owner: string,
-	repo: string,
-	number: number
-): Promise<string | null> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	const data: { body?: string | null; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
-	return data.body ?? null;
 }
 
 /** The body of a pull request's most recent comment, or null if none. */
@@ -519,12 +521,16 @@ export async function commentAndClosePr(
 	body: string
 ): Promise<void> {
 	const headers = { ...baseHeaders, ...authHeaders(token) };
-	await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments`, {
+	const commentRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments`, {
 		method: 'POST',
 		headers,
 		body: JSON.stringify({ body })
 	});
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
+	if (!commentRes.ok) {
+		const data: ErrorResponse = await commentRes.json().catch(() => ({}));
+		throw new Error(data.message || 'Failed to comment on pull request');
+	}
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
 		method: 'PATCH',
 		headers,
 		body: JSON.stringify({ state: 'closed' })
@@ -580,7 +586,7 @@ export async function commitFiles(
 	const api = `${apiRoot(token)}/repos/${owner}/${repo}`;
 
 	const gh = async <T>(path: string, init?: RequestInit): Promise<T> => {
-		const res = await fetch(`${api}${path}`, { headers, cache: 'no-store', ...init });
+		const res = await githubFetch(`${api}${path}`, { headers, cache: 'no-store', ...init });
 		const data = await res.json().catch(() => ({}));
 		if (!res.ok) throw new Error(`${(data as ErrorResponse).message || 'GitHub API error'} (${res.status} ${init?.method ?? 'GET'} ${path})`);
 		return data as T;
@@ -597,19 +603,22 @@ export async function commitFiles(
 
 	// Text files go inline in the tree; binary files are uploaded as base64 blobs
 	// first (the tree API only accepts text inline) and referenced by SHA.
-	const treeEntries = await Promise.all(
-		files.map(async (f) => {
+	const treeEntries: Array<
+		{ path: string; mode: '100644'; type: 'blob'; sha: string } |
+		{ path: string; mode: '100644'; type: 'blob'; content: string }
+	> = [];
+	for (const f of files) {
 			const base = { path: f.path, mode: '100644' as const, type: 'blob' as const };
 			if (f.contentBase64 != null) {
 				const blob = await gh<{ sha: string }>('/git/blobs', {
 					method: 'POST',
 					body: JSON.stringify({ content: f.contentBase64, encoding: 'base64' })
 				});
-				return { ...base, sha: blob.sha };
+				treeEntries.push({ ...base, sha: blob.sha });
+				continue;
 			}
-			return { ...base, content: f.content ?? '' };
-		})
-	);
+			treeEntries.push({ ...base, content: f.content ?? '' });
+	}
 
 	// Build a tree off the current one, with our files added.
 	const tree = await gh<{ sha: string }>('/git/trees', {
@@ -638,7 +647,7 @@ export async function createBranch(
 	branch: string,
 	fromSha: string
 ): Promise<void> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs`, {
 		method: 'POST',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha })
@@ -661,7 +670,7 @@ export async function fastForwardBranch(
 	branch: string,
 	sha: string
 ): Promise<boolean> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
 		method: 'PATCH',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ sha })
@@ -671,7 +680,7 @@ export async function fastForwardBranch(
 
 /** Delete a branch. Treats an already-gone ref (404/422) as success. */
 export async function deleteBranch(token: string, owner: string, repo: string, branch: string): Promise<void> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
 		method: 'DELETE',
 		headers: { ...baseHeaders, ...authHeaders(token) }
 	});
@@ -688,7 +697,7 @@ export async function createPullRequest(
 	repo: string,
 	{ title, head, base, body }: { title: string; head: string; base: string; body: string }
 ): Promise<{ number: number; html_url: string }> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls`, {
 		method: 'POST',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ title, head, base, body })
@@ -744,7 +753,7 @@ export async function dispatchWorkflow(
 	workflow: string,
 	ref: string
 ): Promise<void> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, {
 		method: 'POST',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ ref })
@@ -762,7 +771,7 @@ export async function setRepoTopics(
 	repo: string,
 	names: string[]
 ): Promise<unknown> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/topics`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/topics`, {
 		method: 'PUT',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ names })
@@ -780,7 +789,7 @@ export async function setRepoTopics(
  * claim/submission PRs) have the access they need. Requires admin on the repo.
  */
 export async function setActionsWorkflowPermissions(token: string, owner: string, repo: string): Promise<void> {
-	const res = await fetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/permissions/workflow`, {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/permissions/workflow`, {
 		method: 'PUT',
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ default_workflow_permissions: 'write' })

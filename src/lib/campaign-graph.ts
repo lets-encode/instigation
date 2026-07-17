@@ -266,22 +266,22 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 					label: `${row.subtask_id}·${slot + 1}`,
 					who: s.sub,
 					running: s.running,
-					claimable: encoded && s.key === 'open'
+					claimable: viewer !== '' && encoded && s.key === 'open'
 				};
 			})
 		);
 
 		// The viewer's next step: work they already hold, else the first open
 		// claim (encoding, or a validation they are allowed to take).
-		const mineLock = d.locks.some((l) => l.task_id === task && l.user_id === viewer);
-		const claimableEncoding = !blocked && state?.status === 'encoding_required' && !lock;
+		const mineLock = viewer !== '' && d.locks.some((l) => l.task_id === task && l.user_id === viewer);
+		const claimableEncoding = viewer !== '' && !blocked && state?.status === 'encoding_required' && !lock;
 		const claimableValidation = subRows.some(
 			(r) =>
 				r.status === 'validation_required' &&
 				!validationLock(d, task, r.subtask_id) &&
 				!(viewer !== '' && state?.encoder === viewer)
 		);
-		const nextUp = !nextUpTaken && (mineLock || claimableEncoding || claimableValidation);
+		const nextUp = viewer !== '' && !nextUpTaken && (mineLock || claimableEncoding || claimableValidation);
 		if (nextUp) nextUpTaken = true;
 
 		const h = heights[i];
@@ -469,7 +469,7 @@ export function buildPanel(
 		} else {
 			const selfValidation = state.encoder === viewer && state.encoder !== '';
 			const claimable =
-				row.status === 'validation_required' && sel.slot === finalsOf(d, row) && !lock && !selfValidation;
+				viewer !== '' && row.status === 'validation_required' && sel.slot === finalsOf(d, row) && !lock && !selfValidation;
 			meta = !isEncoded(state.status)
 				? 'Opens once the encoding is submitted.'
 				: selfValidation
@@ -482,10 +482,11 @@ export function buildPanel(
 				disabled: !claimable,
 				title: selfValidation
 					? 'Encoders cannot validate their own work.'
-					: 'Reserve this subtask for validation.'
+					: def.locator !== ''
+						? 'Reserve this subtask and open the zone editor to review it.'
+						: 'Reserve this subtask for validation.'
 			});
 			actions.push(previewAction(false));
-			if (openEditor) actions.push(openEditor);
 		}
 		actions.push(rawLinkAction);
 		return {
@@ -543,15 +544,17 @@ export function buildPanel(
 			id: 'zone-editor',
 			label: mine ? 'Correct measures in editor' : 'Claim correction task',
 			primary: true,
-			disabled: !!blocked || !!otherLock,
-			title: blocked
+			disabled: viewer === '' || !!blocked || !!otherLock,
+			title: viewer === ''
+				? 'Log in to claim this correction task.'
+				: blocked
 				? `Enabled once ${blocked} is completed.`
 				: otherLock
 					? `Already claimed by @${lock.user_id}.`
 					: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
 		});
 	} else {
-		const claimable = !blocked && !otherLock && (state.status === 'encoding_required' || mine);
+		const claimable = viewer !== '' && !blocked && !otherLock && (state.status === 'encoding_required' || mine);
 		actions.push({
 			id: 'open-editor',
 			label: mine ? 'Open in mei-friend ↗' : 'Claim & open in mei-friend ↗',
