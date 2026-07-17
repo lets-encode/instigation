@@ -11,6 +11,8 @@
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { buildGraph, buildPanel, statusPill } from "$lib/campaign-graph.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
+  import { parseMeiHeader } from "$lib/mei-header.ts";
+  import type { MeiHeader } from "$lib/mei-header.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
@@ -48,6 +50,30 @@
   let view = $state<"graph" | "tables">("graph");
   let selected = $state<Selection | null>(null);
   let expert = $state(false);
+  let showInfo = $state(false);
+
+  // The score's <meiHead> fields, fetched on first open of the info panel.
+  let scoreHead = $state<MeiHeader | null>(null);
+  let scoreHeadState = $state<"idle" | "loading" | "done" | "error">("idle");
+  async function loadScoreHead() {
+    if (scoreHeadState !== "idle") return;
+    scoreHeadState = "loading";
+    try {
+      const f = readForge();
+      const mei =
+        (await f.getRepoFile(owner, repo, "sources/score.mei")) ??
+        (taskDefs[0]?.fragment
+          ? await f.getRepoFile(owner, repo, taskDefs[0].fragment)
+          : null);
+      scoreHead = mei ? parseMeiHeader(mei) : null;
+      scoreHeadState = mei ? "done" : "error";
+    } catch {
+      scoreHeadState = "error";
+    }
+  }
+
+  // Everyone the campaign history records as having acted on the score.
+  const workedOn = $derived([...new Set(history.map((h) => h.user_id))].filter(Boolean));
 
   /** One facsimile page in the preview: image plus its measure zones. */
   type PreviewPage = {
@@ -134,10 +160,11 @@
   }
 
   // Drag-resize state: the preview dock's share of the stage height and the
-  // detail panel's width.
+  // detail and info panels' widths.
   let dockFrac = $state(0.55);
   let panelW = $state(360);
-  let resizing = $state<"dock" | "panel" | null>(null);
+  let infoW = $state(300);
+  let resizing = $state<"dock" | "panel" | "info" | null>(null);
   let stageEl = $state<HTMLDivElement | null>(null);
   function resizeMove(e: PointerEvent) {
     if (resizing === "dock" && stageEl) {
@@ -145,6 +172,8 @@
       dockFrac = Math.min(0.85, Math.max(0.2, (r.bottom - e.clientY) / r.height));
     } else if (resizing === "panel") {
       panelW = Math.min(680, Math.max(280, window.innerWidth - e.clientX));
+    } else if (resizing === "info") {
+      infoW = Math.min(520, Math.max(220, e.clientX));
     }
   }
 
@@ -452,6 +481,16 @@
         rel="noreferrer">{owner}/{repo}</a
       >
     </div>
+    <button
+      type="button"
+      class="hbtn"
+      class:on={showInfo}
+      onclick={() => {
+        showInfo = !showInfo;
+        if (showInfo) loadScoreHead();
+      }}
+      title="Show or hide campaign information">Info</button
+    >
     {#if loaded && !notInitialised}
       <div class="progress" title="Completed tasks">
         <div class="bar"><div style={`width:${taskRows.length ? Math.round((tasksDone / taskRows.length) * 100) : 0}%`}></div></div>
@@ -508,11 +547,6 @@
           The measure detector couldn't process {skippedPages.length} page(s) ({skippedPages.join(", ")})
           during creation, so they were left out of the score. Everything else is ready below.
         </span>
-      </div>
-    {/if}
-    {#if license}
-      <div class="banner info">
-        Contributions to this campaign are published under <strong>{license}</strong>.
       </div>
     {/if}
     {#if result && result.error}
@@ -581,6 +615,111 @@
       </div>
     {/if}
 
+    <div class="main">
+    {#if showInfo}
+      <aside class="ipanel" style={`--ipanel-w:${infoW}px`}>
+        <div class="iphead">
+          <div class="iptitle">Campaign info</div>
+          <button
+            type="button"
+            class="pclose"
+            onclick={() => (showInfo = false)}
+            title="Close the info panel"
+            aria-label="Close the info panel">✕</button
+          >
+        </div>
+        <div class="ipbody">
+          <div class="isec">
+            <span class="seclabel">Score</span>
+            {#if scoreHeadState === "loading"}
+              <span class="muted inote">Loading the score header…</span>
+            {:else if scoreHeadState === "error"}
+              <span class="muted inote">Could not read the score.</span>
+            {:else if scoreHeadState === "done" && !scoreHead}
+              <span class="muted inote">The score has no MEI header.</span>
+            {:else if scoreHead}
+              <div class="irow">
+                <span>Title</span>
+                <span>{scoreHead.title || "—"}</span>
+              </div>
+              <div class="irow">
+                <span>Composer</span>
+                <span>{scoreHead.composer || "—"}</span>
+              </div>
+              {#each scoreHead.contributors as c (c.role + c.name)}
+                <div class="irow">
+                  <span>{c.role || "contributor"}</span>
+                  <span>{c.name}</span>
+                </div>
+              {/each}
+            {/if}
+            <div
+              class="irow"
+              title="Everyone the campaign history records: claims, submissions and validations."
+            >
+              <span>Worked on this</span>
+              <span>
+                {#if workedOn.length}
+                  {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
+                      class="mono"
+                      href={`https://github.com/${u}`}
+                      target="_blank"
+                      rel="noreferrer">@{u}</a
+                    >{/each}
+                {:else}—{/if}
+              </span>
+            </div>
+          </div>
+
+          <div class="isec">
+            <span class="seclabel">Campaign</span>
+            <div class="irow">
+              <span>Title</span>
+              <span>{title || repo}</span>
+            </div>
+            <div class="irow">
+              <span>Repository</span>
+              <a
+                class="mono"
+                href={`https://github.com/${owner}/${repo}`}
+                target="_blank"
+                rel="noreferrer">{owner}/{repo}</a
+              >
+            </div>
+            <div class="irow">
+              <span>Visibility</span>
+              <span>{isPrivate ? "Private" : "Public"}</span>
+            </div>
+            <div
+              class="irow"
+              title="Contributions to this campaign are published under this license."
+            >
+              <span>License</span>
+              <span>{license || "—"}</span>
+            </div>
+            <div class="irow">
+              <span>Tasks</span>
+              <span>{tasksDone} / {taskRows.length} complete</span>
+            </div>
+            <div class="irow" title="Validation passes each task needs before it counts as validated.">
+              <span>Passes required</span>
+              <span>{passThreshold}</span>
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="ipanel-resizer"
+          aria-label="Drag to resize the info panel"
+          title="Drag to resize the info panel"
+          onpointerdown={(e) => {
+            e.preventDefault();
+            resizing = "info";
+          }}
+        ></button>
+      </aside>
+    {/if}
+    <div class="viewcol">
     {#if loading}
       <p class="msg muted">Loading campaign…</p>
     {:else if loadError}
@@ -1096,6 +1235,8 @@
         </div>
       </div>
     {/if}
+    </div>
+    </div>
   {/if}
 </div>
 
@@ -1242,6 +1383,11 @@
     opacity: 0.45;
     cursor: default;
   }
+  .hbtn.on {
+    background: #1a1a1a;
+    border-color: #1a1a1a;
+    color: #fff;
+  }
   .tabs {
     display: flex;
     border: 1px solid #d0d0d0;
@@ -1287,6 +1433,11 @@
     background: #fff8e1;
     border-bottom: 1px solid #f0dca0;
     color: #7a6011;
+  }
+  .banner.info {
+    background: #fbf9f4;
+    border-bottom: 1px solid #ece5d5;
+    color: #6f6650;
   }
   .banner-body {
     display: flex;
@@ -1338,6 +1489,95 @@
   }
 
   /* --------------------------------------------------------- graph body */
+  .main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  .viewcol {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* --------------------------------------------------------- info panel */
+  .ipanel {
+    width: var(--ipanel-w, 300px);
+    flex: none;
+    border-right: 1px solid #eee;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+  }
+  .ipanel-resizer {
+    position: absolute;
+    right: -5px;
+    top: 0;
+    bottom: 0;
+    width: 9px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: col-resize;
+    z-index: 5;
+  }
+  .ipanel-resizer:hover,
+  .ipanel-resizer:active {
+    background: rgba(48, 86, 211, 0.18);
+  }
+  .iphead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid #eee;
+    flex: none;
+  }
+  .iptitle {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .ipbody {
+    padding: 15px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    overflow: auto;
+  }
+  .isec {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .inote {
+    font-size: 11px;
+  }
+  .irow {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+  }
+  .irow > span:first-child {
+    color: #999;
+    flex: none;
+  }
+  .irow > :last-child {
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .irow a {
+    color: #2a78d6;
+    text-decoration: none;
+  }
+  .irow a:hover {
+    text-decoration: underline;
+  }
+
   .body {
     flex: 1;
     display: flex;
