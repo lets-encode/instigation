@@ -92,6 +92,13 @@ export interface ForgeClient {
 	getPullRequestState(owner: string, repo: string, number: number): Promise<string>;
 	/** The most recent comment on a pull/merge request, or null. */
 	getLastIssueComment(owner: string, repo: string, number: number): Promise<string | null>;
+	/** The authenticated user's notification subscription for a repo, or null if unset. */
+	getRepoSubscription(
+		owner: string,
+		repo: string
+	): Promise<{ subscribed: boolean; ignored: boolean } | null>;
+	/** Mute all of the repo's notifications (web + email) for the authenticated user. */
+	ignoreRepoNotifications(owner: string, repo: string): Promise<void>;
 	/** The most recent CI run of `workflow` for `event`, or null if none yet. */
 	getLatestWorkflowRun(
 		owner: string,

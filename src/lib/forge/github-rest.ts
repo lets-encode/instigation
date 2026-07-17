@@ -801,6 +801,44 @@ export async function setActionsWorkflowPermissions(token: string, owner: string
 }
 
 /**
+ * The authenticated user's notification subscription for a repo, or null when
+ * they have none set (the default "participating and @mentions" level).
+ * `ignored` true means the repo is muted; `subscribed` true means watching.
+ */
+export async function getRepoSubscription(
+	token: string,
+	owner: string,
+	repo: string
+): Promise<{ subscribed: boolean; ignored: boolean } | null> {
+	const { status, ok, data } = await ghGet<{ subscribed?: boolean; ignored?: boolean; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/subscription`,
+		token,
+		{ cache: false }
+	);
+	if (status === 404) return null;
+	if (!ok) throw new Error(data?.message || 'Failed to read repository subscription');
+	return { subscribed: Boolean(data?.subscribed), ignored: Boolean(data?.ignored) };
+}
+
+/**
+ * Set the authenticated user's subscription for a repo to "ignored": no web or
+ * email notifications from it, including participating threads (own PRs,
+ * mentions). Requires the OAuth 'notifications' scope; affects only the token's
+ * own user.
+ */
+export async function ignoreRepoNotifications(token: string, owner: string, repo: string): Promise<void> {
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/subscription`, {
+		method: 'PUT',
+		headers: { ...baseHeaders, ...authHeaders(token) },
+		body: JSON.stringify({ subscribed: false, ignored: true })
+	});
+	if (!res.ok) {
+		const data: ErrorResponse = await res.json().catch(() => ({}));
+		throw new Error(data.message || 'Failed to set repository subscription');
+	}
+}
+
+/**
  * List repos tagged with `topic`. With the user's `repo`-scoped token, GitHub's
  * search returns matching public repos plus the user's own private matches.
  * Visibility always reflects GitHub's current state.
