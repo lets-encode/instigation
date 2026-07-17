@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { XMLValidator } from 'fast-xml-parser';
+import { SyntaxValidator } from 'fast-xml-validator';
 
 import {
 	buildCampaignConfig,
@@ -86,7 +86,7 @@ test('worked example: stamped MEI is well-formed and placeholders filled', () =>
 		license: config.campaign.license
 	});
 
-	assert.equal(XMLValidator.validate(mei), true, 'sources/score.mei must be well-formed XML');
+	assert.equal(SyntaxValidator.validate(mei), true, 'sources/score.mei must be well-formed XML');
 	for (const ph of ['{{TITLE}}', '{{COMPOSER}}', '{{LICENSE}}']) {
 		assert.equal(mei.includes(ph), false, `placeholder ${ph} should be filled`);
 	}
@@ -166,13 +166,25 @@ test('stampTemplate: substituted values are XML-escaped', () => {
 	assert.equal(out, '<title>Bach &amp; Sons &lt;Works&gt;</title>');
 });
 
-test('configToYaml: quotes are escaped so the YAML stays valid', () => {
-	const config = buildCampaignConfig({ title: 'A "quoted" title' }, 'test-instigator', AUTOMATION);
-	assert.match(configToYaml(config), /title: "A \\"quoted\\" title"/);
+test('configToYaml: YAML-sensitive characters are escaped', () => {
+	const config = buildCampaignConfig({ title: 'A "quoted" \\ title\nsecond line' }, 'test-instigator', AUTOMATION);
+	assert.ok(configToYaml(config).includes('  title: "A \\"quoted\\" \\\\ title\\nsecond line"\n'));
 });
 
-test('assertSupported: rejects an unsupported fragmentation strategy', () => {
-	const config = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
-	config.fragmentation.strategy = 'by_measure';
-	assert.throws(() => assertSupported(config), /fragmentation\.strategy/);
+test('assertSupported: rejects unsupported schema, fragmentation and source shapes', () => {
+	const unsupportedSchema = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	unsupportedSchema.schema_version = 1;
+	assert.throws(() => assertSupported(unsupportedSchema), /schema_version/);
+
+	const unsupportedStrategy = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	unsupportedStrategy.fragmentation.strategy = 'by_measure';
+	assert.throws(() => assertSupported(unsupportedStrategy), /fragmentation\.strategy/);
+
+	const missingSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	missingSource.sources = [];
+	assert.throws(() => assertSupported(missingSource), /at least one source/);
+
+	const unsupportedSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	unsupportedSource.sources[0].kind = 'musicxml';
+	assert.throws(() => assertSupported(unsupportedSource), /source kind/);
 });

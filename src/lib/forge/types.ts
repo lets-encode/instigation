@@ -20,6 +20,12 @@ export interface ChangeRequest {
 	html_url: string;
 }
 
+/** A ChangeRequest whose head branch the client created itself. */
+export interface OpenedChangeRequest extends ChangeRequest {
+	/** The repo (upstream or the user's fork) and branch the PR's head lives in. */
+	head: { owner: string; repo: string; branch: string };
+}
+
 /** The forge operations the instigation GUI needs, independent of provider. */
 export interface ForgeClient {
 	/** The authenticated user + the scopes their token actually holds, or null. */
@@ -74,6 +80,8 @@ export interface ForgeClient {
 	createBranch(owner: string, repo: string, branch: string, fromSha: string): Promise<void>;
 	/** Fast-forward an existing branch to `sha`; false if that isn't a fast-forward. */
 	fastForwardBranch(owner: string, repo: string, branch: string, sha: string): Promise<boolean>;
+	/** Delete a branch; an already-gone ref counts as success. */
+	deleteBranch(owner: string, repo: string, branch: string): Promise<void>;
 	/** Open a pull/merge request. */
 	createPullRequest(
 		owner: string,
@@ -85,7 +93,7 @@ export interface ForgeClient {
 		owner: string,
 		repo: string,
 		opts: { branch: string; files: FileChange[]; message: string; title: string; body: string }
-	): Promise<ChangeRequest>;
+	): Promise<OpenedChangeRequest>;
 	/** Trigger a CI run (GitHub: workflow_dispatch) of `workflow` on `ref`. */
 	dispatchWorkflow(owner: string, repo: string, workflow: string, ref: string): Promise<void>;
 	/** A pull/merge request's current state: 'open' or 'closed'. */

@@ -344,7 +344,11 @@
 			try {
 				progress = 'Reading your upload…';
 				const { prepareFacsimile } = await import('$lib/facsimile-detect.ts');
-				facsimile = await prepareFacsimile(sourceFiles, (_done, _total, note) => (progress = note));
+				facsimile = await prepareFacsimile(
+					sourceFiles,
+					(_done, _total, note) => (progress = note),
+					{ detectorUrl: measureDetectorUrl }
+				);
 			} catch (err) {
 				console.error('Facsimile preparation failed:', (err as Error).message);
 				error = `Could not process the upload: ${(err as Error).message}`;
@@ -600,10 +604,10 @@
 						/>
 						<span class="hint">
 							{#if sourceFiles.length}
-								{sourceFiles.length} file{sourceFiles.length === 1 ? '' : 's'} selected. A PDF is split into
-								one image per page; images are used in the order shown.
+								{sourceFiles.length} file{sourceFiles.length === 1 ? '' : 's'} selected. Each PDF is split into
+								one image per page; all pages are combined into one score in the order shown.
 							{:else}
-								A single PDF (one image per page), or one or more JPG/PNG page images.
+								One or more PDFs (split into one image per page) and/or JPG/PNG page images.
 							{/if}
 						</span>
 						{#if dropNote}

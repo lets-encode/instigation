@@ -14,7 +14,6 @@
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
 import type { ForgeClient } from './forge/types.ts';
-import { meiFriendUrl } from './forge/config.ts';
 import {
 	parseTaskCsv,
 	parseStateCsv,
@@ -37,6 +36,7 @@ const STATE_PATH = 'tracking/state.csv';
 const LOCK_PATH = 'tracking/lock.csv';
 const HISTORY_PATH = 'tracking/history.csv';
 const MAX_LOG_ATTEMPTS = 3;
+const DEFAULT_MEI_FRIEND_URL = 'https://mei-friend.mdw.ac.at';
 
 /** What a command invocation is run against: the campaign, the user, the forge. */
 export interface CommandContext {
@@ -44,6 +44,8 @@ export interface CommandContext {
 	owner: string;
 	repo: string;
 	viewer: string;
+	/** Editor instance used for the mei-friend hand-off. */
+	meiFriendUrl?: string;
 	/** Progress messages for a busy indicator; pass a no-op when headless. */
 	progress: (message: string) => void;
 }
@@ -142,12 +144,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // its own user, and only when granted the OAuth 'notifications' scope.
 async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<void> {
 	const key = `lets-encode:muted:${owner}/${repo}`;
-	if (localStorage.getItem(key)) return;
+	const storage = typeof localStorage === 'undefined' ? null : localStorage;
+	if (storage?.getItem(key)) return;
 	try {
 		if (!(await f.getRepoSubscription(owner, repo))?.ignored) {
 			await f.ignoreRepoNotifications(owner, repo);
 		}
-		localStorage.setItem(key, '1');
+		storage?.setItem(key, '1');
 	} catch (e) {
 		// The repo-subscription API requires the OAuth 'notifications' scope; a
 		// 403/404 here usually means the token was granted without it.
@@ -160,31 +163,66 @@ async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<vo
 }
 
 // Wait until the campaign automation has processed a PR (it closes the PR
-// when done) and return its verdict comment. Null on timeout — the run is
-// then still in flight, not failed.
-async function waitForPrProcessed(ctx: CommandContext, prNumber: number): Promise<string | null> {
+// when done) and return its verdict comment. A timeout means the run is still
+// in flight, not failed. Once the PR is closed, a `head` branch
+// the console created in the user's fork is deleted: the automation deletes
+// the head branches of PRs opened within the campaign repo itself, but it has
+// no rights on a fork, so that half of the cleanup happens here with the
+// user's own session.
+type PrProcessingResult =
+	| { state: 'closed'; verdict: string | null }
+	| { state: 'timeout' };
+
+async function waitForPrProcessed(
+	ctx: CommandContext,
+	pr: {
+		number: number;
+		head?: { owner: string; repo: string; branch: string };
+		cleanup?: 'always' | 'accepted';
+	}
+): Promise<PrProcessingResult> {
 	const { forge: f, owner, repo } = ctx;
-	ctx.progress(`Campaign automation is processing PR #${prNumber}…`);
-	console.log('[pr] waiting for automation to process PR', prNumber);
+	ctx.progress(`Campaign automation is processing PR #${pr.number}…`);
+	console.log('[pr] waiting for automation to process PR', pr.number);
 	const deadline = Date.now() + 90_000;
 	let delayMs = 2_000;
 	while (Date.now() < deadline) {
 		await sleep(delayMs);
-		if ((await f.getPullRequestState(owner, repo, prNumber)) === 'closed') {
-			const verdict = await f.getLastIssueComment(owner, repo, prNumber);
-			console.log('[pr] PR', prNumber, 'processed; verdict:', verdict);
-			return verdict;
+		if ((await f.getPullRequestState(owner, repo, pr.number)) === 'closed') {
+			const verdict = await f.getLastIssueComment(owner, repo, pr.number);
+			console.log('[pr] PR', pr.number, 'processed; verdict:', verdict);
+			if (pr.cleanup !== 'accepted' || verdict?.startsWith('✅')) {
+				await cleanupForkHeadBranch(ctx, pr.head);
+			}
+			return { state: 'closed', verdict };
 		}
 		delayMs = Math.min(10_000, Math.ceil(delayMs * 1.5));
 	}
-	console.log('[pr] PR', prNumber, 'not processed within 90s (still in flight)');
-	return null;
+	console.log('[pr] PR', pr.number, 'not processed within 90s (still in flight)');
+	return { state: 'timeout' };
+}
+
+// Delete a closed PR's head branch when it lives in the user's fork. Non-fatal:
+// a leftover branch is clutter, not a failure of the command that opened the PR.
+async function cleanupForkHeadBranch(
+	ctx: CommandContext,
+	head: { owner: string; repo: string; branch: string } | undefined
+): Promise<void> {
+	if (!head || (head.owner === ctx.owner && head.repo === ctx.repo)) return;
+	try {
+		await ctx.forge.deleteBranch(head.owner, head.repo, head.branch);
+		console.log('[pr] deleted fork branch', `${head.owner}/${head.repo}:${head.branch}`);
+	} catch (e) {
+		console.warn(
+			`Could not delete ${head.branch} in ${head.owner}/${head.repo}: ${(e as Error).message}`
+		);
+	}
 }
 
 // Map the automation's verdict on a PR to a result banner: a rejection is an
 // error (never shown as success), no verdict yet (timeout) is a warning.
-function verdictResult(verdict: string | null, prNumber: number, prUrl: string, fallback: string): Result {
-	if (verdict == null) {
+function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: string, fallback: string): Result {
+	if (result.state === 'timeout') {
 		return {
 			ok: true,
 			warn: true,
@@ -192,8 +230,28 @@ function verdictResult(verdict: string | null, prNumber: number, prUrl: string, 
 			message: `${fallback} PR #${prNumber} is still being processed — refresh the tables in a moment.`
 		};
 	}
-	if (verdict.startsWith('❌')) return { error: verdict, prUrl };
-	return { ok: true, prUrl, message: verdict };
+	if (!result.verdict) {
+		return { error: `PR #${prNumber} closed without a coordinator verdict.`, prUrl };
+	}
+	if (result.verdict.startsWith('❌')) return { error: result.verdict, prUrl };
+	if (!result.verdict.startsWith('✅')) {
+		return { error: `PR #${prNumber} closed with an unrecognised coordinator verdict.`, prUrl };
+	}
+	return { ok: true, prUrl, message: result.verdict };
+}
+
+function stringFromConfig(configText: string | null, key: string): string {
+	const value = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(configText ?? '')?.[1];
+	if (!value) return '';
+	if (value.startsWith('"')) {
+		try {
+			const parsed = JSON.parse(value);
+			return typeof parsed === 'string' ? parsed : '';
+		} catch {
+			return '';
+		}
+	}
+	return value.replace(/\s+#.*$/, '').trim();
 }
 
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
@@ -263,8 +321,6 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			f.getRepoFile(owner, repo, 'config.yaml'),
 			f.getRepoAccess(owner, repo)
 		]);
-		const title = configYaml?.match(/^\s*title:\s*(?:"([^"]*)"|([^#\n]+))/m);
-		const license = configYaml?.match(/^\s*license:\s*(?:"([^"]*)"|([^#\n]+))/m);
 		const passThreshold = configYaml?.match(/^\s*pass_threshold:\s*(\d+)/m);
 		if (taskCsv == null || stateCsv == null || lockCsv == null) {
 			return {
@@ -291,8 +347,8 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			validationColumns: state.validationColumns,
 			locks: parseLockCsv(lockCsv),
 			history: historyCsv ? parseHistoryCsv(historyCsv) : [],
-			title: (title?.[1] ?? title?.[2] ?? '').trim(),
-			license: (license?.[1] ?? license?.[2] ?? '').trim(),
+			title: stringFromConfig(configYaml, 'title'),
+			license: stringFromConfig(configYaml, 'license'),
 			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1
 		};
 	}
@@ -307,7 +363,7 @@ const claimValidation: CommandDef<{ task_id: string; subtask_id: string }, Resul
 			ctx.progress('Opening claim PR…');
 			const pr = await openClaimPr(ctx, task_id, subtask_id, 'validation', envelope);
 			console.log('[claim] claim PR opened', pr.number, pr.html_url);
-			const verdict = await waitForPrProcessed(ctx, pr.number);
+			const verdict = await waitForPrProcessed(ctx, pr);
 			return verdictResult(
 				verdict,
 				pr.number,
@@ -377,7 +433,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			if (!downloadUrl) {
 				return { error: `Could not get a download URL for ${fragment}.` };
 			}
-			const url = `${meiFriendUrl}/?file=${encodeURIComponent(downloadUrl)}${meiParam}`;
+			const url = `${ctx.meiFriendUrl ?? DEFAULT_MEI_FRIEND_URL}/?file=${encodeURIComponent(downloadUrl)}${meiParam}`;
 
 			const mine = parseLockCsv((await f.getRepoFile(owner, repo, LOCK_PATH)) ?? '').some(
 				(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === viewer
@@ -389,7 +445,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 				const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
 				console.log('[editor] encoding claim PR opened', pr.number, pr.html_url);
 				prUrl = pr.html_url;
-				const verdict = await waitForPrProcessed(ctx, pr.number);
+				const verdict = await waitForPrProcessed(ctx, pr);
 				const res = verdictResult(verdict, pr.number, pr.html_url, `Opened encoding claim PR #${pr.number}.`);
 				if (res?.error) {
 					return { error: `The encoding claim was rejected — ${res.error}`, prUrl };
@@ -425,11 +481,14 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 			// campaign repo for owners/collaborators, in the volunteer's fork
 			// otherwise — so the head is fully determined; nothing to guess.
 			let head: string;
+			let forkHead: { owner: string; repo: string; branch: string } | undefined;
 			if (canPush) {
 				head = `encode-${task_id}`;
 			} else {
 				const fork = await f.ensureFork(owner, repo);
-				head = `${fork.owner}:encode-${task_id}`;
+				const branch = `encode-${task_id}`;
+				head = `${fork.owner}:${branch}`;
+				forkHead = { ...fork, branch };
 			}
 			const body = `Submits the encoding of ${task_id} by ${viewer}, edited in mei-friend. Opened from the campaign console.`;
 			console.log('[submitpr] opening PR', { head, base });
@@ -440,7 +499,11 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[submitpr] submission PR opened', pr.number, pr.html_url);
-			const verdict = await waitForPrProcessed(ctx, pr.number);
+			const verdict = await waitForPrProcessed(ctx, {
+				...pr,
+				head: forkHead,
+				cleanup: 'accepted'
+			});
 			return verdictResult(verdict, pr.number, pr.html_url, `Opened submission PR #${pr.number} for ${task_id}.`);
 		} catch (e) {
 			return { error: `Submission PR failed: ${(e as Error).message}` };
@@ -456,6 +519,9 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 	async run({ task_id, subtask_id, verdict }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
 		try {
+			if (verdict !== 'pass' && verdict !== 'fail') {
+				return { error: `Invalid validation verdict: ${verdict}.` };
+			}
 			await muteOnce(f, owner, repo);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
 			const row = findRow(state.rows, task_id, subtask_id);
@@ -476,7 +542,7 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[validate] validation PR opened', pr.number, pr.html_url);
-			const outcome = await waitForPrProcessed(ctx, pr.number);
+			const outcome = await waitForPrProcessed(ctx, pr);
 			return verdictResult(
 				outcome,
 				pr.number,
@@ -646,7 +712,7 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 			ctx.progress('Opening claim PR…');
 			const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
 			console.log('[claim] claim PR opened', pr.number, pr.html_url);
-			const verdict = await waitForPrProcessed(ctx, pr.number);
+			const verdict = await waitForPrProcessed(ctx, pr);
 			return verdictResult(verdict, pr.number, pr.html_url, `Opened claim PR #${pr.number} for ${task_id} (encoding).`);
 		} catch (e) {
 			return { error: `Claim failed: ${(e as Error).message}` };
@@ -698,7 +764,7 @@ async function submitFacsimile(
 			body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 		});
 		console.log('[zones] PR opened', pr.number, pr.html_url);
-		const verdict = await waitForPrProcessed(ctx, pr.number);
+		const verdict = await waitForPrProcessed(ctx, { ...pr, cleanup: 'accepted' });
 		return verdictResult(verdict, pr.number, pr.html_url, `Opened submission PR #${pr.number} for ${task_id}.`);
 	} catch (e) {
 		return { error: `Submission failed: ${(e as Error).message}` };

@@ -29,6 +29,16 @@ test('envelopeFromPrBody: null on a malformed envelope', () => {
 	assert.equal(envelopeFromPrBody('<!-- lets-encode:command {"input":{}} -->'), null);
 });
 
+test('envelopeFromPrBody: rejects invalid envelope fields', () => {
+	const body = (envelope: unknown) => `<!-- lets-encode:command ${JSON.stringify(envelope)} -->`;
+	assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, command: '' })), null);
+	assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, version: 0 })), null);
+	assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, version: 1.5 })), null);
+	assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, user_id: '' })), null);
+	assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, timestamp: 'not-a-date' })), null);
+	assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, input: [] })), null);
+});
+
 test('envelopeColumns: the command columns for a history row, empty without an envelope', () => {
 	assert.deepEqual(envelopeColumns(ENVELOPE), {
 		command: 'campaign.claimValidation',

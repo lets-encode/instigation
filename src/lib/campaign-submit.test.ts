@@ -238,7 +238,27 @@ test('validation: below threshold stays validation_required, writing the next op
 	assert.equal(row.status, 'validation_required');
 });
 
-test('validation: rejects an invalid verdict, wrong state, and non-lock-holders', () => {
+test('validation: malformed pass-like cells do not satisfy the threshold', () => {
+	const state = parseStateCsv(
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n' +
+			'T0001,,validation_required,bob,t,,\n' +
+			'T0001,S0001,validation_required,,,pass||t,\n'
+	);
+	const v = val({
+		state,
+		locks: validationLock,
+		intent: { task_id: 'T0001', subtask_id: 'S0001', verdict: 'pass' },
+		author: 'carol',
+		changedPaths: ['tracking/state.csv'],
+		passThreshold: 2,
+		now: NOW
+	});
+	assert.equal(v.ok, true);
+	assert.equal(findRow(v.state!.rows, 'T0001', 'S0001')!.status, 'validation_required');
+	assert.equal(findRow(v.state!.rows, 'T0001', '')!.status, 'validation_required');
+});
+
+test('validation: rejects invalid verdicts, out-of-bounds changes, wrong states, and non-lock-holders', () => {
 	const base = {
 		locks: validationLock,
 		author: 'carol',
@@ -255,6 +275,15 @@ test('validation: rejects an invalid verdict, wrong state, and non-lock-holders'
 		val({ ...base, state: encodingState(), intent: { task_id: 'T0001', subtask_id: 'S0001', verdict: 'pass' } })
 			.reason,
 		'wrong_state'
+	);
+	assert.equal(
+		val({
+			...base,
+			state: validationState(),
+			changedPaths: ['tracking/state.csv', 'sources/score.mei'],
+			intent: { task_id: 'T0001', subtask_id: 'S0001', verdict: 'pass' }
+		}).reason,
+		'out_of_bounds'
 	);
 	assert.equal(
 		val({

@@ -40,7 +40,7 @@ test('the boundary is strict: exactly at the timeout is kept, just over is remov
 	assert.equal(over.removed.length, 1); // 121 min
 });
 
-test('keeps locks with an unparseable timestamp', () => {
+test('keeps locks when either timestamp is unparseable', () => {
 	const { kept, removed } = reapLocks({
 		locks: [lock('T1', 'not-a-date')],
 		staleAfterMinutes: 120,
@@ -48,6 +48,14 @@ test('keeps locks with an unparseable timestamp', () => {
 	});
 	assert.equal(kept.length, 1);
 	assert.equal(removed.length, 0);
+
+	const invalidNow = reapLocks({
+		locks: [lock('T1', '2026-06-25T09:00:00Z')],
+		staleAfterMinutes: 120,
+		now: 'not-a-date'
+	});
+	assert.equal(invalidNow.kept.length, 1);
+	assert.equal(invalidNow.removed.length, 0);
 });
 
 test('empty lock table yields nothing to do', () => {

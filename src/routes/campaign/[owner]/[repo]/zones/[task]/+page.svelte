@@ -262,7 +262,7 @@
   // ------------------------------------------------------------------------
   // Pointer interactions (zones mode)
 
-  let svgEls: SVGSVGElement[] = [];
+  let svgEls = $state<SVGSVGElement[]>([]);
   type Drag = {
     kind: "move" | "resize" | "draw";
     p: number;

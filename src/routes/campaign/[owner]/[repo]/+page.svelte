@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import { createForge } from "$lib/forge/index.ts";
+  import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type { TaskRow, StateRow, LockRow, HistoryRow } from "$lib/campaign-tables.ts";
@@ -245,6 +246,7 @@
     owner,
     repo,
     viewer,
+    meiFriendUrl,
     progress: (m) => (busyMessage = m),
   });
 

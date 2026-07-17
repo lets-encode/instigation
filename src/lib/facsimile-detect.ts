@@ -7,12 +7,7 @@
 // normalized (0..1) bounding boxes are scaled to the page's real pixel size and
 // sorted into reading order. Everything runs client-side — no backend.
 
-import * as pdfjs from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { measureDetectorUrl } from './forge/config.ts';
 import { sortReadingOrder, type FacsimilePage, type MeasureBox } from './mei-facsimile.ts';
-
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 /** The detector's response shape (only the fields we read). */
 interface DetectorResponse {
@@ -43,6 +38,15 @@ const JPEG_QUALITY = 0.85;
 // Per-page ceiling on a detector request, so a hung service fails the upload
 // instead of leaving the progress overlay spinning indefinitely.
 const DETECTOR_TIMEOUT_MS = 60_000;
+const DEFAULT_DETECTOR_URL = 'https://measure-detector.edirom.de';
+
+export interface PrepareFacsimileOptions {
+	detectorUrl?: string;
+	/** Browser image decoding; injectable for non-browser integration tests. */
+	getImageSize?: (blob: Blob) => Promise<{ width: number; height: number }>;
+	/** PDF rasterisation; injectable for non-browser integration tests. */
+	renderPdf?: (file: File) => Promise<Blob[]>;
+}
 
 function isPdf(file: File): boolean {
 	return file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
@@ -60,6 +64,11 @@ async function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
 
 /** Rasterise a PDF to one JPEG Blob per page, in page order. */
 async function pdfToImages(file: File): Promise<Blob[]> {
+	const [pdfjs, worker] = await Promise.all([
+		import('pdfjs-dist'),
+		import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+	]);
+	pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
 	const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
 	const blobs: Blob[] = [];
 	try {
@@ -97,7 +106,7 @@ async function imageSize(blob: Blob): Promise<{ width: number; height: number }>
  * or malformed detection data. Returns null when the detector fails on this
  * specific page (HTTP 500), signalling the caller to skip just that page.
  */
-async function detectMeasures(blob: Blob, filename: string): Promise<MeasureBox[] | null> {
+async function detectMeasures(blob: Blob, filename: string, detectorUrl: string): Promise<MeasureBox[] | null> {
 	const form = new FormData();
 	form.append('file', blob, filename);
 	form.append('expand', 'false');
@@ -107,7 +116,7 @@ async function detectMeasures(blob: Blob, filename: string): Promise<MeasureBox[
 
 	let res: Response;
 	try {
-		res = await fetch(`${measureDetectorUrl.replace(/\/$/, '')}/measures`, {
+		res = await fetch(`${detectorUrl.replace(/\/$/, '')}/measures`, {
 			method: 'POST',
 			headers: { accept: 'application/json' },
 			body: form,
@@ -118,7 +127,7 @@ async function detectMeasures(blob: Blob, filename: string): Promise<MeasureBox[
 			throw new Error(`The measure detector did not respond within ${DETECTOR_TIMEOUT_MS / 1000}s for ${filename}.`);
 		}
 		// fetch() rejects with an opaque TypeError on network and CORS failures.
-		throw new Error(`Could not reach the measure detector at ${measureDetectorUrl}.`);
+		throw new Error(`Could not reach the measure detector at ${detectorUrl}.`);
 	}
 	if (res.status === 500) {
 		return null; // detector broke on this page; caller skips it
@@ -132,15 +141,25 @@ async function detectMeasures(blob: Blob, filename: string): Promise<MeasureBox[
 	} catch {
 		throw new Error(`The measure detector returned an invalid response for ${filename}.`);
 	}
-	if (data.measures !== undefined && !Array.isArray(data.measures)) {
+	if (!data || typeof data !== 'object' || (data.measures !== undefined && !Array.isArray(data.measures))) {
 		throw new Error(`The measure detector returned an unexpected response shape for ${filename}.`);
 	}
-	const boxes = (data.measures ?? [])
-		.map((m) => m?.bbox)
-		.filter((b): b is NonNullable<typeof b> => Boolean(b))
-		.map((b) => ({ ulx: b.x1, uly: b.y1, lrx: b.x2, lry: b.y2 }));
+	if ((data.measures ?? []).some((measure) => !measure?.bbox || typeof measure.bbox !== 'object')) {
+		throw new Error(`The measure detector returned an unexpected response shape for ${filename}.`);
+	}
+	const boxes = (data.measures ?? []).map(({ bbox }) => ({
+		ulx: bbox!.x1,
+		uly: bbox!.y1,
+		lrx: bbox!.x2,
+		lry: bbox!.y2
+	}));
 	const invalid = boxes.filter(
-		(b) => ![b.ulx, b.uly, b.lrx, b.lry].every((v) => typeof v === 'number' && Number.isFinite(v))
+		(b) =>
+			![b.ulx, b.uly, b.lrx, b.lry].every(
+				(value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+			) ||
+			b.ulx >= b.lrx ||
+			b.uly >= b.lry
 	);
 	if (invalid.length) {
 		throw new Error(`The measure detector returned malformed coordinates for ${filename}.`);
@@ -151,23 +170,35 @@ async function detectMeasures(blob: Blob, filename: string): Promise<MeasureBox[
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /**
- * Turn uploaded files into pages + image blobs. A single PDF expands to its
- * pages; otherwise each image file is a page, in the given order. Every page is
- * detected sequentially (gentle on the shared detector service), its normalized
- * boxes scaled to the page's real pixel size and sorted into reading order.
+ * Turn uploaded files into pages + image blobs. Each PDF expands to one page
+ * per document page; each image file is a page. Pages from all files are
+ * concatenated in the given file order into one compound sequence. Every page
+ * is detected sequentially (gentle on the shared detector service), its
+ * normalized boxes scaled to the page's real pixel size and sorted into
+ * reading order.
  */
-export async function prepareFacsimile(files: File[], onProgress?: ProgressFn): Promise<PreparedFacsimile> {
+export async function prepareFacsimile(
+	files: File[],
+	onProgress?: ProgressFn,
+	options: PrepareFacsimileOptions = {}
+): Promise<PreparedFacsimile> {
+	const detectorUrl = options.detectorUrl ?? DEFAULT_DETECTOR_URL;
+	const getImageSize = options.getImageSize ?? imageSize;
+	const renderPdf = options.renderPdf ?? pdfToImages;
 	// Build the ordered list of (filename, blob) page images.
 	const pageBlobs: Array<{ name: string; blob: Blob }> = [];
-	if (files.length === 1 && isPdf(files[0])) {
-		const rendered = await pdfToImages(files[0]);
-		rendered.forEach((blob, i) => pageBlobs.push({ name: `${pad2(i + 1)}.jpg`, blob }));
-	} else {
-		for (let i = 0; i < files.length; i++) {
-			const f = files[i];
-			if (isPdf(f)) throw new Error('Upload a single PDF, or one or more image files — not a mix.');
-			const ext = (/\.(jpe?g|png)$/i.exec(f.name)?.[1] ?? 'jpg').toLowerCase().replace('jpeg', 'jpg');
-			pageBlobs.push({ name: `${pad2(i + 1)}.${ext}`, blob: f });
+	for (const f of files) {
+		if (isPdf(f)) {
+			onProgress?.(0, files.length, `Rendering ${f.name}…`);
+			for (const blob of await renderPdf(f)) {
+				pageBlobs.push({ name: `${pad2(pageBlobs.length + 1)}.jpg`, blob });
+			}
+		} else {
+			const mimeExt = f.type === 'image/jpeg' ? 'jpg' : f.type === 'image/png' ? 'png' : null;
+			const nameExt = /\.(jpe?g|png)$/i.exec(f.name)?.[1]?.toLowerCase().replace('jpeg', 'jpg') ?? null;
+			const ext = mimeExt ?? (!f.type ? nameExt : null);
+			if (!ext) throw new Error(`Unsupported page image: ${f.name}. Upload JPG or PNG files.`);
+			pageBlobs.push({ name: `${pad2(pageBlobs.length + 1)}.${ext}`, blob: f });
 		}
 	}
 	if (!pageBlobs.length) throw new Error('No pages to process.');
@@ -180,12 +211,12 @@ export async function prepareFacsimile(files: File[], onProgress?: ProgressFn): 
 	for (let i = 0; i < pageBlobs.length; i++) {
 		const { name, blob } = pageBlobs[i];
 		onProgress?.(i, total, `Detecting measures on page ${i + 1} of ${total}…`);
-		const normalized = await detectMeasures(blob, name);
+		const normalized = await detectMeasures(blob, name, detectorUrl);
 		if (normalized === null) {
 			skipped.push(name);
 			continue;
 		}
-		const { width, height } = await imageSize(blob);
+		const { width, height } = await getImageSize(blob);
 		const measures = sortReadingOrder(normalized).map((b) => ({
 			ulx: b.ulx * width,
 			uly: b.uly * height,

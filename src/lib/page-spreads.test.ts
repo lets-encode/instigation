@@ -23,6 +23,10 @@ test('double view, page 1 on the left: 1–2 | 3–4 …', () => {
 		{ pages: [0, 1] },
 		{ pages: [2, 3] }
 	]);
+	assert.deepEqual(buildSpreads(3, 'double', false), [
+		{ pages: [0, 1] },
+		{ pages: [2], lonelySide: 'left' }
+	]);
 });
 
 test('no pages: no spreads', () => {

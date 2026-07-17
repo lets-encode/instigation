@@ -3,6 +3,8 @@
 The server-side piece of the SPA's GitHub auth. The OAuth token **never reaches
 the browser**: the whole flow runs here, the token is kept in a server-side
 session, and the browser holds only an opaque httpOnly session cookie.
+The authorization-code exchange also uses PKCE (S256) and requests the `repo`
+and `notifications` scopes used by repository mutations and notification muting.
 
 - `GET /login?return_to=/path` — starts the OAuth flow (redirects to GitHub).
 - `GET /authorize` — GitHub's callback: exchanges the code, stores the token in
@@ -63,6 +65,14 @@ flask --app app run --port 8787
 gunicorn --bind 127.0.0.1:8787 app:app
 ```
 
+## Test
+
+From the repository root, with the broker requirements installed:
+
+```sh
+python -m unittest broker.test_app -v
+```
+
 ## Deployment notes
 
 - **HTTPS is required** — the session cookie is marked `Secure` outside
@@ -75,8 +85,6 @@ gunicorn --bind 127.0.0.1:8787 app:app
 
 ## Provider note
 
-This broker exists because GitHub offers no PKCE and no CORS on its token
-endpoint — and holding the token server-side keeps it out of reach of any
-script running in the page. A GitLab deployment could use PKCE directly in the
-browser, trading that protection for a serverless setup — auth is a provider
-trait (see `src/lib/forge/config.ts`).
+This broker exists because holding the token server-side keeps it out of reach
+of any script running in the page. PKCE protects the authorization-code exchange
+as well. Auth remains a provider trait (see `src/lib/forge/config.ts`).

@@ -25,8 +25,7 @@ import {
 	parseLockCsv,
 	serializeStateCsv,
 	serializeLockCsv,
-	appendHistory,
-	findRow
+	appendHistory
 } from '../src/lib/campaign-tables.ts';
 import type { ParsedState, TaskRow, LockRow, HistoryRow } from '../src/lib/campaign-tables.ts';
 import { envelopeFromPrBody, envelopeColumns } from '../src/lib/command-envelope.ts';
@@ -34,6 +33,15 @@ import type { CommandEnvelope } from '../src/lib/command-envelope.ts';
 import { checkClaim } from '../src/lib/campaign-claim.ts';
 import { checkEncoding, checkValidation } from '../src/lib/campaign-submit.ts';
 import { reapLocks } from '../src/lib/campaign-reaper.ts';
+import {
+	addedRowFromPatch,
+	classifyPullRequest,
+	numberFromConfig,
+	resolveEncodingTask,
+	shouldCleanupSubmission,
+	singleCellDiff,
+	validationVerdict
+} from '../src/lib/coordinator-policy.ts';
 import {
 	getRepoFile,
 	getRepoHead,
@@ -107,29 +115,8 @@ async function isValidMei(content: string): Promise<boolean> {
 	return r.status === 0;
 }
 
-// Targeted reads of the machine-generated config.yaml (fixed shape, so no YAML
-// dependency is needed).
-function numberFromConfig(configText: string | null, key: string, fallback: number): number {
-	const m = new RegExp(`^\\s*${key}:\\s*(\\d+)`, 'm').exec(configText ?? '');
-	return m ? Number(m[1]) : fallback;
-}
-
 // ---------------------------------------------------------------------------
 // Claim (a PR adding one row to lock.csv)
-
-// Pull the single added line out of a unified-diff patch. Returns null unless
-// exactly one line was added and none removed — a claim adds one lock row.
-function addedRowFromPatch(patch: string | undefined): string | null {
-	if (!patch) return null;
-	const added: string[] = [];
-	let removed = 0;
-	for (const line of patch.split('\n')) {
-		if (line.startsWith('+++') || line.startsWith('---')) continue;
-		if (line.startsWith('+')) added.push(line.slice(1));
-		else if (line.startsWith('-')) removed++;
-	}
-	return removed === 0 && added.length === 1 ? added[0] : null;
-}
 
 async function attemptClaim(
 	changedPaths: string[],
@@ -241,62 +228,10 @@ async function runClaim(
 // Submission (encoding: the PR edits the task's fragment; validation: the PR
 // records a pass/fail in state.csv)
 
-// The single ((task_id, subtask_id), column, value) that differs between two
-// parsed state tables, or null if not exactly one cell changed. Used to read a
-// validation PR's intent (which subtask, pass/fail) from its proposed state.csv.
-function singleCellDiff(
-	base: ParsedState,
-	head: ParsedState
-): { task_id: string; subtask_id: string; column: string; value: string } | null {
-	const diffs: Array<{ task_id: string; subtask_id: string; column: string; value: string }> = [];
-	for (const headRow of head.rows) {
-		const baseRow = findRow(base.rows, headRow.task_id, headRow.subtask_id);
-		if (!baseRow) continue;
-		for (const col of head.header) {
-			if ((headRow[col] ?? '') !== (baseRow[col] ?? '')) {
-				diffs.push({
-					task_id: headRow.task_id,
-					subtask_id: headRow.subtask_id,
-					column: col,
-					value: headRow[col] ?? ''
-				});
-			}
-		}
-	}
-	return diffs.length === 1 ? diffs[0] : null;
-}
-
 interface SubmitOutcome extends Verdict {
 	files: FileChange[];
 	message: string;
 	history: HistoryRow;
-}
-
-// Which task an encoding-type submission addresses. Several tasks can share a
-// fragment (the pre-tasks and the encoding task all live on the score), so the
-// fragment alone no longer identifies the task; the tie is broken by the PR's
-// own data — the command envelope's task_id, the `encode-<task_id>` branch
-// name, or the author's single active encoding lock among the candidates.
-function resolveEncodingTask(
-	tasks: TaskRow[],
-	locks: LockRow[],
-	changedPaths: string[],
-	envelope: CommandEnvelope | null
-): TaskRow | undefined {
-	const candidates = tasks.filter((t) => t.subtask_id === '' && changedPaths.includes(t.fragment));
-	if (candidates.length <= 1) return candidates[0];
-
-	const claimed = String(envelope?.input?.task_id ?? '');
-	const byEnvelope = candidates.find((t) => t.task_id === claimed);
-	if (byEnvelope) return byEnvelope;
-
-	const byBranch = candidates.find((t) => headRef === `encode-${t.task_id}`);
-	if (byBranch) return byBranch;
-
-	const held = candidates.filter((t) =>
-		locks.some((l) => l.task_id === t.task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === author)
-	);
-	return held.length === 1 ? held[0] : undefined;
 }
 
 async function decideEncoding(
@@ -308,7 +243,7 @@ async function decideEncoding(
 	envelope: CommandEnvelope | null,
 	now: string
 ): Promise<Omit<SubmitOutcome, 'files' | 'message' | 'history'> & Partial<SubmitOutcome>> {
-	const task = resolveEncodingTask(tasks, locks, changedPaths, envelope);
+	const task = resolveEncodingTask({ tasks, locks, changedPaths, envelope, headRef, author });
 	if (!task) return { ok: false, reason: 'unknown_task' };
 
 	const mei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
@@ -358,7 +293,7 @@ async function decideValidation(
 	if (!diff || !state.validationColumns.includes(diff.column)) {
 		return { ok: false, reason: 'malformed_validation' };
 	}
-	const status = diff.value.startsWith('pass') ? 'pass' : diff.value.startsWith('fail') ? 'fail' : null;
+	const status = validationVerdict(diff.value);
 	if (!status) return { ok: false, reason: 'invalid_verdict' };
 
 	const configText = await getRepoFile(token, owner, repo, CONFIG_PATH, sha);
@@ -461,7 +396,7 @@ async function runSubmit(
 		? `✅ Submission accepted (${kind}).`
 		: `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.`;
 	await commentAndClosePr(token, owner, repo, prNumber, body);
-	await cleanupHeadBranch();
+	if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
 }
 
 // ---------------------------------------------------------------------------
@@ -540,8 +475,9 @@ async function run(): Promise<void> {
 	// it feeds the command columns of the history row this run authors.
 	const envelope = envelopeFromPrBody(details.body);
 	const changedPaths = files.map((f) => f.filename);
-	if (changedPaths.includes(LOCK_PATH)) return runClaim(files, envelope);
-	return runSubmit(changedPaths.includes(STATE_PATH) ? 'validation' : 'encoding', files, envelope);
+	const kind = classifyPullRequest(changedPaths);
+	if (kind === 'claim') return runClaim(files, envelope);
+	return runSubmit(kind, files, envelope);
 }
 
 run().catch((e) => {

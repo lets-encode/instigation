@@ -7,7 +7,7 @@
 //   - sources/score.mei      (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}};
 //                             facsimile campaigns commit the stage-A facsimile MEI instead)
 //   - tracking/task.csv      (buildTaskCsv: task T0001 + one validation subtask S0001;
-//                             facsimile campaigns prepend the P0001/P0002 pre-tasks)
+//                             facsimile campaigns prepend the P0001 pre-task)
 //   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
@@ -19,7 +19,7 @@ export interface AutomationPointer {
 	path: string;
 }
 
-/** A v1 campaign config object. */
+/** A schema-v2 campaign config object. */
 export interface CampaignConfig {
 	schema_version: number;
 	campaign: {
@@ -61,7 +61,7 @@ const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encod
 const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
 const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
 
-// v1 defaults for fields the create form does not surface.
+// Defaults for fields the create form does not surface.
 const DEFAULTS = {
 	language: 'en',
 	license: 'CC-BY-4.0',
@@ -87,9 +87,10 @@ function csvField(value: unknown): string {
 
 const csvRow = (fields: unknown[]): string => fields.map(csvField).join(',');
 
-// Double-quoted YAML scalar; backslash and quote are the only escapes needed.
+// JSON string syntax is valid for YAML double-quoted scalars and escapes
+// quotes, backslashes, newlines and control characters.
 function yamlStr(value: unknown): string {
-	return `"${String(value ?? '').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+	return JSON.stringify(String(value ?? ''));
 }
 
 // Two source kinds, one fragmentation strategy and one schema version are
@@ -110,9 +111,9 @@ export function assertSupported(config: CampaignConfig): void {
 }
 
 /**
- * Build the v1 campaign config object from create-form fields, the instigator
+ * Build the schema-v2 campaign config object from create-form fields, the instigator
  * login and the central automation pointer. Unspecified optional fields fall
- * back to v1 defaults.
+ * back to defaults.
  */
 export function buildCampaignConfig(
 	fields: CampaignFields,
@@ -147,7 +148,7 @@ export function buildCampaignConfig(
 	};
 }
 
-/** Serialise a v1 config object to the canonical config.yaml text. */
+/** Serialise a schema-v2 config object to the canonical config.yaml text. */
 export function configToYaml(config: CampaignConfig): string {
 	const { campaign: c, sources, validation: v, locking: l } = config;
 	const src = sources[0];

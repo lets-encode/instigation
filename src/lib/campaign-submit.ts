@@ -12,7 +12,7 @@
 // produce the authoritative table changes.
 
 import { boundaryCheck } from './campaign-claim.ts';
-import { findRow } from './campaign-tables.ts';
+import { findRow, isFinalValidation } from './campaign-tables.ts';
 import type { ParsedState, TaskRow, LockRow } from './campaign-tables.ts';
 
 /** Encoding submission intent: just the task being encoded. */
@@ -155,7 +155,10 @@ export function checkValidation({ state, locks, intent, author, changedPaths, pa
 		};
 	}
 
-	const passCount = next.validationColumns.filter((c) => (nextRow[c] ?? '').startsWith('pass|')).length;
+	const passCount = next.validationColumns.filter((c) => {
+		const cell = nextRow[c] ?? '';
+		return isFinalValidation(cell) && cell.startsWith('pass|');
+	}).length;
 	if (passCount >= passThreshold) nextRow.status = 'completed';
 
 	// The task completes when its last subtask does.

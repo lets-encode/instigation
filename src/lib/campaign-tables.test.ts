@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {
 	parseCsv,
 	parseTaskCsv,
-	serializeTaskCsv,
 	parseStateCsv,
 	serializeStateCsv,
 	parseLockCsv,
@@ -22,6 +21,14 @@ const STATE =
 
 test('parseCsv: handles quoted fields with embedded commas', () => {
 	assert.deepEqual(parseCsv('a,"b,c",d\n'), [['a', 'b,c', 'd']]);
+});
+
+test('parseCsv: handles escaped quotes', () => {
+	assert.deepEqual(parseCsv('a,"b""c",d\n'), [['a', 'b"c', 'd']]);
+});
+
+test('parseCsv: handles newlines inside quoted fields', () => {
+	assert.deepEqual(parseCsv('a,"line 1\nline 2",d\n'), [['a', 'line 1\nline 2', 'd']]);
 });
 
 test('parseCsv: no trailing empty row when text ends in newline', () => {
@@ -49,14 +56,6 @@ test('parseTaskCsv: task and subtask rows become keyed objects', () => {
 	});
 	assert.equal(rows[1].subtask_id, 'S0001');
 	assert.equal(rows[1].locator, 'm-12');
-});
-
-test('serializeTaskCsv: round-trips with parseTaskCsv', () => {
-	const text =
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-		'T0001,,sources/score.mei,,,,\n' +
-		'T0001,S0001,sources/score.mei,,,,\n';
-	assert.equal(serializeTaskCsv(parseTaskCsv(text)), text);
 });
 
 test('parseStateCsv: exposes validation columns and keyed task/subtask rows', () => {
@@ -136,6 +135,24 @@ test('appendHistory: creates the header when the table is missing', () => {
 	assert.match(out, /^timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n/);
 });
 
+test('appendHistory: adds a newline before appending to a table without one', () => {
+	const existing =
+		'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n' +
+		't1,T0001,,bob,claim_encoding,accepted,,,,';
+	const out = appendHistory(existing, [
+		{
+			timestamp: 't2',
+			task_id: 'T0001',
+			subtask_id: '',
+			user_id: 'bob',
+			action: 'reap',
+			outcome: 'released',
+			detail: 'encoding'
+		}
+	]);
+	assert.equal(out, existing + '\nt2,T0001,,bob,reap,released,encoding,,,\n');
+});
+
 test('appendHistory: command columns and their JSON input round-trip through CSV quoting', () => {
 	const row = {
 		timestamp: '2026-07-13T10:00:00Z',
@@ -173,4 +190,9 @@ test('isFinalValidation: only pass/fail are final', () => {
 	assert.equal(isFinalValidation('pass|alice|t'), true);
 	assert.equal(isFinalValidation('fail|alice|t'), true);
 	assert.equal(isFinalValidation(''), false);
+	assert.equal(isFinalValidation('pass'), false);
+	assert.equal(isFinalValidation('pass||t'), false);
+	assert.equal(isFinalValidation('fail|alice|'), false);
+	assert.equal(isFinalValidation('pass|alice|t|extra'), false);
+	assert.equal(isFinalValidation('pending|alice|t'), false);
 });

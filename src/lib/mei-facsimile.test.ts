@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { SyntaxValidator } from 'fast-xml-validator';
 import {
 	buildFacsimileMei,
 	initialFacsimileModel,
@@ -32,6 +33,7 @@ const model = () => initialFacsimileModel(twoPages, { title: 'T', composer: 'C',
 
 test('stage A: surfaces, graphics and labelled zones — no measures, no breaks', () => {
 	const mei = buildFacsimileMei(model());
+	assert.equal(SyntaxValidator.validate(mei), true);
 	assert.equal((mei.match(/<surface /g) ?? []).length, 2);
 	assert.equal((mei.match(/<graphic /g) ?? []).length, 2);
 	assert.equal((mei.match(/<zone /g) ?? []).length, 3);
@@ -48,18 +50,24 @@ test('stage C: a pb per page, an sb per flagged measure (except page starts)', (
 	// Page 1's two boxes are two systems (stacked), so its second measure is a
 	// system start — expect one <sb/> for it; page firsts are covered by <pb/>.
 	const mei = buildFacsimileMei(m, { withBreaks: true });
+	assert.equal(SyntaxValidator.validate(mei), true);
 	assert.equal((mei.match(/<pb /g) ?? []).length, 2);
 	assert.equal((mei.match(/<sb /g) ?? []).length, 1);
+	assert.equal((mei.match(/<measure /g) ?? []).length, 3);
 	assert.ok(/<pb[^>]*facs="#surface-1"/.test(mei));
 });
 
-test('volta labels: an override interrupts the numbering and it continues after', () => {
+test('volta labels: alphanumeric labels are emitted and nextLabel advances their leading number', () => {
 	const m = model();
 	m.pages[0].zones[1].label = '1a';
 	// Automatic numbering derives the next label from the previous one.
 	assert.equal(nextLabel('1a'), '2');
 	const mei = buildFacsimileMei(m, { withBreaks: true });
 	assert.ok(mei.includes('n="1a" facs="#zone-1-2"'));
+});
+
+test('parseFacsimileMei rejects input without an MEI header', () => {
+	assert.throws(() => parseFacsimileMei('<mei><music/></mei>'), /no <meiHead>/);
 });
 
 test('parseFacsimileMei round-trips the model through both active stages', () => {

@@ -27,6 +27,7 @@ import sys
 from datetime import timedelta
 from os import getenv, makedirs, chmod, path
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 from authlib.integrations.flask_client import OAuth
@@ -49,6 +50,8 @@ if not app.secret_key:
     sys.exit("FLASK_SECRET is not set; refusing to start with unsigned sessions.")
 if not development and not getenv("REDIRECT_URL"):
     sys.exit("REDIRECT_URL is not set; production OAuth callbacks must be explicit.")
+if not getenv("GITHUB_CLIENT_ID") or not getenv("GITHUB_CLIENT_SECRET"):
+    sys.exit("GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must both be set.")
 
 # Server-side sessions: session data (including the GitHub OAuth token) is kept
 # on the server; the browser only holds an opaque session ID. With Flask's
@@ -92,7 +95,7 @@ github = oauth.register(
     access_token_url="https://github.com/login/oauth/access_token",
     authorize_url="https://github.com/login/oauth/authorize",
     api_base_url="https://api.github.com/",
-    client_kwargs={"scope": "repo"},
+    client_kwargs={"scope": "repo notifications", "code_challenge_method": "S256"},
 )
 
 GITHUB_API = "https://api.github.com"
@@ -108,11 +111,26 @@ def oauth_callback_url() -> str:
 
 
 def safe_return_path(value):
-    # Only same-origin absolute paths — reject full URLs and scheme-relative
-    # ("//host") values so the post-login redirect can't leave the SPA.
-    if value and value.startswith("/") and not value.startswith("//"):
+    # Only same-origin absolute paths. Backslashes are rejected because browsers
+    # can normalize them as URL separators ("/\\host" → "//host").
+    if (
+        not value
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(char) < 0x20 for char in value)
+    ):
+        return "/"
+    parsed = urlsplit(value)
+    if not parsed.scheme and not parsed.netloc and parsed.path.startswith("/"):
         return value
     return "/"
+
+
+def with_auth_error(return_to, message):
+    parsed = urlsplit(return_to)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    query.append(("auth_error", message))
+    return urlunsplit(("", "", parsed.path, urlencode(query), parsed.fragment))
 
 
 @app.route("/login")
@@ -131,10 +149,10 @@ def authorize():
     except Exception as e:
         # Denied grant, stale/invalid state, or a failed exchange. Surface it to
         # the SPA rather than failing silently.
-        return redirect(return_to + "?auth_error=" + requests.utils.quote(str(e)))
+        return redirect(with_auth_error(return_to, str(e)))
     resp = github.get("user", token=token)
     if not resp.ok:
-        return redirect(return_to + "?auth_error=" + requests.utils.quote("Could not resolve the GitHub user."))
+        return redirect(with_auth_error(return_to, "Could not resolve the GitHub user."))
     # Replace the pre-login session ID after authentication so an ID fixed by
     # an attacker cannot become an authenticated session.
     app.session_interface.regenerate(session)
@@ -211,7 +229,12 @@ def proxy(url):
     # hung upstream connection: 10s to connect, 60s between reads.
     try:
         response = requests.request(
-            request.method, url, headers=headers, data=request.get_data(), timeout=(10, 60)
+            request.method,
+            url,
+            headers=headers,
+            data=request.get_data(),
+            timeout=(10, 60),
+            allow_redirects=False,
         )
     except requests.Timeout:
         return jsonify(error="Upstream request timed out"), 504
@@ -230,7 +253,7 @@ def proxy(url):
     # validators itself, so no shared or HTTP cache is involved.
     excluded_response_headers = {
         "content-encoding", "content-length", "transfer-encoding", "connection",
-        "www-authenticate", "date", "server",
+        "www-authenticate", "date", "server", "set-cookie",
         "cache-control", "expires", "pragma", "age",
     }
     out_headers = [

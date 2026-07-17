@@ -371,13 +371,27 @@ export async function ensureFork(
 	});
 	const data: { full_name: string; default_branch: string; message?: string } = await res.json().catch(() => ({}));
 	if (!res.ok) throw new Error(`${data.message || 'Failed to fork repository'} (${res.status} POST forks)`);
+	if (!data.full_name?.includes('/') || !data.default_branch) {
+		throw new Error('GitHub returned an invalid fork description.');
+	}
 
 	const [forkOwner, forkRepo] = data.full_name.split('/');
 	// Poll until the fork's default branch ref exists (the fork is populated).
 	for (let i = 0; i < attempts; i++) {
 		const r = await githubFetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
-		if (r.ok) return { owner: forkOwner, repo: forkRepo };
-		await new Promise((resolve) => setTimeout(resolve, delayMs));
+		if (r.ok) {
+			const sync = await githubFetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/merge-upstream`, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify({ branch: data.default_branch })
+			});
+			if (!sync.ok) {
+				const error: ErrorResponse = await sync.json().catch(() => ({}));
+				throw new Error(`${error.message || 'Failed to sync fork'} (${sync.status} POST merge-upstream)`);
+			}
+			return { owner: forkOwner, repo: forkRepo };
+		}
+		if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
 	}
 	throw new Error(`Fork ${forkOwner}/${forkRepo} was not ready in time.`);
 }
@@ -582,6 +596,14 @@ export async function commitFiles(
 	message: string,
 	{ baseSha, branch }: { baseSha?: string; branch?: string } = {}
 ): Promise<string> {
+	for (const file of files) {
+		const hasText = file.content != null;
+		const hasBinary = file.contentBase64 != null;
+		if (hasText === hasBinary) {
+			throw new Error(`File ${file.path} must provide exactly one of content or contentBase64.`);
+		}
+	}
+
 	const headers = { ...baseHeaders, ...authHeaders(token) };
 	const api = `${apiRoot(token)}/repos/${owner}/${repo}`;
 
@@ -675,19 +697,24 @@ export async function fastForwardBranch(
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ sha })
 	});
-	return res.ok;
+	if (res.ok) return true;
+	const data: ErrorResponse = await res.json().catch(() => ({}));
+	if (res.status === 409 || (res.status === 422 && /fast.?forward/i.test(data.message ?? ''))) {
+		return false;
+	}
+	throw new Error(`${data.message || 'Failed to fast-forward branch'} (${res.status} PATCH ref heads/${branch})`);
 }
 
-/** Delete a branch. Treats an already-gone ref (404/422) as success. */
+/** Delete a branch. An already-gone ref counts as success. */
 export async function deleteBranch(token: string, owner: string, repo: string, branch: string): Promise<void> {
 	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
 		method: 'DELETE',
 		headers: { ...baseHeaders, ...authHeaders(token) }
 	});
-	if (!res.ok && res.status !== 404 && res.status !== 422) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(`${data.message || 'Failed to delete branch'} (${res.status} DELETE ref heads/${branch})`);
-	}
+	if (res.ok || res.status === 404) return;
+	const data: ErrorResponse = await res.json().catch(() => ({}));
+	if (res.status === 422 && /reference does not exist/i.test(data.message ?? '')) return;
+	throw new Error(`${data.message || 'Failed to delete branch'} (${res.status} DELETE ref heads/${branch})`);
 }
 
 /** Open a pull request. Returns { number, html_url }. */
@@ -722,7 +749,9 @@ export async function createPullRequest(
 /**
  * Commit `files` onto a fresh branch and open a pull request to `owner/repo`
  * from it — the way the campaign console stands in for a volunteer client (its
- * PR triggers the claim/submission Actions). Returns { number, html_url }.
+ * PR triggers the claim/submission Actions). Returns { number, html_url } plus
+ * `head`, the repo and branch the PR's head was created in, so the caller can
+ * delete the branch once the PR is resolved.
  *
  * If the user can push to the repo (owner/collaborator) the branch is made in
  * the repo itself. Otherwise the user's fork is used and a cross-repo PR is
@@ -734,15 +763,29 @@ export async function openChangePr(
 	owner: string,
 	repo: string,
 	{ branch, files, message, title, body }: { branch: string; files: FileChange[]; message: string; title: string; body: string }
-): Promise<{ number: number; html_url: string }> {
+): Promise<{ number: number; html_url: string; head: { owner: string; repo: string; branch: string } }> {
 	const { branch: base, sha, canPush } = await getRepoHead(token, owner, repo);
 	const target = canPush ? { owner, repo } : await ensureFork(token, owner, repo);
 
-	await createBranch(token, target.owner, target.repo, branch, sha);
-	await commitFiles(token, target.owner, target.repo, files, message, { baseSha: sha, branch });
+	let branchCreated = false;
+	try {
+		await createBranch(token, target.owner, target.repo, branch, sha);
+		branchCreated = true;
+		await commitFiles(token, target.owner, target.repo, files, message, { baseSha: sha, branch });
 
-	const head = canPush ? branch : `${target.owner}:${branch}`;
-	return createPullRequest(token, owner, repo, { title, head, base, body });
+		const head = canPush ? branch : `${target.owner}:${branch}`;
+		const pr = await createPullRequest(token, owner, repo, { title, head, base, body });
+		return { ...pr, head: { owner: target.owner, repo: target.repo, branch } };
+	} catch (error) {
+		if (branchCreated) {
+			try {
+				await deleteBranch(token, target.owner, target.repo, branch);
+			} catch (cleanupError) {
+				console.warn(`Could not clean up branch ${target.owner}/${target.repo}:${branch}: ${(cleanupError as Error).message}`);
+			}
+		}
+		throw error;
+	}
 }
 
 /** Manually trigger a workflow_dispatch run of `workflow` (a filename) on `ref`. */

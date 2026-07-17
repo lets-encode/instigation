@@ -6,6 +6,7 @@
 // itself is never present in the browser.
 
 import { provider } from './forge/config.ts';
+import { replaceState } from '$app/navigation';
 import { createForge } from './forge/index.ts';
 import { routeSessionVia, SESSION } from './forge/github-rest.ts';
 import type { ForgeClient, GitHubUser } from './forge/types.ts';
@@ -45,7 +46,7 @@ export async function initAuth(): Promise<void> {
 		auth.error = params.get('auth_error');
 		params.delete('auth_error');
 		const query = params.toString();
-		history.replaceState(null, '', location.pathname + (query ? `?${query}` : ''));
+		replaceState(location.pathname + (query ? `?${query}` : ''), {});
 	}
 
 	const resolved = await createForge(SESSION).getAuthenticatedUser();

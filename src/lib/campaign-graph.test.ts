@@ -99,6 +99,32 @@ test('buildGraph: slot states — final verdict, active review lock, open', () =
 	assert.ok(slots[1].running);
 });
 
+test('graph and panel assign concurrent validation locks to separate slots', () => {
+	const d = facsimileData();
+	d.rows[4] = state('T0001', 'S0001', 'validation_required');
+	d.locks = [
+		{ task_id: 'T0001', subtask_id: 'S0001', user_id: 'carol', timestamp: 't1', kind: 'validation' },
+		{ task_id: 'T0001', subtask_id: 'S0001', user_id: 'dan', timestamp: 't2', kind: 'validation' }
+	];
+
+	const slots = buildGraph(d, 'carol').nodes.find((n) => n.task === 'T0001')!.slots;
+	assert.deepEqual(slots.map((slot) => [slot.key, slot.who]), [
+		['review', '@carol · in review'],
+		['review', '@dan · in review']
+	]);
+	const carol = buildPanel(d, noHistory, { task: 'T0001', sub: 'S0001', slot: 0 }, 'carol', false);
+	const dan = buildPanel(d, noHistory, { task: 'T0001', sub: 'S0001', slot: 1 }, 'dan', false);
+	assert.equal(carol?.actions.find((a) => a.id === 'validate-pass')?.disabled, false);
+	assert.equal(dan?.actions.find((a) => a.id === 'validate-pass')?.disabled, false);
+
+	// With one of two slots reserved, the other remains available to a different reviewer.
+	d.locks.pop();
+	const available = buildGraph(d, 'you').nodes.find((n) => n.task === 'T0001')!;
+	assert.deepEqual(available.slots.map((slot) => slot.key), ['review', 'open']);
+	assert.equal(available.slots[1].claimable, true);
+	assert.equal(available.nextUp, true);
+});
+
 test('buildGraph: a blocked task is marked as such', () => {
 	const d = facsimileData();
 	// P0002 not completed → T0001 blocked.
@@ -146,6 +172,8 @@ test('buildPanel: holding the encoding lock enables submit', () => {
 test('buildPanel: no self-validation', () => {
 	const d = facsimileData();
 	d.locks = [];
+	const graph = buildGraph(d, 'bob');
+	assert.equal(graph.nodes.find((n) => n.task === 'T0001')?.slots.some((slot) => slot.claimable), false);
 	const p = buildPanel(d, noHistory, { task: 'T0001', sub: 'S0001', slot: 1 }, 'bob', false);
 	assert.equal(p?.actions.find((a) => a.id === 'claim-validation')?.disabled, true);
 });
@@ -231,11 +259,16 @@ test('buildPanel: a claimed pre-task validation slot links to the zone editor fo
 });
 
 test('buildPanel: validation summary counts passes against the threshold', () => {
-	const p = buildPanel(facsimileData(), noHistory, { task: 'T0001', sub: '', slot: null }, 'you', false);
+	const d = facsimileData();
+	// A pass-like but malformed cell must not count in the UI when campaign
+	// decisions would still treat it as an open validation slot.
+	d.rows[4].validate_status_2 = 'pass||2026-07-14T09:30:00Z';
+	const p = buildPanel(d, noHistory, { task: 'T0001', sub: '', slot: null }, 'you', false);
 	assert.equal(p?.validations.length, 1);
 	assert.equal(p?.validations[0].passes, 1);
 	assert.equal(p?.validations[0].threshold, 2);
 	assert.equal(p?.validations[0].slots.length, 2);
+	assert.equal(p?.validations[0].slots[1].state.key, 'pending');
 });
 
 test('buildPanel: history is filtered to the selected task, newest first', () => {

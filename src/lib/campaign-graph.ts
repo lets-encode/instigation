@@ -146,8 +146,8 @@ const subRowsOf = (d: GraphData, task: string) =>
 
 const encodingLock = (d: GraphData, task: string) =>
 	d.locks.find((l) => l.task_id === task && l.subtask_id === '' && l.kind === 'encoding');
-const validationLock = (d: GraphData, task: string, sub: string) =>
-	d.locks.find((l) => l.task_id === task && l.subtask_id === sub && l.kind === 'validation');
+const validationLocks = (d: GraphData, task: string, sub: string) =>
+	d.locks.filter((l) => l.task_id === task && l.subtask_id === sub && l.kind === 'validation');
 
 /** The incomplete task this task waits for (task.csv depends_on), or ''. */
 export function blockedBy(d: GraphData, task: string): string {
@@ -159,9 +159,20 @@ export function blockedBy(d: GraphData, task: string): string {
 const isEncoded = (status: string) => status === 'validation_required' || status === 'completed';
 
 const cellsOf = (d: GraphData, row: StateRow) => d.validationColumns.map((c) => row[c] ?? '');
-const finalsOf = (d: GraphData, row: StateRow) => cellsOf(d, row).filter(isFinalValidation).length;
 const passesOf = (d: GraphData, row: StateRow) =>
-	cellsOf(d, row).filter((c) => c.startsWith('pass|')).length;
+	cellsOf(d, row).filter((c) => isFinalValidation(c) && c.startsWith('pass|')).length;
+
+// Validation locks do not carry a slot number. Assign them in table order to
+// the still-empty validation cells, which is the same order submissions fill.
+const validationLockForSlot = (d: GraphData, row: StateRow, slot: number) => {
+	const cells = cellsOf(d, row);
+	if (cells[slot] !== '') return undefined;
+	const emptyIndex = cells.slice(0, slot).filter((cell) => cell === '').length;
+	return validationLocks(d, row.task_id, row.subtask_id)[emptyIndex];
+};
+
+const nextUnreservedSlot = (d: GraphData, row: StateRow): number =>
+	cellsOf(d, row).findIndex((cell, slot) => cell === '' && !validationLockForSlot(d, row, slot));
 
 // The main node's status key: blocked wins, then a held encoding lock, then
 // the state.csv status itself. A claimed facsimile pre-task (measure
@@ -186,15 +197,18 @@ interface SlotState {
 }
 
 // The slot's state from its validate_status cell: a final verdict renders
-// solid, the next open slot shows an active review lock, the rest are open.
+// solid, active locks occupy separate empty slots, and the rest are open.
 function slotState(d: GraphData, row: StateRow, slot: number): SlotState {
 	const cell = cellsOf(d, row)[slot] ?? '';
 	if (isFinalValidation(cell)) {
 		const [verdict, user] = cell.split('|');
 		return { key: verdict as StatusKey, sub: `@${user} · ${verdict}`, running: false, user };
 	}
-	const lock = validationLock(d, row.task_id, row.subtask_id);
-	if (slot === finalsOf(d, row) && lock) {
+	if (cell !== '') {
+		return { key: 'pending', sub: 'invalid validation data', running: false, user: '' };
+	}
+	const lock = validationLockForSlot(d, row, slot);
+	if (lock) {
 		return { key: 'review', sub: `@${lock.user_id} · in review`, running: true, user: lock.user_id };
 	}
 	const waiting = !isEncoded(taskState(d, row.task_id)?.status ?? '');
@@ -266,7 +280,12 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 					label: `${row.subtask_id}·${slot + 1}`,
 					who: s.sub,
 					running: s.running,
-					claimable: viewer !== '' && encoded && s.key === 'open'
+					claimable:
+						viewer !== '' &&
+						encoded &&
+						row.status === 'validation_required' &&
+						state?.encoder !== viewer &&
+						slot === nextUnreservedSlot(d, row)
 				};
 			})
 		);
@@ -275,12 +294,7 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 		// claim (encoding, or a validation they are allowed to take).
 		const mineLock = viewer !== '' && d.locks.some((l) => l.task_id === task && l.user_id === viewer);
 		const claimableEncoding = viewer !== '' && !blocked && state?.status === 'encoding_required' && !lock;
-		const claimableValidation = subRows.some(
-			(r) =>
-				r.status === 'validation_required' &&
-				!validationLock(d, task, r.subtask_id) &&
-				!(viewer !== '' && state?.encoder === viewer)
-		);
+		const claimableValidation = slots.some((slot) => slot.claimable);
 		const nextUp = viewer !== '' && !nextUpTaken && (mineLock || claimableEncoding || claimableValidation);
 		if (nextUp) nextUpTaken = true;
 
@@ -425,7 +439,7 @@ export function buildPanel(
 		if (!row) return null;
 		const s = slotState(d, row, sel.slot);
 		const cell = cellsOf(d, row)[sel.slot] ?? '';
-		const lock = validationLock(d, sel.task, sel.sub);
+		const lock = validationLockForSlot(d, row, sel.slot);
 		const mine = lock?.user_id === viewer;
 		const actions: PanelAction[] = [];
 		let lockText = '';
@@ -469,7 +483,10 @@ export function buildPanel(
 		} else {
 			const selfValidation = state.encoder === viewer && state.encoder !== '';
 			const claimable =
-				viewer !== '' && row.status === 'validation_required' && sel.slot === finalsOf(d, row) && !lock && !selfValidation;
+				viewer !== '' &&
+				row.status === 'validation_required' &&
+				sel.slot === nextUnreservedSlot(d, row) &&
+				!selfValidation;
 			meta = !isEncoded(state.status)
 				? 'Opens once the encoding is submitted.'
 				: selfValidation

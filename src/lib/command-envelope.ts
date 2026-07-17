@@ -16,6 +16,9 @@ export interface CommandEnvelope {
 
 const MARKER = 'lets-encode:command';
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);
+
 /** Append the envelope to a PR body as an HTML comment (invisible on GitHub). */
 export function appendEnvelopeToPrBody(body: string, envelope: CommandEnvelope): string {
 	return `${body}\n\n<!-- ${MARKER} ${JSON.stringify(envelope)} -->`;
@@ -26,11 +29,22 @@ export function envelopeFromPrBody(body: string | null): CommandEnvelope | null 
 	const m = new RegExp(`<!--\\s*${MARKER}\\s+(\\{.*?\\})\\s*-->`, 's').exec(body ?? '');
 	if (!m) return null;
 	try {
-		const parsed = JSON.parse(m[1]) as CommandEnvelope;
-		if (typeof parsed.command !== 'string' || typeof parsed.input !== 'object' || parsed.input == null) {
+		const parsed: unknown = JSON.parse(m[1]);
+		if (
+			!isRecord(parsed) ||
+			typeof parsed.command !== 'string' ||
+			parsed.command.trim() === '' ||
+			!Number.isInteger(parsed.version) ||
+			(parsed.version as number) < 1 ||
+			typeof parsed.user_id !== 'string' ||
+			parsed.user_id.trim() === '' ||
+			typeof parsed.timestamp !== 'string' ||
+			!Number.isFinite(Date.parse(parsed.timestamp)) ||
+			!isRecord(parsed.input)
+		) {
 			return null;
 		}
-		return parsed;
+		return parsed as unknown as CommandEnvelope;
 	} catch {
 		return null;
 	}

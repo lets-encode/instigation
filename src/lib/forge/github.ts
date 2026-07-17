@@ -23,6 +23,7 @@ export function createGitHubForge(token: string): ForgeClient {
 		ensureFork: (owner, repo, opts) => gh.ensureFork(token, owner, repo, opts),
 		createBranch: (owner, repo, branch, fromSha) => gh.createBranch(token, owner, repo, branch, fromSha),
 		fastForwardBranch: (owner, repo, branch, sha) => gh.fastForwardBranch(token, owner, repo, branch, sha),
+		deleteBranch: (owner, repo, branch) => gh.deleteBranch(token, owner, repo, branch),
 		createPullRequest: (owner, repo, opts) => gh.createPullRequest(token, owner, repo, opts),
 		openChangePr: (owner, repo, opts) => gh.openChangePr(token, owner, repo, opts),
 		dispatchWorkflow: (owner, repo, workflow, ref) => gh.dispatchWorkflow(token, owner, repo, workflow, ref),
