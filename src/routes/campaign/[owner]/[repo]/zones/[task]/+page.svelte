@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -167,13 +168,20 @@
     if (auth.status === "authenticated" && owner && repo && taskId && !data && !loading) load();
   });
 
-  async function run(command: (c: CommandContext) => Promise<Result>) {
+  async function run(
+    command: (c: CommandContext) => Promise<Result>,
+    opts: { overviewOnSuccess?: boolean } = {},
+  ) {
     const f = forge();
     if (!f) return;
     busy = true;
     busyMessage = "Working…";
     try {
       result = await command(ctx(f));
+      if (opts.overviewOnSuccess && result.ok && !result.warn) {
+        await goto(`/campaign/${owner}/${repo}`);
+        return;
+      }
       busyMessage = "Reloading…";
       data = null;
       await load();
@@ -233,12 +241,14 @@
       ),
     );
   const validate = (verdict: string) =>
-    run((c) =>
-      invoke(
-        commands.submitValidation,
-        { task_id: taskId, subtask_id: validation!.subtask_id, verdict },
-        c,
-      ),
+    run(
+      (c) =>
+        invoke(
+          commands.submitValidation,
+          { task_id: taskId, subtask_id: validation!.subtask_id, verdict },
+          c,
+        ),
+      { overviewOnSuccess: true },
     );
 
   function toPageModels(): PageModel[] {
@@ -251,12 +261,14 @@
   }
 
   const submit = () =>
-    run((c) =>
-      invoke(
-        commands.submitZones,
-        { task_id: taskId, pages: toPageModels() },
-        c,
-      ),
+    run(
+      (c) =>
+        invoke(
+          commands.submitZones,
+          { task_id: taskId, pages: toPageModels() },
+          c,
+        ),
+      { overviewOnSuccess: true },
     );
 
   // ------------------------------------------------------------------------
