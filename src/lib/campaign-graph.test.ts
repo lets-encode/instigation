@@ -271,6 +271,22 @@ test('buildPanel: validation summary counts passes against the threshold', () =>
 	assert.equal(p?.validations[0].slots[1].state.key, 'pending');
 });
 
+test('buildPanel: validation state replaces the encoded task status pill', () => {
+	const d = facsimileData();
+	assert.deepEqual(
+		buildPanel(d, noHistory, { task: 'T0001', sub: '', slot: null }, 'you', false)?.pills,
+		[{ key: 'validation_required', text: 'validating' }]
+	);
+	assert.deepEqual(
+		buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, 'you', false)?.pills,
+		[{ key: 'completed', text: '✓ validated' }]
+	);
+	assert.deepEqual(
+		buildPanel(d, noHistory, { task: 'P0002', sub: '', slot: null }, 'you', false)?.pills,
+		[{ key: 'completed', text: '✓ completed' }]
+	);
+});
+
 test('buildPanel: history is filtered to the selected task, newest first', () => {
 	const history: HistoryRow[] = [
 		{ timestamp: '1', task_id: 'T0001', subtask_id: '', user_id: 'bob', action: 'claim_encoding', outcome: 'accepted', detail: '' },

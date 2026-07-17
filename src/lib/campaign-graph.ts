@@ -532,9 +532,10 @@ export function buildPanel(
 	const encoded = isEncoded(state.status);
 	const statusKey = mainStatusKey(d, sel.task);
 	const subRows = subRowsOf(d, sel.task);
-	const pills: Array<{ key: StatusKey; text: string }> = [
-		{ key: statusKey, text: statusPill(statusKey, def.locator !== '') }
-	];
+	// Once a task is encoded and has validation subtasks, their derived state
+	// replaces the main status pill — subtask states may diverge from the
+	// task status.
+	const pills: Array<{ key: StatusKey; text: string }> = [];
 	if (encoded && subRows.length) {
 		const validated = subRows.every((r) => r.status === 'completed');
 		pills.push(
@@ -542,6 +543,8 @@ export function buildPanel(
 				? { key: 'completed', text: '✓ validated' }
 				: { key: 'validation_required', text: 'validating' }
 		);
+	} else {
+		pills.push({ key: statusKey, text: statusPill(statusKey, def.locator !== '') });
 	}
 	let meta = '';
 	if (blocked) meta = `Waits for ${blocked} — claims open once it is completed.`;
