@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { auth, login, forge } from '$lib/auth.svelte.ts';
-	import { provider, automation, automationRefPinned, measureDetectorUrl } from '$lib/forge/config.ts';
+	import { provider, automation, measureDetectorUrl } from '$lib/forge/config.ts';
 	import { searchReposByTopic, repoExists } from '$lib/forge/github-rest.ts';
 	import type { FileChange, RepoSummary } from '$lib/forge/types.ts';
 	import {
@@ -520,13 +520,6 @@
 {#if auth.user && showForm}
 	<section class="create">
 		<h2>Create a campaign</h2>
-		{#if !automationRefPinned}
-			<div class="banner warn">
-				Development mode: new campaigns will follow the moving automation ref <code>{automation.ref}</code>.
-				Pin <code>PUBLIC_AUTOMATION_REF</code> to a commit SHA before a production release.
-			</div>
-		{/if}
-
 		{#if created}
 			<div class="banner ok">
 				Created <a href={created.html_url} target="_blank" rel="noreferrer">{created.full_name}</a> 🎉
