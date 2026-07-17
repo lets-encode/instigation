@@ -49,7 +49,8 @@ import {
 	getPullRequestDetails,
 	commitFiles,
 	commentAndClosePr,
-	deleteBranch
+	deleteBranch,
+	getGitHubRequestTelemetry
 } from '../src/lib/forge/github-rest.ts';
 import type { FileChange } from '../src/lib/forge/github-rest.ts';
 
@@ -480,7 +481,9 @@ async function run(): Promise<void> {
 	return runSubmit(kind, files, envelope);
 }
 
-run().catch((e) => {
-	console.error(e);
-	process.exit(1);
-});
+run()
+	.catch((e) => {
+		console.error(e);
+		process.exitCode = 1;
+	})
+	.finally(() => console.info('[github-api-summary]', getGitHubRequestTelemetry()));

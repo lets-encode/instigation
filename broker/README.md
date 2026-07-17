@@ -73,6 +73,19 @@ From the repository root, with the broker requirements installed:
 python -m unittest broker.test_app -v
 ```
 
+## GitHub API telemetry
+
+The proxy writes one structured `github_api` log entry for every authenticated
+GitHub request. It includes the method, endpoint path, status, duration,
+GitHub rate-limit bucket, limit, remaining/used counts, reset time and GitHub
+request ID. Query strings, request bodies and OAuth tokens are not logged.
+
+The shared forge client emits the same rate-limit fields in browser developer
+tools and GitHub Actions logs. Its in-process counters are available through
+`getGitHubRequestTelemetry()` for a browser tab or one coordinator run.
+Broker-generated `429` responses carry `X-Lets-Encode-Upstream: broker`, so
+they are reported separately from GitHub primary or secondary limits.
+
 ## Deployment notes
 
 - **HTTPS is required** — the session cookie is marked `Secure` outside

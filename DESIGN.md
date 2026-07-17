@@ -513,6 +513,10 @@ Deferred (designed, not built):
 - [x] **Broker** — holds the client secret and the session tokens; same-origin mount only (no CORS
   surface); revokes the token at GitHub on logout; proxy is allowlisted to `api.github.com`,
   login-gated, and rate-limited.
+- [x] **API quota telemetry** — the shared forge adapter records per-process request counts and
+  GitHub rate-limit headers, each coordinator run prints its own summary in the campaign's Actions
+  log, and the OAuth proxy logs sanitized upstream quota fields while distinguishing its own
+  throttle. No campaign state or coordination telemetry is stored centrally.
 - [ ] **Actions write permissions** — the create flow sets the repo's default workflow token to write;
   confirm for any org-owned repos.
 - [x] **MEI schema validator** — the machine-check runs `xmllint --relaxng` against the pinned

@@ -23,7 +23,9 @@ Config (environment variables, loaded from broker/.env if present):
 See README.md for setup, and deploy/nginx.conf for the production mount.
 """
 
+import json
 import sys
+import time
 from datetime import timedelta
 from os import getenv, makedirs, chmod, path
 from pathlib import Path
@@ -86,6 +88,27 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 Session(app)
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
+
+
+@app.errorhandler(429)
+def broker_rate_limited(_error):
+    app.logger.warning(
+        "github_api %s",
+        json.dumps(
+            {
+                "source": "broker",
+                "method": request.method,
+                "endpoint": request.path,
+                "status": 429,
+                "user": session.get("userLogin"),
+            },
+            separators=(",", ":"),
+        ),
+    )
+    response = jsonify(error="OAuth broker request rate limit exceeded", source="broker")
+    response.status_code = 429
+    response.headers["X-Lets-Encode-Upstream"] = "broker"
+    return response
 
 oauth = OAuth(app)
 github = oauth.register(
@@ -227,6 +250,7 @@ def proxy(url):
 
     # Timeout protects gunicorn workers from being parked indefinitely by a
     # hung upstream connection: 10s to connect, 60s between reads.
+    started_at = time.monotonic()
     try:
         response = requests.request(
             request.method,
@@ -262,6 +286,29 @@ def proxy(url):
         if name.lower() not in excluded_response_headers
     ]
     out_headers.append(("Cache-Control", "no-store"))
+    out_headers.append(("X-Lets-Encode-Upstream", "github"))
+    upstream_headers = requests.structures.CaseInsensitiveDict(response.raw.headers)
+    app.logger.info(
+        "github_api %s",
+        json.dumps(
+            {
+                "source": "github",
+                "method": request.method,
+                "endpoint": parsed.path,
+                "status": response.status_code,
+                "duration_ms": round((time.monotonic() - started_at) * 1000),
+                "user": session.get("userLogin"),
+                "resource": upstream_headers.get("X-RateLimit-Resource"),
+                "limit": upstream_headers.get("X-RateLimit-Limit"),
+                "remaining": upstream_headers.get("X-RateLimit-Remaining"),
+                "used": upstream_headers.get("X-RateLimit-Used"),
+                "reset": upstream_headers.get("X-RateLimit-Reset"),
+                "retry_after": upstream_headers.get("Retry-After"),
+                "request_id": upstream_headers.get("X-GitHub-Request-Id"),
+            },
+            separators=(",", ":"),
+        ),
+    )
     return (response.content, response.status_code, out_headers)
 
 

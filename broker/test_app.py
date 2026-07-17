@@ -64,15 +64,20 @@ class BrokerTest(unittest.TestCase):
                     "Cache-Control": "private",
                     "Set-Cookie": "upstream=bad; Path=/",
                     "Content-Type": "application/json",
+                    "X-RateLimit-Resource": "core",
+                    "X-RateLimit-Limit": "5000",
+                    "X-RateLimit-Remaining": "4998",
+                    "X-GitHub-Request-Id": "request-1",
                 }
             ),
         )
 
         with patch.object(broker.requests, "request", return_value=upstream) as request_upstream:
-            response = self.client.get(
-                "/proxy/api.github.com/user?detail=full",
-                headers={"Authorization": "Bearer browser-token", "X-Test": "kept"},
-            )
+            with self.assertLogs(broker.app.logger.name, level="INFO") as logs:
+                response = self.client.get(
+                    "/proxy/api.github.com/user?detail=full",
+                    headers={"Authorization": "Bearer browser-token", "X-Test": "kept"},
+                )
 
         method, url = request_upstream.call_args.args
         options = request_upstream.call_args.kwargs
@@ -84,7 +89,20 @@ class BrokerTest(unittest.TestCase):
         self.assertFalse(options["allow_redirects"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(response.headers["ETag"], '"user-v1"')
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "github")
         self.assertNotIn("upstream=bad", response.headers.getlist("Set-Cookie"))
+        event = logs.output[0]
+        self.assertIn('"endpoint":"/user"', event)
+        self.assertIn('"remaining":"4998"', event)
+        self.assertIn('"request_id":"request-1"', event)
+
+    def test_broker_rate_limit_is_labeled_separately(self):
+        with broker.app.test_request_context("/proxy/api.github.com/user"):
+            with self.assertLogs(broker.app.logger.name, level="WARNING"):
+                response = broker.broker_rate_limited(None)
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "broker")
+        self.assertEqual(response.get_json()["source"], "broker")
 
     def test_proxy_maps_upstream_timeouts(self):
         self.authenticate()

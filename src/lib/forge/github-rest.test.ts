@@ -12,7 +12,9 @@ import {
 	fastForwardBranch,
 	deleteBranch,
 	openChangePr,
-	RateLimitError
+	RateLimitError,
+	getGitHubRequestTelemetry,
+	resetGitHubRequestTelemetry
 } from './github-rest.js';
 
 const file = (index: number) => ({ filename: `sources/${index}.mei`, status: 'modified' });
@@ -236,8 +238,61 @@ test('secondary rate limits are surfaced even when primary quota remains', async
 	);
 	await assert.rejects(
 		getPullRequestDetails('token', 'owner', 'repo', 7),
-		(error: unknown) => error instanceof RateLimitError && error.retryAfterSeconds === 30
+		(error: unknown) =>
+			error instanceof RateLimitError &&
+			error.source === 'github' &&
+			error.remaining === 42 &&
+			error.retryAfterSeconds === 30
 	);
+});
+
+test('request telemetry records rate headers without query strings', async (t) => {
+	resetGitHubRequestTelemetry();
+	t.mock.method(console, 'info', () => {});
+	t.mock.method(globalThis, 'fetch', async () =>
+		Response.json(
+			{ private: false, permissions: { push: true } },
+			{
+				headers: {
+					'X-RateLimit-Resource': 'core',
+					'X-RateLimit-Limit': '5000',
+					'X-RateLimit-Remaining': '4998',
+					'X-RateLimit-Used': '2',
+					'X-RateLimit-Reset': '2000000000'
+				}
+			}
+		)
+	);
+
+	await getRepoAccess('token', 'telemetry-owner', 'telemetry-repo');
+	const telemetry = getGitHubRequestTelemetry();
+	assert.equal(telemetry.total, 1);
+	assert.deepEqual(telemetry.byMethod, { GET: 1 });
+	assert.deepEqual(telemetry.byResource, { core: 1 });
+	assert.equal(telemetry.last?.endpoint, '/repos/telemetry-owner/telemetry-repo');
+	assert.equal(telemetry.last?.remaining, 4998);
+	assert.equal(telemetry.last?.limit, 5000);
+	assert.equal(telemetry.last?.used, 2);
+});
+
+test('broker throttling is distinguished from a GitHub rate limit', async (t) => {
+	resetGitHubRequestTelemetry();
+	t.mock.method(console, 'info', () => {});
+	t.mock.method(globalThis, 'fetch', async () =>
+		Response.json(
+			{ error: 'OAuth broker request rate limit exceeded', source: 'broker' },
+			{ status: 429, headers: { 'X-Lets-Encode-Upstream': 'broker' } }
+		)
+	);
+
+	await assert.rejects(
+		getPullRequestDetails(SESSION, 'owner', 'repo', 7),
+		(error: unknown) =>
+			error instanceof RateLimitError &&
+			error.source === 'broker' &&
+			/OAuth broker request rate limit exceeded/.test(error.message)
+	);
+	assert.equal(getGitHubRequestTelemetry().rateLimited, 1);
 });
 
 test('ordinary permission failures are not mislabeled as rate limits', async (t) => {

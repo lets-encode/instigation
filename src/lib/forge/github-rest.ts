@@ -58,40 +58,193 @@ const baseHeaders: Record<string, string> = {
  * when to retry.
  */
 export class RateLimitError extends Error {
+	readonly source: 'github' | 'broker';
+	readonly resource: string | null;
+	readonly limit: number | null;
+	readonly remaining: number | null;
+	readonly used: number | null;
 	/** Unix epoch seconds when the limit resets, or null if not reported. */
 	readonly resetAt: number | null;
 	readonly retryAfterSeconds: number | null;
-	constructor(resetAt: number | null, retryAfterSeconds: number | null) {
+	constructor({
+		source,
+		resource,
+		limit,
+		remaining,
+		used,
+		resetAt,
+		retryAfterSeconds
+	}: {
+		source: 'github' | 'broker';
+		resource: string | null;
+		limit: number | null;
+		remaining: number | null;
+		used: number | null;
+		resetAt: number | null;
+		retryAfterSeconds: number | null;
+	}) {
 		const when = retryAfterSeconds
 			? `in about ${retryAfterSeconds} seconds`
 			: resetAt
 				? `at ${new Date(resetAt * 1000).toLocaleTimeString()}`
 				: 'shortly';
-		super(`GitHub API rate limit exceeded — retry ${when}.`);
+		const service = source === 'broker' ? 'OAuth broker request' : 'GitHub API';
+		const bucket = resource ? ` (${resource})` : '';
+		super(`${service} rate limit exceeded${bucket} — retry ${when}.`);
 		this.name = 'RateLimitError';
+		this.source = source;
+		this.resource = resource;
+		this.limit = limit;
+		this.remaining = remaining;
+		this.used = used;
 		this.resetAt = resetAt;
 		this.retryAfterSeconds = retryAfterSeconds;
 	}
 }
 
+export interface GitHubRequestTelemetry {
+	total: number;
+	conditional: number;
+	notModified: number;
+	rateLimited: number;
+	byMethod: Record<string, number>;
+	byResource: Record<string, number>;
+	last: {
+		request: number;
+		method: string;
+		endpoint: string;
+		status: number | null;
+		durationMs: number;
+		source: 'github' | 'broker';
+		resource: string | null;
+		limit: number | null;
+		remaining: number | null;
+		used: number | null;
+		resetAt: number | null;
+		retryAfterSeconds: number | null;
+		conditional: boolean;
+	} | null;
+}
+
+const requestTelemetry: GitHubRequestTelemetry = {
+	total: 0,
+	conditional: 0,
+	notModified: 0,
+	rateLimited: 0,
+	byMethod: {},
+	byResource: {},
+	last: null
+};
+
+/** Cumulative GitHub request counters for this browser tab or coordinator run. */
+export function getGitHubRequestTelemetry(): GitHubRequestTelemetry {
+	return {
+		...requestTelemetry,
+		byMethod: { ...requestTelemetry.byMethod },
+		byResource: { ...requestTelemetry.byResource },
+		last: requestTelemetry.last ? { ...requestTelemetry.last } : null
+	};
+}
+
+/** Reset the current process's counters (primarily useful for diagnostics and tests). */
+export function resetGitHubRequestTelemetry(): void {
+	requestTelemetry.total = 0;
+	requestTelemetry.conditional = 0;
+	requestTelemetry.notModified = 0;
+	requestTelemetry.rateLimited = 0;
+	requestTelemetry.byMethod = {};
+	requestTelemetry.byResource = {};
+	requestTelemetry.last = null;
+}
+
+function numberHeader(headers: Headers, name: string): number | null {
+	const raw = headers.get(name);
+	if (raw == null) return null;
+	const value = Number(raw);
+	return Number.isFinite(value) ? value : null;
+}
+
+function endpointFrom(input: RequestInfo | URL): string {
+	try {
+		const path = new URL(String(input), 'https://local.invalid').pathname;
+		const proxyMarker = '/proxy/api.github.com';
+		const proxyIndex = path.indexOf(proxyMarker);
+		return proxyIndex >= 0 ? path.slice(proxyIndex + proxyMarker.length) || '/' : path;
+	} catch {
+		return '(invalid URL)';
+	}
+}
+
+function recordRequest(
+	input: RequestInfo | URL,
+	init: RequestInit | undefined,
+	startedAt: number,
+	res: Response | null
+): GitHubRequestTelemetry['last'] {
+	const headers = res?.headers ?? new Headers();
+	const method = (init?.method ?? 'GET').toUpperCase();
+	const conditional = new Headers(init?.headers).has('If-None-Match');
+	const source: 'github' | 'broker' =
+		headers.get('X-Lets-Encode-Upstream') === 'broker' ? 'broker' : 'github';
+	const resource = headers.get('X-RateLimit-Resource');
+	const entry = {
+		request: ++requestTelemetry.total,
+		method,
+		endpoint: endpointFrom(input),
+		status: res?.status ?? null,
+		durationMs: Date.now() - startedAt,
+		source,
+		resource,
+		limit: numberHeader(headers, 'X-RateLimit-Limit'),
+		remaining: numberHeader(headers, 'X-RateLimit-Remaining'),
+		used: numberHeader(headers, 'X-RateLimit-Used'),
+		resetAt: numberHeader(headers, 'X-RateLimit-Reset'),
+		retryAfterSeconds: numberHeader(headers, 'Retry-After'),
+		conditional
+	};
+	if (conditional) requestTelemetry.conditional++;
+	if (res?.status === 304) requestTelemetry.notModified++;
+	requestTelemetry.byMethod[method] = (requestTelemetry.byMethod[method] ?? 0) + 1;
+	const bucket = resource ?? 'unknown';
+	requestTelemetry.byResource[bucket] = (requestTelemetry.byResource[bucket] ?? 0) + 1;
+	requestTelemetry.last = entry;
+	if (resource || res == null || source === 'broker') {
+		console.info('[github-api]', entry);
+	}
+	return entry;
+}
+
 async function githubFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-	const res = await fetch(input, init);
+	const startedAt = Date.now();
+	let res: Response;
+	try {
+		res = await fetch(input, init);
+	} catch (error) {
+		recordRequest(input, init, startedAt, null);
+		throw error;
+	}
+	const telemetry = recordRequest(input, init, startedAt, res);
 	if (res.status !== 403 && res.status !== 429) return res;
 	const remaining = res.headers.get('X-RateLimit-Remaining');
 	const retryAfterHeader = res.headers.get('Retry-After');
 	const retryAfter = retryAfterHeader == null ? Number.NaN : Number(retryAfterHeader);
 	const message = await res.clone().text().catch(() => '');
 	const limited =
+		telemetry?.source === 'broker' ||
 		remaining === '0' ||
 		Number.isFinite(retryAfter) ||
 		/secondary rate limit|rate limit exceeded|abuse detection/i.test(message);
 	if (!limited) return res;
-	const resetHeader = res.headers.get('X-RateLimit-Reset');
-	const reset = resetHeader == null ? Number.NaN : Number(resetHeader);
-	throw new RateLimitError(
-		Number.isFinite(reset) && reset > 0 ? reset : null,
-		Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : null
-	);
+	requestTelemetry.rateLimited++;
+	throw new RateLimitError({
+		source: telemetry?.source ?? 'github',
+		resource: telemetry?.resource ?? null,
+		limit: telemetry?.limit ?? null,
+		remaining: telemetry?.remaining ?? null,
+		used: telemetry?.used ?? null,
+		resetAt: telemetry?.resetAt ?? null,
+		retryAfterSeconds: telemetry?.retryAfterSeconds ?? null
+	});
 }
 
 // ETag store for conditional GETs, keyed by full request URL. Only cacheable
