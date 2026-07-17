@@ -596,12 +596,22 @@
 						ondrop={onDrop}
 					>
 						<span class="drop-label">Drag &amp; drop files here, or pick them:</span>
-						<input
-							type="file"
-							accept="image/png,image/jpeg,application/pdf"
-							multiple
-							onchange={onFilesChange}
-						/>
+						<label class="file-picker">
+							<input
+								type="file"
+								accept="image/png,image/jpeg,application/pdf"
+								multiple
+								onchange={onFilesChange}
+							/>
+							Choose files…
+						</label>
+						{#if sourceFiles.length}
+							<ul class="file-list">
+								{#each sourceFiles as file (file.name)}
+									<li>{file.name}</li>
+								{/each}
+							</ul>
+						{/if}
 						<span class="hint">
 							{#if sourceFiles.length}
 								{sourceFiles.length} file{sourceFiles.length === 1 ? '' : 's'} selected. Each PDF is split into
@@ -897,8 +907,31 @@
 		margin: -0.2rem 0 0.2rem 1.6rem;
 	}
 	.create .upload input[type='file'] {
-		font: inherit;
+		display: none;
+	}
+	.create .file-picker {
+		align-self: flex-start;
 		font-size: 0.85rem;
+		font-weight: 600;
+		padding: 0.35rem 0.8rem;
+		border: 1px solid #c0c0c0;
+		border-radius: 6px;
+		background: #fff;
+		cursor: pointer;
+	}
+	.create .file-list {
+		list-style: disc;
+		margin: 0;
+		padding-left: 1.2rem;
+		gap: 0.1rem;
+		font-size: 0.85rem;
+	}
+	.create .file-list li {
+		display: list-item;
+		border: none;
+		border-radius: 0;
+		padding: 0;
+		background: none;
 	}
 	.create .dropzone {
 		border: 2px dashed #d0d0d0;
