@@ -7,10 +7,20 @@
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { findRow } from "$lib/campaign-tables.ts";
-  import type { TaskRow, StateRow, LockRow, HistoryRow } from "$lib/campaign-tables.ts";
+  import type {
+    TaskRow,
+    StateRow,
+    LockRow,
+    HistoryRow,
+  } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { buildGraph, buildPanel, statusPill, isPreTask } from "$lib/campaign-graph.ts";
+  import {
+    buildGraph,
+    buildPanel,
+    statusPill,
+    isPreTask,
+  } from "$lib/campaign-graph.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
@@ -74,7 +84,9 @@
   }
 
   // Everyone the campaign history records as having acted on the score.
-  const workedOn = $derived([...new Set(history.map((h) => h.user_id))].filter(Boolean));
+  const workedOn = $derived(
+    [...new Set(history.map((h) => h.user_id))].filter(Boolean),
+  );
 
   /** One facsimile page in the preview: image plus its measure zones. */
   type PreviewPage = {
@@ -95,17 +107,28 @@
     svgs: Record<number, string>;
   } | null>(null);
 
-  const graphData = $derived({ taskDefs, rows, validationColumns, locks, passThreshold });
+  const graphData = $derived({
+    taskDefs,
+    rows,
+    validationColumns,
+    locks,
+    passThreshold,
+  });
   const graph = $derived(buildGraph(graphData, viewer));
 
   // Manual node placement: buildGraph auto-lays the nodes, but the user can
   // drag any node to a new spot. Overrides are keyed by task id and outlive
   // table refreshes; nodes without an override keep their auto-layout position.
   let nodePos = $state<Record<string, { x: number; y: number }>>({});
-  let drag = $state<
-    | { task: string; startX: number; startY: number; origX: number; origY: number; w: number; h: number }
-    | null
-  >(null);
+  let drag = $state<{
+    task: string;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    w: number;
+    h: number;
+  } | null>(null);
   // Set while a drag actually moves the node, so the pointerup's click does not
   // also select the node.
   let dragMoved = $state(false);
@@ -139,12 +162,18 @@
   // (6px outside its box) and "next step" badge (9px above) stay clear of the
   // edge.
   const EDGE_PAD = 10;
-  const MIN_ZOOM = 0.4;
+  // Auto-fit shrinks to fit the frame but not past AUTO_MIN_ZOOM — below that
+  // the nodes get too small to read, so it stops there (the graph then scrolls)
+  // and the viewer takes over with the manual zoom controls, which reach down to
+  // MANUAL_MIN_ZOOM to see a large graph whole.
+  const AUTO_MIN_ZOOM = 0.6;
+  const MANUAL_MIN_ZOOM = 0.25;
+  const MAX_ZOOM = 1;
+  // null = follow auto-fit; a number = the viewer's manual zoom.
+  let userZoom = $state<number | null>(null);
 
-  // Zoom-to-fit factor, from the auto-layout's bounding box (graph.nodes, so it
-  // is stable while the viewer drags individual nodes) against the frame. Only
-  // shrinks (caps at 1) and never below MIN_ZOOM — past that the graph scrolls
-  // rather than becoming unreadable.
+  // The auto-fit bounding box, from the auto-layout (graph.nodes, so it is stable
+  // while the viewer drags individual nodes).
   const fitBox = $derived.by(() => {
     const ns = graph.nodes;
     if (!ns.length) return { w: 1, h: 1 };
@@ -154,17 +183,32 @@
     const maxY = Math.max(...ns.map((n) => n.y + n.h + NODE_BORDER));
     return { w: maxX - minX + 2 * EDGE_PAD, h: maxY - minY + 2 * EDGE_PAD };
   });
-  const zoomFor = (fw: number, fh: number) =>
-    fw && fh ? Math.max(MIN_ZOOM, Math.min(1, fw / fitBox.w, fh / fitBox.h)) : 1;
-  const zoom = $derived(zoomFor(frameW, frameH));
+  const fitZoom = (fw: number, fh: number) =>
+    fw && fh
+      ? Math.max(
+          AUTO_MIN_ZOOM,
+          Math.min(MAX_ZOOM, fw / fitBox.w, fh / fitBox.h),
+        )
+      : 1;
+  const zoom = $derived(
+    userZoom != null
+      ? Math.min(MAX_ZOOM, Math.max(MANUAL_MIN_ZOOM, userZoom))
+      : fitZoom(frameW, frameH),
+  );
   // The world (unscaled canvas) holds the nodes; it is at least the frame mapped
   // into world units (frame / zoom) so the nodes fill the frame once scaled, and
   // grows further only if a node sits past that (e.g. at the MIN_ZOOM floor).
   const worldW = $derived(
-    Math.max(EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.x + n.w + NODE_BORDER)), frameW / zoom),
+    Math.max(
+      EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.x + n.w + NODE_BORDER)),
+      frameW / zoom,
+    ),
   );
   const worldH = $derived(
-    Math.max(EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.y + n.h + NODE_BORDER)), frameH / zoom),
+    Math.max(
+      EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.y + n.h + NODE_BORDER)),
+      frameH / zoom,
+    ),
   );
 
   // headH / 2 — the header midline the ports and edge anchors sit on (matches
@@ -181,11 +225,17 @@
       const a = laidNodes.find((n) => n.task === e.from);
       const b = laidNodes.find((n) => n.task === e.to);
       if (!a || !b) return { kind: e.kind, d: e.d };
-      return { kind: e.kind, d: edgePath(a.x + a.w, a.y + HEAD_MID, b.x, b.y + HEAD_MID) };
+      return {
+        kind: e.kind,
+        d: edgePath(a.x + a.w, a.y + HEAD_MID, b.x, b.y + HEAD_MID),
+      };
     }),
   );
 
-  function startDrag(e: PointerEvent, n: { task: string; x: number; y: number }) {
+  function startDrag(
+    e: PointerEvent,
+    n: { task: string; x: number; y: number },
+  ) {
     const p = nodePos[n.task];
     // Clamp against the node's rendered border-box (offsetWidth/Height includes
     // the border), so a corner-parked node lands flush with the frame edge and
@@ -206,7 +256,10 @@
   // [PAD, extent - nodeSize - PAD]; collapses to PAD when the node is larger
   // than the frame.
   const clampAxis = (v: number, extent: number, size: number) =>
-    Math.min(Math.max(v, EDGE_PAD), Math.max(EDGE_PAD, extent - size - EDGE_PAD));
+    Math.min(
+      Math.max(v, EDGE_PAD),
+      Math.max(EDGE_PAD, extent - size - EDGE_PAD),
+    );
   function dragMove(e: PointerEvent) {
     if (!drag) return;
     const dx = e.clientX - drag.startX;
@@ -230,6 +283,8 @@
   // units). The frame already excludes the side panels and preview dock, and
   // zoom-to-fit then scales the whole thing to fit.
   function reorder() {
+    // Reorder returns to auto-fit as well as the auto-layout.
+    userZoom = null;
     const ns = graph.nodes;
     if (!ns.length) {
       nodePos = {};
@@ -243,15 +298,24 @@
     // when reorder runs right after the panels open).
     const pxW = wrapEl?.clientWidth ?? 0;
     const pxH = wrapEl?.clientHeight ?? 0;
-    const z = pxW && pxH ? zoomFor(pxW, pxH) : zoom || 1;
+    const z = pxW && pxH ? fitZoom(pxW, pxH) : zoom || 1;
     const fw = pxW ? pxW / z : contentW + 2 * EDGE_PAD;
     const fh = pxH ? pxH / z : contentH + 2 * EDGE_PAD;
     const offX = EDGE_PAD + Math.max(0, (fw - 2 * EDGE_PAD - contentW) / 2);
     const offY = EDGE_PAD + Math.max(0, (fh - 2 * EDGE_PAD - contentH) / 2);
     const next: Record<string, { x: number; y: number }> = {};
-    for (const n of ns) next[n.task] = { x: n.x - minX + offX, y: n.y - minY + offY };
+    for (const n of ns)
+      next[n.task] = { x: n.x - minX + offX, y: n.y - minY + offY };
     nodePos = next;
   }
+
+  // Manual zoom: step from the current effective zoom, switching out of auto-fit.
+  // Fit (and Reorder) hand control back to auto-fit.
+  const ZOOM_STEP = 0.1;
+  function zoomBy(step: number) {
+    userZoom = Math.min(MAX_ZOOM, Math.max(MANUAL_MIN_ZOOM, zoom + step));
+  }
+  const fitToView = () => (userZoom = null);
 
   const panel = $derived(
     buildPanel(
@@ -262,7 +326,9 @@
       selected != null && preview?.taskId === selected.task,
     ),
   );
-  const tasksDone = $derived(taskRows.filter((r) => r.status === "completed").length);
+  const tasksDone = $derived(
+    taskRows.filter((r) => r.status === "completed").length,
+  );
 
   // Preview display state: book-style paging shared by both panes, per-pane
   // zoom, and the zone overlay toggle.
@@ -278,7 +344,10 @@
   );
   const pvSpreads = $derived(buildSpreads(pvPageTotal, pvView, pvFirstOnRight));
   const pvSpreadIndex = $derived(
-    Math.max(0, pvSpreads.findIndex((sp) => sp.pages.includes(pvFirstVisible))),
+    Math.max(
+      0,
+      pvSpreads.findIndex((sp) => sp.pages.includes(pvFirstVisible)),
+    ),
   );
   const pvSpread = $derived(pvSpreads[pvSpreadIndex] ?? { pages: [] });
   const pvSpreadLabel = $derived(
@@ -289,7 +358,8 @@
 
   // Render the encoding pages the current spread needs (kept for later visits).
   function renderSpread() {
-    if (!preview || preview.loading || !verovio || preview.pageCount === 0) return;
+    if (!preview || preview.loading || !verovio || preview.pageCount === 0)
+      return;
     let changed = false;
     const svgs = { ...preview.svgs };
     for (const p of pvSpread.pages) {
@@ -347,7 +417,10 @@
   function resizeMove(e: PointerEvent) {
     if (resizing === "dock" && stageEl) {
       const r = stageEl.getBoundingClientRect();
-      dockFrac = Math.min(0.85, Math.max(0.2, (r.bottom - e.clientY) / r.height));
+      dockFrac = Math.min(
+        0.85,
+        Math.max(0.2, (r.bottom - e.clientY) / r.height),
+      );
     } else if (resizing === "panel") {
       panelW = Math.min(680, Math.max(280, window.innerWidth - e.clientX));
     } else if (resizing === "info") {
@@ -424,7 +497,13 @@
       }
 
       if (preview?.taskId === task_id) {
-        preview = { taskId: task_id, loading: false, facs, pageCount, svgs: {} };
+        preview = {
+          taskId: task_id,
+          loading: false,
+          facs,
+          pageCount,
+          svgs: {},
+        };
         renderSpread();
       }
     } catch (e) {
@@ -479,9 +558,12 @@
       if (!notInitialised) {
         console.log(
           "[load] tables loaded:",
-          taskDefs.length, "task(s),",
-          rows.length, "state row(s),",
-          locks.length, "lock(s)",
+          taskDefs.length,
+          "task(s),",
+          rows.length,
+          "state row(s),",
+          locks.length,
+          "lock(s)",
         );
       }
       loaded = true;
@@ -536,7 +618,10 @@
 
   // Run a command: show the busy overlay, capture its result banner, then
   // refresh the tables.
-  async function run(command: (c: CommandContext) => Promise<Result>, refresh = true) {
+  async function run(
+    command: (c: CommandContext) => Promise<Result>,
+    refresh = true,
+  ) {
     const f = forge();
     if (!f) return;
     busy = true;
@@ -584,7 +669,9 @@
     run((c) => invoke(commands.submitEncoding, { task_id }, c));
 
   const validate = (task_id: string, subtask_id: string, verdict: string) =>
-    run((c) => invoke(commands.submitValidation, { task_id, subtask_id, verdict }, c));
+    run((c) =>
+      invoke(commands.submitValidation, { task_id, subtask_id, verdict }, c),
+    );
 
   // The tokenised raw URL of the score — copied to the clipboard.
   const rawlink = async (task_id: string) => {
@@ -698,7 +785,11 @@
     >
     {#if loaded && !notInitialised}
       <div class="progress" title="Completed tasks">
-        <div class="bar"><div style={`width:${taskRows.length ? Math.round((tasksDone / taskRows.length) * 100) : 0}%`}></div></div>
+        <div class="bar">
+          <div
+            style={`width:${taskRows.length ? Math.round((tasksDone / taskRows.length) * 100) : 0}%`}
+          ></div>
+        </div>
         <span>{tasksDone} / {taskRows.length} tasks complete</span>
       </div>
     {/if}
@@ -739,8 +830,10 @@
     {#if !auth.user}
       <div class="banner warn">
         <span>
-          Viewing this public campaign read-only. <button type="button" class="linkish" onclick={() => login()}
-            >Log in with GitHub</button
+          Viewing this public campaign read-only. <button
+            type="button"
+            class="linkish"
+            onclick={() => login()}>Log in with GitHub</button
           >
           to contribute.
         </span>
@@ -749,8 +842,10 @@
     {#if skippedPages.length}
       <div class="banner warn">
         <span>
-          The measure detector couldn't process {skippedPages.length} page(s) ({skippedPages.join(", ")})
-          during creation, so they were left out of the score. Everything else is ready below.
+          The measure detector couldn't process {skippedPages.length} page(s) ({skippedPages.join(
+            ", ",
+          )}) during creation, so they were left out of the score. Everything
+          else is ready below.
         </span>
       </div>
     {/if}
@@ -759,7 +854,8 @@
         <span>
           {result.error}
           {#if result.prUrl}
-            <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+            <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a
+            >
           {/if}
         </span>
         <button type="button" class="dismiss" onclick={() => (result = null)}
@@ -771,7 +867,8 @@
         <div class="banner-body">
           {result.message}
           {#if result.prUrl}
-            <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+            <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a
+            >
           {/if}
           {#if result.meiFriendUrl}
             <div class="rawlink">
@@ -792,7 +889,8 @@
             </span>
             {#if isPrivate}
               <span class="muted">
-                Opening mei-friend shares a short-lived, read-capable GitHub URL with that external service.
+                Opening mei-friend shares a short-lived, read-capable GitHub URL
+                with that external service.
               </span>
             {/if}
           {/if}
@@ -809,7 +907,8 @@
             </div>
             {#if isPrivate}
               <span class="muted"
-                >The token in this link expires within minutes — use it promptly.</span
+                >The token in this link expires within minutes — use it
+                promptly.</span
               >
             {/if}
           {/if}
@@ -821,645 +920,770 @@
     {/if}
 
     <div class="main">
-    {#if showInfo}
-      <aside class="ipanel" style={`--ipanel-w:${infoW}px`}>
-        <div class="iphead">
-          <div class="iptitle">Campaign info</div>
-          <button
-            type="button"
-            class="pclose"
-            onclick={() => (showInfo = false)}
-            title="Close the info panel"
-            aria-label="Close the info panel">✕</button
-          >
-        </div>
-        <div class="ipbody">
-          <div class="isec">
-            <span class="seclabel">Score</span>
-            {#if scoreHeadState === "loading"}
-              <span class="muted inote">Loading the score header…</span>
-            {:else if scoreHeadState === "error"}
-              <span class="muted inote">Could not read the score.</span>
-            {:else if scoreHeadState === "done" && !scoreHead}
-              <span class="muted inote">The score has no MEI header.</span>
-            {:else if scoreHead}
-              <div class="irow">
-                <span>Title</span>
-                <span>{scoreHead.title || "—"}</span>
-              </div>
-              <div class="irow">
-                <span>Composer</span>
-                <span>{scoreHead.composer || "—"}</span>
-              </div>
-              {#each scoreHead.contributors as c (c.role + c.name)}
-                <div class="irow">
-                  <span>{c.role || "contributor"}</span>
-                  <span>{c.name}</span>
-                </div>
-              {/each}
-            {/if}
-            <div
-              class="irow"
-              title="Everyone the campaign history records: claims, submissions and validations."
-            >
-              <span>Worked on this</span>
-              <span>
-                {#if workedOn.length}
-                  {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
-                      class="mono"
-                      href={`https://github.com/${u}`}
-                      target="_blank"
-                      rel="noreferrer">@{u}</a
-                    >{/each}
-                {:else}—{/if}
-              </span>
-            </div>
-          </div>
-
-          <div class="isec">
-            <span class="seclabel">Campaign</span>
-            <div class="irow">
-              <span>Title</span>
-              <span>{title || repo}</span>
-            </div>
-            <div class="irow">
-              <span>Repository</span>
-              <a
-                class="mono"
-                href={`https://github.com/${owner}/${repo}`}
-                target="_blank"
-                rel="noreferrer">{owner}/{repo}</a
-              >
-            </div>
-            <div class="irow">
-              <span>Visibility</span>
-              <span>{isPrivate ? "Private" : "Public"}</span>
-            </div>
-            <div
-              class="irow"
-              title="Contributions to this campaign are published under this license."
-            >
-              <span>License</span>
-              <span>{license || "—"}</span>
-            </div>
-            <div class="irow">
-              <span>Tasks</span>
-              <span>{tasksDone} / {taskRows.length} complete</span>
-            </div>
-            <div class="irow" title="Validation passes each task needs before it counts as validated.">
-              <span>Passes required</span>
-              <span>{passThreshold}</span>
-            </div>
-          </div>
-        </div>
-        <button
-          type="button"
-          class="ipanel-resizer"
-          aria-label="Drag to resize the info panel"
-          title="Drag to resize the info panel"
-          onpointerdown={(e) => {
-            e.preventDefault();
-            resizing = "info";
-          }}
-        ></button>
-      </aside>
-    {/if}
-    <div class="viewcol">
-    {#if loading}
-      <p class="msg muted">Loading campaign…</p>
-    {:else if loadError}
-      <div class="banner err"><span>{loadError}</span></div>
-    {:else if notInitialised}
-      <div class="banner warn">
-        <span>
-          This repository has no tracking tables (<code>tracking/task.csv</code>,
-          <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>) yet — it
-          may not have been initialised. Create it through the home page to
-          initialise it.
-        </span>
-      </div>
-    {:else if view === "graph"}
-      <div class="body">
-        <div class="stage" bind:this={stageEl}>
-          <div class="canvas-wrap" bind:this={wrapEl}>
-          <div class="scroller">
-            <div class="zoomwrap" style={`width:${worldW * zoom}px;height:${worldH * zoom}px`}>
-            <div
-              class="canvas"
-              style={`width:${worldW}px;height:${worldH}px;transform:scale(${zoom})`}
-            >
-              <svg
-                width="100%"
-                height="100%"
-                class="edges"
-                aria-hidden="true"
-              >
-                <defs>
-                  <marker id="ag" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7fbf8a"></path></marker>
-                  <marker id="ax" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#cfcfcf"></path></marker>
-                </defs>
-                {#each laidEdges as e}
-                  <path
-                    d={e.d}
-                    class="edge {e.kind}"
-                    marker-end={edgeMarker(e.kind)}
-                  ></path>
-                {/each}
-              </svg>
-
-              {#each laidNodes as n (n.key)}
-                <div
-                  class="node s-{n.statusKey}"
-                  class:selected={selected?.task === n.task}
-                  class:mainsel={selected?.task === n.task && selected?.sub === ""}
-                  class:nextup={n.nextUp}
-                  class:dragging={drag?.task === n.task}
-                  style={`left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`}
-                  role="group"
-                  aria-label={`${n.title} node — drag to reposition`}
-                  onpointerdown={(e) => startDrag(e, n)}
-                >
-                  {#if n.hasIn}
-                    <span class="port in"></span>
-                  {/if}
-                  {#if n.hasOut}
-                    <span class="port out" class:green={n.outGreen}></span>
-                  {/if}
-                  {#if n.nextUp}
-                    <span class="nextup-badge">your next step</span>
-                  {/if}
-                  <button
-                    type="button"
-                    class="nmain"
-                    onclick={() => {
-                      if (dragMoved) return;
-                      select(n.task, "", null);
-                    }}
-                  >
-                    <span class="nhead">
-                      <span class="nicon {n.kind}">{n.icon}</span>
-                      <span class="ntitles">
-                        <span class="ntitle">{n.title}</span>
-                        <span class="nsub mono">{n.subtitle}</span>
-                      </span>
-                    </span>
-                    <span class="nmeta">
-                      <span class="pill s-{n.statusKey}"
-                        >{statusPill(n.statusKey, n.kind === "pre")}</span
-                      >
-                      {#if n.running}{@render lockIcon()}{/if}
-                      <span class="mono nmeta-text">{n.meta}</span>
-                    </span>
-                  </button>
-                  {#if n.slots.length}
-                    <span class="nslots-head">
-                      <span>Validation — required</span>
-                      <span>{n.passes} / {n.threshold} passes</span>
-                    </span>
-                    {#each n.slots as s (s.sub + s.slot)}
-                      <button
-                        type="button"
-                        class="nslot"
-                        class:claimable={s.claimable}
-                        class:selected={selected?.task === n.task &&
-                          selected?.sub === s.sub &&
-                          selected?.slot === s.slot}
-                        title="Open this validation slot in the panel"
-                        onclick={() => {
-                          if (dragMoved) return;
-                          select(n.task, s.sub, s.slot);
-                        }}
-                      >
-                        {#if s.key === "review"}
-                          <span class="mark review">{@render reviewIcon()}</span>
-                        {:else if s.key === "pass"}
-                          <span class="mark pass">✓</span>
-                        {:else if s.key === "fail"}
-                          <span class="mark fail">✗</span>
-                        {:else}
-                          <span class="mark open"></span>
-                        {/if}
-                        <span class="mono nslot-id">{s.label}</span>
-                        <span class="nslot-who">{s.who}</span>
-                        <span class="nslot-arrow" aria-hidden="true">›</span>
-                      </button>
-                    {/each}
-                  {/if}
-                </div>
-              {/each}
-            </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            class="reorder-fab"
-            title="Reset the nodes to their automatic layout, centred in view"
-            onclick={reorder}
-          >
-            ⤢ Reorder
-          </button>
-          </div>
-
-          {#if preview}
-            <section
-              class="dock"
-              aria-label="Score preview"
-              style={`flex-basis:${Math.round(dockFrac * 1000) / 10}%`}
-            >
-              <button
-                type="button"
-                class="dock-resizer"
-                aria-label="Drag to resize the preview"
-                title="Drag to resize the preview"
-                onpointerdown={(e) => {
-                  e.preventDefault();
-                  resizing = "dock";
-                }}
-              ></button>
-              <div class="dock-head">
-                <span class="dock-title"
-                  >Score preview · <span class="mono">{preview.taskId}</span></span
-                >
-                {#if pvPageTotal > 1}
-                  <span class="dock-nav">
-                    <button
-                      type="button"
-                      onclick={() => pvGo(-1)}
-                      disabled={pvSpreadIndex <= 0}
-                      aria-label="Previous page">‹</button
-                    >
-                    <span class="dock-nav-label">{pvSpreadLabel}</span>
-                    <button
-                      type="button"
-                      onclick={() => pvGo(1)}
-                      disabled={pvSpreadIndex >= pvSpreads.length - 1}
-                      aria-label="Next page">›</button
-                    >
-                  </span>
-                  <span class="dock-viewmode">
-                    <button
-                      type="button"
-                      class:on={pvView === "single"}
-                      onclick={() => pvSetView("single")}>1 page</button
-                    >
-                    <button
-                      type="button"
-                      class:on={pvView === "double"}
-                      onclick={() => pvSetView("double")}>2 pages</button
-                    >
-                  </span>
-                  {#if pvView === "double"}
-                    <label
-                      class="dock-check"
-                      title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={pvFirstOnRight}
-                        onchange={(e) =>
-                          pvSetFirstOnRight((e.target as HTMLInputElement).checked)}
-                      />
-                      Page 1 on the right
-                    </label>
-                  {/if}
-                {/if}
-                <span class="spacer"></span>
-                <button
-                  type="button"
-                  class="pclose"
-                  onclick={() => (preview = null)}
-                  title="Close the preview"
-                  aria-label="Close the preview">✕</button
-                >
-              </div>
-              <div class="dock-body">
-                {#if preview.loading}
-                  <p class="muted dock-note">Loading the score…</p>
-                {:else if preview.error}
-                  <p class="dock-err">{preview.error}</p>
-                {:else}
-                  {#if preview.facs?.length}
-                    <div class="dock-pane">
-                      <div class="dock-label">
-                        <span>Facsimile</span>
-                        <span class="dock-tools">
-                          <button
-                            type="button"
-                            class="dock-toggle"
-                            class:on={showZones}
-                            onclick={() => (showZones = !showZones)}
-                            title="Show or hide the measure zones on the facsimile"
-                            >Zones {showZones ? "on" : "off"}</button
-                          >
-                          <label class="zoomctl">
-                            <input
-                              type="range"
-                              min="50"
-                              max="400"
-                              step="25"
-                              value={facsZoom * 100}
-                              oninput={(e) =>
-                                (facsZoom =
-                                  Number((e.target as HTMLInputElement).value) / 100)}
-                              aria-label="Facsimile zoom"
-                            />
-                            <span class="mono">{Math.round(facsZoom * 100)}%</span>
-                          </label>
-                        </span>
-                      </div>
-                      <div class="pv-scroll">
-                        <div class="pv-spread" style={`width:${facsZoom * 100}%`}>
-                          {#if pvSpread.lonelySide === "right"}<div class="pv-spacer"></div>{/if}
-                          {#each pvSpread.pages as p (p)}
-                            {@const pg = preview.facs[p]}
-                            <figure class="pv-page">
-                              {#if pg}
-                                <svg viewBox={`0 0 ${pg.w} ${pg.h}`} role="img" aria-label={`Facsimile page ${p + 1}`}>
-                                  {#if pg.url}
-                                    <image href={pg.url} width={pg.w} height={pg.h} />
-                                  {:else}
-                                    <rect width={pg.w} height={pg.h} fill="#f3f3f0" />
-                                  {/if}
-                                  {#if showZones}
-                                    {#each pg.zones as z, zi (zi)}
-                                      <rect
-                                        class="pv-zone"
-                                        x={z.box.ulx}
-                                        y={z.box.uly}
-                                        width={z.box.lrx - z.box.ulx}
-                                        height={z.box.lry - z.box.uly}
-                                      />
-                                      <text
-                                        class="pv-zonelabel"
-                                        x={z.box.ulx + 6}
-                                        y={z.box.uly + 30}>{z.label}</text
-                                      >
-                                    {/each}
-                                  {/if}
-                                </svg>
-                                <figcaption class="mono">page {p + 1}</figcaption>
-                              {/if}
-                            </figure>
-                          {/each}
-                          {#if pvSpread.lonelySide === "left"}<div class="pv-spacer"></div>{/if}
-                        </div>
-                      </div>
-                    </div>
-                  {/if}
-                  {#if preview.pageCount > 0}
-                    <div class="dock-pane">
-                      <div class="dock-label">
-                        <span>Encoding</span>
-                        <span class="dock-tools">
-                          <label class="zoomctl">
-                            <input
-                              type="range"
-                              min="50"
-                              max="400"
-                              step="25"
-                              value={encZoom * 100}
-                              oninput={(e) =>
-                                (encZoom =
-                                  Number((e.target as HTMLInputElement).value) / 100)}
-                              aria-label="Encoding zoom"
-                            />
-                            <span class="mono">{Math.round(encZoom * 100)}%</span>
-                          </label>
-                        </span>
-                      </div>
-                      <div class="pv-scroll">
-                        <div class="pv-spread" style={`width:${encZoom * 100}%`}>
-                          {#if pvSpread.lonelySide === "right"}<div class="pv-spacer"></div>{/if}
-                          {#each pvSpread.pages as p (p)}
-                            <div class="pv-page enc">
-                              {#if p < preview.pageCount}
-                                {@html preview.svgs[p + 1] ?? ""}
-                              {/if}
-                            </div>
-                          {/each}
-                          {#if pvSpread.lonelySide === "left"}<div class="pv-spacer"></div>{/if}
-                        </div>
-                      </div>
-                    </div>
-                  {:else if preview.facs?.length}
-                    <div class="dock-pane">
-                      <div class="dock-label"><span>Encoding</span></div>
-                      <p class="muted dock-note">
-                        No encoding to render yet — the measures are generated
-                        when the measure correction is submitted.
-                      </p>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
-            </section>
-          {/if}
-        </div>
-
-        {#if panel && selected}
-          <aside class="panel" style={`--panel-w:${panelW}px`}>
+      {#if showInfo}
+        <aside class="ipanel" style={`--ipanel-w:${infoW}px`}>
+          <div class="iphead">
+            <div class="iptitle">Campaign info</div>
             <button
               type="button"
-              class="panel-resizer"
-              aria-label="Drag to resize the panel"
-              title="Drag to resize the panel"
-              onpointerdown={(e) => {
-                e.preventDefault();
-                resizing = "panel";
-              }}
-            ></button>
-            <div class="phead">
-              <span class="picon {panel.iconKind}">{panel.icon}</span>
-              <div class="ptitles">
-                <div class="ptitle">{panel.title}</div>
-                <div class="psub mono">{panel.subtitle}</div>
-              </div>
-              <button
-                type="button"
-                class="pclose"
-                onclick={() => (selected = null)}
-                title="Close the panel"
-                aria-label="Close the panel">✕</button
-              >
-            </div>
-            <div class="pbody">
-              <div class="pills">
-                {#each panel.pills as pl}
-                  <span class="pill s-{pl.key}">{pl.text}</span>
-                {/each}
-              </div>
-              {#if panel.lockText}
-                <div class="lockstrip">
-                  {@render lockIcon()}
-                  <span class="mono">{panel.lockText}</span>
+              class="pclose"
+              onclick={() => (showInfo = false)}
+              title="Close the info panel"
+              aria-label="Close the info panel">✕</button
+            >
+          </div>
+          <div class="ipbody">
+            <div class="isec">
+              <span class="seclabel">Score</span>
+              {#if scoreHeadState === "loading"}
+                <span class="muted inote">Loading the score header…</span>
+              {:else if scoreHeadState === "error"}
+                <span class="muted inote">Could not read the score.</span>
+              {:else if scoreHeadState === "done" && !scoreHead}
+                <span class="muted inote">The score has no MEI header.</span>
+              {:else if scoreHead}
+                <div class="irow">
+                  <span>Title</span>
+                  <span>{scoreHead.title || "—"}</span>
                 </div>
+                <div class="irow">
+                  <span>Composer</span>
+                  <span>{scoreHead.composer || "—"}</span>
+                </div>
+                {#each scoreHead.contributors as c (c.role + c.name)}
+                  <div class="irow">
+                    <span>{c.role || "contributor"}</span>
+                    <span>{c.name}</span>
+                  </div>
+                {/each}
               {/if}
-              {#if panel.meta}
-                <div class="pmeta mono">{panel.meta}</div>
-              {/if}
+              <div
+                class="irow"
+                title="Everyone the campaign history records: claims, submissions and validations."
+              >
+                <span>Worked on this</span>
+                <span>
+                  {#if workedOn.length}
+                    {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
+                        class="mono"
+                        href={`https://github.com/${u}`}
+                        target="_blank"
+                        rel="noreferrer">@{u}</a
+                      >{/each}
+                  {:else}—{/if}
+                </span>
+              </div>
+            </div>
 
-              <div class="acts">
-                {#each panel.actions as a (a.id)}
-                  {#if a.id === "zone-editor"}
-                    {#if a.disabled}
-                      <span class="act disabled" title={a.title}>{a.label}</span>
-                    {:else}
-                      <a
-                        class="act"
-                        class:primary={a.primary}
-                        href={`/campaign/${owner}/${repo}/zones/${selected.task}`}
-                        title={a.title}>{a.label}</a
+            <div class="isec">
+              <span class="seclabel">Campaign</span>
+              <div class="irow">
+                <span>Title</span>
+                <span>{title || repo}</span>
+              </div>
+              <div class="irow">
+                <span>Repository</span>
+                <a
+                  class="mono"
+                  href={`https://github.com/${owner}/${repo}`}
+                  target="_blank"
+                  rel="noreferrer">{owner}/{repo}</a
+                >
+              </div>
+              <div class="irow">
+                <span>Visibility</span>
+                <span>{isPrivate ? "Private" : "Public"}</span>
+              </div>
+              <div
+                class="irow"
+                title="Contributions to this campaign are published under this license."
+              >
+                <span>License</span>
+                <span>{license || "—"}</span>
+              </div>
+              <div class="irow">
+                <span>Tasks</span>
+                <span>{tasksDone} / {taskRows.length} complete</span>
+              </div>
+              <div
+                class="irow"
+                title="Validation passes each task needs before it counts as validated."
+              >
+                <span>Passes required</span>
+                <span>{passThreshold}</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="ipanel-resizer"
+            aria-label="Drag to resize the info panel"
+            title="Drag to resize the info panel"
+            onpointerdown={(e) => {
+              e.preventDefault();
+              resizing = "info";
+            }}
+          ></button>
+        </aside>
+      {/if}
+      <div class="viewcol">
+        {#if loading}
+          <p class="msg muted">Loading campaign…</p>
+        {:else if loadError}
+          <div class="banner err"><span>{loadError}</span></div>
+        {:else if notInitialised}
+          <div class="banner warn">
+            <span>
+              This repository has no tracking tables (<code
+                >tracking/task.csv</code
+              >,
+              <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>)
+              yet — it may not have been initialised. Create it through the home
+              page to initialise it.
+            </span>
+          </div>
+        {:else if view === "graph"}
+          <div class="body">
+            <div class="stage" bind:this={stageEl}>
+              <div class="canvas-wrap" bind:this={wrapEl}>
+                <div class="scroller">
+                  <div
+                    class="zoomwrap"
+                    style={`width:${worldW * zoom}px;height:${worldH * zoom}px`}
+                  >
+                    <div
+                      class="canvas"
+                      style={`width:${worldW}px;height:${worldH}px;transform:scale(${zoom})`}
+                    >
+                      <svg
+                        width="100%"
+                        height="100%"
+                        class="edges"
+                        aria-hidden="true"
                       >
-                    {/if}
-                  {:else}
+                        <defs>
+                          <marker
+                            id="ag"
+                            markerWidth="7"
+                            markerHeight="7"
+                            refX="5"
+                            refY="3"
+                            orient="auto"
+                            ><path d="M0,0 L6,3 L0,6 Z" fill="#7fbf8a"
+                            ></path></marker
+                          >
+                          <marker
+                            id="ax"
+                            markerWidth="7"
+                            markerHeight="7"
+                            refX="5"
+                            refY="3"
+                            orient="auto"
+                            ><path d="M0,0 L6,3 L0,6 Z" fill="#cfcfcf"
+                            ></path></marker
+                          >
+                        </defs>
+                        {#each laidEdges as e}
+                          <path
+                            d={e.d}
+                            class="edge {e.kind}"
+                            marker-end={edgeMarker(e.kind)}
+                          ></path>
+                        {/each}
+                      </svg>
+
+                      {#each laidNodes as n (n.key)}
+                        <div
+                          class="node s-{n.statusKey}"
+                          class:selected={selected?.task === n.task}
+                          class:mainsel={selected?.task === n.task &&
+                            selected?.sub === ""}
+                          class:nextup={n.nextUp}
+                          class:dragging={drag?.task === n.task}
+                          style={`left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`}
+                          role="group"
+                          aria-label={`${n.title} node — drag to reposition`}
+                          onpointerdown={(e) => startDrag(e, n)}
+                        >
+                          {#if n.hasIn}
+                            <span class="port in"></span>
+                          {/if}
+                          {#if n.hasOut}
+                            <span class="port out" class:green={n.outGreen}
+                            ></span>
+                          {/if}
+                          {#if n.nextUp}
+                            <span class="nextup-badge">next step</span>
+                          {/if}
+                          <button
+                            type="button"
+                            class="nmain"
+                            onclick={() => {
+                              if (dragMoved) return;
+                              select(n.task, "", null);
+                            }}
+                          >
+                            <span class="nhead">
+                              <span class="nicon {n.kind}">{n.icon}</span>
+                              <span class="ntitles">
+                                <span class="ntitle">{n.title}</span>
+                                <span class="nsub mono">{n.subtitle}</span>
+                              </span>
+                            </span>
+                            <span class="nmeta">
+                              <span class="pill s-{n.statusKey}"
+                                >{statusPill(
+                                  n.statusKey,
+                                  n.kind === "pre",
+                                )}</span
+                              >
+                              {#if n.running}{@render lockIcon()}{/if}
+                              <span class="mono nmeta-text">{n.meta}</span>
+                            </span>
+                          </button>
+                          {#if n.slots.length}
+                            <span class="nslots-head">
+                              <span>Validation — required</span>
+                              <span>{n.passes} / {n.threshold} passes</span>
+                            </span>
+                            {#each n.slots as s (s.sub + s.slot)}
+                              <button
+                                type="button"
+                                class="nslot"
+                                class:claimable={s.claimable}
+                                class:selected={selected?.task === n.task &&
+                                  selected?.sub === s.sub &&
+                                  selected?.slot === s.slot}
+                                title="Open this validation slot in the panel"
+                                onclick={() => {
+                                  if (dragMoved) return;
+                                  select(n.task, s.sub, s.slot);
+                                }}
+                              >
+                                {#if s.key === "review"}
+                                  <span class="mark review"
+                                    >{@render reviewIcon()}</span
+                                  >
+                                {:else if s.key === "pass"}
+                                  <span class="mark pass">✓</span>
+                                {:else if s.key === "fail"}
+                                  <span class="mark fail">✗</span>
+                                {:else}
+                                  <span class="mark open"></span>
+                                {/if}
+                                <span class="mono nslot-id">{s.label}</span>
+                                <span class="nslot-who">{s.who}</span>
+                                <span class="nslot-arrow" aria-hidden="true"
+                                  >›</span
+                                >
+                              </button>
+                            {/each}
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                </div>
+                <div class="graph-fabs">
+                  <div class="zoom-fab" role="group" aria-label="Zoom">
                     <button
                       type="button"
-                      class="act"
-                      class:primary={a.primary && !a.disabled}
-                      class:danger={a.id === "validate-fail"}
-                      class:good={a.id === "validate-pass"}
-                      disabled={busy || a.disabled}
-                      title={a.title}
-                      onclick={() => panelAction(a)}>{a.label}</button
+                      title="Zoom out"
+                      aria-label="Zoom out"
+                      disabled={zoom <= MANUAL_MIN_ZOOM + 0.001}
+                      onclick={() => zoomBy(-ZOOM_STEP)}>−</button
                     >
-                  {/if}
-                {/each}
+                    <button
+                      type="button"
+                      class="zoom-level"
+                      title={userZoom != null
+                        ? "Manual zoom — click to fit to view"
+                        : "Zoom-to-fit — click to reset"}
+                      onclick={fitToView}>{Math.round(zoom * 100)}%</button
+                    >
+                    <button
+                      type="button"
+                      title="Zoom in"
+                      aria-label="Zoom in"
+                      disabled={zoom >= MAX_ZOOM - 0.001}
+                      onclick={() => zoomBy(ZOOM_STEP)}>+</button
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    class="reorder-fab"
+                    title="Reset the nodes to their automatic layout, centred and fit to view"
+                    onclick={reorder}
+                  >
+                    ⤢ Reorder
+                  </button>
+                </div>
               </div>
 
-              {#each panel.validations as v (v.sub)}
-                <div class="valsum">
-                  <div class="valsum-head">
-                    <span class="seclabel">Validation · {v.sub}</span>
-                    <span class="valsum-passes">{v.passes} of {v.threshold} passes</span>
-                  </div>
-                  <div class="valbar"><div style={`width:${v.pct}%`}></div></div>
-                  {#each v.slots as s, i (i)}
-                    <div class="valslot">
-                      {#if s.state.key === "review"}
-                        <span class="mark review">{@render reviewIcon()}</span>
-                      {:else if s.state.key === "pass"}
-                        <span class="mark pass">✓</span>
-                      {:else if s.state.key === "fail"}
-                        <span class="mark fail">✗</span>
-                      {:else}
-                        <span class="mark open"></span>
+              {#if preview}
+                <section
+                  class="dock"
+                  aria-label="Score preview"
+                  style={`flex-basis:${Math.round(dockFrac * 1000) / 10}%`}
+                >
+                  <button
+                    type="button"
+                    class="dock-resizer"
+                    aria-label="Drag to resize the preview"
+                    title="Drag to resize the preview"
+                    onpointerdown={(e) => {
+                      e.preventDefault();
+                      resizing = "dock";
+                    }}
+                  ></button>
+                  <div class="dock-head">
+                    <span class="dock-title"
+                      >Score preview · <span class="mono">{preview.taskId}</span
+                      ></span
+                    >
+                    {#if pvPageTotal > 1}
+                      <span class="dock-nav">
+                        <button
+                          type="button"
+                          onclick={() => pvGo(-1)}
+                          disabled={pvSpreadIndex <= 0}
+                          aria-label="Previous page">‹</button
+                        >
+                        <span class="dock-nav-label">{pvSpreadLabel}</span>
+                        <button
+                          type="button"
+                          onclick={() => pvGo(1)}
+                          disabled={pvSpreadIndex >= pvSpreads.length - 1}
+                          aria-label="Next page">›</button
+                        >
+                      </span>
+                      <span class="dock-viewmode">
+                        <button
+                          type="button"
+                          class:on={pvView === "single"}
+                          onclick={() => pvSetView("single")}>1 page</button
+                        >
+                        <button
+                          type="button"
+                          class:on={pvView === "double"}
+                          onclick={() => pvSetView("double")}>2 pages</button
+                        >
+                      </span>
+                      {#if pvView === "double"}
+                        <label
+                          class="dock-check"
+                          title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={pvFirstOnRight}
+                            onchange={(e) =>
+                              pvSetFirstOnRight(
+                                (e.target as HTMLInputElement).checked,
+                              )}
+                          />
+                          Page 1 on the right
+                        </label>
                       {/if}
-                      <span class="mono slotid">{s.label}</span>
-                      <span class="slotsub">{s.state.sub}</span>
-                    </div>
-                  {/each}
-                </div>
-              {/each}
-
-              <button
-                type="button"
-                class="expert-toggle"
-                onclick={() => (expert = !expert)}
-                title="Node metadata (type, dependencies, fragment, pass threshold) and this task's history."
-                >{expert
-                  ? "Hide node metadata & history"
-                  : "Show node metadata & history"}</button
-              >
-              {#if expert}
-                <div class="xsec">
-                  <span class="seclabel">Node type · registry</span>
-                  {#each panel.metaRows as m (m.k)}
-                    <div class="xrow">
-                      <span>{m.k}</span>
-                      <span class="mono" class:done={m.done}>{m.v}</span>
-                    </div>
-                  {/each}
-                </div>
-                <div class="xsec">
-                  <span class="seclabel">History</span>
-                  {#if panel.history.length === 0}
-                    <span class="muted xnote">No history for this task yet.</span>
-                  {/if}
-                  {#each panel.history as h, i (i)}
-                    <div class="xhist">
-                      <span class="mono xts">{h.t}</span>
-                      <span>{h.text}</span>
-                    </div>
-                  {/each}
-                </div>
+                    {/if}
+                    <span class="spacer"></span>
+                    <button
+                      type="button"
+                      class="pclose"
+                      onclick={() => (preview = null)}
+                      title="Close the preview"
+                      aria-label="Close the preview">✕</button
+                    >
+                  </div>
+                  <div class="dock-body">
+                    {#if preview.loading}
+                      <p class="muted dock-note">Loading the score…</p>
+                    {:else if preview.error}
+                      <p class="dock-err">{preview.error}</p>
+                    {:else}
+                      {#if preview.facs?.length}
+                        <div class="dock-pane">
+                          <div class="dock-label">
+                            <span>Facsimile</span>
+                            <span class="dock-tools">
+                              <button
+                                type="button"
+                                class="dock-toggle"
+                                class:on={showZones}
+                                onclick={() => (showZones = !showZones)}
+                                title="Show or hide the measure zones on the facsimile"
+                                >Zones {showZones ? "on" : "off"}</button
+                              >
+                              <label class="zoomctl">
+                                <input
+                                  type="range"
+                                  min="50"
+                                  max="400"
+                                  step="25"
+                                  value={facsZoom * 100}
+                                  oninput={(e) =>
+                                    (facsZoom =
+                                      Number(
+                                        (e.target as HTMLInputElement).value,
+                                      ) / 100)}
+                                  aria-label="Facsimile zoom"
+                                />
+                                <span class="mono"
+                                  >{Math.round(facsZoom * 100)}%</span
+                                >
+                              </label>
+                            </span>
+                          </div>
+                          <div class="pv-scroll">
+                            <div
+                              class="pv-spread"
+                              style={`width:${facsZoom * 100}%`}
+                            >
+                              {#if pvSpread.lonelySide === "right"}<div
+                                  class="pv-spacer"
+                                ></div>{/if}
+                              {#each pvSpread.pages as p (p)}
+                                {@const pg = preview.facs[p]}
+                                <figure class="pv-page">
+                                  {#if pg}
+                                    <svg
+                                      viewBox={`0 0 ${pg.w} ${pg.h}`}
+                                      role="img"
+                                      aria-label={`Facsimile page ${p + 1}`}
+                                    >
+                                      {#if pg.url}
+                                        <image
+                                          href={pg.url}
+                                          width={pg.w}
+                                          height={pg.h}
+                                        />
+                                      {:else}
+                                        <rect
+                                          width={pg.w}
+                                          height={pg.h}
+                                          fill="#f3f3f0"
+                                        />
+                                      {/if}
+                                      {#if showZones}
+                                        {#each pg.zones as z, zi (zi)}
+                                          <rect
+                                            class="pv-zone"
+                                            x={z.box.ulx}
+                                            y={z.box.uly}
+                                            width={z.box.lrx - z.box.ulx}
+                                            height={z.box.lry - z.box.uly}
+                                          />
+                                          <text
+                                            class="pv-zonelabel"
+                                            x={z.box.ulx + 6}
+                                            y={z.box.uly + 30}>{z.label}</text
+                                          >
+                                        {/each}
+                                      {/if}
+                                    </svg>
+                                    <figcaption class="mono">
+                                      page {p + 1}
+                                    </figcaption>
+                                  {/if}
+                                </figure>
+                              {/each}
+                              {#if pvSpread.lonelySide === "left"}<div
+                                  class="pv-spacer"
+                                ></div>{/if}
+                            </div>
+                          </div>
+                        </div>
+                      {/if}
+                      {#if preview.pageCount > 0}
+                        <div class="dock-pane">
+                          <div class="dock-label">
+                            <span>Encoding</span>
+                            <span class="dock-tools">
+                              <label class="zoomctl">
+                                <input
+                                  type="range"
+                                  min="50"
+                                  max="400"
+                                  step="25"
+                                  value={encZoom * 100}
+                                  oninput={(e) =>
+                                    (encZoom =
+                                      Number(
+                                        (e.target as HTMLInputElement).value,
+                                      ) / 100)}
+                                  aria-label="Encoding zoom"
+                                />
+                                <span class="mono"
+                                  >{Math.round(encZoom * 100)}%</span
+                                >
+                              </label>
+                            </span>
+                          </div>
+                          <div class="pv-scroll">
+                            <div
+                              class="pv-spread"
+                              style={`width:${encZoom * 100}%`}
+                            >
+                              {#if pvSpread.lonelySide === "right"}<div
+                                  class="pv-spacer"
+                                ></div>{/if}
+                              {#each pvSpread.pages as p (p)}
+                                <div class="pv-page enc">
+                                  {#if p < preview.pageCount}
+                                    {@html preview.svgs[p + 1] ?? ""}
+                                  {/if}
+                                </div>
+                              {/each}
+                              {#if pvSpread.lonelySide === "left"}<div
+                                  class="pv-spacer"
+                                ></div>{/if}
+                            </div>
+                          </div>
+                        </div>
+                      {:else if preview.facs?.length}
+                        <div class="dock-pane">
+                          <div class="dock-label"><span>Encoding</span></div>
+                          <p class="muted dock-note">
+                            No encoding to render yet — the measures are
+                            generated when the measure correction is submitted.
+                          </p>
+                        </div>
+                      {/if}
+                    {/if}
+                  </div>
+                </section>
               {/if}
             </div>
-          </aside>
+
+            {#if panel && selected}
+              <aside class="panel" style={`--panel-w:${panelW}px`}>
+                <button
+                  type="button"
+                  class="panel-resizer"
+                  aria-label="Drag to resize the panel"
+                  title="Drag to resize the panel"
+                  onpointerdown={(e) => {
+                    e.preventDefault();
+                    resizing = "panel";
+                  }}
+                ></button>
+                <div class="phead">
+                  <span class="picon {panel.iconKind}">{panel.icon}</span>
+                  <div class="ptitles">
+                    <div class="ptitle">{panel.title}</div>
+                    <div class="psub mono">{panel.subtitle}</div>
+                  </div>
+                  <button
+                    type="button"
+                    class="pclose"
+                    onclick={() => (selected = null)}
+                    title="Close the panel"
+                    aria-label="Close the panel">✕</button
+                  >
+                </div>
+                <div class="pbody">
+                  <div class="pills">
+                    {#each panel.pills as pl}
+                      <span class="pill s-{pl.key}">{pl.text}</span>
+                    {/each}
+                  </div>
+                  {#if panel.lockText}
+                    <div class="lockstrip">
+                      {@render lockIcon()}
+                      <span class="mono">{panel.lockText}</span>
+                    </div>
+                  {/if}
+                  {#if panel.meta}
+                    <div class="pmeta mono">{panel.meta}</div>
+                  {/if}
+
+                  <div class="acts">
+                    {#each panel.actions as a (a.id)}
+                      {#if a.id === "zone-editor"}
+                        {#if a.disabled}
+                          <span class="act disabled" title={a.title}
+                            >{a.label}</span
+                          >
+                        {:else}
+                          <a
+                            class="act"
+                            class:primary={a.primary}
+                            href={`/campaign/${owner}/${repo}/zones/${selected.task}`}
+                            title={a.title}>{a.label}</a
+                          >
+                        {/if}
+                      {:else}
+                        <button
+                          type="button"
+                          class="act"
+                          class:primary={a.primary && !a.disabled}
+                          class:danger={a.id === "validate-fail"}
+                          class:good={a.id === "validate-pass"}
+                          disabled={busy || a.disabled}
+                          title={a.title}
+                          onclick={() => panelAction(a)}>{a.label}</button
+                        >
+                      {/if}
+                    {/each}
+                  </div>
+
+                  {#each panel.validations as v (v.sub)}
+                    <div class="valsum">
+                      <div class="valsum-head">
+                        <span class="seclabel">Validation · {v.sub}</span>
+                        <span class="valsum-passes"
+                          >{v.passes} of {v.threshold} passes</span
+                        >
+                      </div>
+                      <div class="valbar">
+                        <div style={`width:${v.pct}%`}></div>
+                      </div>
+                      {#each v.slots as s, i (i)}
+                        <div class="valslot">
+                          {#if s.state.key === "review"}
+                            <span class="mark review"
+                              >{@render reviewIcon()}</span
+                            >
+                          {:else if s.state.key === "pass"}
+                            <span class="mark pass">✓</span>
+                          {:else if s.state.key === "fail"}
+                            <span class="mark fail">✗</span>
+                          {:else}
+                            <span class="mark open"></span>
+                          {/if}
+                          <span class="mono slotid">{s.label}</span>
+                          <span class="slotsub">{s.state.sub}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {/each}
+
+                  <button
+                    type="button"
+                    class="expert-toggle"
+                    onclick={() => (expert = !expert)}
+                    title="Node metadata (type, dependencies, fragment, pass threshold) and this task's history."
+                    >{expert
+                      ? "Hide node metadata & history"
+                      : "Show node metadata & history"}</button
+                  >
+                  {#if expert}
+                    <div class="xsec">
+                      <span class="seclabel">Node type · registry</span>
+                      {#each panel.metaRows as m (m.k)}
+                        <div class="xrow">
+                          <span>{m.k}</span>
+                          <span class="mono" class:done={m.done}>{m.v}</span>
+                        </div>
+                      {/each}
+                    </div>
+                    <div class="xsec">
+                      <span class="seclabel">History</span>
+                      {#if panel.history.length === 0}
+                        <span class="muted xnote"
+                          >No history for this task yet.</span
+                        >
+                      {/if}
+                      {#each panel.history as h, i (i)}
+                        <div class="xhist">
+                          <span class="mono xts">{h.t}</span>
+                          <span>{h.text}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </aside>
+            {/if}
+          </div>
+        {:else}
+          <div class="tablesview">
+            <div class="tcol">
+              <div class="tsec">
+                <div class="tname">state.csv</div>
+                <div class="tcard">
+                  <div
+                    class="trow thead"
+                    style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
+                  >
+                    <span>task_id</span><span>subtask_id</span><span
+                      >status</span
+                    ><span>encoder</span><span>validate_status_*</span>
+                  </div>
+                  {#each rows as r (r.task_id + "/" + r.subtask_id)}
+                    <div
+                      class="trow"
+                      class:subrow={r.subtask_id !== ""}
+                      style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
+                    >
+                      <span class="mono">{r.task_id}</span>
+                      <span class="mono dim">{r.subtask_id || "—"}</span>
+                      <span
+                        ><span class="pill s-{r.status}">{r.status}</span></span
+                      >
+                      <span class="mono">{r.encoder || "—"}</span>
+                      <span class="mono small"
+                        >{r.subtask_id ? joinedValidations(r) : "—"}</span
+                      >
+                    </div>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="tsec">
+                <div class="tname">lock.csv</div>
+                <div class="tcard">
+                  <div class="trow thead" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
+                    <span>task_id</span><span>subtask_id</span><span
+                      >user_id</span
+                    ><span>timestamp</span><span>kind</span>
+                  </div>
+                  {#each locks as l}
+                    <div class="trow" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
+                      <span class="mono">{l.task_id}</span>
+                      <span class="mono">{l.subtask_id || "—"}</span>
+                      <span class="mono">{l.user_id}</span>
+                      <span class="mono dim">{l.timestamp}</span>
+                      <span class="mono">{l.kind}</span>
+                    </div>
+                  {/each}
+                  {#if locks.length === 0}
+                    <div class="tempty mono">— no active locks —</div>
+                  {/if}
+                </div>
+              </div>
+
+              <div class="tsec">
+                <div class="tname">
+                  history.csv <span class="mono dim small"
+                    >(append-only, newest first)</span
+                  >
+                </div>
+                <div class="tcard">
+                  {#each historyNewestFirst as h, i (i)}
+                    <div class="hrow">
+                      <span class="mono xts">{h.timestamp}</span>
+                      <span class="mono">@{h.user_id}</span>
+                      <span
+                        >{h.action}{h.task_id
+                          ? ` ${h.task_id}`
+                          : ""}{h.subtask_id ? `/${h.subtask_id}` : ""}</span
+                      >
+                      <span class="outcome" class:bad={h.outcome !== "accepted"}
+                        >{h.outcome}</span
+                      >
+                      <span class="dim">{h.detail}</span>
+                    </div>
+                  {/each}
+                  {#if history.length === 0}
+                    <div class="tempty mono">— no history yet —</div>
+                  {/if}
+                </div>
+              </div>
+            </div>
+          </div>
         {/if}
       </div>
-    {:else}
-      <div class="tablesview">
-        <div class="tcol">
-          <div class="tsec">
-            <div class="tname">state.csv</div>
-            <div class="tcard">
-              <div class="trow thead" style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr">
-                <span>task_id</span><span>subtask_id</span><span>status</span
-                ><span>encoder</span><span>validate_status_*</span>
-              </div>
-              {#each rows as r (r.task_id + "/" + r.subtask_id)}
-                <div
-                  class="trow"
-                  class:subrow={r.subtask_id !== ""}
-                  style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
-                >
-                  <span class="mono">{r.task_id}</span>
-                  <span class="mono dim">{r.subtask_id || "—"}</span>
-                  <span><span class="pill s-{r.status}">{r.status}</span></span>
-                  <span class="mono">{r.encoder || "—"}</span>
-                  <span class="mono small">{r.subtask_id ? joinedValidations(r) : "—"}</span>
-                </div>
-              {/each}
-            </div>
-          </div>
-
-          <div class="tsec">
-            <div class="tname">lock.csv</div>
-            <div class="tcard">
-              <div class="trow thead" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
-                <span>task_id</span><span>subtask_id</span><span>user_id</span
-                ><span>timestamp</span><span>kind</span>
-              </div>
-              {#each locks as l}
-                <div class="trow" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
-                  <span class="mono">{l.task_id}</span>
-                  <span class="mono">{l.subtask_id || "—"}</span>
-                  <span class="mono">{l.user_id}</span>
-                  <span class="mono dim">{l.timestamp}</span>
-                  <span class="mono">{l.kind}</span>
-                </div>
-              {/each}
-              {#if locks.length === 0}
-                <div class="tempty mono">— no active locks —</div>
-              {/if}
-            </div>
-          </div>
-
-          <div class="tsec">
-            <div class="tname">
-              history.csv <span class="mono dim small">(append-only, newest first)</span>
-            </div>
-            <div class="tcard">
-              {#each historyNewestFirst as h, i (i)}
-                <div class="hrow">
-                  <span class="mono xts">{h.timestamp}</span>
-                  <span class="mono">@{h.user_id}</span>
-                  <span>{h.action}{h.task_id ? ` ${h.task_id}` : ""}{h.subtask_id ? `/${h.subtask_id}` : ""}</span>
-                  <span class="outcome" class:bad={h.outcome !== "accepted"}
-                    >{h.outcome}</span
-                  >
-                  <span class="dim">{h.detail}</span>
-                </div>
-              {/each}
-              {#if history.length === 0}
-                <div class="tempty mono">— no history yet —</div>
-              {/if}
-            </div>
-          </div>
-        </div>
-      </div>
-    {/if}
-    </div>
     </div>
   {/if}
 </div>
@@ -1818,11 +2042,16 @@
     flex: 1;
     min-height: 0;
   }
-  .reorder-fab {
+  .graph-fabs {
     position: absolute;
     right: 16px;
     bottom: 16px;
     z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .reorder-fab {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -1840,6 +2069,40 @@
   .reorder-fab:hover {
     border-color: #3056d3;
     color: #3056d3;
+  }
+  .zoom-fab {
+    display: flex;
+    align-items: center;
+    border: 1px solid #d8d8d8;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+  }
+  .zoom-fab button {
+    border: none;
+    background: none;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .zoom-fab button:hover:not(:disabled) {
+    background: #f0f4ff;
+    color: #3056d3;
+  }
+  .zoom-fab button:disabled {
+    color: #bbb;
+    cursor: default;
+  }
+  .zoom-fab .zoom-level {
+    min-width: 46px;
+    font-size: 12px;
+    border-left: 1px solid #eee;
+    border-right: 1px solid #eee;
   }
   .scroller {
     position: absolute;
@@ -1985,7 +2248,9 @@
     border-radius: 7px;
     display: grid;
     place-items: center;
-    font: 700 12px ui-monospace, monospace;
+    font:
+      700 12px ui-monospace,
+      monospace;
   }
   .nicon.pre {
     background: #f3edfa;
@@ -2066,12 +2331,13 @@
     background: #e8f1fd;
   }
   .nslot.claimable {
-    border-color: #bcd4f3;
-    background: #f0f6fe;
+    border-color: #3056d3;
+    background: #eaf1fe;
+    box-shadow: inset 3px 0 0 #3056d3;
   }
   .nslot.claimable .nslot-who {
     color: #2c5aa0;
-    font-weight: 500;
+    font-weight: 600;
   }
   .nslot .mark {
     width: 16px;
@@ -2137,7 +2403,6 @@
     color: #b42318;
   }
 
-
   /* -------------------------------------------------------------- panel */
   .panel {
     width: var(--panel-w, 360px);
@@ -2180,7 +2445,9 @@
     border-radius: 7px;
     display: grid;
     place-items: center;
-    font: 700 13px ui-monospace, monospace;
+    font:
+      700 13px ui-monospace,
+      monospace;
   }
   .picon.pre {
     background: #f3edfa;
@@ -2644,7 +2911,9 @@
     stroke-width: 2;
   }
   .pv-zonelabel {
-    font: 24px ui-monospace, monospace;
+    font:
+      24px ui-monospace,
+      monospace;
     fill: #1a1a1a;
     paint-order: stroke;
     stroke: #fff;
