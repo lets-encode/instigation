@@ -7,7 +7,8 @@
 //   - sources/score.mei      (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}};
 //                             facsimile campaigns commit the stage-A facsimile MEI instead)
 //   - tracking/task.csv      (buildTaskCsv: task T0001 + one validation subtask S0001;
-//                             facsimile campaigns prepend the P0001 pre-task)
+//                             facsimile campaigns prepend the P0001 pre-task and split
+//                             encoding into one task per page carrying measures)
 //   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
@@ -192,57 +193,92 @@ export function stampTemplate(
 		.replaceAll('{{LICENSE}}', xmlEscape(license));
 }
 
+const taskId = (n: number): string => `T${String(n).padStart(4, '0')}`;
+
+// The 1-based page numbers (surface ids) that carry at least one measure, in
+// upload order — the pages that become their own encoding task. Empty when no
+// per-page counts were supplied.
+function pagesWithMeasures(pageMeasureCounts?: number[]): number[] {
+	return (pageMeasureCounts ?? []).flatMap((count, i) => (count > 0 ? [i + 1] : []));
+}
+
 /**
- * Build the task table. `whole` strategy: one encoding task T0001 spanning the
- * entire source (task row, empty subtask_id) with one validation subtask S0001
- * — empty locators address the whole file, allow/blocklists are open.
+ * Build the task table.
+ *
+ * `mei-template` (`whole` strategy): one encoding task T0001 spanning the entire
+ * source (task row, empty subtask_id) with one validation subtask S0001 — empty
+ * locators address the whole file, allow/blocklists are open.
  *
  * A facsimile source prepends one pre-task (DESIGN.md §7a): P0001 corrects the
  * detected measures (locator `measure-zones`, with a validation subtask) —
  * measure boxes and numbers, page/system breaks, and movement boundaries in
- * one task. The encoding task waits for it.
+ * one task. It then splits the encoding into one task per page that carries
+ * measures (locator `surface-N`, matching the page's `<pb>`), each with its own
+ * validation subtask and each depending on the pre-task; a page task's PR is
+ * joined back into the shared score by page (mei-page-splice.ts). Without
+ * per-page counts (e.g. re-init with no page data) it falls back to one whole
+ * encoding task T0001.
  */
-export function buildTaskCsv(config: CampaignConfig): string {
+export function buildTaskCsv(config: CampaignConfig, pageMeasureCounts?: number[]): string {
 	const fragment = config.sources[0].path;
-	const preTasks =
-		config.sources[0].kind === 'facsimile'
-			? [
-					csvRow(['P0001', '', fragment, 'measure-zones', '', '', '']),
-					csvRow(['P0001', 'S0001', fragment, 'measure-zones', '', '', ''])
-				]
-			: [];
-	const dependsOn = preTasks.length ? 'P0001' : '';
-	const lines = [
-		csvRow(TASK_COLUMNS),
-		...preTasks,
-		csvRow(['T0001', '', fragment, '', '', '', dependsOn]),
-		csvRow(['T0001', 'S0001', fragment, '', '', '', ''])
-	];
+	const lines = [csvRow(TASK_COLUMNS)];
+
+	if (config.sources[0].kind !== 'facsimile') {
+		lines.push(csvRow(['T0001', '', fragment, '', '', '', '']));
+		lines.push(csvRow(['T0001', 'S0001', fragment, '', '', '', '']));
+		return `${lines.join('\n')}\n`;
+	}
+
+	lines.push(csvRow(['P0001', '', fragment, 'measure-zones', '', '', '']));
+	lines.push(csvRow(['P0001', 'S0001', fragment, 'measure-zones', '', '', '']));
+
+	const pages = pagesWithMeasures(pageMeasureCounts);
+	if (pages.length === 0) {
+		lines.push(csvRow(['T0001', '', fragment, '', '', '', 'P0001']));
+		lines.push(csvRow(['T0001', 'S0001', fragment, '', '', '', '']));
+	} else {
+		pages.forEach((page, i) => {
+			const id = taskId(i + 1);
+			const locator = `surface-${page}`;
+			lines.push(csvRow([id, '', fragment, locator, '', '', 'P0001']));
+			lines.push(csvRow([id, 'S0001', fragment, locator, '', '', '']));
+		});
+	}
 	return `${lines.join('\n')}\n`;
 }
 
 /**
  * Build the initial state table: task rows start at encoding_required,
- * validation subtasks at pending, with empty validate_status_1…n cells.
+ * validation subtasks at pending, with empty validate_status_1…n cells. Its
+ * rows mirror buildTaskCsv one-for-one (same pre-task and per-page tasks).
  */
-export function buildStateCsv(config: CampaignConfig): string {
+export function buildStateCsv(config: CampaignConfig, pageMeasureCounts?: number[]): string {
 	const count = config.validation?.required_validations ?? 0;
 	const validationCols = Array.from({ length: count }, (_, i) => `validate_status_${i + 1}`);
 	const header = [...STATE_BASE_COLUMNS, ...validationCols];
 	const empty = validationCols.map(() => '');
-	const preTasks =
-		config.sources[0].kind === 'facsimile'
-			? [
-					csvRow(['P0001', '', 'encoding_required', '', '', ...empty]),
-					csvRow(['P0001', 'S0001', 'pending', '', '', ...empty])
-				]
-			: [];
-	const lines = [
-		csvRow(header),
-		...preTasks,
-		csvRow(['T0001', '', 'encoding_required', '', '', ...empty]),
-		csvRow(['T0001', 'S0001', 'pending', '', '', ...empty])
-	];
+	const lines = [csvRow(header)];
+	const task = (id: string) => lines.push(csvRow([id, '', 'encoding_required', '', '', ...empty]));
+	const subtask = (id: string) => lines.push(csvRow([id, 'S0001', 'pending', '', '', ...empty]));
+
+	if (config.sources[0].kind !== 'facsimile') {
+		task('T0001');
+		subtask('T0001');
+		return `${lines.join('\n')}\n`;
+	}
+
+	task('P0001');
+	subtask('P0001');
+	const pages = pagesWithMeasures(pageMeasureCounts);
+	if (pages.length === 0) {
+		task('T0001');
+		subtask('T0001');
+	} else {
+		pages.forEach((_page, i) => {
+			task(taskId(i + 1));
+			subtask(taskId(i + 1));
+		});
+	}
 	return `${lines.join('\n')}\n`;
 }
 

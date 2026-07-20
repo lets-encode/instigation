@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -9,7 +10,7 @@
   import type { TaskRow, StateRow, LockRow, HistoryRow } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { buildGraph, buildPanel, statusPill } from "$lib/campaign-graph.ts";
+  import { buildGraph, buildPanel, statusPill, isPreTask } from "$lib/campaign-graph.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
@@ -96,6 +97,162 @@
 
   const graphData = $derived({ taskDefs, rows, validationColumns, locks, passThreshold });
   const graph = $derived(buildGraph(graphData, viewer));
+
+  // Manual node placement: buildGraph auto-lays the nodes, but the user can
+  // drag any node to a new spot. Overrides are keyed by task id and outlive
+  // table refreshes; nodes without an override keep their auto-layout position.
+  let nodePos = $state<Record<string, { x: number; y: number }>>({});
+  let drag = $state<
+    | { task: string; startX: number; startY: number; origX: number; origY: number; w: number; h: number }
+    | null
+  >(null);
+  // Set while a drag actually moves the node, so the pointerup's click does not
+  // also select the node.
+  let dragMoved = $state(false);
+  // The canvas-wrap is the visible graph frame: its box excludes the side panels
+  // and preview dock, and (unlike the scroller inside it) is not a scroll
+  // container, so its size never feeds back through a scrollbar. frameW/frameH
+  // track it reactively to drive zoom-to-fit.
+  let wrapEl = $state<HTMLDivElement | null>(null);
+  let frameW = $state(0);
+  let frameH = $state(0);
+  // Read the frame size, writing only on an actual change so a no-op resize
+  // callback cannot feed back into another resize.
+  function measureFrame() {
+    if (!wrapEl) return;
+    if (wrapEl.clientWidth !== frameW) frameW = wrapEl.clientWidth;
+    if (wrapEl.clientHeight !== frameH) frameH = wrapEl.clientHeight;
+  }
+
+  const laidNodes = $derived(
+    graph.nodes.map((n) => {
+      const p = nodePos[n.task];
+      return p ? { ...n, x: p.x, y: p.y } : n;
+    }),
+  );
+  // NODE_BORDER is the node's 1px border on each side: node widths/heights are
+  // content-box, so the rendered box extends 2px past n.w / n.h, and any box
+  // sized to the nodes must include it or a corner-parked node overflows by
+  // those 2px into a scrollbar.
+  const NODE_BORDER = 2;
+  // Inset the frame by this much when placing nodes, so a node's connector ports
+  // (6px outside its box) and "next step" badge (9px above) stay clear of the
+  // edge.
+  const EDGE_PAD = 10;
+  const MIN_ZOOM = 0.4;
+
+  // Zoom-to-fit factor, from the auto-layout's bounding box (graph.nodes, so it
+  // is stable while the viewer drags individual nodes) against the frame. Only
+  // shrinks (caps at 1) and never below MIN_ZOOM — past that the graph scrolls
+  // rather than becoming unreadable.
+  const fitBox = $derived.by(() => {
+    const ns = graph.nodes;
+    if (!ns.length) return { w: 1, h: 1 };
+    const minX = Math.min(...ns.map((n) => n.x));
+    const minY = Math.min(...ns.map((n) => n.y));
+    const maxX = Math.max(...ns.map((n) => n.x + n.w + NODE_BORDER));
+    const maxY = Math.max(...ns.map((n) => n.y + n.h + NODE_BORDER));
+    return { w: maxX - minX + 2 * EDGE_PAD, h: maxY - minY + 2 * EDGE_PAD };
+  });
+  const zoomFor = (fw: number, fh: number) =>
+    fw && fh ? Math.max(MIN_ZOOM, Math.min(1, fw / fitBox.w, fh / fitBox.h)) : 1;
+  const zoom = $derived(zoomFor(frameW, frameH));
+  // The world (unscaled canvas) holds the nodes; it is at least the frame mapped
+  // into world units (frame / zoom) so the nodes fill the frame once scaled, and
+  // grows further only if a node sits past that (e.g. at the MIN_ZOOM floor).
+  const worldW = $derived(
+    Math.max(EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.x + n.w + NODE_BORDER)), frameW / zoom),
+  );
+  const worldH = $derived(
+    Math.max(EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.y + n.h + NODE_BORDER)), frameH / zoom),
+  );
+
+  // headH / 2 — the header midline the ports and edge anchors sit on (matches
+  // the 43px port offset in the CSS and headH in campaign-graph.ts).
+  const HEAD_MID = 43;
+  const edgePath = (x1: number, y1: number, x2: number, y2: number): string => {
+    const dx = Math.max(18, (x2 - x1) * 0.5);
+    return `M${x1} ${y1} C${x1 + dx} ${y1},${x2 - dx} ${y2},${x2} ${y2}`;
+  };
+  // Re-route each dependency edge through its endpoints' current (possibly
+  // dragged) positions so edges track their nodes.
+  const laidEdges = $derived(
+    graph.edges.map((e) => {
+      const a = laidNodes.find((n) => n.task === e.from);
+      const b = laidNodes.find((n) => n.task === e.to);
+      if (!a || !b) return { kind: e.kind, d: e.d };
+      return { kind: e.kind, d: edgePath(a.x + a.w, a.y + HEAD_MID, b.x, b.y + HEAD_MID) };
+    }),
+  );
+
+  function startDrag(e: PointerEvent, n: { task: string; x: number; y: number }) {
+    const p = nodePos[n.task];
+    // Clamp against the node's rendered border-box (offsetWidth/Height includes
+    // the border), so a corner-parked node lands flush with the frame edge and
+    // does not overflow it into a scrollbar.
+    const el = e.currentTarget as HTMLElement;
+    drag = {
+      task: n.task,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: p?.x ?? n.x,
+      origY: p?.y ?? n.y,
+      w: el.offsetWidth,
+      h: el.offsetHeight,
+    };
+    dragMoved = false;
+  }
+  // Keep the node (with its decorations) inside the padded frame:
+  // [PAD, extent - nodeSize - PAD]; collapses to PAD when the node is larger
+  // than the frame.
+  const clampAxis = (v: number, extent: number, size: number) =>
+    Math.min(Math.max(v, EDGE_PAD), Math.max(EDGE_PAD, extent - size - EDGE_PAD));
+  function dragMove(e: PointerEvent) {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!dragMoved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    dragMoved = true;
+    // Pointer travel is in screen px; divide by the zoom to move in world units,
+    // and clamp to the frame mapped into world units so the node stays visible.
+    const z = zoom || 1;
+    const fw = wrapEl ? wrapEl.clientWidth / z : Infinity;
+    const fh = wrapEl ? wrapEl.clientHeight / z : Infinity;
+    nodePos = {
+      ...nodePos,
+      [drag.task]: {
+        x: clampAxis(drag.origX + dx / z, fw, drag.w),
+        y: clampAxis(drag.origY + dy / z, fh, drag.h),
+      },
+    };
+  }
+  // Reorder: restore the auto-layout, centred in the frame (mapped into world
+  // units). The frame already excludes the side panels and preview dock, and
+  // zoom-to-fit then scales the whole thing to fit.
+  function reorder() {
+    const ns = graph.nodes;
+    if (!ns.length) {
+      nodePos = {};
+      return;
+    }
+    const minX = Math.min(...ns.map((n) => n.x));
+    const minY = Math.min(...ns.map((n) => n.y));
+    const contentW = Math.max(...ns.map((n) => n.x + n.w)) - minX;
+    const contentH = Math.max(...ns.map((n) => n.y + n.h)) - minY;
+    // Measure and fit synchronously (the reactive zoom may not have caught up
+    // when reorder runs right after the panels open).
+    const pxW = wrapEl?.clientWidth ?? 0;
+    const pxH = wrapEl?.clientHeight ?? 0;
+    const z = pxW && pxH ? zoomFor(pxW, pxH) : zoom || 1;
+    const fw = pxW ? pxW / z : contentW + 2 * EDGE_PAD;
+    const fh = pxH ? pxH / z : contentH + 2 * EDGE_PAD;
+    const offX = EDGE_PAD + Math.max(0, (fw - 2 * EDGE_PAD - contentW) / 2);
+    const offY = EDGE_PAD + Math.max(0, (fh - 2 * EDGE_PAD - contentH) / 2);
+    const next: Record<string, { x: number; y: number }> = {};
+    for (const n of ns) next[n.task] = { x: n.x - minX + offX, y: n.y - minY + offY };
+    nodePos = next;
+  }
+
   const panel = $derived(
     buildPanel(
       graphData,
@@ -166,6 +323,27 @@
   let infoW = $state(300);
   let resizing = $state<"dock" | "panel" | "info" | null>(null);
   let stageEl = $state<HTMLDivElement | null>(null);
+
+  // Track the graph frame's size to drive zoom-to-fit. A ResizeObserver covers
+  // window resizes; reading the panel/dock/resizer state makes the effect also
+  // re-run when those toggle or drag (they resize the canvas-wrap), and the
+  // measurement is deferred a frame so it reads the settled layout. Declared
+  // here — below the panel/dock state — so those reads are in scope.
+  $effect(() => {
+    void selected;
+    void preview;
+    void dockFrac;
+    void panelW;
+    void infoW;
+    void view;
+    const el = wrapEl;
+    if (!el) return;
+    measureFrame();
+    const ro = new ResizeObserver(measureFrame);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   function resizeMove(e: PointerEvent) {
     if (resizing === "dock" && stageEl) {
       const r = stageEl.getBoundingClientRect();
@@ -318,6 +496,26 @@
     if (auth.status !== "loading" && owner && repo && !loaded) load();
   });
 
+  // On first load of an initialised campaign, open with the detail panel and
+  // preview showing — selecting the viewer's next step when there is one, else
+  // the first node. Runs once; the viewer can close either afterwards.
+  let defaultsApplied = $state(false);
+  $effect(() => {
+    if (loaded && !notInitialised && !defaultsApplied && graph.nodes.length) {
+      defaultsApplied = true;
+      applyDefaults();
+    }
+  });
+  async function applyDefaults() {
+    const first = graph.nodes.find((n) => n.nextUp) ?? graph.nodes[0];
+    selected = { task: first.task, sub: "", slot: null };
+    togglePreview(first.task);
+    // Centre once the panel and preview have taken their space, so the flow is
+    // laid out for the room that is actually left.
+    await tick();
+    reorder();
+  }
+
   // Pages the measure detector couldn't process during campaign creation, handed
   // over via sessionStorage by the create flow. Read once and clear, so the
   // notice shows on arrival but not on a later reload.
@@ -358,16 +556,16 @@
   const claim = (task_id: string, subtask_id: string) =>
     run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
 
-  // Facsimile tasks are validated in the zone editor, so claiming one opens it
-  // — but only on a clean claim, so a rejected claim leaves you on the console
-  // rather than in a read-only editor. Encoding tasks review in the preview and
-  // just claim in place.
+  // Measure-correction pre-tasks are validated in the zone editor, so claiming
+  // one opens it — but only on a clean claim, so a rejected claim leaves you on
+  // the console rather than in a read-only editor. Encoding tasks (whole-file
+  // and per-page) review in the preview and just claim in place.
   const claimValidate = async (task_id: string, subtask_id: string) => {
     await claim(task_id, subtask_id);
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
-    if (locator && result?.ok && !result.warn) {
+    if (isPreTask(locator ?? "") && result?.ok && !result.warn) {
       await goto(`/campaign/${owner}/${repo}/zones/${task_id}`);
     }
   };
@@ -414,7 +612,7 @@
   }
 
   const edgeMarker = (kind: string) =>
-    kind === "green" ? "url(#ag)" : kind === "grey" ? "url(#ar)" : "url(#ax)";
+    kind === "green" ? "url(#ag)" : "url(#ax)";
 
   // History rows for the tables tab, newest first (the file is append-only).
   const historyNewestFirst = $derived(history.slice().reverse());
@@ -423,8 +621,15 @@
 </script>
 
 <svelte:window
-  onpointermove={(e) => resizing && resizeMove(e)}
-  onpointerup={() => (resizing = null)}
+  onpointermove={(e) => {
+    if (resizing) resizeMove(e);
+    else if (drag) dragMove(e);
+  }}
+  onpointerup={() => {
+    resizing = null;
+    drag = null;
+  }}
+  onresize={measureFrame}
 />
 
 {#snippet lockIcon()}
@@ -736,24 +941,24 @@
     {:else if view === "graph"}
       <div class="body">
         <div class="stage" bind:this={stageEl}>
-          <div class="canvas-wrap">
+          <div class="canvas-wrap" bind:this={wrapEl}>
           <div class="scroller">
+            <div class="zoomwrap" style={`width:${worldW * zoom}px;height:${worldH * zoom}px`}>
             <div
               class="canvas"
-              style={`width:${graph.W}px;height:${graph.H}px`}
+              style={`width:${worldW}px;height:${worldH}px;transform:scale(${zoom})`}
             >
               <svg
-                width={graph.W}
-                height={graph.H}
+                width="100%"
+                height="100%"
                 class="edges"
                 aria-hidden="true"
               >
                 <defs>
-                  <marker id="ar" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a9a9a9"></path></marker>
                   <marker id="ag" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7fbf8a"></path></marker>
                   <marker id="ax" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#cfcfcf"></path></marker>
                 </defs>
-                {#each graph.edges as e}
+                {#each laidEdges as e}
                   <path
                     d={e.d}
                     class="edge {e.kind}"
@@ -762,13 +967,17 @@
                 {/each}
               </svg>
 
-              {#each graph.nodes as n (n.key)}
+              {#each laidNodes as n (n.key)}
                 <div
                   class="node s-{n.statusKey}"
                   class:selected={selected?.task === n.task}
                   class:mainsel={selected?.task === n.task && selected?.sub === ""}
                   class:nextup={n.nextUp}
+                  class:dragging={drag?.task === n.task}
                   style={`left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`}
+                  role="group"
+                  aria-label={`${n.title} node — drag to reposition`}
+                  onpointerdown={(e) => startDrag(e, n)}
                 >
                   {#if n.hasIn}
                     <span class="port in"></span>
@@ -782,7 +991,10 @@
                   <button
                     type="button"
                     class="nmain"
-                    onclick={() => select(n.task, "", null)}
+                    onclick={() => {
+                      if (dragMoved) return;
+                      select(n.task, "", null);
+                    }}
                   >
                     <span class="nhead">
                       <span class="nicon {n.kind}">{n.icon}</span>
@@ -813,7 +1025,10 @@
                           selected?.sub === s.sub &&
                           selected?.slot === s.slot}
                         title="Open this validation slot in the panel"
-                        onclick={() => select(n.task, s.sub, s.slot)}
+                        onclick={() => {
+                          if (dragMoved) return;
+                          select(n.task, s.sub, s.slot);
+                        }}
                       >
                         {#if s.key === "review"}
                           <span class="mark review">{@render reviewIcon()}</span>
@@ -833,7 +1048,16 @@
                 </div>
               {/each}
             </div>
+            </div>
           </div>
+          <button
+            type="button"
+            class="reorder-fab"
+            title="Reset the nodes to their automatic layout, centred in view"
+            onclick={reorder}
+          >
+            ⤢ Reorder
+          </button>
           </div>
 
           {#if preview}
@@ -1594,6 +1818,29 @@
     flex: 1;
     min-height: 0;
   }
+  .reorder-fab {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid #d8d8d8;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: #333;
+    cursor: pointer;
+  }
+  .reorder-fab:hover {
+    border-color: #3056d3;
+    color: #3056d3;
+  }
   .scroller {
     position: absolute;
     inset: 0;
@@ -1603,11 +1850,19 @@
     background-image: radial-gradient(#e4e2dc 1px, transparent 1px);
     background-size: 22px 22px;
   }
-  .canvas {
+  /* The zoom wrapper carries the scaled size (world × zoom), so the scroller
+     sees the fitted footprint; the canvas holds the nodes in unscaled world
+     units and is shrunk to fit via transform. */
+  .zoomwrap {
     position: relative;
     flex: none;
-    /* Centres the flow when it is smaller than the viewport. */
     margin: auto;
+  }
+  .canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: top left;
   }
   .edges {
     position: absolute;
@@ -1620,9 +1875,6 @@
   }
   .edge.green {
     stroke: #7fbf8a;
-  }
-  .edge.grey {
-    stroke: #c7c7c7;
   }
   .edge.open {
     stroke: #d9d9d9;
@@ -1640,6 +1892,14 @@
     border: 1px solid #e5e5e5;
     border-radius: 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+  }
+  .node.dragging {
+    cursor: grabbing;
+    z-index: 2;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
   }
   .node.s-completed {
     border-color: #b6e2c1;

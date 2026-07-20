@@ -9,10 +9,11 @@ instigation GUI** (organiser creates/configures a campaign) and the **mei-friend
 (contributors encode/validate).
 
 > Single authoritative design + status document; §9 records the current state. Data model is
-> **schema v2** (four tables keyed by `(task_id, subtask_id)` plus the command log, §5); the only fragmentation strategy
-> implemented is `whole` (one campaign = one task = the whole `sources/score.mei`, with one
-> validation subtask). Coding guidelines to honour are in `CLAUDE.md` (simplicity, surgical
-> changes, goal-driven).
+> **schema v2** (four tables keyed by `(task_id, subtask_id)` plus the command log, §5). An
+> `mei-template` campaign uses the `whole` strategy (one task = the whole `sources/score.mei`, one
+> validation subtask); a `facsimile` campaign splits encoding into one task per page carrying
+> measures, joined back into the shared score by page on accept (§6, §7a). Coding guidelines to
+> honour are in `CLAUDE.md` (simplicity, surgical changes, goal-driven).
 
 ## 1. Architecture at a glance
 
@@ -202,9 +203,10 @@ score) with one subtask `S0001` spanning the same range.
 `task_id, subtask_id, fragment, locator, allowlist, blocklist, depends_on`
 
 - `fragment`: the source file the row addresses (e.g. `sources/score.mei`).
-- `locator`: address *within* the fragment — an MEI `xml:id`, or a controlled-vocab term for
-  pre-tasks (`measure-zones`; §7a); empty = the whole file. Realises the reserved
-  `by_measure`/`by_section` strategies.
+- `locator`: address *within* the fragment — a page's surface id (`surface-N`) for a per-page
+  encoding task, a controlled-vocab term for pre-tasks (`measure-zones`; §7a), or empty = the whole
+  file. Realises per-page fragmentation now (facsimile, §7a) and the reserved `by_measure`/`by_section`
+  strategies later.
 - `allowlist`/`blocklist`: per-row claim gates — present in the schema but **not yet enforced**
   (default open, §10).
 - `depends_on`: a task_id that must be `completed` before this task can be claimed; empty = none.
@@ -293,6 +295,13 @@ Because several tasks can share one fragment, an encoding-type PR's **task** is 
 PR's own data: the command envelope's task_id, the `encode-<task_id>` branch name, or the author's
 single active encoding lock among the candidate tasks (in that order; a lone candidate needs no
 tie-break).
+
+**Joining encoding into the fragment.** A whole-file task (empty locator) and a pre-task take the
+fork's fragment verbatim. A per-page encoding task (locator `surface-N`, §7a) contributes only its
+page: the coordinator splices the fork's measures for that page — those inside the page's `<pb>`
+span, matched by `xml:id` — into the base score and keeps every other page as it stands
+(`src/lib/mei-page-splice.ts`). This is what lets page tasks be worked independently and merge
+without clobbering each other; the spliced result is what the machine-check validates.
 
 **Accept rules.**
 
@@ -384,8 +393,12 @@ caller's `pull_request_target` is `paths`-filtered (§4), so an identical file w
 PR that never triggers the automation and leaves the console polling forever.
 
 The task table chains the work via `depends_on` (§5): **P0001** (`locator: measure-zones`, one
-validation subtask) → **T0001** (the encoding). The pre-task is an ordinary crowd task: claimed
-(encoding-kind lock), submitted as an encoding-type PR, validated through the normal machinery.
+validation subtask) → **one encoding task per page** that carries measures (`locator: surface-N`,
+one validation subtask each), all depending on P0001. The pre-task establishes the `<pb>`
+boundaries and continuous measure numbering the per-page split and join rely on. Each is an
+ordinary crowd task: claimed (encoding-kind lock), submitted as an encoding-type PR (joined into
+the shared score by page, §6), validated through the normal machinery. Pages with no detected
+measures get no encoding task. An `mei-template` campaign keeps the single whole-file **T0001**.
 
 The **zone editor** (`/campaign/[owner]/[repo]/zones/[task]`) is the volunteer interface for the
 pre-task, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`). It has two

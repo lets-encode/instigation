@@ -32,6 +32,7 @@ import { envelopeFromPrBody, envelopeColumns } from '../src/lib/command-envelope
 import type { CommandEnvelope } from '../src/lib/command-envelope.ts';
 import { checkClaim } from '../src/lib/campaign-claim.ts';
 import { checkEncoding, checkValidation } from '../src/lib/campaign-submit.ts';
+import { splicePage } from '../src/lib/mei-page-splice.ts';
 import { reapLocks } from '../src/lib/campaign-reaper.ts';
 import {
 	addedRowFromPatch,
@@ -247,7 +248,20 @@ async function decideEncoding(
 	const task = resolveEncodingTask({ tasks, locks, changedPaths, envelope, headRef, author });
 	if (!task) return { ok: false, reason: 'unknown_task' };
 
-	const mei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
+	// A page task (locator `surface-N`) contributes only its page's measures: we
+	// splice the fork's page into the base score, leaving other pages as they
+	// stand. Whole-file tasks (empty locator) and pre-tasks take the fork verbatim.
+	const forkMei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
+	let mei = forkMei;
+	if (forkMei != null && task.locator.startsWith('surface-')) {
+		const baseMei = await getRepoFile(token, owner, repo, task.fragment, sha);
+		try {
+			mei = baseMei == null ? null : splicePage(baseMei, forkMei, task.locator);
+		} catch (err) {
+			console.warn(`Page splice failed for ${task.task_id} (${task.locator}): ${(err as Error).message}`);
+			mei = null;
+		}
+	}
 	const verdict = checkEncoding({
 		tasks,
 		state,

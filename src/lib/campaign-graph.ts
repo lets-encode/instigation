@@ -73,6 +73,7 @@ const G = {
 	slotH: 30,
 	slotsPad: 8,
 	gapX: 110,
+	gapY: 40,
 	x0: 60,
 	y0: 60
 };
@@ -114,10 +115,14 @@ export interface LaidNode {
 	nextUp: boolean;
 }
 
-/** A positioned edge (cubic bézier path). */
+/** A dependency edge from one task node to another (cubic bézier path). */
 export interface LaidEdge {
+	/** task_id the edge runs from (the depended-on task). */
+	from: string;
+	/** task_id the edge runs to (the dependent task). */
+	to: string;
 	d: string;
-	kind: 'green' | 'grey' | 'open';
+	kind: 'green' | 'open';
 }
 
 /** The laid-out graph: canvas size plus everything positioned inside it. */
@@ -128,13 +133,23 @@ export interface Graph {
 	edges: LaidEdge[];
 }
 
+/**
+ * Whether a task is a facsimile pre-task (measure correction, reviewed in the
+ * zone editor). Encoding tasks — whole-file (empty locator) and per-page
+ * (`surface-N`) — are not pre-tasks and use mei-friend.
+ */
+export function isPreTask(locator: string): boolean {
+	return locator === 'measure-zones';
+}
+
 /** The task's human type from its locator. */
 export function typeLabel(locator: string): string {
 	if (locator === 'measure-zones') return 'Measure correction';
-	return 'Encoding';
+	const page = /^surface-(\d+)$/.exec(locator);
+	return page ? `Encoding · page ${page[1]}` : 'Encoding';
 }
 
-const iconFor = (locator: string): string => (locator === 'measure-zones' ? 'M' : 'E');
+const iconFor = (locator: string): string => (isPreTask(locator) ? 'M' : 'E');
 
 // ---------------------------------------------------------------------------
 // Table lookups
@@ -182,7 +197,7 @@ function mainStatusKey(d: GraphData, task: string): StatusKey {
 	if (blockedBy(d, task)) return 'blocked';
 	const status = taskState(d, task)?.status ?? 'pending';
 	if (status === 'encoding_required' && encodingLock(d, task)) {
-		return taskDef(d, task)?.locator ? 'claimed' : 'encoding';
+		return isPreTask(taskDef(d, task)?.locator ?? '') ? 'claimed' : 'encoding';
 	}
 	if (status in STATUS_LABELS) return status as StatusKey;
 	return 'pending';
@@ -212,7 +227,7 @@ function slotState(d: GraphData, row: StateRow, slot: number): SlotState {
 		return { key: 'review', sub: `@${lock.user_id} · in review`, running: true, user: lock.user_id };
 	}
 	const waiting = !isEncoded(taskState(d, row.task_id)?.status ?? '');
-	const pre = !!taskDef(d, row.task_id)?.locator;
+	const pre = isPreTask(taskDef(d, row.task_id)?.locator ?? '');
 	return {
 		key: 'open',
 		sub: waiting
@@ -237,10 +252,12 @@ const nodeHeight = (slots: number): number =>
 	G.headH + (slots > 0 ? G.slotsHead + slots * G.slotH + G.slotsPad : G.basePad);
 
 /**
- * Auto-layout: one node per task, laid out left to right in task.csv order
- * (which is topological for depends_on chains), vertically centred on a
- * shared midline. A pure function of the tables. `viewer` is only used to
- * pick the "next up" node — the first one the viewer can act on.
+ * Auto-layout: one node per task, in dependency layers. A task's column is the
+ * length of its longest depends_on chain, so dependents sit one column right of
+ * what they wait for; parallel tasks (unrelated, or sharing a dependency) land
+ * in the same column and stack vertically. A pure function of the tables.
+ * `viewer` is only used to pick the "next up" node — the first one the viewer
+ * can act on.
  */
 export function buildGraph(d: GraphData, viewer = ''): Graph {
 	const reqVal = d.validationColumns.length;
@@ -248,13 +265,25 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 	const nodes: LaidNode[] = [];
 	const edges: LaidEdge[] = [];
 
-	const heights = defs.map((t) => nodeHeight(subRowsOf(d, t.task_id).length * reqVal));
-	const maxH = Math.max(0, ...heights);
-	// Top-aligned nodes share a header line, so the chain's edges run straight
-	// through the headers.
-	const edgeY = G.y0 + G.headH / 2;
+	const isTask = (id: string) => defs.some((t) => t.task_id === id);
 
-	let x = G.x0;
+	// Column = longest depends_on chain length to the task. Roots, dangling
+	// dependencies and cycles anchor at column 0.
+	const columnOf = new Map<string, number>();
+	const resolveColumn = (task: string, trail: Set<string>): number => {
+		const cached = columnOf.get(task);
+		if (cached !== undefined) return cached;
+		const dep = taskDef(d, task)?.depends_on ?? '';
+		const col = dep && isTask(dep) && !trail.has(task) ? resolveColumn(dep, new Set(trail).add(task)) + 1 : 0;
+		columnOf.set(task, col);
+		return col;
+	};
+	defs.forEach((t) => resolveColumn(t.task_id, new Set()));
+
+	const heights = defs.map((t) => nodeHeight(subRowsOf(d, t.task_id).length * reqVal));
+	// Running vertical cursor per column, so same-column nodes stack downward.
+	const columnBottom = new Map<number, number>();
+
 	let nextUpTaken = false;
 	defs.forEach((def, i) => {
 		const task = def.task_id;
@@ -299,7 +328,10 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 		if (nextUp) nextUpTaken = true;
 
 		const h = heights[i];
-		const y = G.y0;
+		const col = columnOf.get(task) ?? 0;
+		const x = G.x0 + col * (G.nodeW + G.gapX);
+		const y = columnBottom.get(col) ?? G.y0;
+		columnBottom.set(col, y + h + G.gapY);
 		nodes.push({
 			key: task,
 			task,
@@ -307,7 +339,7 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 			y,
 			w: G.nodeW,
 			h,
-			kind: def.locator ? 'pre' : 'encode',
+			kind: isPreTask(def.locator) ? 'pre' : 'encode',
 			icon: iconFor(def.locator),
 			title: typeLabel(def.locator),
 			subtitle: task,
@@ -315,32 +347,38 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 			// Drives the node's lock marker: only while the meta line shows the claim.
 			running: !!lock && !encoded && !blocked,
 			meta,
-			hasIn: i > 0,
-			hasOut: i < defs.length - 1,
+			hasIn: !!def.depends_on && isTask(def.depends_on),
+			hasOut: defs.some((t) => t.depends_on === task),
 			outGreen: state?.status === 'completed',
 			slots,
 			passes: subRows.reduce((n, r) => n + passesOf(d, r), 0),
 			threshold: d.passThreshold * subRows.length,
 			nextUp
 		});
-
-		if (i > 0) {
-			const prev = nodes[i - 1];
-			// depends_on edges turn green once the upstream task completes;
-			// unrelated neighbours are chained neutrally for reading order.
-			const dependent = def.depends_on === prev.task;
-			const upstreamDone = taskState(d, prev.task)?.status === 'completed';
-			edges.push({
-				d: hpath(prev.x + prev.w, edgeY, x, edgeY),
-				kind: dependent ? (upstreamDone ? 'green' : 'open') : 'grey'
-			});
-		}
-		x += G.nodeW + G.gapX;
 	});
 
+	// One edge per dependency, from the depended-on task to the dependent, in
+	// task order. Green once the upstream completes, else open (pending).
+	const nodeByTask = new Map(nodes.map((n) => [n.task, n]));
+	defs.forEach((def) => {
+		const dep = def.depends_on;
+		if (!dep || !isTask(dep)) return;
+		const from = nodeByTask.get(dep)!;
+		const to = nodeByTask.get(def.task_id)!;
+		const upstreamDone = taskState(d, dep)?.status === 'completed';
+		edges.push({
+			from: dep,
+			to: def.task_id,
+			d: hpath(from.x + from.w, from.y + G.headH / 2, to.x, to.y + G.headH / 2),
+			kind: upstreamDone ? 'green' : 'open'
+		});
+	});
+
+	const right = Math.max(G.x0, ...nodes.map((n) => n.x + n.w));
+	const bottom = Math.max(G.y0, ...nodes.map((n) => n.y + n.h));
 	return {
-		W: Math.max(x - G.gapX + G.x0, G.x0 * 2),
-		H: Math.max(maxH + G.y0 * 2, 240),
+		W: right + G.x0,
+		H: Math.max(bottom + G.y0, 240),
 		nodes,
 		edges
 	};
@@ -446,7 +484,7 @@ export function buildPanel(
 		let meta = '';
 		// Facsimile pre-tasks are reviewed in the zone editor (read-only view).
 		const openEditor: PanelAction | null =
-			def.locator !== ''
+			isPreTask(def.locator)
 				? {
 						id: 'zone-editor',
 						label: 'Open editor',
@@ -499,7 +537,7 @@ export function buildPanel(
 				disabled: !claimable,
 				title: selfValidation
 					? 'Encoders cannot validate their own work.'
-					: def.locator !== ''
+					: isPreTask(def.locator)
 						? 'Reserve this subtask and open the zone editor to review it.'
 						: 'Reserve this subtask for validation.'
 			});
@@ -544,7 +582,7 @@ export function buildPanel(
 				: { key: 'validation_required', text: 'validating' }
 		);
 	} else {
-		pills.push({ key: statusKey, text: statusPill(statusKey, def.locator !== '') });
+		pills.push({ key: statusKey, text: statusPill(statusKey, isPreTask(def.locator)) });
 	}
 	let meta = '';
 	if (blocked) meta = `Waits for ${blocked} — claims open once it is completed.`;
@@ -559,7 +597,7 @@ export function buildPanel(
 
 	const actions: PanelAction[] = [];
 	const otherLock = lock && !mine;
-	if (def.locator !== '') {
+	if (isPreTask(def.locator)) {
 		actions.push({
 			id: 'zone-editor',
 			label: mine ? 'Correct measures in editor' : 'Claim correction task',
@@ -613,7 +651,7 @@ export function buildPanel(
 	const depDone = def.depends_on ? taskState(d, def.depends_on)?.status === 'completed' : false;
 	return {
 		icon: iconFor(def.locator),
-		iconKind: def.locator ? 'pre' : 'encode',
+		iconKind: isPreTask(def.locator) ? 'pre' : 'encode',
 		title: typeLabel(def.locator),
 		subtitle: `${sel.task} · ${def.fragment}`,
 		pills,
@@ -622,7 +660,7 @@ export function buildPanel(
 		actions,
 		validations,
 		metaRows: [
-			{ k: 'Type', v: def.locator ? `${def.locator}-node` : 'encode-node' },
+			{ k: 'Type', v: isPreTask(def.locator) ? `${def.locator}-node` : 'encode-node' },
 			{
 				k: 'Depends on',
 				v: def.depends_on ? `${def.depends_on} ${depDone ? '✓' : '⧗'}` : '—',
