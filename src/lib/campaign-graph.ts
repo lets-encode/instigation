@@ -281,6 +281,15 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 	defs.forEach((t) => resolveColumn(t.task_id, new Set()));
 
 	const heights = defs.map((t) => nodeHeight(subRowsOf(d, t.task_id).length * reqVal));
+	// Total stacked height of each column, so shorter columns can be centred
+	// against the tallest one rather than floating to the top.
+	const columnHeight = new Map<number, number>();
+	defs.forEach((def, i) => {
+		const col = columnOf.get(def.task_id) ?? 0;
+		const prev = columnHeight.get(col);
+		columnHeight.set(col, prev === undefined ? heights[i] : prev + G.gapY + heights[i]);
+	});
+	const maxColumnHeight = Math.max(0, ...columnHeight.values());
 	// Running vertical cursor per column, so same-column nodes stack downward.
 	const columnBottom = new Map<number, number>();
 
@@ -330,7 +339,9 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 		const h = heights[i];
 		const col = columnOf.get(task) ?? 0;
 		const x = G.x0 + col * (G.nodeW + G.gapX);
-		const y = columnBottom.get(col) ?? G.y0;
+		// Centre each column's stack vertically against the tallest column.
+		const start = G.y0 + (maxColumnHeight - (columnHeight.get(col) ?? 0)) / 2;
+		const y = columnBottom.get(col) ?? start;
 		columnBottom.set(col, y + h + G.gapY);
 		nodes.push({
 			key: task,
