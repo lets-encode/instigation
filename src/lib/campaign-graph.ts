@@ -213,7 +213,9 @@ interface SlotState {
 
 // The slot's state from its validate_status cell: a final verdict renders
 // solid, active locks occupy separate empty slots, and the rest are open.
-function slotState(d: GraphData, row: StateRow, slot: number): SlotState {
+// `viewer` tailors the open-slot text: the encoder cannot validate their own
+// work, so they see that another volunteer is needed rather than a claim prompt.
+function slotState(d: GraphData, row: StateRow, slot: number, viewer = ''): SlotState {
 	const cell = cellsOf(d, row)[slot] ?? '';
 	if (isFinalValidation(cell)) {
 		const [verdict, user] = cell.split('|');
@@ -226,15 +228,19 @@ function slotState(d: GraphData, row: StateRow, slot: number): SlotState {
 	if (lock) {
 		return { key: 'review', sub: `@${lock.user_id} · in review`, running: true, user: lock.user_id };
 	}
-	const waiting = !isEncoded(taskState(d, row.task_id)?.status ?? '');
+	const taskStatus = taskState(d, row.task_id);
+	const waiting = !isEncoded(taskStatus?.status ?? '');
 	const pre = isPreTask(taskDef(d, row.task_id)?.locator ?? '');
+	const selfEncoded = viewer !== '' && taskStatus?.encoder === viewer;
 	return {
 		key: 'open',
 		sub: waiting
 			? pre
 				? 'waiting for measure correction'
 				: 'waiting for encoding'
-			: 'open — claim to review',
+			: selfEncoded
+				? 'open — needs another volunteer'
+				: 'open — claim to review',
 		running: false,
 		user: ''
 	};
@@ -310,7 +316,7 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 
 		const slots: NodeSlot[] = subRows.flatMap((row) =>
 			Array.from({ length: reqVal }, (_, slot) => {
-				const s = slotState(d, row, slot);
+				const s = slotState(d, row, slot, viewer);
 				return {
 					sub: row.subtask_id,
 					slot,
@@ -486,7 +492,7 @@ export function buildPanel(
 	if (sel.sub !== '' && sel.slot != null) {
 		const row = findRow(d.rows, sel.task, sel.sub);
 		if (!row) return null;
-		const s = slotState(d, row, sel.slot);
+		const s = slotState(d, row, sel.slot, viewer);
 		const cell = cellsOf(d, row)[sel.slot] ?? '';
 		const lock = validationLockForSlot(d, row, sel.slot);
 		const mine = lock?.user_id === viewer;
@@ -609,19 +615,31 @@ export function buildPanel(
 	const actions: PanelAction[] = [];
 	const otherLock = lock && !mine;
 	if (isPreTask(def.locator)) {
-		actions.push({
-			id: 'zone-editor',
-			label: mine ? 'Correct measures in editor' : 'Claim correction task',
-			primary: true,
-			disabled: viewer === '' || !!blocked || !!otherLock,
-			title: viewer === ''
-				? 'Log in to claim this correction task.'
-				: blocked
-				? `Enabled once ${blocked} is completed.`
-				: otherLock
-					? `Already claimed by @${lock.user_id}.`
-					: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
-		});
+		if (encoded) {
+			// The correction is submitted, so the task can no longer be claimed.
+			// The zone editor opens read-only for reviewing the corrected measures.
+			actions.push({
+				id: 'zone-editor',
+				label: 'Open measure viewer',
+				primary: false,
+				disabled: false,
+				title: 'View the corrected measures on the facsimile (read-only).'
+			});
+		} else {
+			actions.push({
+				id: 'zone-editor',
+				label: mine ? 'Correct measures in editor' : 'Claim correction task',
+				primary: true,
+				disabled: viewer === '' || !!blocked || !!otherLock,
+				title: viewer === ''
+					? 'Log in to claim this correction task.'
+					: blocked
+					? `Enabled once ${blocked} is completed.`
+					: otherLock
+						? `Already claimed by @${lock.user_id}.`
+						: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
+			});
+		}
 	} else {
 		const claimable = viewer !== '' && !blocked && !otherLock && (state.status === 'encoding_required' || mine);
 		actions.push({
@@ -654,7 +672,7 @@ export function buildPanel(
 			pct: Math.min(100, Math.round((passes / Math.max(1, d.passThreshold)) * 100)),
 			slots: Array.from({ length: reqVal }, (_, slot) => ({
 				label: `${row.subtask_id}·${slot + 1}`,
-				state: slotState(d, row, slot)
+				state: slotState(d, row, slot, viewer)
 			}))
 		};
 	});

@@ -333,6 +333,38 @@ test('anonymous viewers can inspect the graph but cannot claim work', () => {
 	const graph = buildGraph(d, '');
 	assert.equal(graph.nodes.some((node) => node.nextUp), false);
 	assert.equal(graph.nodes.flatMap((node) => node.slots).some((slot) => slot.claimable), false);
+	// An unencoded pre-task still offers a claim button, disabled for anonymous.
+	d.rows[0] = state('P0001', '', 'encoding_required');
 	const panel = buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, '', false);
-	assert.equal(panel?.actions.find((action) => action.id === 'zone-editor')?.disabled, true);
+	const act = panel?.actions.find((action) => action.id === 'zone-editor');
+	assert.equal(act?.label, 'Claim correction task');
+	assert.equal(act?.disabled, true);
+});
+
+test('buildPanel: a submitted measure-correction task is a read-only viewer, not a claim', () => {
+	const d = facsimileData();
+	// Encoded but not yet fully validated — the correction can no longer be claimed.
+	d.rows[0] = state('P0001', '', 'validation_required', 'alice');
+	d.rows[1] = state('P0001', 'S0001', 'validation_required', '');
+	const act = buildPanel(d, noHistory, { task: 'P0001', sub: '', slot: null }, 'you', false)?.actions.find(
+		(a) => a.id === 'zone-editor'
+	);
+	assert.equal(act?.label, 'Open measure viewer');
+	assert.equal(act?.disabled, false);
+	assert.equal(act?.primary, false);
+});
+
+test('buildGraph: the encoder sees an open slot needs another volunteer, not a claim', () => {
+	const d = facsimileData();
+	// Alice encoded P0001; her open validation slot is not hers to claim.
+	d.rows[0] = state('P0001', '', 'validation_required', 'alice');
+	d.rows[1] = state('P0001', 'S0001', 'validation_required', '');
+	const slotFor = (viewer: string) =>
+		buildGraph(d, viewer).nodes.find((n) => n.task === 'P0001')!.slots[0];
+	const asEncoder = slotFor('alice');
+	assert.equal(asEncoder.claimable, false);
+	assert.equal(asEncoder.who, 'open — needs another volunteer');
+	const asOther = slotFor('you');
+	assert.equal(asOther.claimable, true);
+	assert.equal(asOther.who, 'open — claim to review');
 });
