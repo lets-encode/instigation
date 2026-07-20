@@ -15,7 +15,7 @@ import {
 	RateLimitError,
 	getGitHubRequestTelemetry,
 	resetGitHubRequestTelemetry
-} from './github-rest.js';
+} from '../forge/github-rest.ts';
 
 const file = (index: number) => ({ filename: `sources/${index}.mei`, status: 'modified' });
 

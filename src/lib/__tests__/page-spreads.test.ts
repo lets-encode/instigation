@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSpreads } from './page-spreads.ts';
+import { buildSpreads } from '../page-spreads.ts';
 
 test('single view: one spread per page', () => {
 	assert.deepEqual(buildSpreads(3, 'single', true), [

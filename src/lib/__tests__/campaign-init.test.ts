@@ -14,11 +14,11 @@ import {
 	buildLockCsv,
 	buildHistoryCsv,
 	assertSupported
-} from './campaign-init.js';
+} from '../campaign-init.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // instigation/src/lib -> up 3 -> lets-encode/ -> the template repo.
-const TEMPLATE_MEI = join(HERE, '../../../user-repo-template/templates/score.template.mei');
+const TEMPLATE_MEI = join(HERE, '../../../../user-repo-template/templates/score.template.mei');
 
 // The create-form fields for the worked example (one-note test case; DESIGN.md §6).
 const WORKED_EXAMPLE_FIELDS = {
@@ -126,6 +126,35 @@ test('facsimile campaign: task.csv chains the pre-task before the encoding task'
 			'P0001,S0001,pending,,,\n' +
 			'T0001,,encoding_required,,,\n' +
 			'T0001,S0001,pending,,,\n'
+	);
+});
+
+test('facsimile campaign: page counts split encoding into one task per page with measures', () => {
+	const config = buildCampaignConfig(
+		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
+		'test-instigator',
+		AUTOMATION
+	);
+	// Page 2 has no measures, so it gets no task; pages 1 and 3 do.
+	assert.equal(
+		buildTaskCsv(config, [4, 0, 5]),
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'P0001,,sources/score.mei,measure-zones,,,\n' +
+			'P0001,S0001,sources/score.mei,measure-zones,,,\n' +
+			'T0001,,sources/score.mei,surface-1,,,P0001\n' +
+			'T0001,S0001,sources/score.mei,surface-1,,,\n' +
+			'T0002,,sources/score.mei,surface-3,,,P0001\n' +
+			'T0002,S0001,sources/score.mei,surface-3,,,\n'
+	);
+	assert.equal(
+		buildStateCsv(config, [4, 0, 5]),
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+			'P0001,,encoding_required,,,\n' +
+			'P0001,S0001,pending,,,\n' +
+			'T0001,,encoding_required,,,\n' +
+			'T0001,S0001,pending,,,\n' +
+			'T0002,,encoding_required,,,\n' +
+			'T0002,S0001,pending,,,\n'
 	);
 });
 

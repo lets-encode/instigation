@@ -9,7 +9,7 @@ import {
 	nextLabel,
 	type FacsimilePage,
 	type FacsimileModel
-} from './mei-facsimile.ts';
+} from '../mei-facsimile.ts';
 
 const twoPages: FacsimilePage[] = [
 	{

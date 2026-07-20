@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { appendEnvelopeToPrBody, envelopeFromPrBody, envelopeColumns } from './command-envelope.js';
-import type { CommandEnvelope } from './command-envelope.js';
+import { appendEnvelopeToPrBody, envelopeFromPrBody, envelopeColumns } from '../command-envelope.ts';
+import type { CommandEnvelope } from '../command-envelope.ts';
 
 const ENVELOPE: CommandEnvelope = {
 	command: 'campaign.claimValidation',

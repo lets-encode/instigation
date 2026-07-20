@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveFacsimileImageUrls, resolveRepoRelativeTarget } from './facsimile-images.ts';
+import { resolveFacsimileImageUrls, resolveRepoRelativeTarget } from '../facsimile-images.ts';
 
 test('graphic targets resolve relative to the MEI fragment', () => {
 	assert.equal(resolveRepoRelativeTarget('sources/score.mei', 'img/page-001.jpg'), 'sources/img/page-001.jpg');

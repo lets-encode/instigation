@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseTaskCsv, parseStateCsv, parseLockCsv, serializeStateCsv, serializeLockCsv, findRow } from './campaign-tables.js';
-import type { ParsedState, LockRow } from './campaign-tables.js';
-import { checkEncoding, checkValidation } from './campaign-submit.js';
-import type { CheckEncodingArgs, CheckValidationArgs } from './campaign-submit.js';
+import { parseTaskCsv, parseStateCsv, parseLockCsv, serializeStateCsv, serializeLockCsv, findRow } from '../campaign-tables.ts';
+import type { ParsedState, LockRow } from '../campaign-tables.ts';
+import { checkEncoding, checkValidation } from '../campaign-submit.ts';
+import type { CheckEncodingArgs, CheckValidationArgs } from '../campaign-submit.ts';
 
 // A relaxed view of the submit result for assertions, where the accepted-branch
 // fields are read directly without narrowing each result.

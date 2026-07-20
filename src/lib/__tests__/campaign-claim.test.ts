@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseTaskCsv, parseStateCsv, parseLockCsv } from './campaign-tables.js';
-import type { LockRow } from './campaign-tables.js';
-import { boundaryCheck, checkClaim } from './campaign-claim.js';
-import type { CheckClaimArgs } from './campaign-claim.js';
+import { parseTaskCsv, parseStateCsv, parseLockCsv } from '../campaign-tables.ts';
+import type { LockRow } from '../campaign-tables.ts';
+import { boundaryCheck, checkClaim } from '../campaign-claim.ts';
+import type { CheckClaimArgs } from '../campaign-claim.ts';
 
 // A relaxed view of the claim result for assertions, where the branch-specific
 // fields are read directly without narrowing each result.

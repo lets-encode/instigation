@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMeiHeader } from './mei-header.ts';
-import { buildMeiHead } from './mei-facsimile.ts';
+import { parseMeiHeader } from '../mei-header.ts';
+import { buildMeiHead } from '../mei-facsimile.ts';
 
 test('parses the header buildMeiHead emits', () => {
 	const mei = `<mei>\n${buildMeiHead({ title: 'Sonata & Co', composer: 'C. P. E. Bach', license: 'CC-BY-4.0' })}\n</mei>`;

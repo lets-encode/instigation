@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseStateCsv, type LockRow, type TaskRow } from './campaign-tables.ts';
+import { parseStateCsv, type LockRow, type TaskRow } from '../campaign-tables.ts';
 import {
 	addedRowFromPatch,
 	classifyPullRequest,
@@ -10,7 +10,7 @@ import {
 	shouldCleanupSubmission,
 	singleCellDiff,
 	validationVerdict
-} from './coordinator-policy.ts';
+} from '../coordinator-policy.ts';
 
 const stateCsv =
 	'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +

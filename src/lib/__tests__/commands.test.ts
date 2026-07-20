@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { commands, invoke, type CommandContext } from './commands.ts';
-import { envelopeFromPrBody } from './command-envelope.ts';
-import type { ForgeClient, OpenedChangeRequest } from './forge/types.ts';
+import { commands, invoke, type CommandContext } from '../commands.ts';
+import { envelopeFromPrBody } from '../command-envelope.ts';
+import type { ForgeClient, OpenedChangeRequest } from '../forge/types.ts';
 
 type ForgeOverrides = Partial<{ [K in keyof ForgeClient]: ForgeClient[K] }>;
 

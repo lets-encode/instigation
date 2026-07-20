@@ -12,7 +12,7 @@ import {
 	appendHistory,
 	findRow,
 	isFinalValidation
-} from './campaign-tables.js';
+} from '../campaign-tables.ts';
 
 const STATE =
 	'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +

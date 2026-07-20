@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGraph, buildPanel, blockedBy } from './campaign-graph.ts';
-import type { GraphData } from './campaign-graph.ts';
-import type { HistoryRow, StateRow, TaskRow } from './campaign-tables.ts';
+import { buildGraph, buildPanel, blockedBy } from '../campaign-graph.ts';
+import type { GraphData } from '../campaign-graph.ts';
+import type { HistoryRow, StateRow, TaskRow } from '../campaign-tables.ts';
 
 const task = (task_id: string, locator = '', depends_on = ''): TaskRow => ({
 	task_id,
@@ -71,6 +71,33 @@ test('buildGraph: one node per task, slots inside, edges between neighbours', ()
 		assert.ok(n.x >= 0 && n.x + n.w <= g.W, `${n.key} inside width`);
 		assert.ok(n.y >= 0 && n.y + n.h <= g.H, `${n.key} inside height`);
 	}
+});
+
+test('buildGraph: parallel tasks share a column and stack vertically', () => {
+	const g = buildGraph({
+		taskDefs: [task('A'), task('B'), task('C', '', 'A')],
+		rows: [
+			state('A', '', 'encoding_required'),
+			state('B', '', 'encoding_required'),
+			state('C', '', 'encoding_required')
+		],
+		validationColumns: [],
+		locks: [],
+		passThreshold: 1
+	});
+	const at = g.nodes.find((n) => n.task === 'A')!;
+	const bt = g.nodes.find((n) => n.task === 'B')!;
+	const ct = g.nodes.find((n) => n.task === 'C')!;
+	// A and B are independent roots: same column (x), stacked (B below A).
+	assert.equal(at.x, bt.x);
+	assert.ok(bt.y >= at.y + at.h, 'B stacks below A');
+	// C depends on A, so it sits one column to the right.
+	assert.ok(ct.x > at.x + at.w, 'C is right of A');
+	// One dependency edge, A → C.
+	assert.deepEqual(
+		g.edges.map((e) => [e.from, e.to]),
+		[['A', 'C']]
+	);
 });
 
 test('buildGraph: full type names, no abbreviations', () => {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { blobToBase64, prepareFacsimile } from './facsimile-detect.ts';
+import { blobToBase64, prepareFacsimile } from '../facsimile-detect.ts';
 
 const imageSize = async () => ({ width: 1000, height: 2000 });
 
