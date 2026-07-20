@@ -1,11 +1,10 @@
 """
 OAuth session broker for the instigation SPA (Flask).
 
-The GitHub OAuth token never reaches the browser. The full OAuth flow runs
-server-side (/login -> GitHub -> /authorize), the token is stored in a
-server-side session, and the browser holds only an opaque httpOnly session
-cookie. All authenticated GitHub API traffic from the SPA flows through
-/proxy/<url>, which attaches the token from the session.
+The full OAuth flow runs server-side (/login -> GitHub -> /authorize), the
+token is stored in a server-side session, and the browser holds only an opaque
+httpOnly session cookie. All authenticated GitHub API traffic from the SPA
+flows through /proxy/<url>, which attaches the token from the session.
 
 The broker must be served under the SAME origin as the SPA (e.g. mounted at
 /oauth by nginx in production, or by the Vite dev proxy) so the session cookie
@@ -49,9 +48,13 @@ app = Flask(__name__)
 development = getenv("FLASK_ENV") == "development"
 app.secret_key = getenv("FLASK_SECRET")
 if not app.secret_key:
-    sys.exit("FLASK_SECRET is not set; refusing to start with unsigned sessions.")
+    sys.exit(
+        "FLASK_SECRET is not set; refusing to start with unsigned sessions."
+    )
 if not development and not getenv("REDIRECT_URL"):
-    sys.exit("REDIRECT_URL is not set; production OAuth callbacks must be explicit.")
+    sys.exit(
+        "REDIRECT_URL is not set; production OAuth callbacks must be explicit."
+    )
 if not getenv("GITHUB_CLIENT_ID") or not getenv("GITHUB_CLIENT_SECRET"):
     sys.exit("GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must both be set.")
 
@@ -75,13 +78,17 @@ try:
 except OSError as e:
     sys.exit("Cannot create session directory {}: {}".format(session_dir, e))
 app.config["SESSION_TYPE"] = "cachelib"
-app.config["SESSION_CACHELIB"] = FileSystemCache(cache_dir=session_dir, threshold=1000)
+app.config["SESSION_CACHELIB"] = FileSystemCache(
+    cache_dir=session_dir, threshold=1000
+)
 # Session cookie hygiene. Secure requires HTTPS, so switch it off for local
 # development by setting FLASK_ENV=development.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = not development
-app.config["SESSION_COOKIE_NAME"] = "lets_encode_session" if development else "__Host-lets_encode_session"
+app.config["SESSION_COOKIE_NAME"] = (
+    "lets_encode_session" if development else "__Host-lets_encode_session"
+)
 app.config["SESSION_COOKIE_PATH"] = "/"
 app.config["SESSION_PERMANENT"] = False
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
@@ -105,10 +112,13 @@ def broker_rate_limited(_error):
             separators=(",", ":"),
         ),
     )
-    response = jsonify(error="OAuth broker request rate limit exceeded", source="broker")
+    response = jsonify(
+        error="OAuth broker request rate limit exceeded", source="broker"
+    )
     response.status_code = 429
     response.headers["X-Lets-Encode-Upstream"] = "broker"
     return response
+
 
 oauth = OAuth(app)
 github = oauth.register(
@@ -118,7 +128,10 @@ github = oauth.register(
     access_token_url="https://github.com/login/oauth/access_token",
     authorize_url="https://github.com/login/oauth/authorize",
     api_base_url="https://api.github.com/",
-    client_kwargs={"scope": "repo notifications", "code_challenge_method": "S256"},
+    client_kwargs={
+        "scope": "repo notifications",
+        "code_challenge_method": "S256",
+    },
 )
 
 GITHUB_API = "https://api.github.com"
@@ -175,7 +188,9 @@ def authorize():
         return redirect(with_auth_error(return_to, str(e)))
     resp = github.get("user", token=token)
     if not resp.ok:
-        return redirect(with_auth_error(return_to, "Could not resolve the GitHub user."))
+        return redirect(
+            with_auth_error(return_to, "Could not resolve the GitHub user.")
+        )
     # Replace the pre-login session ID after authentication so an ID fixed by
     # an attacker cannot become an authenticated session.
     app.session_interface.regenerate(session)
@@ -213,12 +228,17 @@ def logout():
     return jsonify(ok=True)
 
 
-@app.route("/proxy/<path:url>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.route(
+    "/proxy/<path:url>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
+)
 # All authenticated GitHub traffic flows through here, and the SPA polls
 # (workflow runs, fork readiness), so bursts exceed the default limit. Key by
 # user login so users behind a shared institutional NAT don't throttle each
 # other.
-@limiter.limit("30 per second", key_func=lambda: session.get("userLogin") or get_remote_address())
+@limiter.limit(
+    "30 per second",
+    key_func=lambda: session.get("userLogin") or get_remote_address(),
+)
 def proxy(url):
     # Only logged-in users may use the proxy: it exists to attach the session's
     # token, and gating it prevents abuse as an open relay. Anonymous reads
@@ -244,7 +264,9 @@ def proxy(url):
     # browser.
     excluded_request_headers = {"host", "cookie", "authorization"}
     headers = {
-        key: value for key, value in request.headers if key.lower() not in excluded_request_headers
+        key: value
+        for key, value in request.headers
+        if key.lower() not in excluded_request_headers
     }
     headers["Authorization"] = "token " + session["githubToken"]
 
@@ -276,9 +298,18 @@ def proxy(url):
     # GitHub does not count against the API rate limit). The SPA keeps those
     # validators itself, so no shared or HTTP cache is involved.
     excluded_response_headers = {
-        "content-encoding", "content-length", "transfer-encoding", "connection",
-        "www-authenticate", "date", "server", "set-cookie",
-        "cache-control", "expires", "pragma", "age",
+        "content-encoding",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "www-authenticate",
+        "date",
+        "server",
+        "set-cookie",
+        "cache-control",
+        "expires",
+        "pragma",
+        "age",
     }
     out_headers = [
         (name, value)
@@ -287,7 +318,9 @@ def proxy(url):
     ]
     out_headers.append(("Cache-Control", "no-store"))
     out_headers.append(("X-Lets-Encode-Upstream", "github"))
-    upstream_headers = requests.structures.CaseInsensitiveDict(response.raw.headers)
+    upstream_headers = requests.structures.CaseInsensitiveDict(
+        response.raw.headers
+    )
     app.logger.info(
         "github_api %s",
         json.dumps(

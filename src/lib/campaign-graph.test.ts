@@ -61,7 +61,6 @@ function facsimileData(): GraphData {
 test('buildGraph: one node per task, slots inside, edges between neighbours', () => {
 	const g = buildGraph(facsimileData());
 	assert.deepEqual(g.nodes.map((n) => n.task), ['P0001', 'P0002', 'T0001']);
-	// P0001 and T0001 each carry 2 validation slots; P0002 has none.
 	assert.deepEqual(g.nodes.map((n) => n.slots.length), [2, 0, 2]);
 	assert.equal(g.edges.length, 2);
 	// Left-to-right order, all inside the canvas.

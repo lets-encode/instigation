@@ -288,8 +288,8 @@ export interface ParsedFacsimile extends FacsimileModel {
 }
 
 /**
- * Parse a facsimile score (any stage, as emitted by buildFacsimileMei or the
- * pre-redesign scaffold) back into the model. Labels fall back to continuous
+ * Parse a facsimile score (any stage, as emitted by buildFacsimileMei) back
+ * into the model. Labels fall back to continuous
  * numbering when zones carry no @n; system flags come from the section's
  * <sb/>/<pb/> tokens where present, else from the row grouping.
  */

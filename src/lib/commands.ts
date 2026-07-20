@@ -131,7 +131,7 @@ async function logDirect(ctx: CommandContext, envelope: CommandEnvelope, result:
 }
 
 // ---------------------------------------------------------------------------
-// Shared helpers (moved from the campaign console page)
+// Shared helpers
 
 const rand = () => crypto.randomUUID().slice(0, 8);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
