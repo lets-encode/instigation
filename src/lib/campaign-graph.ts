@@ -549,7 +549,7 @@ export function buildPanel(
 					: '';
 			actions.push({
 				id: 'claim-validation',
-				label: 'Claim (validate)',
+				label: 'Claim validation task',
 				primary: true,
 				disabled: !claimable,
 				title: selfValidation
@@ -644,7 +644,7 @@ export function buildPanel(
 		const claimable = viewer !== '' && !blocked && !otherLock && (state.status === 'encoding_required' || mine);
 		actions.push({
 			id: 'open-editor',
-			label: mine ? 'Open in mei-friend ↗' : 'Claim & open in mei-friend ↗',
+			label: mine ? 'Open in mei-friend ↗' : 'Claim encoding task ↗',
 			primary: true,
 			disabled: !claimable,
 			title: blocked

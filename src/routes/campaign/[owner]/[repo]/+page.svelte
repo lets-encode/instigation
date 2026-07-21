@@ -283,8 +283,11 @@
   // units). The frame already excludes the side panels and preview dock, and
   // zoom-to-fit then scales the whole thing to fit.
   function reorder() {
-    // Reorder returns to auto-fit as well as the auto-layout.
+    // Reorder returns to auto-fit as well as the auto-layout. Measure the frame
+    // first so the derived auto-zoom is correct straight away (the observer can
+    // lag on first paint).
     userZoom = null;
+    measureFrame();
     const ns = graph.nodes;
     if (!ns.length) {
       nodePos = {};

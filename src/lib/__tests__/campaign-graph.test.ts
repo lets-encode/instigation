@@ -183,6 +183,7 @@ test('buildPanel: encoding node — claim enabled only when unblocked and unclai
 	assert.ok(p);
 	const open = p.actions.find((a) => a.id === 'open-editor');
 	assert.equal(open?.disabled, false);
+	assert.equal(open?.label, 'Claim encoding task ↗');
 	assert.equal(p.actions.find((a) => a.id === 'submit-encoding')?.disabled, true);
 });
 
@@ -208,7 +209,9 @@ test('buildPanel: open slot claimable by a non-encoder; verdicts need the lock',
 	const d = facsimileData();
 	d.locks = [];
 	const open = buildPanel(d, noHistory, { task: 'T0001', sub: 'S0001', slot: 1 }, 'you', false);
-	assert.equal(open?.actions.find((a) => a.id === 'claim-validation')?.disabled, false);
+	const claim = open?.actions.find((a) => a.id === 'claim-validation');
+	assert.equal(claim?.disabled, false);
+	assert.equal(claim?.label, 'Claim validation task');
 	assert.equal(open?.actions.find((a) => a.id === 'validate-pass'), undefined);
 
 	d.locks = [{ task_id: 'T0001', subtask_id: 'S0001', user_id: 'you', timestamp: '', kind: 'validation' }];
