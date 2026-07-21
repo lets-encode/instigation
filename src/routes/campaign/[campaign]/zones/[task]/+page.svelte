@@ -8,12 +8,22 @@
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
+  import { createForge } from "$lib/forge/index.ts";
+  import { resolveCampaign } from "$lib/campaign-resolve.ts";
+  import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
 
-  // Guaranteed present by the [owner]/[repo]/zones/[task] route.
-  const owner = $derived(page.params.owner!);
-  const repo = $derived(page.params.repo!);
+  // The URL carries the campaign name and task; the repo is resolved from the
+  // name (name → stable repo id → current owner/name) — see resolveCampaign.
+  const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
-  const viewer = $derived(auth.user?.login ?? "");
+  let resolved = $state<ResolvedCampaign | null>(null);
+  let resolving = $state(false);
+  let notFound = $state(false);
+  const owner = $derived(resolved?.owner ?? "");
+  const repo = $derived(resolved?.repo ?? "");
+  const repoId = $derived(resolved?.repoId ?? 0);
+  // The acting user's stable numeric id; login is display-only.
+  const viewer = $derived(auth.user?.id != null ? String(auth.user.id) : "");
 
   // Editor-side zone: the box, the label override (null = automatic), the
   // computed label, and the break flags (structure step).
@@ -97,10 +107,28 @@
 
   const ctx = (f: ForgeClient): CommandContext => ({
     forge: f,
+    repoId,
     owner,
     repo,
     viewer,
+    viewerLogin: auth.user?.login ?? "",
     progress: (m) => (busyMessage = m),
+  });
+
+  const readForge = () => forge() ?? createForge("");
+
+  // Login for the reviewer holding the validation lock (id → login, for display).
+  let lockUserLogin = $state("");
+  $effect(() => {
+    const id = Number(data?.validation?.lockUser);
+    if (!Number.isInteger(id)) {
+      lockUserLogin = data?.validation?.lockUser ?? "";
+      return;
+    }
+    readForge()
+      .getUserLogin(id)
+      .then((login) => (lockUserLogin = login ?? String(id)))
+      .catch(() => (lockUserLogin = String(id)));
   });
 
   // Recompute every label from reading order + overrides ("10a" continues as 11).
@@ -157,12 +185,24 @@
           prev = zone.label;
         }
       }
+      resetHistory();
     } catch (e) {
       loadError = `Could not load ${taskId}: ${(e as Error).message}`;
     } finally {
       loading = false;
     }
   }
+
+  // Resolve the campaign name to its repo first; the load effect is gated on
+  // `owner`/`repo` so it waits for this.
+  $effect(() => {
+    if (auth.status === "loading" || resolved || notFound || resolving) return;
+    resolving = true;
+    resolveCampaign(readForge(), campaign)
+      .then((r) => (r ? (resolved = r) : (notFound = true)))
+      .catch(() => (notFound = true))
+      .finally(() => (resolving = false));
+  });
 
   $effect(() => {
     if (auth.status === "authenticated" && owner && repo && taskId && !data && !loading) load();
@@ -179,7 +219,7 @@
     try {
       result = await command(ctx(f));
       if (opts.overviewOnSuccess && result.ok && !result.warn) {
-        await goto(`/campaign/${owner}/${repo}`);
+        await goto(`/campaign/${campaign}`);
         return;
       }
       busyMessage = "Reloading…";
@@ -272,6 +312,52 @@
     );
 
   // ------------------------------------------------------------------------
+  // Undo / redo
+  //
+  // History holds full snapshots of the page zones. Each committed edit pushes
+  // a snapshot; undo/redo move within the stack and restore one. `selected` is
+  // a transient pointer, not part of a snapshot, so it is cleared on restore.
+  let history = $state<EditPage[][]>([]);
+  let historyIndex = $state(-1);
+
+  function clonePages(src: EditPage[]): EditPage[] {
+    return src.map((pg) => ({
+      ...pg,
+      zones: pg.zones.map((z) => ({ ...z, box: { ...z.box } })),
+    }));
+  }
+
+  // Discard any history and start a fresh baseline (after a load/reload).
+  function resetHistory() {
+    history = [clonePages(pages)];
+    historyIndex = 0;
+  }
+
+  // Record the current pages as a new entry, dropping any redo tail.
+  function commit() {
+    history = history.slice(0, historyIndex + 1);
+    history.push(clonePages(pages));
+    historyIndex = history.length - 1;
+  }
+
+  const canUndo = $derived(canEdit && historyIndex > 0);
+  const canRedo = $derived(canEdit && historyIndex < history.length - 1);
+
+  function undo() {
+    if (!canUndo) return;
+    historyIndex--;
+    pages = clonePages(history[historyIndex]);
+    selected = null;
+  }
+
+  function redo() {
+    if (!canRedo) return;
+    historyIndex++;
+    pages = clonePages(history[historyIndex]);
+    selected = null;
+  }
+
+  // ------------------------------------------------------------------------
   // Pointer interactions (zones mode)
 
   let svgEls = $state<SVGSVGElement[]>([]);
@@ -302,12 +388,16 @@
       // Shift-click toggles the movement flag (structure step only). The
       // score's first measure always opens the first movement.
       if (e.shiftKey) {
-        if (p > 0 || z > 0) pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+        if (p > 0 || z > 0) {
+          pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+          commit();
+        }
         return;
       }
       // Toggle the system flag; a page's first measure is covered by its <pb/>.
       if (z > 0) {
         pages[p].zones[z].sb = !pages[p].zones[z].sb;
+        commit();
       }
       return;
     }
@@ -332,9 +422,13 @@
       e.stopPropagation();
       if (mode === "breaks" && canEdit) {
         if (e.shiftKey) {
-          if (p > 0 || z > 0) pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+          if (p > 0 || z > 0) {
+            pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+            commit();
+          }
         } else if (z > 0) {
           pages[p].zones[z].sb = !pages[p].zones[z].sb;
+          commit();
         }
       } else {
         selected = { p, z };
@@ -359,6 +453,7 @@
     const zone = pages[p].zones[z];
     resort(p);
     selected = { p, z: pages[p].zones.indexOf(zone) };
+    commit();
   }
 
   function handleKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -375,6 +470,7 @@
     const zone = pages[p].zones[z];
     resort(p);
     selected = { p, z: pages[p].zones.indexOf(zone) };
+    commit();
   }
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
@@ -509,7 +605,7 @@
   </div>
 {/if}
 
-<p class="back"><a href={`/campaign/${owner}/${repo}`}>← Campaign console</a></p>
+<p class="back"><a href={`/campaign/${campaign}`}>← Campaign console</a></p>
 
 <header>
   <h1>Measure correction — <code>{taskId}</code></h1>
@@ -518,7 +614,12 @@
   </p>
 </header>
 
-{#if auth.status === "loading"}
+{#if notFound}
+  <div class="banner err">
+    No campaign called <code>{campaign}</code> was found.
+    <a href="/">Back to all campaigns</a>.
+  </div>
+{:else if auth.status === "loading" || (!resolved && !notFound)}
   <p class="muted">Loading…</p>
 {:else if !auth.user}
   <div class="banner warn">
@@ -667,7 +768,7 @@
               <p class="hint">
                 {holdsValidation
                   ? "You hold this validation lock — review the pages, then pass or fail."
-                  : `Being reviewed by @${validation.lockUser}.`}
+                  : `Being reviewed by @${lockUserLogin || validation.lockUser}.`}
               </p>
             {:else if selfValidation}
               <p class="hint">You submitted this work — no self-validation.</p>

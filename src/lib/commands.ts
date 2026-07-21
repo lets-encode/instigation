@@ -41,9 +41,15 @@ const DEFAULT_MEI_FRIEND_URL = 'https://mei-friend.mdw.ac.at';
 /** What a command invocation is run against: the campaign, the user, the forge. */
 export interface CommandContext {
 	forge: ForgeClient;
+	/** The campaign repo's numeric id — the canonical, rename-stable reference. */
+	repoId: number;
+	/** The repo id's current owner/name, resolved for the GitHub API paths. */
 	owner: string;
 	repo: string;
+	/** The acting user's numeric account id — written to the tracking tables. */
 	viewer: string;
+	/** The acting user's login — for human-readable PR prose only, never as an id. */
+	viewerLogin: string;
 	/** Editor instance used for the mei-friend hand-off. */
 	meiFriendUrl?: string;
 	/** Progress messages for a busy indicator; pass a no-op when headless. */
@@ -142,8 +148,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ("you authored the thread"). Skipped when this browser already muted the repo
 // or when it is already ignored server-side. Non-fatal — a token can only mute
 // its own user, and only when granted the OAuth 'notifications' scope.
-async function muteOnce(f: ForgeClient, owner: string, repo: string): Promise<void> {
-	const key = `lets-encode:muted:${owner}/${repo}`;
+async function muteOnce(f: ForgeClient, repoId: number, owner: string, repo: string): Promise<void> {
+	const key = `lets-encode:muted:${repoId}`;
 	const storage = typeof localStorage === 'undefined' ? null : localStorage;
 	if (storage?.getItem(key)) return;
 	try {
@@ -264,8 +270,8 @@ async function openClaimPr(
 	kind: string,
 	envelope: CommandEnvelope | null
 ) {
-	const { forge: f, owner, repo, viewer } = ctx;
-	await muteOnce(f, owner, repo);
+	const { forge: f, repoId, owner, repo, viewer, viewerLogin } = ctx;
+	await muteOnce(f, repoId, owner, repo);
 	const lockRows = parseLockCsv((await f.getRepoFile(owner, repo, LOCK_PATH)) ?? '');
 	lockRows.push({
 		task_id,
@@ -275,7 +281,7 @@ async function openClaimPr(
 		kind
 	});
 	const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
-	const body = `Reserves ${target} for ${kind} work by ${viewer}. Opened from the campaign console.`;
+	const body = `Reserves ${target} for ${kind} work by ${viewerLogin}. Opened from the campaign console.`;
 	console.log('[claim] opening claim PR', { task_id, subtask_id, kind, user: viewer });
 	return f.openChangePr(owner, repo, {
 		branch: `claim-${task_id}${subtask_id ? '-' + subtask_id : ''}-${rand()}`,
@@ -305,6 +311,42 @@ export interface CampaignTables {
 	license: string;
 	/** validation.pass_threshold from config.yaml; 1 when unreadable. */
 	passThreshold: number;
+	/**
+	 * Numeric account id → current login, for every user referenced by the
+	 * tables (locks, encoders, history). The tables store the stable numeric id;
+	 * this map is how the UI shows a username. Missing entries fall back to the id.
+	 */
+	logins: Record<string, string>;
+}
+
+// Resolve every distinct user id referenced by the tables to its current login,
+// for display. The tables key people by their stable numeric id; a lookup is
+// cheap and memoised (see getUserLogin). An id that can't be resolved is omitted
+// so the UI falls back to showing the raw id.
+async function resolveLogins(
+	f: ForgeClient,
+	rows: StateRow[],
+	locks: LockRow[],
+	history: HistoryRow[]
+): Promise<Record<string, string>> {
+	const ids = new Set<string>();
+	for (const r of rows) if (r.encoder) ids.add(r.encoder);
+	for (const l of locks) if (l.user_id) ids.add(l.user_id);
+	for (const h of history) if (h.user_id) ids.add(h.user_id);
+	const logins: Record<string, string> = {};
+	await Promise.all(
+		[...ids].map(async (id) => {
+			const n = Number(id);
+			if (!Number.isInteger(n)) return; // not a numeric id (legacy/manual row): leave as-is
+			try {
+				const login = await f.getUserLogin(n);
+				if (login) logins[id] = login;
+			} catch {
+				// A failed lookup just falls back to the id in the UI.
+			}
+		})
+	);
+	return logins;
 }
 
 const readTables: CommandDef<Record<string, never>, CampaignTables> = {
@@ -334,10 +376,13 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 				history: [],
 				title: '',
 				license: '',
-				passThreshold: 1
+				passThreshold: 1,
+				logins: {}
 			};
 		}
 		const state = parseStateCsv(stateCsv);
+		const locks = parseLockCsv(lockCsv);
+		const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
 		return {
 			notInitialised: false,
 			isPrivate: access.isPrivate,
@@ -345,11 +390,12 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			taskDefs: parseTaskCsv(taskCsv),
 			rows: state.rows,
 			validationColumns: state.validationColumns,
-			locks: parseLockCsv(lockCsv),
-			history: historyCsv ? parseHistoryCsv(historyCsv) : [],
+			locks,
+			history,
 			title: stringFromConfig(configYaml, 'title'),
 			license: stringFromConfig(configYaml, 'license'),
-			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1
+			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1,
+			logins: await resolveLogins(f, state.rows, locks, history)
 		};
 	}
 };
@@ -472,9 +518,9 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 	version: 1,
 	log: 'pr',
 	async run({ task_id }, ctx, envelope) {
-		const { forge: f, owner, repo, viewer } = ctx;
+		const { forge: f, repoId, owner, repo, viewerLogin } = ctx;
 		try {
-			await muteOnce(f, owner, repo);
+			await muteOnce(f, repoId, owner, repo);
 			ctx.progress('Opening the submission PR…');
 			const { branch: base, canPush } = await f.getRepoHead(owner, repo);
 			// The claim/editor flow put the encoding on `encode-<task_id>` — in the
@@ -490,7 +536,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				head = `${fork.owner}:${branch}`;
 				forkHead = { ...fork, branch };
 			}
-			const body = `Submits the encoding of ${task_id} by ${viewer}, edited in mei-friend. Opened from the campaign console.`;
+			const body = `Submits the encoding of ${task_id} by ${viewerLogin}, edited in mei-friend. Opened from the campaign console.`;
 			console.log('[submitpr] opening PR', { head, base });
 			const pr = await f.createPullRequest(owner, repo, {
 				title: `Encoding of ${task_id}`,
@@ -517,12 +563,12 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 	version: 1,
 	log: 'pr',
 	async run({ task_id, subtask_id, verdict }, ctx, envelope) {
-		const { forge: f, owner, repo } = ctx;
+		const { forge: f, repoId, owner, repo } = ctx;
 		try {
 			if (verdict !== 'pass' && verdict !== 'fail') {
 				return { error: `Invalid validation verdict: ${verdict}.` };
 			}
-			await muteOnce(f, owner, repo);
+			await muteOnce(f, repoId, owner, repo);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
 			const row = findRow(state.rows, task_id, subtask_id);
 			if (!row) return { error: `Unknown subtask ${task_id}/${subtask_id}.` };
@@ -735,9 +781,9 @@ async function submitFacsimile(
 	pages: PageModel[],
 	envelope: CommandEnvelope | null
 ): Promise<Result> {
-	const { forge: f, owner, repo } = ctx;
+	const { forge: f, repoId, owner, repo } = ctx;
 	try {
-		await muteOnce(f, owner, repo);
+		await muteOnce(f, repoId, owner, repo);
 		const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
 		const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
 		if (!fragment) return { error: `Unknown task ${task_id}.` };

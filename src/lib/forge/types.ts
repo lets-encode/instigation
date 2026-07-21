@@ -3,9 +3,9 @@
 // per-deployment values in config.ts. The GitHub implementation is github.ts,
 // built over the REST calls in github-rest.ts.
 
-import type { FileChange, GitHubUser, RepoData, RepoSummary } from './github-rest.ts';
+import type { FileChange, GitHubUser, RepoData, RepoSummary, RepoRef } from './github-rest.ts';
 
-export type { FileChange, GitHubUser, RepoData, RepoSummary };
+export type { FileChange, GitHubUser, RepoData, RepoSummary, RepoRef };
 
 /** A repo's default branch, its head commit SHA, and whether the user can push. */
 export interface RepoHead {
@@ -30,6 +30,10 @@ export interface OpenedChangeRequest extends ChangeRequest {
 export interface ForgeClient {
 	/** The authenticated user + the scopes their token actually holds, or null. */
 	getAuthenticatedUser(): Promise<{ user: GitHubUser; scopes: string } | null>;
+	/** Resolve a numeric account id to its current login, or null. Memoised. */
+	getUserLogin(id: number): Promise<string | null>;
+	/** Resolve a numeric repo id to its current owner/name, or null. Memoised. */
+	getRepoById(id: number): Promise<RepoRef | null>;
 	/** Repos tagged with `topic` that the user can see. */
 	searchReposByTopic(topic: string): Promise<RepoSummary[]>;
 	/** Create a repo from a template into `owner`'s account. */

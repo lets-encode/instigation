@@ -2,7 +2,7 @@
 
 Spec for a change to **mei-friend** (`mei-friend/mei-friend`), to be applied in that
 repository. Written against `main` as read on 2026-06-30. The instigation side that
-consumes this parameter is already wired (see `src/routes/campaign/[owner]/[repo]/+page.server.ts`).
+consumes this parameter is already wired (see `src/routes/campaign/[campaign]/+page.svelte`).
 
 ## Why
 
@@ -150,7 +150,7 @@ so both `connect` and `fork` work for private campaign repos.
 
 ## How instigation uses it (already wired, for reference)
 
-`src/routes/campaign/[owner]/[repo]/+page.server.ts`, `editor` action:
+`src/routes/campaign/[campaign]/+page.svelte`, `editor` action:
 
 - **Owner / collaborator (`canPush`):** the console creates an `encode-<task_id>` branch,
   gets the score's `download_url` **on that branch**, and opens

@@ -26,7 +26,10 @@ export interface CampaignConfig {
 	campaign: {
 		title: string;
 		description: string;
+		/** The instigator's stable numeric GitHub account id (as a string). */
 		instigator: string;
+		/** This campaign repo's stable numeric GitHub id (rename/transfer-proof). */
+		repo_id: number;
 		language: string;
 		license: string;
 	};
@@ -112,21 +115,23 @@ export function assertSupported(config: CampaignConfig): void {
 }
 
 /**
- * Build the schema-v2 campaign config object from create-form fields, the instigator
- * login and the central automation pointer. Unspecified optional fields fall
- * back to defaults.
+ * Build the schema-v2 campaign config object from create-form fields, the
+ * instigator's numeric account id, the central automation pointer, and the
+ * campaign repo's numeric id. Unspecified optional fields fall back to defaults.
  */
 export function buildCampaignConfig(
 	fields: CampaignFields,
-	login: string,
-	automation: AutomationPointer
+	instigator: string,
+	automation: AutomationPointer,
+	repoId: number
 ): CampaignConfig {
 	return {
 		schema_version: 2,
 		campaign: {
 			title: fields.title ?? '',
 			description: fields.description ?? '',
-			instigator: login,
+			instigator,
+			repo_id: repoId,
 			language: fields.language ?? DEFAULTS.language,
 			license: fields.license ?? DEFAULTS.license
 		},
@@ -159,6 +164,7 @@ export function configToYaml(config: CampaignConfig): string {
 		`  title: ${yamlStr(c.title)}\n` +
 		`  description: ${yamlStr(c.description)}\n` +
 		`  instigator: ${yamlStr(c.instigator)}\n` +
+		`  repo_id: ${c.repo_id}\n` +
 		`  language: ${yamlStr(c.language)}\n` +
 		`  license: ${yamlStr(c.license)}\n` +
 		`automation:\n` +

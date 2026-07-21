@@ -36,9 +36,13 @@ const AUTOMATION = {
 	path: 'scripts/coordinator.ts'
 };
 
-test('buildCampaignConfig: instigator comes from login; defaults fill the rest', () => {
-	const config = buildCampaignConfig({ title: 'T' }, 'test-instigator', AUTOMATION);
+// The created repo's numeric id, as createRepoFromTemplate would return it.
+const REPO_ID = 424242;
+
+test('buildCampaignConfig: instigator + repo_id come from args; defaults fill the rest', () => {
+	const config = buildCampaignConfig({ title: 'T' }, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.equal(config.campaign.instigator, 'test-instigator');
+	assert.equal(config.campaign.repo_id, REPO_ID);
 	assert.equal(config.campaign.license, 'CC-BY-4.0');
 	assert.equal(config.automation.central_repository, 'lets-encode/instigation');
 	assert.equal(config.validation.required_validations, 1);
@@ -47,7 +51,7 @@ test('buildCampaignConfig: instigator comes from login; defaults fill the rest',
 });
 
 test('configToYaml: matches the worked example', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.equal(
 		configToYaml(config),
 		'schema_version: 2\n' +
@@ -55,6 +59,7 @@ test('configToYaml: matches the worked example', () => {
 			'  title: "Test Campaign — One Note"\n' +
 			'  description: "Smallest possible campaign for end-to-end testing."\n' +
 			'  instigator: "test-instigator"\n' +
+			'  repo_id: 424242\n' +
 			'  language: "en"\n' +
 			'  license: "CC-BY-4.0"\n' +
 			'automation:\n' +
@@ -79,7 +84,7 @@ test('configToYaml: matches the worked example', () => {
 });
 
 test('worked example: stamped MEI is well-formed and placeholders filled', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
 	const mei = stampTemplate(readFileSync(TEMPLATE_MEI, 'utf8'), {
 		title: config.campaign.title,
 		composer: config.sources[0].header.composer,
@@ -96,7 +101,7 @@ test('worked example: stamped MEI is well-formed and placeholders filled', () =>
 });
 
 test('worked example: task.csv holds the task row and its one validation subtask', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.equal(
 		buildTaskCsv(config),
 		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
@@ -109,7 +114,8 @@ test('facsimile campaign: task.csv chains the pre-task before the encoding task'
 	const config = buildCampaignConfig(
 		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
 		'test-instigator',
-		AUTOMATION
+		AUTOMATION,
+		REPO_ID
 	);
 	assert.equal(
 		buildTaskCsv(config),
@@ -133,7 +139,8 @@ test('facsimile campaign: page counts split encoding into one task per page with
 	const config = buildCampaignConfig(
 		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
 		'test-instigator',
-		AUTOMATION
+		AUTOMATION,
+		REPO_ID
 	);
 	// Page 2 has no measures, so it gets no task; pages 1 and 3 do.
 	assert.equal(
@@ -159,7 +166,7 @@ test('facsimile campaign: page counts split encoding into one task per page with
 });
 
 test('worked example: state.csv matches the expected rows exactly', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION);
+	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.equal(
 		buildStateCsv(config),
 		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
@@ -177,7 +184,7 @@ test('worked example: lock.csv and history.csv are header-only', () => {
 });
 
 test('buildStateCsv: required_validations controls the validate_status columns', () => {
-	const config = buildCampaignConfig({ required_validations: 3 }, 'test-instigator', AUTOMATION);
+	const config = buildCampaignConfig({ required_validations: 3 }, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.equal(
 		buildStateCsv(config),
 		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2,validate_status_3\n' +
@@ -196,24 +203,24 @@ test('stampTemplate: substituted values are XML-escaped', () => {
 });
 
 test('configToYaml: YAML-sensitive characters are escaped', () => {
-	const config = buildCampaignConfig({ title: 'A "quoted" \\ title\nsecond line' }, 'test-instigator', AUTOMATION);
+	const config = buildCampaignConfig({ title: 'A "quoted" \\ title\nsecond line' }, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.ok(configToYaml(config).includes('  title: "A \\"quoted\\" \\\\ title\\nsecond line"\n'));
 });
 
 test('assertSupported: rejects unsupported schema, fragmentation and source shapes', () => {
-	const unsupportedSchema = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	const unsupportedSchema = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
 	unsupportedSchema.schema_version = 1;
 	assert.throws(() => assertSupported(unsupportedSchema), /schema_version/);
 
-	const unsupportedStrategy = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	const unsupportedStrategy = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
 	unsupportedStrategy.fragmentation.strategy = 'by_measure';
 	assert.throws(() => assertSupported(unsupportedStrategy), /fragmentation\.strategy/);
 
-	const missingSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	const missingSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
 	missingSource.sources = [];
 	assert.throws(() => assertSupported(missingSource), /at least one source/);
 
-	const unsupportedSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION);
+	const unsupportedSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
 	unsupportedSource.sources[0].kind = 'musicxml';
 	assert.throws(() => assertSupported(unsupportedSource), /source kind/);
 });

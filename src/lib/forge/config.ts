@@ -30,6 +30,15 @@ export const provider: ProviderConfig = {
 	repoTopic: env.PUBLIC_REPO_TOPIC || 'created-with-instigation'
 };
 
+/**
+ * The slug registry (redirector) mount, as a same-origin path so its calls need
+ * no CORS — served under this path by nginx (prod) / the Vite dev proxy, the way
+ * the OAuth broker is mounted at /oauth. It owns the campaign name → repo id
+ * mapping: the app resolves a campaign URL through it and registers a new name
+ * against its GitHub repo id after creating the repo.
+ */
+export const registryUrl = env.PUBLIC_REGISTRY_URL || '/registry';
+
 /** The mei-friend instance volunteers are handed off to for editing. */
 export const meiFriendUrl = env.PUBLIC_MEI_FRIEND_URL || 'https://mei-friend.mdw.ac.at';
 

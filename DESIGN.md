@@ -104,10 +104,10 @@ entry needs are the identity of the event; it derives the rest itself.
 | Env var | `pull_request_target` | `schedule` / `workflow_dispatch` |
 |---|---|---|
 | `GH_TOKEN` | base repo's `GITHUB_TOKEN` (write) | same |
-| `BASE_REPO` | `owner/repo` | same |
+| `BASE_REPO` / `BASE_REPO_ID` | `owner/repo` + numeric repo id | same |
 | `EVENT_NAME` | `pull_request_target` | `schedule` / `workflow_dispatch` |
-| `PR_NUMBER`, `PR_AUTHOR` | from the PR | — |
-| `HEAD_REPO`, `HEAD_SHA`, `HEAD_REF` | the PR head (fork or same-repo) | — |
+| `PR_NUMBER`, `PR_AUTHOR` (numeric account id), `PR_AUTHOR_LOGIN` | from the PR | — |
+| `HEAD_REPO` / `HEAD_REPO_ID`, `HEAD_SHA`, `HEAD_REF` | the PR head (fork or same-repo) | — |
 
 **What is *not* forwarded — central derives or reads it as data:**
 
@@ -162,8 +162,11 @@ jobs:
           BASE_REPO:  ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER:  ${{ github.event.pull_request.number }}
-          PR_AUTHOR:  ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR:  ${{ github.event.pull_request.user.id }}        # numeric id = identity
+          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }} # login = commit prose only
+          BASE_REPO_ID: ${{ github.repository_id }}
           HEAD_REPO:  ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
           HEAD_SHA:   ${{ github.event.pull_request.head.sha }}
           HEAD_REF:   ${{ github.event.pull_request.head.ref }}
         run: node central/${{ steps.cfg.outputs.path }}
@@ -182,7 +185,7 @@ Authored once at instigation. Minimal but extensible; growth points marked `(res
 
 ```yaml
 schema_version: 2
-campaign:      { title, description, instigator, language, license }
+campaign:      { title, description, instigator, repo_id, language, license }  # instigator + repo_id are numeric GitHub ids
 automation:    { central_repository, ref, path }   # the central pointer (§4a); ref is pinned
 sources:       [ { id, kind: mei-template, path, template, header: { composer } } ]
 fragmentation: { strategy: whole }
@@ -273,9 +276,9 @@ authoritative row/cell itself:
 
 | Field | Authoritative source |
 |---|---|
-| lock `user_id` / `encoder` / validator login | the **PR author** (from the event) |
+| lock `user_id` / `encoder` / validator id | the **PR author's numeric account id** (from the event); the login is resolved for display only |
 | lock `timestamp` / `encoded_at` / validation time | **server time** |
-| validation `pass`/`fail` | the volunteer's verdict, stamped with their login + time |
+| validation `pass`/`fail` | the volunteer's verdict, stamped with their numeric id + time |
 | MEI bytes | the **fork's content**, after the machine-check |
 | every `history.csv` row | the Action, describing what it just decided; the command columns come from the PR body's envelope, never the fork's tables (§5) |
 
@@ -400,7 +403,7 @@ ordinary crowd task: claimed (encoding-kind lock), submitted as an encoding-type
 the shared score by page, §6), validated through the normal machinery. Pages with no detected
 measures get no encoding task. An `mei-template` campaign keeps the single whole-file **T0001**.
 
-The **zone editor** (`/campaign/[owner]/[repo]/zones/[task]`) is the volunteer interface for the
+The **zone editor** (`/campaign/[campaign]/zones/[task]`) is the volunteer interface for the
 pre-task, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`). It has two
 steps within the one task, submitted together:
 

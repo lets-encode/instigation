@@ -19,7 +19,17 @@ function fakeForge(overrides: ForgeOverrides): ForgeClient {
 }
 
 function context(forge: ForgeClient): CommandContext {
-	return { forge, owner: 'campaign-owner', repo: 'campaign', viewer: 'volunteer', progress: () => {} };
+	// viewer is the acting user's numeric id (written to the tables); viewerLogin
+	// is their login (human-readable PR prose only).
+	return {
+		forge,
+		repoId: 555,
+		owner: 'campaign-owner',
+		repo: 'campaign',
+		viewer: '9001',
+		viewerLogin: 'volunteer',
+		progress: () => {}
+	};
 }
 
 async function withImmediateTimeouts<T>(run: () => Promise<T>): Promise<T> {
@@ -101,7 +111,7 @@ test('a headless claim carries its envelope and cleans its fork branch after acc
 
 	assert.equal(result.ok, true);
 	assert.equal(envelope?.command, 'campaign.claimTask');
-	assert.equal(envelope?.user_id, 'volunteer');
+	assert.equal(envelope?.user_id, '9001');
 	assert.deepEqual(envelope?.input, { task_id: 'P0001' });
 	assert.deepEqual(deleted, ['volunteer', 'campaign', 'claim-P0001-abcd']);
 });

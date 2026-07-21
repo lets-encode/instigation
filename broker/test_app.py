@@ -27,16 +27,16 @@ class BrokerTest(unittest.TestCase):
             current["userLogin"] = "alice"
 
     def test_return_path_is_same_origin_and_auth_error_preserves_query(self):
-        self.assertEqual(broker.safe_return_path("/campaign/owner/repo?view=table"), "/campaign/owner/repo?view=table")
+        self.assertEqual(broker.safe_return_path("/campaign/my-campaign?view=table"), "/campaign/my-campaign?view=table")
         for unsafe in ("https://evil.test/", "//evil.test/", "///evil.test/", "/\\evil.test/", "javascript:alert(1)"):
             self.assertEqual(broker.safe_return_path(unsafe), "/")
 
         with self.client.session_transaction() as current:
-            current["return_to"] = "/campaign/owner/repo?view=table"
+            current["return_to"] = "/campaign/my-campaign?view=table"
         with patch.object(broker.github, "authorize_access_token", side_effect=RuntimeError("denied")):
             response = self.client.get("/authorize")
         location = urlsplit(response.headers["Location"])
-        self.assertEqual(location.path, "/campaign/owner/repo")
+        self.assertEqual(location.path, "/campaign/my-campaign")
         self.assertEqual(parse_qs(location.query), {"view": ["table"], "auth_error": ["denied"]})
 
     def test_login_uses_state_pkce_and_the_required_scopes(self):

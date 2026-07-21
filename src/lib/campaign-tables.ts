@@ -24,6 +24,7 @@ export interface TaskRow {
 export interface LockRow {
 	task_id: string;
 	subtask_id: string;
+	/** The GitHub numeric account id (as a string) of who holds the lock. */
 	user_id: string;
 	timestamp: string;
 	kind: string;
@@ -39,6 +40,7 @@ export interface HistoryRow {
 	timestamp: string;
 	task_id: string;
 	subtask_id: string;
+	/** The GitHub numeric account id (as a string) of who caused the event. */
 	user_id: string;
 	action: string;
 	outcome: string;
@@ -57,6 +59,7 @@ export interface StateRow {
 	task_id: string;
 	subtask_id: string;
 	status: string;
+	/** The GitHub numeric account id (as a string) of who submitted the encoding. */
 	encoder: string;
 	encoded_at: string;
 	[column: string]: string;

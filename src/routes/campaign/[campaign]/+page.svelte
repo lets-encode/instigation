@@ -6,6 +6,8 @@
   import { createForge } from "$lib/forge/index.ts";
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
+  import { resolveCampaign } from "$lib/campaign-resolve.ts";
+  import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
@@ -29,10 +31,18 @@
   import { buildSpreads } from "$lib/page-spreads.ts";
   import type { Selection, PanelAction } from "$lib/campaign-graph.ts";
 
-  // Guaranteed present by the [owner]/[repo] route.
-  const owner = $derived(page.params.owner!);
-  const repo = $derived(page.params.repo!);
-  const viewer = $derived(auth.user?.login ?? "");
+  // The URL carries only the campaign name; the repo it addresses is resolved
+  // from it (name → stable repo id → current owner/name) — see resolveCampaign.
+  const campaign = $derived(page.params.campaign!);
+  let resolved = $state<ResolvedCampaign | null>(null);
+  let resolving = $state(false);
+  let notFound = $state(false);
+  const owner = $derived(resolved?.owner ?? "");
+  const repo = $derived(resolved?.repo ?? "");
+  const repoId = $derived(resolved?.repoId ?? 0);
+  // The acting user's stable numeric id (written to the tables); login is display-only.
+  const viewer = $derived(auth.user?.id != null ? String(auth.user.id) : "");
+  const viewerLogin = $derived(auth.user?.login ?? "");
 
   let loading = $state(false);
   let loaded = $state(false);
@@ -45,6 +55,8 @@
   let validationColumns = $state<string[]>([]);
   let locks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
+  // Numeric user id → login, for displaying the people the tables reference.
+  let logins = $state<Record<string, string>>({});
   let title = $state("");
   let license = $state("");
   let passThreshold = $state(1);
@@ -114,7 +126,7 @@
     locks,
     passThreshold,
   });
-  const graph = $derived(buildGraph(graphData, viewer));
+  const graph = $derived(buildGraph(graphData, viewer, logins));
 
   // Manual node placement: buildGraph auto-lays the nodes, but the user can
   // drag any node to a new spot. Overrides are keyed by task id and outlive
@@ -327,6 +339,7 @@
       selected,
       viewer,
       selected != null && preview?.taskId === selected.task,
+      logins,
     ),
   );
   const tasksDone = $derived(
@@ -532,9 +545,11 @@
   // The context every command runs against; progress messages feed the busy overlay.
   const ctx = (f: ForgeClient): CommandContext => ({
     forge: f,
+    repoId,
     owner,
     repo,
     viewer,
+    viewerLogin,
     meiFriendUrl,
     progress: (m) => (busyMessage = m),
   });
@@ -555,6 +570,7 @@
       validationColumns = tables.validationColumns;
       locks = tables.locks;
       history = tables.history;
+      logins = tables.logins;
       title = tables.title;
       license = tables.license;
       passThreshold = tables.passThreshold;
@@ -576,6 +592,17 @@
       loading = false;
     }
   }
+
+  // Resolve the campaign name to its repo before anything reads the tables. The
+  // load effect below is gated on `owner`/`repo`, so it waits for this.
+  $effect(() => {
+    if (auth.status === "loading" || resolved || notFound || resolving) return;
+    resolving = true;
+    resolveCampaign(readForge(), campaign)
+      .then((r) => (r ? (resolved = r) : (notFound = true)))
+      .catch(() => (notFound = true))
+      .finally(() => (resolving = false));
+  });
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
@@ -606,7 +633,7 @@
   // notice shows on arrival but not on a later reload.
   let skippedPages = $state<string[]>([]);
   $effect(() => {
-    const key = `facsimile-skipped:${owner}/${repo}`;
+    const key = `facsimile-skipped:${repoId}`;
     const raw = sessionStorage.getItem(key);
     if (raw) {
       sessionStorage.removeItem(key);
@@ -654,7 +681,7 @@
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
     if (isPreTask(locator ?? "") && result?.ok && !result.warn) {
-      await goto(`/campaign/${owner}/${repo}/zones/${task_id}`);
+      await goto(`/campaign/${campaign}/zones/${task_id}`);
     }
   };
 
@@ -1030,7 +1057,17 @@
         </aside>
       {/if}
       <div class="viewcol">
-        {#if loading}
+        {#if notFound}
+          <div class="banner err">
+            <span>
+              No campaign called <code>{campaign}</code> was found. It may have
+              been removed, or the name may be misspelled.
+              <a href="/">Back to all campaigns</a>.
+            </span>
+          </div>
+        {:else if !resolved}
+          <p class="msg muted">Finding the campaign…</p>
+        {:else if loading}
           <p class="msg muted">Loading campaign…</p>
         {:else if loadError}
           <div class="banner err"><span>{loadError}</span></div>
@@ -1511,7 +1548,7 @@
                           <a
                             class="act"
                             class:primary={a.primary}
-                            href={`/campaign/${owner}/${repo}/zones/${selected.task}`}
+                            href={`/campaign/${campaign}/zones/${selected.task}`}
                             title={a.title}>{a.label}</a
                           >
                         {/if}

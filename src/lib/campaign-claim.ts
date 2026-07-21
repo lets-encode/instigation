@@ -23,7 +23,7 @@ export interface CheckClaimArgs {
 	state: ParsedState;
 	locks: LockRow[];
 	intent: ClaimIntent;
-	/** PR author's GitHub login. */
+	/** PR author's GitHub numeric account id (stable across username changes). */
 	author: string;
 	/** Paths the PR changes. */
 	changedPaths: string[];

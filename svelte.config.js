@@ -17,7 +17,7 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		// Static SPA: all routes are client-rendered and served via the fallback,
-		// so the dynamic /campaign/[owner]/[repo] route resolves without a server.
+		// so the dynamic /campaign/[campaign] route resolves without a server.
 		adapter: adapter({ fallback: 'index.html' }),
 		// Strict CSP as defence in depth: the forge token lives server-side in
 		// the broker session, but scripts on the page could still act through

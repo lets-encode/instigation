@@ -8,7 +8,7 @@
   // The zone editor is a full-width tool; the campaign console is a full-bleed,
   // full-height surface; every other route keeps the narrow reading column.
   const wide = $derived(page.url.pathname.includes('/zones/'));
-  const full = $derived(/^\/campaign\/[^/]+\/[^/]+\/?$/.test(page.url.pathname));
+  const full = $derived(/^\/campaign\/[^/]+\/?$/.test(page.url.pathname));
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {

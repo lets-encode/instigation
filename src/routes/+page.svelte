@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import {
     provider,
@@ -7,6 +8,7 @@
     measureDetectorUrl,
   } from "$lib/forge/config.ts";
   import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
+  import { registerCampaign } from "$lib/campaign-resolve.ts";
   import type { FileChange, RepoSummary } from "$lib/forge/types.ts";
   import {
     buildCampaignConfig,
@@ -61,8 +63,8 @@
     error = null;
     try {
       await retryInitialisation();
-      const [owner, repo] = created.full_name.split("/");
-      await goto(`/campaign/${owner}/${repo}`);
+      const repoName = created.full_name.split("/")[1];
+      await goto(`/campaign/${repoName}`);
     } catch (err) {
       error = `Campaign initialisation still failed: ${(err as Error).message}`;
       submitting = false;
@@ -141,6 +143,24 @@
   let title = $state("");
   let handle = $state("");
   let handleTouched = $state(false);
+
+  // The handle is also the GitHub repo name AND the campaign's registry slug, so
+  // it must satisfy the registry's slug rules (lowercase, digits, single internal
+  // hyphens, length 3–40). Keep in sync with redirector/app/validation.py.
+  const SLUG_RE = /^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])?$/;
+  const isValidHandle = (h: string) => SLUG_RE.test(h) && !h.includes("--");
+
+  // Arriving from the slug registry (letsenco.de) with a chosen name: prefill the
+  // handle and open the form. Runs once — setting handleTouched stops it recurring
+  // and stops the title→handle auto-fill from overwriting the chosen name.
+  $effect(() => {
+    const chosen = page.url.searchParams.get("campaign");
+    if (chosen && !handleTouched) {
+      handle = chosen;
+      handleTouched = true;
+      showForm = true;
+    }
+  });
   let description = $state("");
   let license = $state("CC-BY-4.0");
   let composer = $state("");
@@ -177,7 +197,7 @@
       handleCheck = { state: "idle" };
       return;
     }
-    if (!/^[A-Za-z0-9_-]+$/.test(h)) {
+    if (!isValidHandle(h)) {
       handleCheck = { state: "invalid" };
       return;
     }
@@ -515,9 +535,9 @@
     const h = handle.trim();
     if (!t) return void (error = "Campaign name is required.");
     if (!h) return void (error = "A handle is required.");
-    if (!/^[A-Za-z0-9_-]+$/.test(h)) {
+    if (!isValidHandle(h)) {
       return void (error =
-        "The handle may only contain letters, numbers, hyphens and underscores.");
+        "The handle must be 3–40 characters: lowercase letters, digits, and single internal hyphens.");
     }
     if (handleCheck.state === "taken") {
       return void (error = `The handle "${h}" is already in use by ${handleCheck.by}. Pick a different one.`);
@@ -617,8 +637,9 @@
             composer: composer.trim(),
             sourceKind: facsimile ? "facsimile" : "mei-template",
           },
-          user.login,
+          String(user.id),
           automation,
+          repo.id,
         );
         const header = {
           title: config.campaign.title,
@@ -704,14 +725,28 @@
           facsimile.skipped.join(", "),
         );
         sessionStorage.setItem(
-          `facsimile-skipped:${owner}/${repo.name}`,
+          `facsimile-skipped:${repo.id}`,
           JSON.stringify(facsimile.skipped),
         );
       }
 
-      // Take the organiser straight to the new repo's console. Keep the overlay
-      // up through navigation rather than flashing it away.
-      await goto(`/campaign/${owner}/${repo.name}`);
+      // Register the campaign name against the new repo's stable id in the slug
+      // registry. A conflict means someone claimed this name (for a different
+      // repo) since the pre-create check: the repo exists but the name now points
+      // elsewhere, so surface that rather than opening the wrong campaign. A
+      // registry that is unreachable is non-fatal — resolution falls back to the
+      // repo search by name.
+      const reg = await registerCampaign(repo.name, repo.id, provider.id);
+      if (reg === "conflict") {
+        error = `The name “${repo.name}” was just registered to a different campaign. Your repository “${repo.full_name}” was created, but isn't reachable under that name — rename it and register again.`;
+        submitting = false;
+        progress = null;
+        return;
+      }
+
+      // Take the organiser straight to the new campaign's console (by name). Keep
+      // the overlay up through navigation rather than flashing it away.
+      await goto(`/campaign/${repo.name}`);
     } catch (err) {
       console.error("Repo creation failed:", (err as Error).message);
       error =
@@ -820,7 +855,8 @@
           <span class="hint hint-err">✗ Already used by {handleCheck.by}</span>
         {:else if handleCheck.state === "invalid"}
           <span class="hint hint-err"
-            >Only letters, numbers, hyphens and underscores.</span
+            >3–40 characters: lowercase letters, digits, and single internal
+            hyphens.</span
           >
         {:else if handleCheck.state === "unknown"}
           <span class="hint"
@@ -1000,7 +1036,7 @@
       {#each repos as repo (repo.full_name)}
         <li>
           <div class="row">
-            <a href={`/campaign/${repo.owner}/${repo.name}`}>{repo.full_name}</a
+            <a href={`/campaign/${repo.name}`}>{repo.full_name}</a
             >
             {#if repo.private}
               <span class="badge" title="Private — only visible to its owner">

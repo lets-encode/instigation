@@ -306,6 +306,8 @@ export interface FileChange {
 
 /** The authenticated GitHub user, as far as this app reads it. */
 export interface GitHubUser {
+	/** Numeric account id — stable across username (login) changes. */
+	id: number;
 	login: string;
 	name: string | null;
 	avatar_url: string;
@@ -313,6 +315,8 @@ export interface GitHubUser {
 
 /** A repo as returned by the create/read endpoints (fields this app reads). */
 export interface RepoData {
+	/** Numeric repo id — stable across rename/transfer. */
+	id: number;
 	html_url: string;
 	full_name: string;
 	name: string;
@@ -326,6 +330,8 @@ export interface RepoData {
 
 /** A repo summary for the listing page. */
 export interface RepoSummary {
+	/** Numeric repo id — stable across rename/transfer. */
+	id: number;
 	full_name: string;
 	name: string;
 	owner: string | undefined;
@@ -333,6 +339,13 @@ export interface RepoSummary {
 	private: boolean;
 	description: string | null;
 	updated_at: string;
+}
+
+/** A repo's stable numeric id resolved to its current owner/name. */
+export interface RepoRef {
+	id: number;
+	owner: string;
+	repo: string;
 }
 
 interface ErrorResponse {
@@ -355,6 +368,64 @@ export async function getAuthenticatedUser(
 	const user: GitHubUser = await res.json();
 	const scopes = res.headers.get('X-OAuth-Scopes') ?? '';
 	return { user, scopes };
+}
+
+// Value cache for the id→login and id→repo resolvers, on top of ghGet's ETag
+// conditional caching (a 304 is free of the rate limit, but still a round trip).
+// This memo skips the network entirely for a repeat lookup within TTL_MS. Logins
+// and repo names change rarely; the TTL bounds how long a rename stays hidden
+// behind a display lookup — acceptable, since these values are display-only.
+const RESOLVE_TTL_MS = 5 * 60_000;
+const loginCache = new Map<number, { value: string; expires: number }>();
+const repoRefCache = new Map<number, { value: RepoRef; expires: number }>();
+
+function memoGet<T>(cache: Map<number, { value: T; expires: number }>, key: number): T | undefined {
+	const hit = cache.get(key);
+	if (hit && hit.expires > Date.now()) return hit.value;
+	if (hit) cache.delete(key);
+	return undefined;
+}
+
+/**
+ * Resolve a numeric account id to its current login (username). Used to display
+ * the people referenced by the tracking tables, which store the stable numeric
+ * id. Memoised for RESOLVE_TTL_MS. Returns null if the account can't be read.
+ */
+export async function getUserLogin(token: string | undefined, id: number): Promise<string | null> {
+	const memo = memoGet(loginCache, id);
+	if (memo !== undefined) return memo;
+	const { status, ok, data } = await ghGet<{ login?: string; message?: string }>(
+		`${apiRoot(token)}/user/${id}`,
+		token
+	);
+	if (status === 404) return null;
+	if (!ok) throw new Error(data?.message || `Failed to resolve user ${id}`);
+	const login = data?.login ?? null;
+	if (login) loginCache.set(id, { value: login, expires: Date.now() + RESOLVE_TTL_MS });
+	return login;
+}
+
+/**
+ * Resolve a numeric repo id to its current owner/name via `GET /repositories/{id}`
+ * — the id is stable across rename/transfer, so this is the authoritative way to
+ * reach a repo the app tracks by id. Memoised for RESOLVE_TTL_MS. Returns null if
+ * the repo can't be read (deleted, or not visible to this token).
+ */
+export async function getRepoById(token: string | undefined, id: number): Promise<RepoRef | null> {
+	const memo = memoGet(repoRefCache, id);
+	if (memo !== undefined) return memo;
+	const { status, ok, data } = await ghGet<{ name?: string; owner?: { login?: string }; message?: string }>(
+		`${apiRoot(token)}/repositories/${id}`,
+		token
+	);
+	if (status === 404) return null;
+	if (!ok) throw new Error(data?.message || `Failed to resolve repository ${id}`);
+	const owner = data?.owner?.login;
+	const repo = data?.name;
+	if (!owner || !repo) return null;
+	const ref: RepoRef = { id, owner, repo };
+	repoRefCache.set(id, { value: ref, expires: Date.now() + RESOLVE_TTL_MS });
+	return ref;
 }
 
 /**
@@ -1043,6 +1114,7 @@ export async function searchReposByTopic(topic: string, token?: string): Promise
 	const q = encodeURIComponent(`topic:${topic}`);
 	const { ok, data } = await ghGet<{
 		items?: Array<{
+			id: number;
 			full_name: string;
 			name: string;
 			owner?: { login: string };
@@ -1055,6 +1127,7 @@ export async function searchReposByTopic(topic: string, token?: string): Promise
 	}>(`${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, token);
 	if (!ok) throw new Error(data?.message || 'Repo search failed');
 	return (data?.items || []).map((r) => ({
+		id: r.id,
 		full_name: r.full_name,
 		name: r.name,
 		owner: r.owner?.login,

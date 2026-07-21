@@ -371,3 +371,27 @@ test('buildGraph: the encoder sees an open slot needs another volunteer, not a c
 	assert.equal(asOther.claimable, true);
 	assert.equal(asOther.who, 'open — claim to review');
 });
+
+// The tables key people by their stable numeric id; the graph shows a login when
+// one is supplied, and falls back to the raw id when it isn't resolved.
+test('buildGraph/buildPanel: numeric user ids render as logins via the map', () => {
+	const data: GraphData = {
+		taskDefs: [task('T0001'), subDef('T0001')],
+		rows: [state('T0001', '', 'encoding_required'), state('T0001', 'S0001', 'pending')],
+		validationColumns: ['validate_status_1'],
+		locks: [
+			{ task_id: 'T0001', subtask_id: '', user_id: '12345', timestamp: '2026-07-14T09:30:00Z', kind: 'encoding' }
+		],
+		passThreshold: 1
+	};
+	const logins = { '12345': 'octocat' };
+
+	const withLogin = buildGraph(data, '', logins).nodes.find((n) => n.task === 'T0001');
+	assert.equal(withLogin?.meta, 'claimed by @octocat');
+	// No map entry → the id stands in for the login, never a blank.
+	const withoutLogin = buildGraph(data, '').nodes.find((n) => n.task === 'T0001');
+	assert.equal(withoutLogin?.meta, 'claimed by @12345');
+
+	const panel = buildPanel(data, [], { task: 'T0001', sub: '', slot: null }, '', false, logins);
+	assert.equal(panel?.lockText, 'Claimed by @octocat');
+});

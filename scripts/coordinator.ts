@@ -9,9 +9,11 @@
 // request is treated purely as DATA: we read its changed-file patches and
 // blobs via the API and never check out or execute anything the fork supplies.
 //
-// Env: GH_TOKEN, BASE_REPO ("owner/repo"), EVENT_NAME;
-//      for pull_request_target additionally PR_NUMBER, PR_AUTHOR,
-//      HEAD_REPO ("owner/repo" of the PR head), HEAD_SHA, HEAD_REF.
+// Env: GH_TOKEN, BASE_REPO ("owner/repo"), BASE_REPO_ID, EVENT_NAME;
+//      for pull_request_target additionally PR_NUMBER, PR_AUTHOR (numeric
+//      account id — the canonical identity written to the tables), PR_AUTHOR_LOGIN
+//      (login, for commit messages only), HEAD_REPO ("owner/repo" of the PR head),
+//      HEAD_REPO_ID, HEAD_SHA, HEAD_REF.
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -59,7 +61,13 @@ const token = process.env.GH_TOKEN ?? '';
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');
 const eventName = process.env.EVENT_NAME ?? '';
 const prNumber = Number(process.env.PR_NUMBER);
+// The PR author's stable numeric account id — the identity written to the
+// tracking tables (lock.user_id, state.encoder, validate_status, history).
 const author = process.env.PR_AUTHOR ?? '';
+// The PR author's login — for human-readable commit messages / co-author
+// trailers only, never as a stored identity. Falls back to the id if absent.
+const authorLogin = process.env.PR_AUTHOR_LOGIN ?? '';
+const authorLabel = authorLogin || author;
 const [headOwner, headRepo] = (process.env.HEAD_REPO ?? '').split('/');
 const headSha = process.env.HEAD_SHA ?? '';
 const headRef = process.env.HEAD_REF ?? '';
@@ -182,8 +190,8 @@ async function attemptClaim(
 	}
 
 	const message = verdict.ok
-		? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && '/' + verdict.lock!.subtask_id} for ${author} (${verdict.lock!.kind})`
-		: `Reject claim by ${author} (${verdict.reason})`;
+		? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && '/' + verdict.lock!.subtask_id} for ${authorLabel} (${verdict.lock!.kind})`
+		: `Reject claim by ${authorLabel} (${verdict.reason})`;
 	// Non-fast-forward update fails if `main` moved since `sha` → we retry.
 	await commitFiles(token, owner, repo, files, message, { baseSha: sha });
 	return verdict;
@@ -220,7 +228,7 @@ async function runClaim(
 		? `\`${verdict.lock.task_id}${verdict.lock.subtask_id && '/' + verdict.lock.subtask_id}\``
 		: '';
 	const body = verdict.ok
-		? `✅ Claim accepted — ${target} locked for ${author} (${verdict.lock!.kind}).`
+		? `✅ Claim accepted — ${target} locked for ${authorLabel} (${verdict.lock!.kind}).`
 		: `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
 	await commentAndClosePr(token, owner, repo, prNumber, body);
 	await cleanupHeadBranch();
@@ -292,7 +300,7 @@ async function decideEncoding(
 			{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
 			{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
 		],
-		message: `Accept encoding of ${task.task_id} by ${author}\n\nCo-authored-by: ${author} <${author}@users.noreply.github.com>`
+		message: `Accept encoding of ${task.task_id} by ${authorLabel}\n\nCo-authored-by: ${authorLabel} <${author}+${authorLogin}@users.noreply.github.com>`
 	};
 }
 
@@ -337,7 +345,7 @@ async function decideValidation(
 		{ path: STATE_PATH, content: serializeStateCsv(verdict.state) },
 		{ path: LOCK_PATH, content: serializeLockCsv(verdict.locks) }
 	];
-	const message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${author}`;
+	const message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${authorLabel}`;
 
 	return { ok: true, history, files, message };
 }
@@ -384,7 +392,7 @@ async function attemptSubmit(
 	];
 	const message = outcome.ok
 		? outcome.message!
-		: `Reject ${kind} submission by ${author} (${outcome.reason})`;
+		: `Reject ${kind} submission by ${authorLabel} (${outcome.reason})`;
 	await commitFiles(token, owner, repo, files, message, { baseSha: sha });
 	return outcome;
 }

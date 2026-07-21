@@ -86,7 +86,8 @@ npm run dev
 ```
 
 Open <http://localhost:5173> → **Log in with GitHub** → create a campaign. On a
-clean creation you land on its console at `/campaign/<owner>/<repo>`.
+clean creation you land on its console at `/campaign/<campaign>` (the campaign
+name; the repo it addresses is resolved from it).
 
 ## 5. Build / preview / test
 

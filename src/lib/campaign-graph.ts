@@ -7,6 +7,16 @@
 import { findRow, isFinalValidation } from './campaign-tables.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow } from './campaign-tables.ts';
 
+/**
+ * Numeric account id → current login. The tables key people by their stable
+ * numeric id; the console resolves logins for display and passes them in. An
+ * unresolved id falls back to showing the id itself.
+ */
+export type Logins = Record<string, string>;
+
+/** The display handle for a stored user id: its login, or the id if unresolved. */
+const handle = (logins: Logins, id: string): string => logins[id] || id;
+
 /** The tables (and config) the graph is derived from. */
 export interface GraphData {
 	taskDefs: TaskRow[];
@@ -215,18 +225,18 @@ interface SlotState {
 // solid, active locks occupy separate empty slots, and the rest are open.
 // `viewer` tailors the open-slot text: the encoder cannot validate their own
 // work, so they see that another volunteer is needed rather than a claim prompt.
-function slotState(d: GraphData, row: StateRow, slot: number, viewer = ''): SlotState {
+function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', logins: Logins = {}): SlotState {
 	const cell = cellsOf(d, row)[slot] ?? '';
 	if (isFinalValidation(cell)) {
 		const [verdict, user] = cell.split('|');
-		return { key: verdict as StatusKey, sub: `@${user} · ${verdict}`, running: false, user };
+		return { key: verdict as StatusKey, sub: `@${handle(logins, user)} · ${verdict}`, running: false, user };
 	}
 	if (cell !== '') {
 		return { key: 'pending', sub: 'invalid validation data', running: false, user: '' };
 	}
 	const lock = validationLockForSlot(d, row, slot);
 	if (lock) {
-		return { key: 'review', sub: `@${lock.user_id} · in review`, running: true, user: lock.user_id };
+		return { key: 'review', sub: `@${handle(logins, lock.user_id)} · in review`, running: true, user: lock.user_id };
 	}
 	const taskStatus = taskState(d, row.task_id);
 	const waiting = !isEncoded(taskStatus?.status ?? '');
@@ -265,7 +275,7 @@ const nodeHeight = (slots: number): number =>
  * `viewer` is only used to pick the "next up" node — the first one the viewer
  * can act on.
  */
-export function buildGraph(d: GraphData, viewer = ''): Graph {
+export function buildGraph(d: GraphData, viewer = '', logins: Logins = {}): Graph {
 	const reqVal = d.validationColumns.length;
 	const defs = d.taskDefs.filter((t) => t.subtask_id === '');
 	const nodes: LaidNode[] = [];
@@ -310,13 +320,13 @@ export function buildGraph(d: GraphData, viewer = ''): Graph {
 		const subRows = subRowsOf(d, task);
 		let meta = 'unclaimed';
 		if (blocked) meta = `waiting for ${blocked}`;
-		else if (encoded && state?.encoder) meta = `@${state.encoder} · encoded`;
+		else if (encoded && state?.encoder) meta = `@${handle(logins, state.encoder)} · encoded`;
 		else if (state?.status === 'completed') meta = '✓ done';
-		else if (lock) meta = lock.user_id === viewer ? 'claimed by you' : `claimed by @${lock.user_id}`;
+		else if (lock) meta = lock.user_id === viewer ? 'claimed by you' : `claimed by @${handle(logins, lock.user_id)}`;
 
 		const slots: NodeSlot[] = subRows.flatMap((row) =>
 			Array.from({ length: reqVal }, (_, slot) => {
-				const s = slotState(d, row, slot, viewer);
+				const s = slotState(d, row, slot, viewer, logins);
 				return {
 					sub: row.subtask_id,
 					slot,
@@ -445,12 +455,12 @@ export interface Panel {
 	history: Array<{ t: string; text: string }>;
 }
 
-const historyOf = (history: HistoryRow[], task: string) =>
+const historyOf = (history: HistoryRow[], task: string, logins: Logins = {}) =>
 	history
 		.filter((h) => h.task_id === task)
 		.map((h) => ({
 			t: h.timestamp,
-			text: `@${h.user_id} · ${h.action} · ${h.detail || h.outcome}`
+			text: `@${handle(logins, h.user_id)} · ${h.action} · ${h.detail || h.outcome}`
 		}))
 		.reverse();
 
@@ -464,7 +474,8 @@ export function buildPanel(
 	history: HistoryRow[],
 	sel: Selection | null,
 	viewer: string,
-	previewOpen: boolean
+	previewOpen: boolean,
+	logins: Logins = {}
 ): Panel | null {
 	if (!sel) return null;
 	const def = taskDef(d, sel.task);
@@ -492,7 +503,7 @@ export function buildPanel(
 	if (sel.sub !== '' && sel.slot != null) {
 		const row = findRow(d.rows, sel.task, sel.sub);
 		if (!row) return null;
-		const s = slotState(d, row, sel.slot, viewer);
+		const s = slotState(d, row, sel.slot, viewer, logins);
 		const cell = cellsOf(d, row)[sel.slot] ?? '';
 		const lock = validationLockForSlot(d, row, sel.slot);
 		const mine = lock?.user_id === viewer;
@@ -512,11 +523,11 @@ export function buildPanel(
 				: null;
 		if (isFinalValidation(cell)) {
 			const [, user, ts] = cell.split('|');
-			meta = `by @${user}${ts ? ` · ${ts}` : ''}`;
+			meta = `by @${handle(logins, user)}${ts ? ` · ${ts}` : ''}`;
 			if (openEditor) actions.push(openEditor);
 			actions.push(previewAction(false));
 		} else if (s.key === 'review') {
-			lockText = mine ? 'You hold this validation lock' : `Being reviewed by @${lock!.user_id}`;
+			lockText = mine ? 'You hold this validation lock' : `Being reviewed by @${handle(logins, lock!.user_id)}`;
 			if (openEditor) actions.push(openEditor);
 			actions.push(previewAction(false));
 			if (mine) {
@@ -573,11 +584,11 @@ export function buildPanel(
 			validations: [],
 			metaRows: [
 				{ k: 'Type', v: 'validate-node' },
-				{ k: 'Encoder', v: state.encoder ? `@${state.encoder}` : '—' },
+				{ k: 'Encoder', v: state.encoder ? `@${handle(logins, state.encoder)}` : '—' },
 				{ k: 'Fragment', v: def.fragment },
 				{ k: 'Pass threshold', v: `${d.passThreshold} of ${reqVal}` }
 			],
-			history: historyOf(history, sel.task)
+			history: historyOf(history, sel.task, logins)
 		};
 	}
 
@@ -604,12 +615,12 @@ export function buildPanel(
 	let meta = '';
 	if (blocked) meta = `Waits for ${blocked} — claims open once it is completed.`;
 	else if (encoded && state.encoder)
-		meta = `encoded by @${state.encoder}${state.encoded_at ? ` · ${state.encoded_at}` : ''}`;
+		meta = `encoded by @${handle(logins, state.encoder)}${state.encoded_at ? ` · ${state.encoded_at}` : ''}`;
 	else if (statusKey === 'claimed') meta = 'Waiting for correction.';
 	const lockText = lock
 		? mine
 			? 'You hold this claim'
-			: `Claimed by @${lock.user_id}`
+			: `Claimed by @${handle(logins, lock.user_id)}`
 		: '';
 
 	const actions: PanelAction[] = [];
@@ -636,7 +647,7 @@ export function buildPanel(
 					: blocked
 					? `Enabled once ${blocked} is completed.`
 					: otherLock
-						? `Already claimed by @${lock.user_id}.`
+						? `Already claimed by @${handle(logins, lock.user_id)}.`
 						: 'Correct the detected measures on the facsimile: add, delete, move, resize and renumber them.'
 			});
 		}
@@ -650,7 +661,7 @@ export function buildPanel(
 			title: blocked
 				? `Enabled once ${blocked} is completed.`
 				: otherLock
-					? `Already claimed by @${lock.user_id}.`
+					? `Already claimed by @${handle(logins, lock.user_id)}.`
 					: 'Claims this task for you and opens the score in mei-friend. Commit your encoding there, then use “Submit encoding”.'
 		});
 		actions.push({
@@ -672,7 +683,7 @@ export function buildPanel(
 			pct: Math.min(100, Math.round((passes / Math.max(1, d.passThreshold)) * 100)),
 			slots: Array.from({ length: reqVal }, (_, slot) => ({
 				label: `${row.subtask_id}·${slot + 1}`,
-				state: slotState(d, row, slot, viewer)
+				state: slotState(d, row, slot, viewer, logins)
 			}))
 		};
 	});
@@ -699,6 +710,6 @@ export function buildPanel(
 			{ k: 'Fragment', v: def.fragment },
 			{ k: 'Pass threshold', v: `${d.passThreshold} of ${reqVal}` }
 		],
-		history: historyOf(history, sel.task)
+		history: historyOf(history, sel.task, logins)
 	};
 }
