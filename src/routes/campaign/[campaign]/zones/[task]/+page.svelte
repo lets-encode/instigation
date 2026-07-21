@@ -524,10 +524,11 @@
         return;
       }
     }
-    if (kind === "move" && !moved) return; // plain select
+    if (kind !== "draw" && !moved) return; // plain select / handle click, no move
     resort(p);
     // Keep the selection on the same zone object after the re-sort.
     selected = null;
+    commit();
   }
 
   function deleteSelected() {
@@ -535,10 +536,23 @@
     pages[selected.p].zones.splice(selected.z, 1);
     resort(selected.p);
     selected = null;
+    commit();
   }
 
   function keydown(e: KeyboardEvent) {
     if ((e.target as HTMLElement).tagName === "INPUT") return;
+    // Cmd/Ctrl+Z undoes; add Shift (or Ctrl+Y) to redo.
+    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      redo();
+      return;
+    }
     if ((e.key === "Delete" || e.key === "Backspace") && selected) {
       e.preventDefault();
       deleteSelected();
@@ -843,6 +857,20 @@
           {/if}
         </div>
 
+        {#if canEdit}
+          <div class="panel">
+            <p class="panel-title">Edit</p>
+            <div class="viewmode">
+              <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">
+                ↶ Undo
+              </button>
+              <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">
+                Redo ↷
+              </button>
+            </div>
+          </div>
+        {/if}
+
         <div class="panel">
           <p class="panel-title">Zoom</p>
           <div class="zoom">
@@ -866,6 +894,7 @@
                 <input
                   value={pages[selected.p].zones[selected.z].override ?? pages[selected.p].zones[selected.z].label}
                   oninput={(e) => setOverride((e.target as HTMLInputElement).value)}
+                  onchange={() => commit()}
                   disabled={!canEdit}
                   title="Override the automatic number, e.g. 10a — numbering continues after it"
                 />
