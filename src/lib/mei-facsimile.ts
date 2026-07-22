@@ -10,9 +10,11 @@
 //   B. + measures      — one <measure n="label" facs="#zone"> (holding an
 //      <mRest/>) per zone.
 //   C. + breaks        — a <pb/> before each page's first measure, an <sb/>
-//      before each measure flagged as starting a system, and one <mdiv> per
-//      movement/section/piece (a zone's mdiv flag starts a new one). Written
-//      by the measure-correction pre-task's submission.
+//      before each other measure flagged as a system start, and one <mdiv> per
+//      movement/section/piece (a zone's mdiv flag starts a new one). A page
+//      break implies a system break, so a page's first measure emits only the
+//      <pb/>. A <pb/> @n is its page number; an <sb/> @n counts system breaks in
+//      document order. Written by the measure-correction pre-task's submission.
 // parseFacsimileMei reads any stage back into the model; the <meiHead> block
 // is carried verbatim across rebuilds.
 
@@ -29,7 +31,13 @@ export interface ZoneModel {
 	box: MeasureBox;
 	/** The measure number/label written as @n — "12", but also "10a"/"10b" for voltas. */
 	label: string;
-	/** Whether the measure starts a new system (emitted as <sb/> at stage C). */
+	/**
+	 * Whether the measure starts a new page — emitted as <pb facs="#surface-N"/>
+	 * at stage C (each page's first measure). A page break implies a system
+	 * break, so a measure with pb emits no separate <sb/>.
+	 */
+	pb: boolean;
+	/** Whether the measure starts a new system (emitted as <sb/> at stage C, unless pb already implies it). */
 	sb: boolean;
 	/**
 	 * Whether the measure starts a new movement/section/piece — it opens a new
@@ -78,8 +86,6 @@ function xmlEscape(value: unknown): string {
 		.replaceAll('>', '&gt;')
 		.replaceAll('"', '&quot;');
 }
-
-const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /**
  * Group measure boxes into systems (rows), top-to-bottom, each row ordered
@@ -156,6 +162,7 @@ export function initialFacsimileModel(pages: FacsimilePage[], meta: ScoreMeta = 
 		headXml: buildMeiHead(meta),
 		pages: pages.map((page) => {
 			const rows = readingOrderRows(page.measures);
+			let firstOfPage = true;
 			return {
 				image: page.image,
 				width: page.width,
@@ -163,7 +170,12 @@ export function initialFacsimileModel(pages: FacsimilePage[], meta: ScoreMeta = 
 				zones: rows.flatMap((row) =>
 					row.map((box, i) => {
 						label = nextLabel(label);
-						return { box, label, sb: i === 0, mdiv: false };
+						// The page's first measure carries the page break; other row
+						// starts carry a system break. pb and sb stay independent, so a
+						// page's first measure does not also default to sb.
+						const zone = { box, label, pb: firstOfPage, sb: i === 0 && !firstOfPage, mdiv: false };
+						firstOfPage = false;
+						return zone;
 					})
 				)
 			};
@@ -187,14 +199,14 @@ export function buildFacsimileMei(
 	// Section content grouped per movement: mdivParts[k] holds <mdiv> k+1's lines.
 	const mdivParts: string[][] = [[]];
 	let measureNo = 0;
+	// System breaks are numbered in document order; a page break's @n records its
+	// page number (the surface ordinal), per the MEI guidelines for <pb>.
+	let sbNo = 0;
 
 	model.pages.forEach((page, pi) => {
 		const p = pi + 1;
 		const surfaceId = `surface-${p}`;
 		const zones: string[] = [];
-		// A page break precedes the page's first measure, tying the flow to the
-		// surface — emitted lazily so it lands inside that measure's <mdiv>.
-		let pbPending = withBreaks;
 
 		page.zones.forEach((zone, zi) => {
 			measureNo++;
@@ -209,12 +221,14 @@ export function buildFacsimileMei(
 			// A flagged measure opens the next movement (the first one is implicit).
 			if (zone.mdiv && measureNo > 1) mdivParts.push([]);
 			const parts = mdivParts[mdivParts.length - 1];
-			if (pbPending) {
-				parts.push(`               <pb xml:id="pb-${p}" n="${pad2(p)}" facs="#${surfaceId}"/>`);
-				pbPending = false;
-			} else if (withBreaks && zone.sb && zi > 0) {
-				// The page break already implies a new system for a page's first measure.
-				parts.push(`               <sb xml:id="sb-${p}-${zi + 1}"/>`);
+			// A page break ties the flow to the page surface and, per the MEI
+			// guidelines, implies a system break — so a measure that starts a page
+			// emits only the <pb/>, never a redundant <sb/>. A page break's @n is
+			// its page number; a system break's @n counts system breaks in order.
+			if (zone.pb) {
+				parts.push(`               <pb xml:id="pb-${p}" n="${p}" facs="#${surfaceId}"/>`);
+			} else if (zone.sb) {
+				parts.push(`               <sb xml:id="sb-${p}-${zi + 1}" n="${++sbNo}"/>`);
 			}
 			parts.push(
 				`               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}" facs="#${zoneId}">\n` +
@@ -301,28 +315,34 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 	// (stage C), keyed by zone id via each measure's facs link. A second or
 	// later <mdiv> flags its first measure; the first <mdiv> is implicit.
 	const body = /<body>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? '';
+	const pbZones = new Set<string>();
 	const sbZones = new Set<string>();
 	const mdivZones = new Set<string>();
 	let hasMeasures = false;
 	let hasBreaks = false;
-	let pendingBreak = false;
+	let pendingPb = false;
+	let pendingSb = false;
 	let pendingMdiv = false;
 	let seenMdiv = false;
 	for (const token of body.match(/<(mdiv|pb|sb|measure)\b[^>]*>/g) ?? []) {
 		if (token.startsWith('<mdiv')) {
 			if (seenMdiv) pendingMdiv = true;
 			seenMdiv = true;
-		} else if (token.startsWith('<pb') || token.startsWith('<sb')) {
-			pendingBreak = true;
-			if (token.startsWith('<pb')) hasBreaks = true;
+		} else if (token.startsWith('<pb')) {
+			pendingPb = true;
+			hasBreaks = true;
+		} else if (token.startsWith('<sb')) {
+			pendingSb = true;
 		} else {
 			hasMeasures = true;
 			const facs = attr(token, 'facs');
 			if (facs?.startsWith('#')) {
-				if (pendingBreak) sbZones.add(facs.slice(1));
+				if (pendingPb) pbZones.add(facs.slice(1));
+				if (pendingSb) sbZones.add(facs.slice(1));
 				if (pendingMdiv) mdivZones.add(facs.slice(1));
 			}
-			pendingBreak = false;
+			pendingPb = false;
+			pendingSb = false;
 			pendingMdiv = false;
 		}
 	}
@@ -346,13 +366,18 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 			};
 			label = attr(tag, 'n') ?? nextLabel(label);
 			const id = attr(tag, 'xml:id') ?? '';
-			zones.push({ box, label, sb: sbZones.has(id), mdiv: mdivZones.has(id) });
+			zones.push({ box, label, pb: pbZones.has(id), sb: sbZones.has(id), mdiv: mdivZones.has(id) });
 			boxesOnly.push(box);
 		}
 		if (!hasBreaks) {
-			// No breaks recorded yet — suggest system starts from the row grouping.
+			// No breaks recorded yet — default the page break to the first measure
+			// and suggest system starts for the other row starts (kept independent).
 			const rowStarts = new Set(readingOrderRows(boxesOnly).map((row) => row[0]));
-			for (const zone of zones) zone.sb = rowStarts.has(zone.box);
+			const pageFirst = boxesOnly[0];
+			for (const zone of zones) {
+				zone.pb = zone.box === pageFirst;
+				zone.sb = rowStarts.has(zone.box) && zone.box !== pageFirst;
+			}
 		}
 		pages.push({
 			image: attr(graphic, 'target') ?? '',

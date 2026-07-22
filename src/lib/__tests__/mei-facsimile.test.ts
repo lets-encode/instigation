@@ -119,6 +119,38 @@ test('movements: a flagged zone opens a new <mdiv>; flags round-trip', () => {
 	assert.equal(rebuilt, mei);
 });
 
+test('a page break implies the system break: a pb measure emits <pb> only, and can still open a movement', () => {
+	const m = model();
+	// Page 2's first measure carries the page break (default) and starts a new
+	// movement; its system break is implied by the pb, so no <sb/> is written.
+	m.pages[1].zones[0].mdiv = true;
+	const mei = buildFacsimileMei(m, { withBreaks: true });
+	assert.equal(SyntaxValidator.validate(mei), true);
+	// Nothing between page 2's <pb> and its measure — no redundant <sb>.
+	const second = mei.slice(mei.indexOf('<mdiv xml:id="mdiv-2"'));
+	const beforeMeasure = second.slice(0, second.indexOf('facs="#zone-2-1"'));
+	assert.ok(/<pb[^>]*facs="#surface-2"/.test(beforeMeasure));
+	assert.ok(!/<sb\b/.test(beforeMeasure));
+
+	const parsed = parseFacsimileMei(mei);
+	const z = parsed.pages[1].zones[0];
+	assert.equal(z.pb, true);
+	assert.equal(z.sb, false);
+	assert.equal(z.mdiv, true);
+	const rebuilt = buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }, { withBreaks: true });
+	assert.equal(rebuilt, mei);
+});
+
+test('breaks carry @n: a page break its page number, a system break its order', () => {
+	const m = model();
+	// Page 1 measure 1 opens page 1, page 2 measure 1 opens page 2; page 1's
+	// second measure is the only explicit system break (sb #1).
+	const mei = buildFacsimileMei(m, { withBreaks: true });
+	assert.ok(/<pb xml:id="pb-1" n="1"/.test(mei));
+	assert.ok(/<pb xml:id="pb-2" n="2"/.test(mei));
+	assert.ok(/<sb xml:id="sb-1-2" n="1"/.test(mei));
+});
+
 test('movements: the first zone never opens a second <mdiv>', () => {
 	const m = model();
 	m.pages[0].zones[0].mdiv = true;

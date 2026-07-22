@@ -116,10 +116,12 @@
     padding: 2.5rem 1.5rem;
     box-sizing: border-box;
   }
+  /* Full-width scroller so its scrollbar sits at the window edge; the editor
+     centres its own content and runs its toolbar full-bleed. */
   main.wide {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 1.5rem 2rem;
+    max-width: none;
+    margin: 0;
+    padding: 0;
   }
   main.full {
     max-width: none;

@@ -26,7 +26,8 @@
   const viewer = $derived(auth.user?.id != null ? String(auth.user.id) : "");
 
   // Editor-side zone: the box, the label override (null = automatic), the
-  // computed label, and the break flags (structure step).
+  // computed label, and the break flags. The page break is derived from
+  // position (each page's first measure), not stored per-zone.
   type EditZone = {
     box: MeasureBox;
     override: string | null;
@@ -50,10 +51,20 @@
   let data = $state<FacsimileTaskData | null>(null);
   let pages = $state<EditPage[]>([]);
   let selected = $state<{ p: number; z: number } | null>(null);
+  // The zone the pointer is currently over. Kept separate from `selected` so a
+  // brief hover shows the controls without pinning them; a short hide delay
+  // bridges the gap between a zone and its own controls.
+  let hovered = $state<{ p: number; z: number } | null>(null);
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  // The zone whose controls show: the hovered one, else the pinned selection.
+  const active = $derived(hovered ?? selected);
 
   let busy = $state(false);
   let busyMessage = $state("");
   let result = $state<Result | null>(null);
+
+  // Alternating system tint / accent: even systems blue, odd green.
+  const SYS_ACCENT = ["#3056d3", "#149650"];
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the page overflows and its container scrolls horizontally.
@@ -94,13 +105,6 @@
     selected = null;
   }
 
-  // The measure-correction task has two steps in one session: step 1 corrects
-  // the measure boxes and numbers, step 2 marks system starts and movement
-  // boundaries. One submission carries both.
-  let step = $state<"measures" | "structure">("measures");
-  // 'zones' (edit measure boxes) or 'breaks' (toggle break/movement flags) —
-  // what the pointer interactions do right now.
-  const mode = $derived(step === "structure" ? "breaks" : "zones");
   const canEdit = $derived(
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
@@ -159,6 +163,7 @@
     loading = true;
     loadError = null;
     selected = null;
+    hovered = null;
     firstVisible = 0;
     try {
       data = await invoke(commands.readFacsimile, { task_id: taskId }, ctx(f));
@@ -296,7 +301,15 @@
       image: pg.image,
       width: pg.width,
       height: pg.height,
-      zones: pg.zones.map((z) => ({ box: { ...z.box }, label: z.label, sb: z.sb, mdiv: z.mdiv })),
+      // The page break sits on each page's first measure; a page break implies
+      // the system break, so its explicit sb flag is not carried.
+      zones: pg.zones.map((z, i) => ({
+        box: { ...z.box },
+        label: z.label,
+        pb: i === 0,
+        sb: z.sb,
+        mdiv: z.mdiv,
+      })),
     }));
   }
 
@@ -358,9 +371,65 @@
   }
 
   // ------------------------------------------------------------------------
-  // Pointer interactions (zones mode)
+  // Break flags
+  //
+  // The page break is derived from position (each page's first measure). A page
+  // break implies a system break, so on a page's first measure the system flag
+  // is fixed on and the button is disabled. The score's first measure always
+  // opens the first movement, so its section flag is fixed on too.
+  const pbAt = (p: number, z: number) => z === 0;
+  const sbActive = (p: number, z: number) => pbAt(p, z) || pages[p].zones[z].sb;
+  const sectionLocked = (p: number, z: number) => p === 0 && z === 0;
+
+  function toggleSb(p: number, z: number) {
+    if (!canEdit || pbAt(p, z)) return;
+    pages[p].zones[z].sb = !pages[p].zones[z].sb;
+    commit();
+  }
+  function toggleSection(p: number, z: number) {
+    if (!canEdit || sectionLocked(p, z)) return;
+    pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+    commit();
+  }
+
+  function setLabel(p: number, z: number, value: string) {
+    pages[p].zones[z].override = value.trim() === "" ? null : value.trim();
+    renumber();
+  }
+
+  // ------------------------------------------------------------------------
+  // Hover tracking (a short hide delay bridges zone → its controls)
+
+  function hoverEnter(p: number, z: number) {
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+    hovered = { p, z };
+  }
+  function hoverLeave() {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      hovered = null;
+      hoverTimer = null;
+    }, 90);
+  }
+
+  // ------------------------------------------------------------------------
+  // Pointer interactions (box move / resize / draw)
 
   let svgEls = $state<SVGSVGElement[]>([]);
+  // Each visible page's rendered canvas width (px), so the SVG number labels can
+  // be sized to a near-constant on-screen size across zoom and 1-/2-page view.
+  let canvasW = $state<number[]>([]);
+  // On-screen height (px) for the number label at 100%; it grows a little with
+  // zoom (damped) so it does not feel oversized zoomed out or small zoomed in.
+  const LABEL_PX = 15;
+  const labelFont = (p: number, pageW: number) => {
+    const damp = Math.min(1.7, Math.max(0.8, 0.7 + 0.3 * zoom));
+    const target = LABEL_PX * damp;
+    return canvasW[p] ? (target * pageW) / canvasW[p] : target;
+  };
   type Drag = {
     kind: "move" | "resize" | "draw";
     p: number;
@@ -383,24 +452,6 @@
   }
 
   function zonePointerDown(e: PointerEvent, p: number, z: number) {
-    if (mode === "breaks") {
-      if (!canEdit) return;
-      // Shift-click toggles the movement flag (structure step only). The
-      // score's first measure always opens the first movement.
-      if (e.shiftKey) {
-        if (p > 0 || z > 0) {
-          pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
-          commit();
-        }
-        return;
-      }
-      // Toggle the system flag; a page's first measure is covered by its <pb/>.
-      if (z > 0) {
-        pages[p].zones[z].sb = !pages[p].zones[z].sb;
-        commit();
-      }
-      return;
-    }
     selected = { p, z };
     if (!canEdit) return;
     e.stopPropagation();
@@ -409,7 +460,7 @@
   }
 
   function handlePointerDown(e: PointerEvent, p: number, z: number) {
-    if (mode === "breaks" || !canEdit) return;
+    if (!canEdit) return;
     e.stopPropagation();
     selected = { p, z };
     const { x, y } = svgXY(e, p);
@@ -420,22 +471,10 @@
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       e.stopPropagation();
-      if (mode === "breaks" && canEdit) {
-        if (e.shiftKey) {
-          if (p > 0 || z > 0) {
-            pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
-            commit();
-          }
-        } else if (z > 0) {
-          pages[p].zones[z].sb = !pages[p].zones[z].sb;
-          commit();
-        }
-      } else {
-        selected = { p, z };
-      }
+      selected = { p, z };
       return;
     }
-    if (mode === "breaks" || !canEdit || !e.key.startsWith("Arrow")) return;
+    if (!canEdit || !e.key.startsWith("Arrow")) return;
     e.preventDefault();
     e.stopPropagation();
     selected = { p, z };
@@ -475,7 +514,8 @@
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
     selected = null;
-    if (mode === "breaks" || !canEdit) return;
+    hovered = null;
+    if (!canEdit) return;
     const { x, y } = svgXY(e, p);
     pages[p].zones.push({
       box: { ulx: x, uly: y, lrx: x, lry: y },
@@ -525,17 +565,28 @@
       }
     }
     if (kind !== "draw" && !moved) return; // plain select / handle click, no move
+    // Keep the same zone selected across the re-sort (its index may change), so
+    // its resize handle stays and further edits need no extra click.
+    const zone = pages[p].zones[z];
     resort(p);
-    // Keep the selection on the same zone object after the re-sort.
-    selected = null;
+    selected = { p, z: pages[p].zones.indexOf(zone) };
     commit();
   }
 
   function deleteSelected() {
-    if (!selected || mode === "breaks" || !canEdit) return;
+    if (!selected || !canEdit) return;
     pages[selected.p].zones.splice(selected.z, 1);
     resort(selected.p);
     selected = null;
+    commit();
+  }
+
+  function deleteZone(p: number, z: number) {
+    if (!canEdit) return;
+    pages[p].zones.splice(z, 1);
+    resort(p);
+    selected = null;
+    hovered = null;
     commit();
   }
 
@@ -563,25 +614,9 @@
     }
   }
 
-  function setOverride(value: string) {
-    if (!selected) return;
-    pages[selected.p].zones[selected.z].override = value.trim() === "" ? null : value.trim();
-    renumber();
-  }
-
-  // Which system (0-based) each of a page's measures belongs to, for the
-  // alternating tint in breaks mode.
-  function systemIndices(pg: EditPage): number[] {
-    let s = -1;
-    return pg.zones.map((z, i) => {
-      if (i === 0 || z.sb) s++;
-      return s;
-    });
-  }
-
-  // Paint order for a page's zones (zones mode): the selected zone is moved to
-  // the end so it renders on top. SVG has no z-index, so an earlier zone would
-  // otherwise sit under a later overlapping one and steal its pointer events.
+  // Paint order for a page's zones: the selected zone is moved to the end so it
+  // renders on top. SVG has no z-index, so an earlier zone would otherwise sit
+  // under a later overlapping one and steal its pointer events.
   function paintOrder(pg: EditPage, p: number): { zone: EditZone; z: number }[] {
     const entries = pg.zones.map((zone, z) => ({ zone, z }));
     if (selected?.p === p) {
@@ -589,6 +624,16 @@
       if (i >= 0) entries.push(entries.splice(i, 1)[0]);
     }
     return entries;
+  }
+
+  // Which system (0-based) each of a page's measures belongs to, for the
+  // alternating tint. A page's first measure and any system start begin one.
+  function systemIndices(pg: EditPage): number[] {
+    let s = -1;
+    return pg.zones.map((z, i) => {
+      if (i === 0 || z.sb) s++;
+      return s;
+    });
   }
 
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
@@ -602,7 +647,23 @@
   // Whether a zone starts a movement in the emitted MEI (the very first
   // measure always opens the first one).
   const startsMovement = (p: number, z: number) =>
-    (p === 0 && z === 0) || (pages[p].zones[z].mdiv && (p > 0 || z > 0));
+    sectionLocked(p, z) || (pages[p].zones[z].mdiv && (p > 0 || z > 0));
+
+  // The at-a-glance flag markers drawn on the box label: § section, ⇱ page
+  // beginning, ↵ system beginning (the page break already implies a system).
+  const markers = (p: number, z: number) =>
+    (startsMovement(p, z) ? "§" : "") +
+    (pbAt(p, z) ? "⇱" : "") +
+    (!pbAt(p, z) && pages[p].zones[z].sb ? "↵" : "");
+  const labelText = (p: number, z: number) => {
+    const m = markers(p, z);
+    return (m ? m + " " : "") + pages[p].zones[z].label;
+  };
+
+  // System/section colours reused for the box tint and the zone controls.
+  const MDIV_ACCENT = "#8b5fbf";
+  const accentFor = (systems: number[], p: number, z: number) =>
+    startsMovement(p, z) ? MDIV_ACCENT : SYS_ACCENT[systems[z] % 2];
 </script>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
@@ -619,61 +680,141 @@
   </div>
 {/if}
 
-<p class="back"><a href={`/campaign/${campaign}`}>← Campaign console</a></p>
-
-<header>
-  <h1>Measure correction — <code>{taskId}</code></h1>
-  <p class="repo">
-    <a href={`https://github.com/${owner}/${repo}`} target="_blank" rel="noreferrer">{owner}/{repo}</a>
-  </p>
-</header>
-
 {#if notFound}
-  <div class="banner err">
-    No campaign called <code>{campaign}</code> was found.
-    <a href="/">Back to all campaigns</a>.
+  <div class="wrap">
+    <div class="banner err">
+      No campaign called <code>{campaign}</code> was found.
+      <a href="/">Back to all campaigns</a>.
+    </div>
   </div>
 {:else if auth.status === "loading" || (!resolved && !notFound)}
-  <p class="muted">Loading…</p>
+  <div class="wrap"><p class="muted">Loading…</p></div>
 {:else if !auth.user}
-  <div class="banner warn">
-    Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
-    to work on this task.
+  <div class="wrap">
+    <div class="banner warn">
+      Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
+      to work on this task.
+    </div>
   </div>
 {:else}
-  {#if result && result.error}
-    <div class="banner err">
-      {result.error}
-      {#if result.prUrl}<a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
-    </div>
-  {:else if result && result.ok}
-    <div class="banner {result.warn ? 'warn' : 'ok'}">
-      {result.message}
-      {#if result.prUrl}<a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
-    </div>
-  {/if}
-
   {#if loading}
-    <p class="muted">Loading the facsimile…</p>
+    <div class="wrap"><p class="muted">Loading the facsimile…</p></div>
   {:else if loadError}
-    <div class="banner err">{loadError}</div>
+    <div class="wrap"><div class="banner err">{loadError}</div></div>
   {:else if data}
-    <div class="editor">
-      <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
-        {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
-        {#each spread.pages as p (p)}
-          {@const pg = pages[p]}
-          <div class="page">
-            <p class="pagehead">
-              Page {p + 1}
-              {#if mode === "breaks"}<span class="pb-badge" title="A page break is written before this page's first measure">pb</span>{/if}
-            </p>
-            {#if pg.failed}
-              <div class="banner err">
-                The page facsimile for page {p + 1} could not be loaded. The zones
-                are shown without their reference image.
-              </div>
+    <div class="toolbar">
+     <div class="toolbar-inner">
+      <span class="tb-group tb-title">
+        <a href={`/campaign/${campaign}`} title="Back to the campaign console">← Console</a>
+        <span class="tb-task"><code>{taskId}</code></span>
+        <span class="count">
+          {measureCount} measure{measureCount === 1 ? "" : "s"}
+          · {movementCount} movement{movementCount === 1 ? "" : "s"}
+        </span>
+      </span>
+
+      {#if canEdit}
+        <div class="tb-group tb-div">
+          <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
+          <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
+        </div>
+      {/if}
+
+      {#if validation && submitted}
+        <div class="tb-group tb-div tb-validation">
+          <span class="vstatus">
+            {#if validation.status === "completed"}
+              Validation complete
+            {:else if validation.lockUser}
+              {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
+            {:else if selfValidation}
+              Your own submission
+            {:else}
+              Awaiting validation
             {/if}
+          </span>
+          <button type="button" onclick={() => claimValidation()} disabled={busy || !canClaimValidation}
+            title="Reserve this subtask for validation. Encoders cannot validate their own work.">Claim</button>
+          <button type="button" class="vpass" onclick={() => validate("pass")} disabled={busy || !holdsValidation}
+            title="Record a passing verdict.">Pass</button>
+          <button type="button" class="vfail" onclick={() => validate("fail")} disabled={busy || !holdsValidation}
+            title="Record a failing verdict — the task goes back to encoding.">Fail</button>
+        </div>
+      {/if}
+
+      <button
+        type="button"
+        class="primary tb-submit tb-div"
+        onclick={() => submit()}
+        disabled={busy || !canEdit}
+        title="Submit the corrected measures, breaks and movements for validation"
+      >
+        Submit corrections
+      </button>
+
+      <div class="tb-group tb-zoom tb-right">
+        <button type="button" onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out" title="Zoom out">−</button>
+        <span class="zoom-val">{Math.round(zoom * 100)}%</span>
+        <button type="button" onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" onclick={() => (zoom = 1)} disabled={zoom === 1} title="Fit page to width">Fit</button>
+      </div>
+      <div class="tb-group tb-div tb-nav">
+        <button type="button" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page" title="Previous page">‹</button>
+        <span class="nav-label">{spreadLabel}</span>
+        <button type="button" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page" title="Next page">›</button>
+      </div>
+      <div class="tb-group tb-div tb-view">
+        <button type="button" class:on={view === "single"} onclick={() => (view = "single")} title="Show one page">1 page</button>
+        <button type="button" class:on={view === "double"} onclick={() => (view = "double")} title="Show a two-page spread">2 pages</button>
+        {#if view === "double"}
+          <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
+            <input type="checkbox" bind:checked={firstOnRight} /> P1 right
+          </label>
+        {/if}
+      </div>
+     </div>
+    </div>
+
+    <div class="wrap">
+    {#if result && result.error}
+      <div class="banner err">
+        {result.error}
+        {#if result.prUrl}<a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+      </div>
+    {:else if result && result.ok}
+      <div class="banner {result.warn ? 'warn' : 'ok'}">
+        {result.message}
+        {#if result.prUrl}<a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+      </div>
+    {/if}
+
+    {#if !canEdit}
+      <div class="banner warn">
+        {#if data.status === "completed"}
+          This task is completed — the view is read-only.
+        {:else if data.status !== "encoding_required"}
+          This task has been submitted and is awaiting validation — the view is read-only.
+        {:else if !data.holdsLock}
+          Claim this task to edit.
+          <button type="button" onclick={() => claim()} disabled={busy}>Claim task</button>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
+      {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
+      {#each spread.pages as p (p)}
+        {@const pg = pages[p]}
+        {@const systems = systemIndices(pg)}
+        <div class="page">
+          <p class="pagehead">Page {p + 1}</p>
+          {#if pg.failed}
+            <div class="banner err">
+              The page facsimile for page {p + 1} could not be loaded. The zones
+              are shown without their reference image.
+            </div>
+          {/if}
+          <div class="canvas" bind:clientWidth={canvasW[p]}>
             <svg
               bind:this={svgEls[p]}
               viewBox={`0 0 ${pg.width} ${pg.height}`}
@@ -689,235 +830,107 @@
                   onerror={() => (pages[p].failed = true)}
                 />
               {/if}
-              {#if mode === "breaks"}
-                {@const systems = systemIndices(pg)}
-                {#each pg.zones as zone, z}
-                  <rect
-                    class="zone sys{systems[z] % 2}"
-                    class:sysstart={z === 0 || zone.sb}
-                    class:mdivstart={startsMovement(p, z)}
-                    role="button"
-                    tabindex={0}
-                    aria-label={`Measure ${zone.label}: click toggles system start, shift-click toggles movement start`}
-                    x={zone.box.ulx}
-                    y={zone.box.uly}
-                    width={zone.box.lrx - zone.box.ulx}
-                    height={zone.box.lry - zone.box.uly}
-                    onpointerdown={(e) => zonePointerDown(e, p, z)}
-                    onkeydown={(e) => zoneKeydown(e, p, z)}
-                  />
-                  <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>
-                    {(startsMovement(p, z) ? "§ " : z === 0 ? "⤓ " : zone.sb ? "↵ " : "") +
-                      zone.label}
-                  </text>
-                {/each}
-              {:else}
-                {#each paintOrder(pg, p) as { zone, z } (z)}
-                  <rect
-                    class="zone"
-                    class:selected={selected?.p === p && selected?.z === z}
-                    role="button"
-                    tabindex={0}
-                    aria-label={`Measure ${zone.label}: select or drag`}
-                    x={zone.box.ulx}
-                    y={zone.box.uly}
-                    width={zone.box.lrx - zone.box.ulx}
-                    height={zone.box.lry - zone.box.uly}
-                    onpointerdown={(e) => zonePointerDown(e, p, z)}
-                    onkeydown={(e) => zoneKeydown(e, p, z)}
-                  />
-                  <text class="zonelabel" x={zone.box.ulx + 6} y={zone.box.uly + 26}>{zone.label}</text>
-                  {#if canEdit && selected?.p === p && selected?.z === z}
-                    <circle
-                      class="handle"
-                      role="button"
-                      tabindex={0}
-                      aria-label={`Measure ${zone.label}: resize`}
-                      cx={zone.box.lrx}
-                      cy={zone.box.lry}
-                      r={Math.max(8, pg.width / 120)}
-                      onpointerdown={(e) => handlePointerDown(e, p, z)}
-                      onkeydown={(e) => handleKeydown(e, p, z)}
-                    />
-                  {/if}
-                {/each}
-              {/if}
-            </svg>
-          </div>
-        {/each}
-        {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
-      </div>
-
-      <aside class="sidebar">
-        <div class="panel">
-          <p class="panel-title">Steps</p>
-          <div class="viewmode">
-            <button type="button" class:on={step === "measures"} onclick={() => (step = "measures")}>
-              1 · Measures
-            </button>
-            <button type="button" class:on={step === "structure"} onclick={() => (step = "structure")}>
-              2 · Breaks & movements
-            </button>
-          </div>
-        </div>
-        {#if !canEdit}
-          <div class="banner warn">
-            {#if data.status === "completed"}
-              This task is completed — the view is read-only.
-            {:else if data.status !== "encoding_required"}
-              This task has been submitted and is awaiting validation — the view is read-only.
-            {:else if !data.holdsLock}
-              Claim this task to edit.
-              <button type="button" onclick={() => claim()} disabled={busy}>Claim task</button>
-            {/if}
-          </div>
-        {/if}
-
-        {#if validation && submitted}
-          <div class="panel">
-            <p class="panel-title">Validation</p>
-            {#if validation.status === "completed"}
-              <p class="hint">This task's validation is complete.</p>
-            {:else if validation.lockUser}
-              <p class="hint">
-                {holdsValidation
-                  ? "You hold this validation lock — review the pages, then pass or fail."
-                  : `Being reviewed by @${lockUserLogin || validation.lockUser}.`}
-              </p>
-            {:else if selfValidation}
-              <p class="hint">You submitted this work — no self-validation.</p>
-            {:else}
-              <p class="hint">Review the submitted measures, breaks and movements.</p>
-            {/if}
-            <div class="vbtns">
-              <button
-                type="button"
-                onclick={() => claimValidation()}
-                disabled={busy || !canClaimValidation}
-                title="Reserve this subtask for validation. Encoders cannot validate their own work."
-              >
-                Claim (validate)
-              </button>
-              <button
-                type="button"
-                class="vpass"
-                onclick={() => validate("pass")}
-                disabled={busy || !holdsValidation}
-                title="Record a passing verdict."
-              >
-                Validate: pass
-              </button>
-              <button
-                type="button"
-                class="vfail"
-                onclick={() => validate("fail")}
-                disabled={busy || !holdsValidation}
-                title="Record a failing verdict — the task goes back to encoding."
-              >
-                Validate: fail
-              </button>
-            </div>
-          </div>
-        {/if}
-
-        <div class="panel">
-          <p class="panel-title">Pages</p>
-          <div class="nav">
-            <button type="button" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page">‹</button>
-            <span class="nav-label">{spreadLabel}</span>
-            <button type="button" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page">›</button>
-          </div>
-          <div class="viewmode">
-            <button type="button" class:on={view === "single"} onclick={() => (view = "single")}>1 page</button>
-            <button type="button" class:on={view === "double"} onclick={() => (view = "double")}>2 pages</button>
-          </div>
-          {#if view === "double"}
-            <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
-              <input type="checkbox" bind:checked={firstOnRight} />
-              Page 1 on the right
-            </label>
-          {/if}
-        </div>
-
-        <div class="panel">
-          <p class="panel-title">How to</p>
-          {#if mode === "breaks"}
-            <p class="hint">
-              Click a measure to mark it as the start of a system. Page breaks
-              are set automatically at each page's first measure. Shift-click a
-              measure to mark it as the start of a movement, section or piece
-              (§) — each becomes its own &lt;mdiv&gt; in the MEI.
-            </p>
-          {:else}
-            <p class="hint">
-              Drag a box to move it, its corner handle to resize, or drag on the
-              page to add one. Select a box and press Delete to remove it.
-              Numbers follow reading order; type a label (e.g. 10a) to override.
-            </p>
-          {/if}
-        </div>
-
-        {#if canEdit}
-          <div class="panel">
-            <p class="panel-title">Edit</p>
-            <div class="viewmode">
-              <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">
-                ↶ Undo
-              </button>
-              <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">
-                Redo ↷
-              </button>
-            </div>
-          </div>
-        {/if}
-
-        <div class="panel">
-          <p class="panel-title">Zoom</p>
-          <div class="zoom">
-            <button type="button" onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out">−</button>
-            <span class="zoom-val">{Math.round(zoom * 100)}%</span>
-            <button type="button" onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in">+</button>
-            <button type="button" class="zoom-reset" onclick={() => (zoom = 1)} disabled={zoom === 1} title="Fit page to width">Fit</button>
-          </div>
-        </div>
-
-        <div class="panel">
-          <p class="panel-title">Selection</p>
-          <p class="count">
-            {measureCount} measure{measureCount === 1 ? "" : "s"}
-            &nbsp;· {movementCount} movement{movementCount === 1 ? "" : "s"}
-          </p>
-          {#if mode === "zones"}
-            {#if selected}
-              <label class="labeledit">
-                Measure label
-                <input
-                  value={pages[selected.p].zones[selected.z].override ?? pages[selected.p].zones[selected.z].label}
-                  oninput={(e) => setOverride((e.target as HTMLInputElement).value)}
-                  onchange={() => commit()}
-                  disabled={!canEdit}
-                  title="Override the automatic number, e.g. 10a — numbering continues after it"
+              {#each paintOrder(pg, p) as { zone, z } (z)}
+                <rect
+                  class="zone sys{systems[z] % 2}"
+                  class:selected={selected?.p === p && selected?.z === z}
+                  class:sysstart={sbActive(p, z)}
+                  class:mdivstart={startsMovement(p, z)}
+                  role="button"
+                  tabindex={0}
+                  aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
+                  x={zone.box.ulx}
+                  y={zone.box.uly}
+                  width={zone.box.lrx - zone.box.ulx}
+                  height={zone.box.lry - zone.box.uly}
+                  onpointerdown={(e) => zonePointerDown(e, p, z)}
+                  onpointerenter={() => hoverEnter(p, z)}
+                  onpointerleave={hoverLeave}
+                  onkeydown={(e) => zoneKeydown(e, p, z)}
                 />
-              </label>
-              <button type="button" onclick={() => deleteSelected()} disabled={!canEdit} title="Remove the selected measure (Delete)">
-                Delete measure
-              </button>
-            {:else}
-              <p class="hint">No measure selected.</p>
-            {/if}
-          {/if}
-        </div>
+                {@const lbl = labelText(p, z)}
+                {@const fs = labelFont(p, pg.width)}
+                {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
+                <rect class="labelbg" x={zone.box.ulx + 2} y={zone.box.uly + 3} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
+                <text
+                  class="zonelabel"
+                  x={zone.box.ulx + 2 + lblW / 2}
+                  y={zone.box.uly + 3 + fs * 1.12}
+                  text-anchor="middle"
+                  font-size={fs}
+                >{lbl}</text>
+                {#if canEdit && selected?.p === p && selected?.z === z}
+                  <circle
+                    class="handle"
+                    role="button"
+                    tabindex={0}
+                    aria-label={`Measure ${zone.label}: resize`}
+                    cx={zone.box.lrx}
+                    cy={zone.box.lry}
+                    r={Math.max(8, pg.width / 120)}
+                    onpointerdown={(e) => handlePointerDown(e, p, z)}
+                    onkeydown={(e) => handleKeydown(e, p, z)}
+                  />
+                {/if}
+              {/each}
+            </svg>
 
-        <button
-          type="button"
-          class="primary"
-          onclick={() => submit()}
-          disabled={busy || !canEdit}
-          title="Submit the corrected measures, breaks and movements for validation"
-        >
-          Submit corrections
-        </button>
-      </aside>
+            {#if canEdit && active && active.p === p && pg.zones[active.z]}
+              {@const z = active.z}
+              {@const zone = pg.zones[z]}
+              {@const box = zone.box}
+              <div
+                class="zc"
+                style={`left:${(box.ulx / pg.width) * 100}%; top:${(box.uly / pg.height) * 100}%; width:${((box.lrx - box.ulx) / pg.width) * 100}%; height:${((box.lry - box.uly) / pg.height) * 100}%; --accent:${accentFor(systems, p, z)}`}
+              >
+                <div
+                  class="zc-inner"
+                  role="group"
+                  aria-label={`Measure ${zone.label} controls`}
+                  onpointerenter={() => hoverEnter(p, z)}
+                  onpointerleave={hoverLeave}
+                  onpointerdown={(e) => {
+                    selected = { p, z };
+                    e.stopPropagation();
+                  }}
+                >
+                  <input
+                    class="znum"
+                    value={zone.override ?? zone.label}
+                    size={Math.max(2, String(zone.override ?? zone.label).length)}
+                    onfocus={() => (selected = { p, z })}
+                    oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
+                    onchange={() => commit()}
+                    title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
+                  />
+                  <button
+                    type="button"
+                    class:on={sbActive(p, z)}
+                    onclick={() => toggleSb(p, z)}
+                    disabled={pbAt(p, z)}
+                    aria-pressed={sbActive(p, z)}
+                    title={pbAt(p, z)
+                      ? "System beginning — implied by the page break on a page's first measure"
+                      : "System beginning (sb)"}>↵</button>
+                  <button
+                    type="button"
+                    class:on={startsMovement(p, z)}
+                    onclick={() => toggleSection(p, z)}
+                    disabled={sectionLocked(p, z)}
+                    aria-pressed={startsMovement(p, z)}
+                    title={sectionLocked(p, z)
+                      ? "The first measure always opens the first section"
+                      : "Section beginning — starts a new movement/section (mdiv)"}>§</button>
+                  <button type="button" class="zdel" onclick={() => deleteZone(p, z)}
+                    title="Delete this measure">✕</button>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/each}
+      {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
+    </div>
     </div>
   {/if}
 {/if}
@@ -973,23 +986,6 @@
     }
   }
 
-  .back {
-    margin: 0 0 1rem;
-  }
-  .back a {
-    color: #555;
-    text-decoration: none;
-  }
-  header h1 {
-    margin-bottom: 0.2rem;
-  }
-  .repo {
-    margin: 0 0 0.6rem;
-    font-weight: 600;
-  }
-  .repo a {
-    color: #1a1a1a;
-  }
   .muted {
     color: #777;
     font-size: 0.9rem;
@@ -1003,138 +999,127 @@
     cursor: pointer;
     text-decoration: underline;
   }
-  /* Canvas (scrolling pages) beside a sticky tools sidebar. */
-  .editor {
-    display: flex;
-    align-items: flex-start;
-    gap: 1.5rem;
+
+  /* A full-width sticky bar with an edge-to-edge hairline under it (matching the
+     app header); its content is centred to line up with the page column. It
+     holds every whole-task control; per-measure editing lives on the zones. */
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: #fff;
+    border-bottom: 1px solid #e5e5e5;
   }
+  .toolbar-inner {
+    max-width: 1600px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.45rem 0.6rem;
+    padding: 0.6rem 2rem;
+    box-sizing: border-box;
+  }
+  /* The centred content column below the bar (and for the pre-editor states). */
+  .wrap {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 1.25rem 2rem 1.5rem;
+    box-sizing: border-box;
+  }
+  .tb-group {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  /* A vertical rule and breathing room separating adjacent tool groups. */
+  .tb-div {
+    margin-left: 0.5rem;
+    padding-left: 0.8rem;
+    border-left: 1px solid #e0e0e0;
+  }
+  .tb-title {
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .tb-title a {
+    color: #555;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .tb-task {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .toolbar .count {
+    font-size: 0.82rem;
+    color: #666;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* Zoom + page navigation sit together at the far right of the bar. */
+  .tb-right {
+    margin-left: auto;
+  }
+  .tb-nav .nav-label {
+    font-size: 0.78rem;
+    color: #555;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    padding: 0 0.2rem;
+  }
+  .tb-zoom .zoom-val {
+    min-width: 2.8rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.82rem;
+  }
+  .tb-validation .vstatus {
+    font-size: 0.8rem;
+    color: #666;
+    white-space: nowrap;
+  }
+  .tb-validation .vpass {
+    color: #1a7f37;
+  }
+  .tb-validation .vfail {
+    color: #b42318;
+  }
+  .checkline {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.78rem;
+    color: #666;
+    white-space: nowrap;
+  }
+  button.on {
+    background: #1a1a1a;
+    color: #fff;
+    border-color: #1a1a1a;
+  }
+
   .pages {
-    flex: 1;
     min-width: 0;
   }
   /* Two-up view: the spread's pages (and any empty-half spacer) share the row. */
   .pages.double {
     display: flex;
     align-items: flex-start;
-    gap: 1rem;
+    /* A few pixels between the two pages at the spine. */
+    gap: 4px;
   }
   .pages.double .page,
   .page-spacer {
     flex: 1 1 0;
     min-width: 0;
   }
-  .sidebar {
-    position: sticky;
-    top: 1rem;
-    flex: 0 0 260px;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    max-height: calc(100vh - 2rem);
-    overflow-y: auto;
-  }
-  .panel {
-    border: 1px solid #e5e5e5;
-    border-radius: 8px;
-    padding: 0.7rem 0.8rem;
-    background: #fff;
-  }
-  .panel-title {
-    margin: 0 0 0.5rem;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #999;
-  }
-  .hint {
-    margin: 0;
-    font-size: 0.82rem;
-    color: #666;
-    line-height: 1.4;
-  }
-  .count {
-    margin: 0 0 0.6rem;
-    font-size: 0.9rem;
-    font-weight: 600;
-  }
-  .nav {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-bottom: 0.6rem;
-  }
-  .nav button {
-    font-size: 1.1rem;
-    line-height: 1;
-    padding: 0.2rem 0.6rem;
-  }
-  .nav-label {
-    flex: 1;
-    text-align: center;
-    font-size: 0.82rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .viewmode {
-    display: flex;
-    gap: 0.3rem;
-  }
-  .viewmode button {
-    flex: 1;
-  }
-  .viewmode button.on {
-    background: #1a1a1a;
-    color: #fff;
-    border-color: #1a1a1a;
-  }
-  .checkline {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-top: 0.6rem;
-    font-size: 0.82rem;
-    color: #666;
-  }
-  .zoom {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .zoom-val {
-    min-width: 3rem;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-    font-size: 0.85rem;
-  }
-  .zoom-reset {
+  /* Open-book: the left column's page hugs the centre spine (right-aligned),
+     the right column's stays left, so the two pages meet in the middle. The
+     page headings keep their normal left alignment. */
+  .pages.double .page:not(:last-child) .canvas {
     margin-left: auto;
-  }
-  .labeledit {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    margin-bottom: 0.6rem;
-    font-size: 0.82rem;
-    color: #666;
-  }
-  .labeledit input {
-    font: inherit;
-    padding: 0.3rem 0.4rem;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-  }
-  /* Narrow screens: stack the tools above the pages instead of beside them. */
-  @media (max-width: 720px) {
-    .editor {
-      flex-direction: column-reverse;
-    }
-    .sidebar {
-      position: static;
-      flex-basis: auto;
-      width: 100%;
-      max-height: none;
-    }
   }
   button {
     font: inherit;
@@ -1149,22 +1134,11 @@
     opacity: 0.45;
     cursor: default;
   }
-  .vbtns {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .vbtns .vpass {
-    color: #1a7f37;
-  }
-  .vbtns .vfail {
-    color: #b42318;
-  }
   button.primary {
     background: #1a1a1a;
     color: #fff;
     border-color: #1a1a1a;
-    padding: 0.5rem 0.6rem;
+    padding: 0.45rem 0.7rem;
     font-size: 0.85rem;
   }
   .banner {
@@ -1197,22 +1171,18 @@
     position: sticky;
     left: 0;
   }
-  .pb-badge {
-    display: inline-block;
-    margin-left: 0.4rem;
-    padding: 0 0.4rem;
-    font-family: ui-monospace, monospace;
-    font-size: 0.75rem;
-    background: #e8f1fd;
-    border: 1px solid #bcd4f3;
-    border-radius: 999px;
+  /* Positioning context for the per-zone controls overlay: its width tracks the
+     zoomed svg so percentage-placed controls line up with the boxes. */
+  .canvas {
+    position: relative;
+    width: calc(100% * var(--zoom, 1));
   }
   svg {
     display: block;
     /* border-box so the 1px border stays within 100% and the page doesn't
        overflow its container by a couple of pixels at 100% zoom. */
     box-sizing: border-box;
-    width: calc(100% * var(--zoom, 1));
+    width: 100%;
     max-width: none;
     height: auto;
     border: 1px solid #e5e5e5;
@@ -1226,10 +1196,6 @@
     stroke-width: 2;
     cursor: pointer;
   }
-  .zone.selected {
-    fill: rgba(48, 86, 211, 0.28);
-    stroke-width: 3;
-  }
   .zone.sys0 {
     fill: rgba(48, 86, 211, 0.12);
     stroke: rgba(48, 86, 211, 0.85);
@@ -1237,6 +1203,10 @@
   .zone.sys1 {
     fill: rgba(20, 150, 80, 0.12);
     stroke: rgba(20, 150, 80, 0.85);
+  }
+  .zone.selected {
+    fill-opacity: 1;
+    stroke-width: 3.5;
   }
   .zone.sysstart {
     stroke-width: 4;
@@ -1246,13 +1216,14 @@
     fill: rgba(139, 95, 191, 0.14);
     stroke-width: 5;
   }
+  .labelbg {
+    fill: rgba(255, 255, 255, 0.88);
+    pointer-events: none;
+  }
   .zonelabel {
     font-family: ui-monospace, monospace;
-    font-size: 20px;
+    font-weight: 600;
     fill: #1a1a1a;
-    paint-order: stroke;
-    stroke: #fff;
-    stroke-width: 4;
     pointer-events: none;
   }
   .handle {
@@ -1260,5 +1231,85 @@
     stroke: rgba(48, 86, 211, 0.85);
     stroke-width: 2;
     cursor: nwse-resize;
+  }
+
+  /* The per-zone controls: floating buttons bound to the zone box, centred
+     left-to-right and dropped below the number label. The outer layer maps to
+     the box and ignores the pointer (so the box stays draggable); the inner
+     cluster re-enables the pointer and wraps to new rows when the box is narrow.
+     Button size tracks zoom, but dampened, so it stays usable when zoomed out.
+     The clearance below the label scales with zoom, since the label (SVG text)
+     scales linearly with it. */
+  .zc {
+    position: absolute;
+    pointer-events: none;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    /* flex-start on the cross axis so the cluster is only as tall as its
+       buttons — otherwise it would stretch over the box and block dragging. */
+    align-items: flex-start;
+    /* Clear the number label, which is ~15px·damp tall on screen; the top pad
+       follows the same damp curve (0.7 + 0.3·zoom) so it always clears it. */
+    padding: calc(24px * (0.7 + 0.3 * var(--zoom, 1)) + 8px) 0.3rem 0.3rem;
+    box-sizing: border-box;
+  }
+  .zc-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    justify-content: center;
+    gap: 0.3em;
+    max-width: 100%;
+    pointer-events: auto;
+    /* Same damp curve as the number label, a touch larger, so buttons and
+       numbers grow together with zoom. */
+    font-size: clamp(13px, calc(17px * (0.7 + 0.3 * var(--zoom, 1))), 27px);
+  }
+  .zc-inner .znum,
+  .zc-inner button {
+    font: inherit;
+    font-size: 1em;
+    line-height: 1;
+    border: 1px solid var(--accent);
+    border-radius: 0.4em;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+    cursor: pointer;
+  }
+  .zc-inner .znum {
+    min-width: 2.4em;
+    padding: 0.28em 0.4em;
+    background: #fff;
+    color: #1a1a1a;
+    font-variant-numeric: tabular-nums;
+    cursor: text;
+  }
+  .zc-inner button {
+    min-width: 2em;
+    padding: 0.28em 0.45em;
+    font-weight: 700;
+    /* Same hue as the zone, but opaque so it reads as a button over the score. */
+    background: color-mix(in srgb, var(--accent) 30%, white);
+    color: var(--accent);
+  }
+  .zc-inner button.on {
+    background: var(--accent);
+    color: #fff;
+  }
+  /* Disabled (e.g. the system break implied by a page break): clearly inert —
+     a dashed, muted, greyscale chip that reads as locked rather than active. */
+  .zc-inner button:disabled {
+    cursor: default;
+    opacity: 1;
+    border-style: dashed;
+    border-color: #bbb;
+    background: #f0f0f0;
+    color: #9a9a9a;
+    box-shadow: none;
+  }
+  .zc-inner .zdel {
+    border-color: #b42318;
+    color: #b42318;
+    background: color-mix(in srgb, #b42318 18%, white);
   }
 </style>
