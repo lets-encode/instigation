@@ -85,19 +85,22 @@ account-age / contribution-history heuristics. Full anti-Sybil is hard on public
 forges — the realistic mitigation is allowlist + human approval for campaigns that
 need integrity.
 
-### H-3 — Broad `repo` OAuth scope → large blast radius
-**Severity: High · Status: PLANNED (GitHub App / fine-grained migration, gated on mei-friend)**
+### H-3 — OAuth scope blast radius
+**Severity: Medium · Status: MITIGATED (narrowed to `public_repo`)**
 
-The broker requests `scope: "repo notifications"` — full read/write over **all** of
-the user's repositories, not just campaigns. The token never reaches the browser
-(good), but anything that can drive the broker proxy as the victim (see M-1) acts
-with that full scope.
+The broker requests `scope: "public_repo notifications"` — read/write over the
+user's **public** repositories plus notification management, and no access to
+their private repositories. The token never reaches the browser (good), but
+anything that can drive the broker proxy as the victim (see M-1) acts with that
+scope, so it could write to the user's public repos.
 
-*Fix (later, as planned):* migrate to a GitHub App or fine-grained PAT scoped to
-campaign repos only. Noted here for completeness — this is understood to depend on
-mei-friend migrating too, so it can't be exercised end-to-end yet and is a later
-step. Until then, M-1 (XSS) matters more because it is the thing that would abuse
-this scope.
+A GitHub App was evaluated to scope access to campaign repos only, but GitHub
+requires **"All repositories"** access to create a repository (a fork or a
+template-generate) through an App — broader than `public_repo`, and it includes
+private repos — so the App path was not adopted. `public_repo` is the narrowest
+classic scope that still permits the fork/create flow; narrowing further would
+require per-repo fine-grained tokens the user creates by hand. M-1 (XSS) remains
+the thing that would abuse this scope, so it matters more.
 
 ### M-1 — Stored XSS via Verovio SVG injected with `{@html}`
 **Severity: Medium (High impact, lower likelihood) · Status: new finding, fixable now**

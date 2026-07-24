@@ -43,7 +43,7 @@ class BrokerTest(unittest.TestCase):
         response = self.client.get("/login?return_to=/campaign")
         params = parse_qs(urlsplit(response.headers["Location"]).query)
 
-        self.assertEqual(params["scope"], ["repo notifications"])
+        self.assertEqual(params["scope"], ["public_repo notifications"])
         self.assertEqual(params["code_challenge_method"], ["S256"])
         self.assertTrue(params["code_challenge"][0])
         self.assertTrue(params["state"][0])

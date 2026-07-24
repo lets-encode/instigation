@@ -3,8 +3,9 @@
 The server-side piece of the SPA's GitHub auth. The OAuth token **never reaches
 the browser**: the whole flow runs here, the token is kept in a server-side
 session, and the browser holds only an opaque httpOnly session cookie.
-The authorization-code exchange also uses PKCE (S256) and requests the `repo`
-and `notifications` scopes used by repository mutations and notification muting.
+The authorization-code exchange also uses PKCE (S256) and requests the
+`public_repo` and `notifications` scopes used by repository mutations and
+notification muting.
 
 - `GET /login?return_to=/path` — starts the OAuth flow (redirects to GitHub).
 - `GET /authorize` — GitHub's callback: exchanges the code, stores the token in
@@ -24,10 +25,10 @@ The broker **must share the SPA's origin** — the session cookie
 (`HttpOnly; Secure; SameSite=Lax`) has to be first-party. Mount it under a path
 of the SPA's origin:
 
-- production: nginx proxies `/oauth/` to the broker (see `deploy/nginx.conf`),
-- development: the Vite dev server proxies `/oauth` (see `vite.config.js`).
+- production: nginx proxies `/auth/` to the broker (see `deploy/nginx.conf`),
+- development: the Vite dev server proxies `/auth` (see `vite.config.js`).
 
-The SPA reaches it via `PUBLIC_OAUTH_BROKER_URL`, which defaults to `/oauth`.
+The SPA reaches it via `PUBLIC_BROKER_URL`, which defaults to `/auth`.
 
 ## Configure
 
@@ -38,7 +39,7 @@ Environment variables:
 | `GITHUB_CLIENT_ID` | the OAuth app's client id |
 | `GITHUB_CLIENT_SECRET` | the OAuth app's client secret (**secret**, only here) |
 | `FLASK_SECRET` | signs the session cookie (**secret**; e.g. `python3 -c "import secrets; print(secrets.token_hex(32))"`) |
-| `REDIRECT_URL` | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/oauth/authorize` — required outside development and must match the OAuth app's registered callback |
+| `REDIRECT_URL` | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/auth/authorize` — required outside development and must match the OAuth app's registered callback |
 | `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
 | `SESSION_DIR` | optional: session file directory |
 

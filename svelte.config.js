@@ -3,7 +3,7 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { loadEnv } from 'vite';
 
 // Hosts the app talks to are deployment config — read them from the same env
-// files Vite gives the app. The OAuth session broker needs no CSP entry: it is
+// files Vite gives the app. The session broker needs no CSP entry: it is
 // mounted on the SPA's own origin, covered by 'self'.
 const env = loadEnv(process.env.NODE_ENV ?? 'production', process.cwd(), 'PUBLIC_');
 // The measure-detector the campaign scaffolder POSTs page images to.

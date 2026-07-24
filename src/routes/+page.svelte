@@ -2,13 +2,9 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
-  import {
-    provider,
-    automation,
-    measureDetectorUrl,
-  } from "$lib/forge/config.ts";
+  import { provider, automation, measureDetectorUrl } from "$lib/forge/config.ts";
   import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
-  import { registerCampaign } from "$lib/campaign-resolve.ts";
+  import { registerCampaign, lookupSlug } from "$lib/campaign-resolve.ts";
   import type { FileChange, RepoSummary } from "$lib/forge/types.ts";
   import {
     buildCampaignConfig,
@@ -150,11 +146,11 @@
   const SLUG_RE = /^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])?$/;
   const isValidHandle = (h: string) => SLUG_RE.test(h) && !h.includes("--");
 
-  // Arriving from the slug registry (letsenco.de) with a chosen name: prefill the
-  // handle and open the form. Runs once — setting handleTouched stops it recurring
-  // and stops the title→handle auto-fill from overwriting the chosen name.
+  // Arriving from the slug registry (letsenco.de) at /c?slug=<name> with a chosen
+  // name: prefill the handle and open the form. Runs once — setting handleTouched
+  // stops it recurring and stops the title→handle auto-fill from overwriting it.
   $effect(() => {
-    const chosen = page.url.searchParams.get("campaign");
+    const chosen = page.url.searchParams.get("slug");
     if (chosen && !handleTouched) {
       handle = chosen;
       handleTouched = true;
@@ -212,11 +208,24 @@
         return;
       }
       try {
-        const exists = await repoExists(user.login, h, token);
-        if (seq === handleCheckSeq) {
-          handleCheck = exists
-            ? { state: "taken", by: `${user.login}/${h}` }
-            : { state: "available" };
+        // The slug registry is authoritative for the name, so check it too: a
+        // name can be free on the user's GitHub yet already registered to
+        // another repo, which would only surface as a 409 after the repo was
+        // created. A null slug means the registry couldn't be reached — treat
+        // that as "unknown" rather than falsely "available".
+        const [slug, exists] = await Promise.all([
+          lookupSlug(h),
+          repoExists(user.login, h, token),
+        ]);
+        if (seq !== handleCheckSeq) return;
+        if (slug && slug.status !== "free") {
+          handleCheck = { state: "taken", by: `letsenco.de/${h}` };
+        } else if (exists) {
+          handleCheck = { state: "taken", by: `${user.login}/${h}` };
+        } else if (!slug) {
+          handleCheck = { state: "unknown" };
+        } else {
+          handleCheck = { state: "available" };
         }
       } catch {
         if (seq === handleCheckSeq) handleCheck = { state: "unknown" };
@@ -522,6 +531,21 @@
   // Create the campaign repo and initialise it (Action A), entirely client-side
   // with the user's token: generate from the template, tag it, give its Actions a
   // write token, then commit the config, stamped score, and tracking tables.
+  function cancelCampaign() {
+    showForm = false;
+    error = null;
+    created = null;
+    retryInitialisation = null;
+    title = "";
+    handle = "";
+    handleTouched = false;
+    visibility = "public";
+    sourceMode = "facsimile";
+    sourceFiles = [];
+    progress = null;
+    dropNote = null;
+  }
+
   async function createCampaign(e: SubmitEvent) {
     e.preventDefault();
     error = null;
@@ -799,6 +823,13 @@
       Log in with GitHub
     </button>
   {/if}
+
+  <!-- Debug shortcut to the local registry (redirector). -->
+  <p class="debug-link">
+    <a href="http://localhost:8000" target="_blank" rel="noreferrer"
+      >Go to registry (localhost:8000)</a
+    >
+  </p>
 </section>
 
 {#if auth.user && showForm}
@@ -1017,9 +1048,14 @@
         </label>
       </fieldset>
 
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Creating…" : "Create campaign"}
-      </button>
+      <div class="form-actions">
+        <button type="submit" disabled={submitting}>
+          {submitting ? "Creating…" : "Create campaign"}
+        </button>
+        <button type="button" onclick={cancelCampaign} disabled={submitting}>
+          Cancel
+        </button>
+      </div>
     </form>
   </section>
 {/if}
@@ -1161,6 +1197,13 @@
     font-weight: 600;
     cursor: pointer;
   }
+  .debug-link {
+    margin-top: 1.5rem;
+    font-size: 0.8rem;
+  }
+  .debug-link a {
+    color: #888;
+  }
 
   .create {
     margin-top: 3rem;
@@ -1290,8 +1333,12 @@
     font-weight: 600;
     font-size: 0.85rem;
   }
+  .create .form-actions {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+  }
   .create button[type="submit"] {
-    align-self: flex-start;
     font: inherit;
     font-weight: 600;
     padding: 0.6rem 1.1rem;
@@ -1299,6 +1346,16 @@
     border-radius: 8px;
     background: #1a1a1a;
     color: #fff;
+    cursor: pointer;
+  }
+  .create button[type="button"] {
+    font: inherit;
+    font-weight: 600;
+    padding: 0.6rem 1.1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: transparent;
+    color: #1a1a1a;
     cursor: pointer;
   }
   .create button[disabled] {

@@ -129,7 +129,10 @@ github = oauth.register(
     authorize_url="https://github.com/login/oauth/authorize",
     api_base_url="https://api.github.com/",
     client_kwargs={
-        "scope": "repo notifications",
+        # public_repo (not the broader repo): fork/create-from-template/commit/PR
+        # on public repositories, no access to the user's private repos.
+        # notifications: mute the campaign repo for volunteers (see muteOnce).
+        "scope": "public_repo notifications",
         "code_challenge_method": "S256",
     },
 )

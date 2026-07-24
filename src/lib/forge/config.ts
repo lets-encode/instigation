@@ -9,7 +9,7 @@ export interface ProviderConfig {
 	/** Which ForgeClient implementation to use (see forge/index.ts). */
 	id: string;
 	/**
-	 * The OAuth session broker, as a same-origin path (it must share the SPA's
+	 * The session broker, as a same-origin path (it must share the SPA's
 	 * origin so its session cookie is first-party). It runs the OAuth flow,
 	 * holds the user's token server-side, and proxies authenticated API calls.
 	 */
@@ -22,7 +22,7 @@ export interface ProviderConfig {
 
 export const provider: ProviderConfig = {
 	id: env.PUBLIC_FORGE || 'github',
-	brokerUrl: env.PUBLIC_OAUTH_BROKER_URL || '/oauth',
+	brokerUrl: env.PUBLIC_BROKER_URL || '/auth',
 	template: {
 		owner: env.PUBLIC_TEMPLATE_OWNER || '',
 		repo: env.PUBLIC_TEMPLATE_REPO || ''
@@ -33,7 +33,7 @@ export const provider: ProviderConfig = {
 /**
  * The slug registry (redirector) mount, as a same-origin path so its calls need
  * no CORS — served under this path by nginx (prod) / the Vite dev proxy, the way
- * the OAuth broker is mounted at /oauth. It owns the campaign name → repo id
+ * the session broker is mounted at /auth. It owns the campaign name → repo id
  * mapping: the app resolves a campaign URL through it and registers a new name
  * against its GitHub repo id after creating the repo.
  */
