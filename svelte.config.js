@@ -35,9 +35,12 @@ const config = {
 				// avatars: the signed-in user's avatar. raw.githubusercontent.com:
 				// repo file contents by URL (the Contents API download_url) — the
 				// page facsimiles the zone editor renders as a background, tokenised
-				// for private repos.
+				// for private repos. blob: previews page images the browser itself
+				// holds (the onboarding wizard's upload, before it is committed);
+				// it grants no remote origin.
 				'img-src': [
 					'self',
+					'blob:',
 					'https://avatars.githubusercontent.com',
 					'https://raw.githubusercontent.com'
 				],

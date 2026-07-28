@@ -307,6 +307,8 @@ export interface CampaignTables {
 	history: HistoryRow[];
 	/** campaign.title from config.yaml; '' when unreadable. */
 	title: string;
+	/** campaign.description from config.yaml; '' when unreadable or unset. */
+	description: string;
 	/** campaign.license from config.yaml; '' when unreadable. */
 	license: string;
 	/** validation.pass_threshold from config.yaml; 1 when unreadable. */
@@ -375,6 +377,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 				locks: [],
 				history: [],
 				title: '',
+				description: '',
 				license: '',
 				passThreshold: 1,
 				logins: {}
@@ -393,6 +396,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			locks,
 			history,
 			title: stringFromConfig(configYaml, 'title'),
+			description: stringFromConfig(configYaml, 'description'),
 			license: stringFromConfig(configYaml, 'license'),
 			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1,
 			logins: await resolveLogins(f, state.rows, locks, history)

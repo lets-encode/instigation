@@ -389,3 +389,19 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 
 	return { headXml, pages, hasMeasures, hasBreaks };
 }
+
+/**
+ * Swap an MEI document's `<meiHead>` for another. Used on an uploaded encoding
+ * once it has been converted: the converter emits its own header, which the
+ * campaign replaces with the piece's, so every piece MEI describes itself and
+ * its source the same way. A document with no header gets one inserted after
+ * the root element's start tag.
+ */
+export function replaceMeiHead(mei: string, headXml: string): string {
+	const head = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>|<meiHead\b[^>]*\/>/.exec(mei);
+	if (head) return mei.slice(0, head.index) + headXml.trim() + mei.slice(head.index + head[0].length);
+	const root = /<mei\b[^>]*>/.exec(mei);
+	if (!root) return mei;
+	const at = root.index + root[0].length;
+	return `${mei.slice(0, at)}\n${headXml}${mei.slice(at)}`;
+}

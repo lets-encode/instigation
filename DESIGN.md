@@ -185,7 +185,7 @@ Authored once at instigation. Minimal but extensible; growth points marked `(res
 
 ```yaml
 schema_version: 2
-campaign:      { title, description, instigator, repo_id, language, license }  # instigator + repo_id are numeric GitHub ids
+campaign:      { name, title, description, instigator, repo_id, language, license }  # name is the handle; instigator + repo_id are numeric GitHub ids
 automation:    { central_repository, ref, path }   # the central pointer (§4a); ref is pinned
 sources:       [ { id, kind: mei-template, path, template, header: { composer } } ]
 fragmentation: { strategy: whole }
@@ -365,8 +365,8 @@ At creation the GUI, acting as the organiser via the `ForgeClient` (token attach
 
 1. **generates** the campaign repo from the template into the instigator's account,
 2. sets the repo's Actions token to read/write (so the caller can commit tables + close PRs),
-3. commits, in one commit: `config.yaml` (including the `automation` pointer), the stamped
-   `sources/score.mei` (fills `{{TITLE}}`/`{{COMPOSER}}`/`{{LICENSE}}`), and the four tracking
+3. commits, in one commit: `config.yaml` (including the `automation` pointer), each piece's
+   `sources/<piece>/score.mei` (header built from the source and piece metadata forms), and the four tracking
    tables (§5): `task.csv` (task `T0001` + subtask `S0001`), `state.csv` (`encoding_required` /
    `pending`), and header-only `lock.csv` and `history.csv`.
 
@@ -511,6 +511,68 @@ Deferred (designed, not built):
 - **Allow/blocklist enforcement** — an optional per-task gate in the accept logic; **default open**
   (anyone can claim).
 - **GitLab (and other) `ForgeClient`** implementations behind the §8 seam.
+- **Dark-mode review of the console** — see below.
+
+### TODO: dark-mode review of the console
+
+The campaign console and the zone editor were written with a hardcoded light palette. Their
+~275 colour literals now read from the theme tokens in `src/routes/theme.css`, so both surfaces
+follow the light/dark toggle instead of staying light inside a dark shell. What has *not* happened
+is a look at the result: the substitution was verified mechanically (light mode compared
+declaration by declaration, tokens resolved — 1438 values identical, the rest listed below), not
+visually in dark mode. It needs a logged-in session on a real campaign.
+
+Two reasons it is more than a glance:
+
+- **Depth reads backwards.** The console's greys encode stacking — canvas → panel → node → hover,
+  each step lighter. In a dark theme that order normally inverts. Rules that share a token today
+  may need genuinely different dark values: `.node` (`--card`) against `.nmain:hover`
+  (`--bg-alt`), `.node.s-blocked`, `.trow.subrow`, `.act:disabled`.
+- **There is no dark design.** Both prototypes in `design_handoff_node_graph_console/` are
+  light-only. The dark appearance of each graph node state (claimed / blocked / completed /
+  next-up), the four banner kinds, the four pill kinds, the edges, ports and panel chrome is
+  a design decision, not an implementation of a spec.
+
+Specific things to look at:
+
+- Node and slot states on the dark canvas: `.node.s-*`, `.nslot`, `.nslot.claimable`,
+  `.nslot.selected`, `.nextup-badge` (white-ish text on `--accent`, which is a *light* blue in
+  dark mode).
+- The inverted toggle pair `--invert-bg` / `--invert-ink`: a pressed tab goes light-on-dark in
+  the light theme and dark-on-light in the dark one. Check `.hbtn.on`, `.tabs button.on`,
+  `.act.primary`, `.dock-viewmode button.on`.
+- Translucent status fills (`--ok-bg`, `--warn-bg`, `--danger-bg`, `--info-bg`, `--note-bg`) sit
+  over whichever surface is behind them. Verify on banners (over the canvas) and on pills (over
+  a node).
+- SVG edges, ports and the `--grid-dot` canvas grid.
+- `.zoom-fab button:disabled` reads less disabled than it did (`--ink-faint`, no opacity).
+
+Deliberately left with a fixed palette, for the same reason `--facsimile-paper` exists — they are
+drawn over a scanned page, which is white in either theme: the measure zones and their labels
+(`.zone*`, `.labelbg`, `.zonelabel`, `.handle`), the floating zone controls (`.zc*`), and the
+console's score preview overlay (`.pv-zone`, `.pv-zonelabel`).
+
+Light-mode values that shifted when literals were folded onto shared tokens (visible only
+side by side; everything else resolves to its previous value):
+
+| was | now | token |
+|---|---|---|
+| `#eee` `#e5e5e5` `#f2f2f2` `#e0e0e0` `#ddd` `#eaeaea` | `#e6e8f0` | `--line` |
+| `#d8d8d8` `#ccc` `#d5d5d5` `#a9a9a9` `#d9d9d9` | `#d0d0d0` | `--line-strong` |
+| `#777` `#888` `#999` `#aaa` `#bbb` | `#79809a` | `--ink-faint` |
+| `#555` `#666` | `#4a5167` | `--ink-soft` |
+| `#333` `#444` | `#1f2433` | `--ink` |
+| `#fafafa` `#fcfcfb` `#fbfbfa` `#f3f3f3` `#f4f4f4` | `#f7f8fb` | `--bg-alt` |
+| `#3056d3` | `#2563c9` | `--accent` (the app's blue) |
+| `#2a78d6` | `#2f68c4` | `--link` |
+| `#1a7f37` `#1a6b33` | `#1a7f4b` | `--ok` |
+| `#8a6d00` `#7a6011` | `#9a6700` | `--warn` |
+| `#9f3a38` | `#b42318` | `--danger` |
+| `#fdeaea` | `#fdecec` | `--danger-bg` |
+| `#fff8e1` | `#fff4d6` | `--warn-bg` |
+| `#fbfcfe` `#f7faff` `#f0f5fd` `#f0f4ff` `#eef2fb` | `#f4f7fe` | `--accent-tint` |
+| `#eaf1fe` | `#e8f1fd` | `--accent-tint-strong` |
+| `#e2e8f4` `#e8edf6` `#dfe7fb` | `#cfe0f6` | `--accent-line` |
 
 ## 11. Before production — hardening checklist
 

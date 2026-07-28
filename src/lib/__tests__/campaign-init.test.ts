@@ -1,32 +1,43 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { SyntaxValidator } from 'fast-xml-validator';
 
 import {
 	buildCampaignConfig,
 	configToYaml,
-	stampTemplate,
 	buildTaskCsv,
 	buildStateCsv,
 	buildLockCsv,
 	buildHistoryCsv,
-	assertSupported
+	assertSupported,
+	planTasks,
+	piecePath,
+	type ConfigPiece
 } from '../campaign-init.ts';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-// instigation/src/lib -> up 3 -> lets-encode/ -> the template repo.
-const TEMPLATE_MEI = join(HERE, '../../../../user-repo-template/templates/score.template.mei');
+/** A facsimile piece covering whole pages, as the wizard would emit it. */
+function facsimile(id: string, surfaces: number[], title = ''): ConfigPiece {
+	return {
+		id,
+		kind: 'facsimile',
+		path: piecePath(id),
+		zones: surfaces.map((surface) => ({ surface, ulx: 0, uly: 0, lrx: 100, lry: 100 })),
+		header: { title, composer: '' }
+	};
+}
 
-// The create-form fields for the worked example (one-note test case; DESIGN.md §6).
+function encoded(id: string, title = ''): ConfigPiece {
+	return { id, kind: 'encoded', path: piecePath(id), zones: [], header: { title, composer: '' } };
+}
+
+// The wizard's fields for the worked example (one-note test case; DESIGN.md §6).
 const WORKED_EXAMPLE_FIELDS = {
+	name: 'test-campaign-one-note',
 	title: 'Test Campaign — One Note',
 	description: 'Smallest possible campaign for end-to-end testing.',
 	language: 'en',
 	license: 'CC-BY-4.0',
-	composer: 'Anonymous'
+	sourceHeader: { composer: 'Anonymous' },
+	pieces: [facsimile('piece-01', [1])]
 };
 
 // The central automation pointer, as the deployment config would supply it.
@@ -39,23 +50,35 @@ const AUTOMATION = {
 // The created repo's numeric id, as createRepoFromTemplate would return it.
 const REPO_ID = 424242;
 
+const build = (fields: Parameters<typeof buildCampaignConfig>[0] = {}) =>
+	buildCampaignConfig(fields, 'test-instigator', AUTOMATION, REPO_ID);
+
 test('buildCampaignConfig: instigator + repo_id come from args; defaults fill the rest', () => {
-	const config = buildCampaignConfig({ title: 'T' }, 'test-instigator', AUTOMATION, REPO_ID);
+	const config = build({ title: 'T', pieces: [facsimile('piece-01', [1])] });
+	assert.equal(config.schema_version, 3);
 	assert.equal(config.campaign.instigator, 'test-instigator');
 	assert.equal(config.campaign.repo_id, REPO_ID);
 	assert.equal(config.campaign.license, 'CC-BY-4.0');
 	assert.equal(config.automation.central_repository, 'lets-encode/instigation');
+	assert.equal(config.fragmentation.strategy, 'by-piece');
 	assert.equal(config.validation.required_validations, 1);
 	assert.equal(config.locking.stale_after_minutes, 120);
 	assert.doesNotThrow(() => assertSupported(config));
 });
 
+test('buildCampaignConfig: a piece with no explicit path gets the conventional one', () => {
+	const config = build({
+		pieces: [{ id: 'piece-07', kind: 'facsimile', path: '', zones: [], header: { title: '', composer: '' } }]
+	});
+	assert.equal(config.pieces[0].path, 'sources/piece-07/score.mei');
+});
+
 test('configToYaml: matches the worked example', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
 	assert.equal(
-		configToYaml(config),
-		'schema_version: 2\n' +
+		configToYaml(build(WORKED_EXAMPLE_FIELDS)),
+		'schema_version: 3\n' +
 			'campaign:\n' +
+			'  name: "test-campaign-one-note"\n' +
 			'  title: "Test Campaign — One Note"\n' +
 			'  description: "Smallest possible campaign for end-to-end testing."\n' +
 			'  instigator: "test-instigator"\n' +
@@ -66,15 +89,26 @@ test('configToYaml: matches the worked example', () => {
 			'  central_repository: "lets-encode/instigation"\n' +
 			'  ref: "main"\n' +
 			'  path: "scripts/coordinator.ts"\n' +
-			'sources:\n' +
-			'  - id: "src-1"\n' +
-			'    kind: "mei-template"\n' +
-			'    path: "sources/score.mei"\n' +
-			'    template: "templates/score.template.mei"\n' +
+			'source:\n' +
+			'  kind: "facsimile"\n' +
+			'  images: []\n' +
+			'  header:\n' +
+			'    title: ""\n' +
+			'    composer: "Anonymous"\n' +
+			'    publisher: ""\n' +
+			'    date: ""\n' +
+			'  rights_acknowledged: ""\n' +
+			'pieces:\n' +
+			'  - id: "piece-01"\n' +
+			'    kind: "facsimile"\n' +
+			'    path: "sources/piece-01/score.mei"\n' +
+			'    zones:\n' +
+			'      - { surface: 1, ulx: 0, uly: 0, lrx: 100, lry: 100 }\n' +
 			'    header:\n' +
-			'      composer: "Anonymous"\n' +
+			'      title: ""\n' +
+			'      composer: ""\n' +
 			'fragmentation:\n' +
-			'  strategy: "whole"\n' +
+			'  strategy: "by-piece"\n' +
 			'validation:\n' +
 			'  required_validations: 1\n' +
 			'  pass_threshold: 1\n' +
@@ -83,99 +117,104 @@ test('configToYaml: matches the worked example', () => {
 	);
 });
 
-test('worked example: stamped MEI is well-formed and placeholders filled', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
-	const mei = stampTemplate(readFileSync(TEMPLATE_MEI, 'utf8'), {
-		title: config.campaign.title,
-		composer: config.sources[0].header.composer,
-		license: config.campaign.license
+test('configToYaml: committed images and the rights acknowledgement are recorded', () => {
+	const yaml = configToYaml(
+		build({
+			images: ['sources/img/01.jpg', 'sources/img/02.jpg'],
+			rightsAcknowledged: 'v1',
+			pieces: [encoded('piece-01')]
+		})
+	);
+	assert.ok(yaml.includes('  images:\n    - "sources/img/01.jpg"\n    - "sources/img/02.jpg"\n'));
+	assert.ok(yaml.includes('  rights_acknowledged: "v1"\n'));
+	// An encoded piece has no regions.
+	assert.ok(yaml.includes('    zones: []\n'));
+});
+
+test('one facsimile piece: the pre-task chains before its page task', () => {
+	const config = build(WORKED_EXAMPLE_FIELDS);
+	assert.equal(
+		buildTaskCsv(config),
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'P0001,,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0001,S0001,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'T0001,,sources/piece-01/score.mei,surface-1,,,P0001\n' +
+			'T0001,S0001,sources/piece-01/score.mei,surface-1,,,\n'
+	);
+	assert.equal(
+		buildStateCsv(config),
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+			'P0001,,encoding_required,,,\n' +
+			'P0001,S0001,pending,,,\n' +
+			'T0001,,encoding_required,,,\n' +
+			'T0001,S0001,pending,,,\n'
+	);
+});
+
+test('measured pages, not covered pages, decide the page tasks', () => {
+	const config = build({ pieces: [facsimile('piece-01', [1, 2, 3])] });
+	// The detector found measures only on pages 1 and 3.
+	assert.equal(
+		buildTaskCsv(config, { 'piece-01': [1, 3] }),
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'P0001,,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0001,S0001,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'T0001,,sources/piece-01/score.mei,surface-1,,,P0001\n' +
+			'T0001,S0001,sources/piece-01/score.mei,surface-1,,,\n' +
+			'T0002,,sources/piece-01/score.mei,surface-3,,,P0001\n' +
+			'T0002,S0001,sources/piece-01/score.mei,surface-3,,,\n'
+	);
+});
+
+test('a facsimile piece with no measured page falls back to one whole-file task', () => {
+	const config = build({ pieces: [facsimile('piece-01', [])] });
+	assert.deepEqual(planTasks(config), [
+		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'measure-zones', dependsOn: '' },
+		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: '', dependsOn: 'P0001' }
+	]);
+});
+
+test('several pieces: ids stay unique and every task addresses its own piece', () => {
+	const config = build({
+		pieces: [facsimile('piece-01', [1, 2]), encoded('piece-02'), facsimile('piece-03', [2, 3])]
 	});
-
-	assert.equal(SyntaxValidator.validate(mei), true, 'sources/score.mei must be well-formed XML');
-	for (const ph of ['{{TITLE}}', '{{COMPOSER}}', '{{LICENSE}}']) {
-		assert.equal(mei.includes(ph), false, `placeholder ${ph} should be filled`);
-	}
-	assert.match(mei, /<title>Test Campaign — One Note<\/title>/);
-	assert.match(mei, /role="composer">Anonymous</);
-	assert.match(mei, /<useRestrict>CC-BY-4\.0<\/useRestrict>/);
+	assert.deepEqual(planTasks(config), [
+		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'measure-zones', dependsOn: '' },
+		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: 'surface-1', dependsOn: 'P0001' },
+		{ id: 'T0002', fragment: 'sources/piece-01/score.mei', locator: 'surface-2', dependsOn: 'P0001' },
+		// An encoded piece is already notated: one whole-file task, no pre-task.
+		{ id: 'T0003', fragment: 'sources/piece-02/score.mei', locator: '', dependsOn: '' },
+		{ id: 'P0002', fragment: 'sources/piece-03/score.mei', locator: 'measure-zones', dependsOn: '' },
+		{ id: 'T0004', fragment: 'sources/piece-03/score.mei', locator: 'surface-2', dependsOn: 'P0002' },
+		{ id: 'T0005', fragment: 'sources/piece-03/score.mei', locator: 'surface-3', dependsOn: 'P0002' }
+	]);
 });
 
-test('worked example: task.csv holds the task row and its one validation subtask', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
-	assert.equal(
-		buildTaskCsv(config),
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-			'T0001,,sources/score.mei,,,,\n' +
-			'T0001,S0001,sources/score.mei,,,,\n'
-	);
-});
-
-test('facsimile campaign: task.csv chains the pre-task before the encoding task', () => {
-	const config = buildCampaignConfig(
-		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
-		'test-instigator',
-		AUTOMATION,
-		REPO_ID
-	);
-	assert.equal(
-		buildTaskCsv(config),
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-			'P0001,,sources/score.mei,measure-zones,,,\n' +
-			'P0001,S0001,sources/score.mei,measure-zones,,,\n' +
-			'T0001,,sources/score.mei,,,,P0001\n' +
-			'T0001,S0001,sources/score.mei,,,,\n'
-	);
-	assert.equal(
-		buildStateCsv(config),
-		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
-			'P0001,,encoding_required,,,\n' +
-			'P0001,S0001,pending,,,\n' +
-			'T0001,,encoding_required,,,\n' +
-			'T0001,S0001,pending,,,\n'
+test('two pieces may share a page without sharing a task', () => {
+	const config = build({ pieces: [facsimile('piece-01', [2]), facsimile('piece-02', [2])] });
+	const planned = planTasks(config);
+	const onPageTwo = planned.filter((task) => task.locator === 'surface-2');
+	assert.equal(onPageTwo.length, 2);
+	assert.deepEqual(
+		onPageTwo.map((task) => task.fragment),
+		['sources/piece-01/score.mei', 'sources/piece-02/score.mei']
 	);
 });
 
-test('facsimile campaign: page counts split encoding into one task per page with measures', () => {
-	const config = buildCampaignConfig(
-		{ ...WORKED_EXAMPLE_FIELDS, sourceKind: 'facsimile' },
-		'test-instigator',
-		AUTOMATION,
-		REPO_ID
-	);
-	// Page 2 has no measures, so it gets no task; pages 1 and 3 do.
-	assert.equal(
-		buildTaskCsv(config, [4, 0, 5]),
-		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-			'P0001,,sources/score.mei,measure-zones,,,\n' +
-			'P0001,S0001,sources/score.mei,measure-zones,,,\n' +
-			'T0001,,sources/score.mei,surface-1,,,P0001\n' +
-			'T0001,S0001,sources/score.mei,surface-1,,,\n' +
-			'T0002,,sources/score.mei,surface-3,,,P0001\n' +
-			'T0002,S0001,sources/score.mei,surface-3,,,\n'
-	);
-	assert.equal(
-		buildStateCsv(config, [4, 0, 5]),
-		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
-			'P0001,,encoding_required,,,\n' +
-			'P0001,S0001,pending,,,\n' +
-			'T0001,,encoding_required,,,\n' +
-			'T0001,S0001,pending,,,\n' +
-			'T0002,,encoding_required,,,\n' +
-			'T0002,S0001,pending,,,\n'
-	);
+test('the state table mirrors the task table row for row', () => {
+	const config = build({
+		pieces: [facsimile('piece-01', [1, 2]), encoded('piece-02'), facsimile('piece-03', [3])]
+	});
+	const ids = (csv: string) =>
+		csv
+			.trim()
+			.split('\n')
+			.slice(1)
+			.map((line) => line.split(',').slice(0, 2).join(','));
+	assert.deepEqual(ids(buildStateCsv(config)), ids(buildTaskCsv(config)));
 });
 
-test('worked example: state.csv matches the expected rows exactly', () => {
-	const config = buildCampaignConfig(WORKED_EXAMPLE_FIELDS, 'test-instigator', AUTOMATION, REPO_ID);
-	assert.equal(
-		buildStateCsv(config),
-		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
-			'T0001,,encoding_required,,,\n' +
-			'T0001,S0001,pending,,,\n'
-	);
-});
-
-test('worked example: lock.csv and history.csv are header-only', () => {
+test('lock.csv and history.csv are header-only', () => {
 	assert.equal(buildLockCsv(), 'task_id,subtask_id,user_id,timestamp,kind\n');
 	assert.equal(
 		buildHistoryCsv(),
@@ -184,7 +223,7 @@ test('worked example: lock.csv and history.csv are header-only', () => {
 });
 
 test('buildStateCsv: required_validations controls the validate_status columns', () => {
-	const config = buildCampaignConfig({ required_validations: 3 }, 'test-instigator', AUTOMATION, REPO_ID);
+	const config = build({ required_validations: 3, pieces: [encoded('piece-01')] });
 	assert.equal(
 		buildStateCsv(config),
 		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2,validate_status_3\n' +
@@ -193,34 +232,29 @@ test('buildStateCsv: required_validations controls the validate_status columns',
 	);
 });
 
-test('stampTemplate: substituted values are XML-escaped', () => {
-	const out = stampTemplate('<title>{{TITLE}}</title>', {
-		title: 'Bach & Sons <Works>',
-		composer: '',
-		license: ''
-	});
-	assert.equal(out, '<title>Bach &amp; Sons &lt;Works&gt;</title>');
-});
-
 test('configToYaml: YAML-sensitive characters are escaped', () => {
-	const config = buildCampaignConfig({ title: 'A "quoted" \\ title\nsecond line' }, 'test-instigator', AUTOMATION, REPO_ID);
+	const config = build({ title: 'A "quoted" \\ title\nsecond line' });
 	assert.ok(configToYaml(config).includes('  title: "A \\"quoted\\" \\\\ title\\nsecond line"\n'));
 });
 
-test('assertSupported: rejects unsupported schema, fragmentation and source shapes', () => {
-	const unsupportedSchema = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
-	unsupportedSchema.schema_version = 1;
+test('assertSupported: rejects unsupported schema, strategy and piece shapes', () => {
+	const unsupportedSchema = build({ pieces: [encoded('piece-01')] });
+	unsupportedSchema.schema_version = 2;
 	assert.throws(() => assertSupported(unsupportedSchema), /schema_version/);
 
-	const unsupportedStrategy = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
-	unsupportedStrategy.fragmentation.strategy = 'by_measure';
+	const unsupportedStrategy = build({ pieces: [encoded('piece-01')] });
+	unsupportedStrategy.fragmentation.strategy = 'whole';
 	assert.throws(() => assertSupported(unsupportedStrategy), /fragmentation\.strategy/);
 
-	const missingSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
-	missingSource.sources = [];
-	assert.throws(() => assertSupported(missingSource), /at least one source/);
+	assert.throws(() => assertSupported(build({ pieces: [] })), /at least one piece/);
 
-	const unsupportedSource = buildCampaignConfig({}, 'test-instigator', AUTOMATION, REPO_ID);
-	unsupportedSource.sources[0].kind = 'musicxml';
-	assert.throws(() => assertSupported(unsupportedSource), /source kind/);
+	const unsupportedKind = build({ pieces: [encoded('piece-01')] });
+	unsupportedKind.pieces[0].kind = 'musicxml';
+	assert.throws(() => assertSupported(unsupportedKind), /piece kind/);
+
+	// A shared path would make a submission ambiguous: the coordinator resolves
+	// a task by its fragment path alone.
+	const clashing = build({ pieces: [encoded('piece-01'), encoded('piece-02')] });
+	clashing.pieces[1].path = clashing.pieces[0].path;
+	assert.throws(() => assertSupported(clashing), /distinct path/);
 });

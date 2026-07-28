@@ -8,6 +8,7 @@
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
+  import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import { createForge } from "$lib/forge/index.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
@@ -669,15 +670,7 @@
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
 
 {#if busy}
-  <div class="overlay" role="status" aria-live="polite">
-    <div class="overlay-card">
-      <div class="spinner" aria-hidden="true"></div>
-      <p class="overlay-title">{busyMessage || "Working…"}</p>
-      <p class="overlay-sub">
-        The campaign automation runs on GitHub — this can take a few seconds.
-      </p>
-    </div>
-  </div>
+  <LoadingOverlay message={busyMessage} />
 {/if}
 
 {#if notFound}
@@ -936,68 +929,9 @@
 {/if}
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(255, 255, 255, 0.75);
-    backdrop-filter: blur(2px);
-  }
-  .overlay-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.8rem;
-    padding: 2rem 2.5rem;
-    background: #fff;
-    border: 1px solid #e5e5e5;
-    border-radius: 12px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
-    text-align: center;
-  }
-  .spinner {
-    width: 38px;
-    height: 38px;
-    border: 3px solid #e5e5e5;
-    border-top-color: #1a1a1a;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .overlay-title {
-    margin: 0;
-    font-weight: 600;
-  }
-  .overlay-sub {
-    margin: 0;
-    color: #777;
-    font-size: 0.88rem;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
-  }
-
   .muted {
-    color: #777;
+    color: var(--ink-faint);
     font-size: 0.9rem;
-  }
-  .linkish {
-    font: inherit;
-    color: #3056d3;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    text-decoration: underline;
   }
 
   /* A full-width sticky bar with an edge-to-edge hairline under it (matching the
@@ -1007,8 +941,8 @@
     position: sticky;
     top: 0;
     z-index: 20;
-    background: #fff;
-    border-bottom: 1px solid #e5e5e5;
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
   }
   .toolbar-inner {
     max-width: 1600px;
@@ -1036,7 +970,7 @@
   .tb-div {
     margin-left: 0.5rem;
     padding-left: 0.8rem;
-    border-left: 1px solid #e0e0e0;
+    border-left: 1px solid var(--line);
   }
   .tb-title {
     align-items: baseline;
@@ -1044,7 +978,7 @@
     font-size: 0.85rem;
   }
   .tb-title a {
-    color: #555;
+    color: var(--ink-soft);
     text-decoration: none;
     white-space: nowrap;
   }
@@ -1054,7 +988,7 @@
   }
   .toolbar .count {
     font-size: 0.82rem;
-    color: #666;
+    color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -1064,7 +998,7 @@
   }
   .tb-nav .nav-label {
     font-size: 0.78rem;
-    color: #555;
+    color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     padding: 0 0.2rem;
@@ -1077,27 +1011,27 @@
   }
   .tb-validation .vstatus {
     font-size: 0.8rem;
-    color: #666;
+    color: var(--ink-soft);
     white-space: nowrap;
   }
   .tb-validation .vpass {
-    color: #1a7f37;
+    color: var(--ok);
   }
   .tb-validation .vfail {
-    color: #b42318;
+    color: var(--danger);
   }
   .checkline {
     display: flex;
     align-items: center;
     gap: 0.3rem;
     font-size: 0.78rem;
-    color: #666;
+    color: var(--ink-soft);
     white-space: nowrap;
   }
   button.on {
-    background: #1a1a1a;
-    color: #fff;
-    border-color: #1a1a1a;
+    background: var(--invert-bg);
+    color: var(--invert-ink);
+    border-color: var(--invert-bg);
   }
 
   .pages {
@@ -1125,9 +1059,9 @@
     font: inherit;
     font-size: 0.8rem;
     padding: 0.3rem 0.6rem;
-    border: 1px solid #ccc;
+    border: 1px solid var(--line-strong);
     border-radius: 6px;
-    background: #fff;
+    background: var(--card);
     cursor: pointer;
   }
   button:disabled {
@@ -1135,9 +1069,9 @@
     cursor: default;
   }
   button.primary {
-    background: #1a1a1a;
-    color: #fff;
-    border-color: #1a1a1a;
+    background: var(--invert-bg);
+    color: var(--invert-ink);
+    border-color: var(--invert-bg);
     padding: 0.45rem 0.7rem;
     font-size: 0.85rem;
   }
@@ -1147,16 +1081,16 @@
     margin-bottom: 1rem;
   }
   .banner.ok {
-    background: #e8f7ec;
-    border: 1px solid #b6e2c1;
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-line);
   }
   .banner.err {
-    background: #fdeaea;
-    border: 1px solid #f3c0c0;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
   }
   .banner.warn {
-    background: #fff8e1;
-    border: 1px solid #f0dca0;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
   }
 
   .page {
@@ -1185,7 +1119,7 @@
     width: 100%;
     max-width: none;
     height: auto;
-    border: 1px solid #e5e5e5;
+    border: 1px solid var(--line);
     border-radius: 8px;
     touch-action: none;
     user-select: none;

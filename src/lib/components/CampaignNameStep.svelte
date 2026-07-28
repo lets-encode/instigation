@@ -1,0 +1,274 @@
+<!--
+  Wizard step 1: the campaign's name, title and description. The name is the repo
+  name and the registry slug at once, so it is checked for availability as it is
+  typed and held in the registry on Continue — from then on it is the campaign's
+  name rather than a proposal, and the field is locked. Holding it here is what
+  keeps a slow setup from losing the name it was promised: nothing later has to
+  ask for it again.
+-->
+<script lang="ts">
+  import { page } from "$app/state";
+  import { auth } from "$lib/auth.svelte.ts";
+  import { provider } from "$lib/forge/config.ts";
+  import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
+  import { claimName, lookupSlug, releaseClaim } from "$lib/campaign-resolve.ts";
+  import { isValidHandle } from "$lib/campaign-handle.ts";
+  import { wizard, nextStep, MAX_DESCRIPTION_LENGTH } from "$lib/wizard.svelte.ts";
+  import type { RepoSummary } from "$lib/forge/types.ts";
+  import WizardCard from "./WizardCard.svelte";
+
+  // Existing campaigns, to catch a name already used by one of them.
+  let campaignRepos = $state<RepoSummary[]>([]);
+
+  $effect(() => {
+    if (auth.status === "loading") return;
+    searchReposByTopic(provider.repoTopic, auth.token ?? undefined)
+      .then((r) => (campaignRepos = r))
+      .catch(() => (campaignRepos = []));
+  });
+
+  // Arriving from the slug registry (letsenco.de) with a chosen name: prefill the
+  // name field once, so later edits to it are not overwritten.
+  let slugApplied = false;
+  $effect(() => {
+    const chosen = page.url.searchParams.get("slug");
+    if (chosen && !slugApplied) {
+      slugApplied = true;
+      wizard.handle = chosen;
+    }
+  });
+
+  // Live availability check: against the campaign repos already fetched (public
+  // ones of every user, plus the user's own private matches), and against the
+  // user's own account for any other repo of the same name. Debounced; a
+  // sequence number discards results of superseded checks.
+  let handleCheck = $state<
+    | { state: "idle" }
+    | { state: "invalid" }
+    | { state: "checking" }
+    | { state: "available" }
+    | { state: "held" }
+    | { state: "taken"; by: string }
+    | { state: "unknown" }
+  >({ state: "idle" });
+  let handleCheckSeq = 0;
+
+  $effect(() => {
+    const h = wizard.handle.trim();
+    const user = auth.user;
+    const token = auth.token ?? undefined;
+    const repos = campaignRepos;
+    const seq = ++handleCheckSeq;
+    if (!h) {
+      handleCheck = { state: "idle" };
+      return;
+    }
+    // Already held for this campaign: the registry would report it occupied, and
+    // it is occupied — by us.
+    if (wizard.claim?.name === h) {
+      handleCheck = { state: "held" };
+      return;
+    }
+    // The format rules are pure, so report them whether or not anyone is signed
+    // in; only the availability lookups below need a user.
+    if (!isValidHandle(h)) {
+      handleCheck = { state: "invalid" };
+      return;
+    }
+    if (!user) {
+      handleCheck = { state: "idle" };
+      return;
+    }
+    handleCheck = { state: "checking" };
+    const timer = setTimeout(async () => {
+      const clash = repos.find((r) => r.name.toLowerCase() === h.toLowerCase());
+      if (clash) {
+        if (seq === handleCheckSeq)
+          handleCheck = { state: "taken", by: clash.full_name };
+        return;
+      }
+      try {
+        // The slug registry is authoritative for the name, so check it too: a
+        // name can be free on the user's GitHub yet already registered to
+        // another repo, which would only surface as a 409 after the repo was
+        // created. A null slug means the registry couldn't be reached — treat
+        // that as "unknown" rather than falsely "available".
+        const [slug, exists] = await Promise.all([
+          lookupSlug(h),
+          repoExists(user.login, h, token),
+        ]);
+        if (seq !== handleCheckSeq) return;
+        if (slug && slug.status !== "free") {
+          handleCheck = { state: "taken", by: `letsenco.de/${h}` };
+        } else if (exists) {
+          handleCheck = { state: "taken", by: `${user.login}/${h}` };
+        } else if (!slug) {
+          handleCheck = { state: "unknown" };
+        } else {
+          handleCheck = { state: "available" };
+        }
+      } catch {
+        if (seq === handleCheckSeq) handleCheck = { state: "unknown" };
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  });
+
+  // A name that is taken or malformed can't proceed. "unknown" may: the registry
+  // was unreachable, and the claim on Continue verifies the name anyway.
+  const canAdvance = $derived(
+    wizard.title.trim() !== "" &&
+      isValidHandle(wizard.handle.trim()) &&
+      handleCheck.state !== "taken" &&
+      handleCheck.state !== "checking",
+  );
+
+  let claiming = $state(false);
+  let claimError = $state<string | null>(null);
+  let releaseNote = $state<string | null>(null);
+
+  // The repository is created under the held name, so once it exists the name is
+  // fixed for good; before that it can be given back and another one held.
+  const nameFixed = $derived(wizard.repo !== null);
+
+  async function submit(e: SubmitEvent) {
+    e.preventDefault();
+    if (!canAdvance || claiming) return;
+    const name = wizard.handle.trim();
+    // Returning to this step with the name already held: nothing to do again.
+    if (wizard.claim?.name === name) {
+      nextStep();
+      return;
+    }
+    claiming = true;
+    claimError = null;
+    releaseNote = null;
+    const result = await claimName(name);
+    claiming = false;
+    if ("token" in result) {
+      wizard.claim = { name, token: result.token };
+      nextStep();
+      return;
+    }
+    claimError =
+      result.error === "taken"
+        ? `“${name}” has just been taken by another campaign. Choose a different name.`
+        : result.error === "invalid"
+          ? `“${name}” cannot be used as a campaign name.`
+          : "The name could not be reserved just now. Check your connection and try again.";
+  }
+
+  async function changeName() {
+    const claim = wizard.claim;
+    if (!claim || nameFixed) return;
+    // The field unlocks either way: a registry that cannot be reached must not
+    // trap the campaign under a name. An unreleased hold runs out on its own.
+    wizard.claim = null;
+    claimError = null;
+    const released = await releaseClaim(claim.name, claim.token);
+    releaseNote = released
+      ? null
+      : `“${claim.name}” could not be given back, so it stays reserved for up to half an hour before it is free again.`;
+  }
+</script>
+
+<form onsubmit={submit}>
+  <WizardCard
+    step="name"
+    heading="Name your campaign"
+    intro="The name identifies the campaign to volunteers and becomes its address."
+  >
+    <label class="field">
+      Campaign name
+      <input
+        class="input"
+        bind:value={wizard.handle}
+        placeholder="symphony-9-choral"
+        readonly={wizard.claim !== null}
+        required
+      />
+      <span class="hint">Used in the URL and as the Git repository name.</span>
+      {#if handleCheck.state === "checking"}
+        <span class="hint">Checking availability…</span>
+      {:else if handleCheck.state === "held"}
+        <span class="hint hint-ok">✓ Reserved for this campaign</span>
+      {:else if handleCheck.state === "available"}
+        <span class="hint hint-ok">✓ Available</span>
+      {:else if handleCheck.state === "taken"}
+        <span class="hint hint-err">✗ Already used by {handleCheck.by}</span>
+      {:else if handleCheck.state === "invalid"}
+        <span class="hint hint-err">
+          3–40 characters: lowercase letters, digits, and single internal
+          hyphens.
+        </span>
+      {:else if handleCheck.state === "unknown"}
+        <span class="hint">
+          Couldn't check availability — it will be verified when the name is
+          reserved.
+        </span>
+      {/if}
+      {#if wizard.claim && nameFixed}
+        <span class="hint">
+          The repository {wizard.repo?.full_name} carries this name, so it can no
+          longer be changed.
+        </span>
+      {:else if wizard.claim}
+        <button type="button" class="btn btn-ghost btn-inline" onclick={changeName}>
+          Use a different name
+        </button>
+      {/if}
+      {#if claimError}
+        <span class="hint hint-err" role="alert">{claimError}</span>
+      {/if}
+      {#if releaseNote}
+        <span class="hint" role="status">{releaseNote}</span>
+      {/if}
+    </label>
+
+    <label class="field">
+      Title
+      <input
+        class="input"
+        bind:value={wizard.title}
+        placeholder="e.g. Symphony No. 9 in D minor, Op. 125"
+        required
+      />
+      <span class="hint">
+        The campaign's readable label, shown wherever it is listed.
+      </span>
+    </label>
+
+    <label class="field">
+      About this campaign
+      <textarea
+        class="input"
+        bind:value={wizard.description}
+        rows="3"
+        maxlength={MAX_DESCRIPTION_LENGTH}
+        placeholder="e.g. Encoding the 1826 first edition of the Ninth Symphony, movement by movement, to a complete MEI score."
+      ></textarea>
+      <span class="hint">
+        Optional: what this campaign sets out to encode, in a few sentences.
+        Volunteers see it when they open the campaign. {wizard.description
+          .length}/{MAX_DESCRIPTION_LENGTH} characters.
+      </span>
+    </label>
+
+    <!-- Continue submits the form, so this step draws its own footer. -->
+    {#snippet footer()}
+      <button type="submit" class="btn btn-primary" disabled={!canAdvance || claiming}>
+        {claiming ? "Reserving the name…" : "Continue"}
+      </button>
+    {/snippet}
+  </WizardCard>
+</form>
+
+<style>
+  .field {
+    margin-bottom: 1.25rem;
+  }
+  /* Sits under the field's hints rather than beside the input. */
+  .btn-inline {
+    margin-top: 0.4rem;
+  }
+</style>

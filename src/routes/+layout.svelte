@@ -2,13 +2,37 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { auth, initAuth, logout } from '$lib/auth.svelte.ts';
+  import './theme.css';
+  import './ui.css';
 
   let { children } = $props();
 
-  // The zone editor is a full-width tool; the campaign console is a full-bleed,
-  // full-height surface; every other route keeps the narrow reading column.
-  const wide = $derived(page.url.pathname.includes('/zones/'));
-  const full = $derived(/^\/campaign\/[^/]+\/?$/.test(page.url.pathname));
+  // The pre-paint script in app.html has already set data-theme before mount;
+  // mirror it here so the bulb reflects the active theme, and flip + persist on
+  // click. Only an explicit choice is stored — a functional preference.
+  let theme = $state<'light' | 'dark'>('light');
+  onMount(() => {
+    theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  });
+  function toggleTheme() {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try {
+      localStorage.setItem('theme', theme);
+    } catch (e) {
+      /* storage unavailable — theme still applies for this visit */
+    }
+  }
+
+  // The zone editor is a full-width tool; the campaign console and the
+  // onboarding wizard are full-bleed, full-height surfaces (the wizard splits
+  // into a form pane and a page-preview pane); every other route keeps the
+  // narrow reading column. Matching on the route rather than the path is what
+  // makes the wizard full-height at /c?slug=, whose URL keeps its own path
+  // while hooks.ts reroutes it to / (see src/hooks.ts).
+  const wide = $derived(page.route.id === '/campaign/[campaign]/zones/[task]');
+  const full = $derived(page.route.id === '/' || page.route.id === '/campaign/[campaign]');
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
@@ -20,22 +44,48 @@
   <a class="brand" href="/">
     <img src="/lets-encode.png" alt="Let's Encode" />
   </a>
-  {#if auth.user}
-    <div class="user">
-      {#if auth.user.avatar_url}
-        <img class="avatar" src={auth.user.avatar_url} alt="" />
-      {/if}
-      <span>{auth.user.login}</span>
-      <button type="button" onclick={() => logout()}>Log out</button>
-    </div>
-  {/if}
+  <div class="topbar-right">
+    {#if auth.user}
+      <div class="user">
+        {#if auth.user.avatar_url}
+          <img class="avatar" src={auth.user.avatar_url} alt="" />
+        {/if}
+        <span>{auth.user.login}</span>
+        <button type="button" class="btn btn-soft" onclick={() => logout()}>Log out</button>
+      </div>
+    {/if}
+    <button
+      class="theme-toggle"
+      type="button"
+      onclick={toggleTheme}
+      aria-pressed={theme === 'dark'}
+      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      title="Toggle light / dark theme"
+    >
+      <svg class="bulb" viewBox="-2 -2 28 28" width="22" height="22" aria-hidden="true" focusable="false">
+        <g class="bulb-rays" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <line x1="12" y1="-1.8" x2="12" y2="2" />
+          <line x1="21.8" y1="2.2" x2="18.9" y2="5.1" />
+          <line x1="2.2" y1="2.2" x2="5.1" y2="5.1" />
+          <line x1="24.6" y1="11" x2="20.8" y2="11" />
+          <line x1="-0.6" y1="11" x2="3.2" y2="11" />
+        </g>
+        <path class="bulb-glass" d="M12 2.6a6.2 6.2 0 0 0-3.8 11.1c.75.58 1.25 1.4 1.35 2.35h4.9c.1-.95.6-1.77 1.35-2.35A6.2 6.2 0 0 0 12 2.6Z" />
+        <path class="bulb-filament" d="M10 12.7 12 10l2 2.7" />
+        <g class="bulb-base" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none">
+          <path d="M9.6 16.2v1.6h4.8v-1.6" />
+          <line x1="10.4" y1="20" x2="13.6" y2="20" />
+        </g>
+      </svg>
+    </button>
+  </div>
 </header>
 
 {#snippet body()}
   {#if auth.error}
     <p class="auth-error" role="alert">
       Sign-in failed: {auth.error}
-      <button type="button" onclick={() => (auth.error = null)}>Dismiss</button>
+      <button type="button" class="btn btn-soft" onclick={() => (auth.error = null)}>Dismiss</button>
     </p>
   {/if}
   {@render children()}
@@ -63,8 +113,8 @@
       system-ui,
       -apple-system,
       sans-serif;
-    color: #1a1a1a;
-    background: #fafafa;
+    color: var(--ink);
+    background: var(--bg-alt);
   }
   header {
     flex: none;
@@ -72,8 +122,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.75rem 1.5rem;
-    border-bottom: 1px solid #e5e5e5;
-    background: #fff;
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
   }
   .brand img {
     height: 36px;
@@ -130,15 +185,89 @@
     flex-direction: column;
     overflow: hidden;
   }
-  button {
+  /* ---- Theme (light/dark) bulb toggle — ported from the redirector ------- */
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
     cursor: pointer;
-    font: inherit;
-    padding: 0.4rem 0.8rem;
-    border: 1px solid #d0d0d0;
-    border-radius: 6px;
-    background: #f5f5f5;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease,
+      background 0.15s ease,
+      transform 0.15s ease;
   }
-  button:hover {
-    background: #ececec;
+  .theme-toggle:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: transparent;
+    transform: translateY(-1px);
+  }
+  .theme-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .bulb {
+    display: block;
+  }
+  .bulb-glass {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linejoin: round;
+    transition: fill 0.2s ease;
+  }
+  .bulb-filament {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.55;
+    transition: opacity 0.2s ease;
+  }
+  .bulb-rays {
+    opacity: 0;
+    transform-origin: 12px 11px;
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease;
+  }
+  /* Lit bulb in dark mode: a warm glowing shine so it reads as "on". */
+  :global([data-theme='dark']) .theme-toggle {
+    color: #ffdf85;
+    border-color: rgba(255, 223, 133, 0.55);
+  }
+  :global([data-theme='dark']) .theme-toggle:hover {
+    color: #ffe9a6;
+    border-color: #ffdf85;
+    background: rgba(255, 223, 133, 0.14);
+  }
+  :global([data-theme='dark']) .bulb {
+    filter: drop-shadow(0 0 3px rgba(255, 210, 110, 0.8));
+  }
+  :global([data-theme='dark']) .bulb-glass {
+    fill: rgba(255, 223, 133, 0.45);
+  }
+  :global([data-theme='dark']) .bulb-filament {
+    opacity: 1;
+  }
+  :global([data-theme='dark']) .bulb-rays {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .theme-toggle,
+    .bulb-glass,
+    .bulb-filament,
+    .bulb-rays {
+      transition: none;
+    }
   }
 </style>

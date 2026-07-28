@@ -22,7 +22,7 @@ export interface ResolvedCampaign {
 /** A slug's state in the registry. */
 export interface SlugInfo {
 	name: string;
-	status: 'free' | 'active' | 'reserved' | 'tombstoned';
+	status: 'free' | 'pending' | 'active' | 'reserved' | 'tombstoned';
 	/** Which forge repo_id belongs to (e.g. 'github'); null unless active. */
 	forge: string | null;
 	repo_id: number | null;
@@ -42,24 +42,70 @@ export async function lookupSlug(name: string): Promise<SlugInfo | null> {
 	}
 }
 
+/** A held name's token, or why the name could not be held. */
+export type ClaimResult = { token: string } | { error: 'taken' | 'invalid' | 'unreachable' };
+
+/**
+ * Hold a name in the registry before the repo it will belong to exists, so the
+ * rest of a campaign's setup cannot lose it. The token is the right to register
+ * the name later, or to give it back; the hold itself runs out (see the
+ * registry's CLAIM_TTL_MINUTES), which only means someone else may take the name
+ * from then on — the token keeps working until they do.
+ */
+export async function claimName(name: string): Promise<ClaimResult> {
+	try {
+		const res = await fetch(`${registryUrl}/claim`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name })
+		});
+		if (res.ok) return { token: ((await res.json()) as { claim_token: string }).claim_token };
+		if (res.status === 409) return { error: 'taken' };
+		if (res.status === 422) return { error: 'invalid' };
+		return { error: 'unreachable' };
+	} catch {
+		return { error: 'unreachable' };
+	}
+}
+
+/**
+ * Give a held name back, so a campaign renamed before its repo exists does not
+ * leave its first name held. Best-effort: false means the name stays held until
+ * the registry's hold runs out, which frees it without anyone acting.
+ */
+export async function releaseClaim(name: string, token: string): Promise<boolean> {
+	try {
+		const res = await fetch(`${registryUrl}/claim/${encodeURIComponent(name)}`, {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ claim_token: token })
+		});
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
 /** The outcome of registering a name against a repo id. */
 export type RegisterResult = 'ok' | 'conflict' | 'invalid' | 'error';
 
 /**
  * Register a campaign name against its repo id on `forge`, after the repo has
- * been created. Idempotent for the same (forge, repo id). 'conflict' means the
- * name is taken by a different repo; 'invalid' means it isn't a valid slug.
+ * been created, presenting the token the name was held under. Idempotent for the
+ * same (forge, repo id). 'conflict' means the name now belongs to a different
+ * repo; 'invalid' means it isn't a valid slug.
  */
 export async function registerCampaign(
 	name: string,
 	repoId: number,
-	forge: string
+	forge: string,
+	claimToken: string
 ): Promise<RegisterResult> {
 	try {
 		const res = await fetch(`${registryUrl}/register`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, repo_id: repoId, forge })
+			body: JSON.stringify({ name, repo_id: repoId, forge, claim_token: claimToken })
 		});
 		if (res.ok) return 'ok';
 		if (res.status === 409) return 'conflict';

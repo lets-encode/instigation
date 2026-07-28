@@ -1,0 +1,201 @@
+/* =========================================================================
+   Let's Encode! — shared UI rules for the instigation app.
+
+   Everything here is global: the classes are applied in component markup, and
+   the components keep only the styling that is theirs alone. Colours, radii
+   and fonts come from the tokens in theme.css.
+   ========================================================================= */
+
+/* ---- Buttons -----------------------------------------------------------
+   .btn carries what every button shares. One variant class sets the rest:
+   primary and secondary are the large pill pair used in wizard footers,
+   soft and quiet are the small controls inside a card or a pane. */
+.btn {
+  cursor: pointer;
+  font: inherit;
+  padding: 0.4rem 0.8rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  font-weight: 600;
+  padding: 0.6rem 1.4rem;
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+  border-radius: 999px;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-dark);
+}
+
+.btn-secondary {
+  font-weight: 600;
+  padding: 0.6rem 1.4rem;
+  background: var(--bg-alt);
+  border-radius: 999px;
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn-soft {
+  background: var(--bg-alt);
+}
+.btn-soft:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn-quiet {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+  color: var(--ink-soft);
+}
+.btn-quiet:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* A quiet button whose action removes something. */
+.btn-quiet.btn-danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+/* A quiet button in a set where one option is the active one. */
+.btn-quiet.on {
+  color: var(--card);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* A button that reads as a link, for actions inside a sentence. */
+.linkish {
+  font: inherit;
+  padding: 0;
+  color: var(--link);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---- Form controls ----------------------------------------------------- */
+.input {
+  display: block;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+textarea.input {
+  resize: vertical;
+}
+
+/* Label text above a control. The control's own top margin sets the gap. */
+.field {
+  display: block;
+  font-weight: 600;
+}
+
+/* ---- Messages ----------------------------------------------------------
+   Notes under a field, and the result of an action taken in a card. */
+.hint {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+.hint-ok {
+  color: var(--ok);
+}
+.hint-err {
+  color: var(--danger);
+}
+.msg-error {
+  margin: 1.25rem 0 0;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+}
+/* A failure reported next to the control it concerns, rather than in a box. */
+.msg-error-inline {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+}
+.msg-progress {
+  margin: 1.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+.msg-warn {
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
+
+/* ---- Full-height layout ------------------------------------------------
+   Routes that fill the window: .pane-split stacks a scrolling pane over a
+   pane pinned to the bottom, .pane-scroll is the scrolling one. */
+.pane-split {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.pane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 1.5rem;
+}
+
+/* ---- Page strip --------------------------------------------------------
+   Page images laid out left to right, each scaled to the strip's height. */
+.page-strip {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0 0.75rem 0.75rem;
+  overflow: auto;
+}
+.page-strip figure {
+  flex: none;
+  height: 100%;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+.page-strip figcaption {
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+/* The bar of controls above a strip. */
+.strip-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem 0.35rem;
+}

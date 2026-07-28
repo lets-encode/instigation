@@ -22,7 +22,9 @@ Config (environment variables, loaded from broker/.env if present):
 See README.md for setup, and deploy/nginx.conf for the production mount.
 """
 
+import ipaddress
 import json
+import socket
 import sys
 import time
 from datetime import timedelta
@@ -141,6 +143,47 @@ GITHUB_API = "https://api.github.com"
 # The proxy relays only GitHub REST API calls (the SPA does no git smart-HTTP).
 ALLOWED_DOMAINS = ["api.github.com"]
 
+# /iiif relay limits. Campaign sources come from any institution's IIIF server,
+# so the host cannot be an allowlist; the request is constrained instead — see
+# iiif_fetch. A manifest is JSON and a canvas is one downscaled page image, so
+# both fit well inside the size cap.
+IIIF_MAX_BYTES = 25 * 1024 * 1024
+IIIF_MAX_REDIRECTS = 5
+IIIF_ALLOWED_CONTENT = ("application/json", "application/ld+json", "image/")
+
+
+def resolves_to_public_address(hostname):
+    """
+    True when every address a hostname resolves to is publicly routable.
+
+    The IIIF relay fetches URLs supplied by the browser, so without this it
+    would be a server-side request forgery vector into anything the broker's
+    network can reach — cloud metadata endpoints, loopback services, private
+    LAN hosts. Every resolved address is checked, since a name can return both
+    a public and a private record.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            address = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            return False
+    return True
+
 
 def oauth_callback_url() -> str:
     # Behind the /oauth mount the prefix and scheme are invisible to Flask, so
@@ -229,6 +272,93 @@ def logout():
     revoke_github_token(session.get("githubToken"))
     session.clear()
     return jsonify(ok=True)
+
+
+@app.route("/iiif", methods=["GET"])
+# Fetching a source is a handful of requests per campaign, not a poll loop.
+@limiter.limit(
+    "10 per second",
+    key_func=lambda: session.get("userLogin") or get_remote_address(),
+)
+def iiif_fetch():
+    """
+    Relay a IIIF manifest or canvas image, same-origin, for the onboarding
+    wizard.
+
+    Campaign sources come from arbitrary institutions, which rules out both a
+    CSP host allowlist and direct browser fetches (many IIIF servers send no
+    CORS headers). Relaying here solves both. No credentials are attached — the
+    session gates who may use the relay, nothing more — and redirects are
+    followed manually so each hop is re-checked against the address rules.
+    """
+    if "githubToken" not in session:
+        return jsonify(error="Authentication required"), 401
+    target = request.args.get("url", "")
+    if not target:
+        return jsonify(error="A url parameter is required"), 400
+
+    seen_redirects = 0
+    while True:
+        parsed = urlsplit(target)
+        if parsed.scheme != "https":
+            return jsonify(error="Only https URLs are allowed"), 400
+        if not parsed.hostname or not resolves_to_public_address(
+            parsed.hostname
+        ):
+            return jsonify(error="That host is not allowed"), 400
+        try:
+            response = requests.get(
+                target,
+                headers={"accept": request.headers.get("accept", "*/*")},
+                timeout=(10, 60),
+                allow_redirects=False,
+                stream=True,
+            )
+        except requests.Timeout:
+            return jsonify(error="Upstream request timed out"), 504
+        except requests.RequestException:
+            return jsonify(error="Upstream request failed"), 502
+
+        if response.is_redirect or response.is_permanent_redirect:
+            seen_redirects += 1
+            if seen_redirects > IIIF_MAX_REDIRECTS:
+                response.close()
+                return jsonify(error="Too many redirects"), 502
+            location = response.headers.get("location", "")
+            response.close()
+            if not location:
+                return jsonify(error="Upstream request failed"), 502
+            # A relative Location resolves against the hop it came from.
+            target = requests.compat.urljoin(target, location)
+            continue
+        break
+
+    content_type = response.headers.get("content-type", "")
+    if not content_type.startswith(IIIF_ALLOWED_CONTENT):
+        response.close()
+        return jsonify(error="Unexpected content type from that URL"), 415
+
+    # Read with a ceiling rather than trusting Content-Length, which may be
+    # absent or understate a chunked response.
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(64 * 1024):
+        total += len(chunk)
+        if total > IIIF_MAX_BYTES:
+            response.close()
+            return jsonify(error="That resource is too large"), 413
+        chunks.append(chunk)
+    response.close()
+
+    return (
+        b"".join(chunks),
+        response.status_code,
+        [
+            ("Content-Type", content_type),
+            ("Cache-Control", "no-store"),
+            ("X-Lets-Encode-Upstream", "iiif"),
+        ],
+    )
 
 
 @app.route(

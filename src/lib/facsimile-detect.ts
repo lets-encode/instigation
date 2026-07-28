@@ -106,7 +106,7 @@ async function imageSize(blob: Blob): Promise<{ width: number; height: number }>
  * or malformed detection data. Returns null when the detector fails on this
  * specific page (HTTP 500), signalling the caller to skip just that page.
  */
-async function detectMeasures(blob: Blob, filename: string, detectorUrl: string): Promise<MeasureBox[] | null> {
+export async function detectMeasures(blob: Blob, filename: string, detectorUrl: string): Promise<MeasureBox[] | null> {
 	const form = new FormData();
 	form.append('file', blob, filename);
 	form.append('expand', 'false');

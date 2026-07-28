@@ -23,6 +23,11 @@
     "vite": "^8.1.0"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
     "pdfjs-dist": "^4.10.38",
     "verovio": "^6.2.0"
   }

@@ -1,14 +1,19 @@
-// Campaign initialisation logic — Action A, `whole` strategy, schema v2.
+// Campaign initialisation logic — Action A, `by-piece` strategy, schema v3.
 // See DESIGN.md §5. Pure functions: strings/objects in, strings out. No
 // filesystem or network access.
 //
+// A campaign describes one physical source holding N pieces (works). Each piece
+// is one MEI at its own path and one group of tasks; the tables address every
+// task by that path, which is what the coordinator resolves a submission
+// against.
+//
 // Produces, from a filled config:
 //   - config.yaml            (configToYaml)
-//   - sources/score.mei      (stampTemplate: fills {{TITLE}}/{{COMPOSER}}/{{LICENSE}};
-//                             facsimile campaigns commit the stage-A facsimile MEI instead)
-//   - tracking/task.csv      (buildTaskCsv: task T0001 + one validation subtask S0001;
-//                             facsimile campaigns prepend the P0001 pre-task and split
-//                             encoding into one task per page carrying measures)
+//   - sources/<piece>/score.mei  (one per piece; built by mei-facsimile.ts)
+//   - tracking/task.csv      (buildTaskCsv: per piece, a measure-correction
+//                             pre-task plus one encoding task per covered page
+//                             for a facsimile piece, or one whole-file task for
+//                             an encoded piece; each with a validation subtask)
 //   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
@@ -20,10 +25,35 @@ export interface AutomationPointer {
 	path: string;
 }
 
-/** A schema-v2 campaign config object. */
+/** A region of one page image that a piece covers. */
+export interface ConfigZone {
+	/** 1-based page number, matching the page's `<pb>` / surface id. */
+	surface: number;
+	ulx: number;
+	uly: number;
+	lrx: number;
+	lry: number;
+}
+
+/** One work within the source: its own MEI, its own tasks. */
+export interface ConfigPiece {
+	id: string;
+	/** 'facsimile' (regions volunteers encode) or 'encoded' (an uploaded score). */
+	kind: string;
+	/** Repo path of this piece's MEI — the `fragment` its tasks address. */
+	path: string;
+	/** Regions this piece covers. Empty for an encoded piece. */
+	zones: ConfigZone[];
+	header: { title: string; composer: string };
+}
+
+/** A schema-v3 campaign config object. */
 export interface CampaignConfig {
 	schema_version: number;
 	campaign: {
+		/** The campaign's handle: repo name, registry slug and address at once. */
+		name: string;
+		/** Human-readable label for the campaign. */
 		title: string;
 		description: string;
 		/** The instigator's stable numeric GitHub account id (as a string). */
@@ -34,13 +64,16 @@ export interface CampaignConfig {
 		license: string;
 	};
 	automation: AutomationPointer;
-	sources: Array<{
-		id: string;
+	/** The physical source the pieces were read from. */
+	source: {
 		kind: string;
-		path: string;
-		template: string;
-		header: { composer: string };
-	}>;
+		/** Committed page images, repo-relative. */
+		images: string[];
+		header: { title: string; composer: string; publisher: string; date: string };
+		/** Which acknowledgement the instigator agreed to, for provenance. */
+		rights_acknowledged: string;
+	};
+	pieces: ConfigPiece[];
 	fragmentation: { strategy: string };
 	validation: { required_validations: number; pass_threshold: number };
 	locking: { stale_after_minutes: number };
@@ -48,13 +81,17 @@ export interface CampaignConfig {
 
 /** Create-form fields feeding buildCampaignConfig; unset fields fall to defaults. */
 export interface CampaignFields {
+	name?: string;
 	title?: string;
 	description?: string;
 	language?: string;
 	license?: string;
-	composer?: string;
-	/** 'mei-template' (blank template score) or 'facsimile' (detected page images + pre-tasks). */
+	/** 'facsimile' | 'mei-template' | 'mixed' — what the source itself is. */
 	sourceKind?: string;
+	sourceHeader?: { title?: string; composer?: string; publisher?: string; date?: string };
+	images?: string[];
+	rightsAcknowledged?: string;
+	pieces?: ConfigPiece[];
 	required_validations?: number;
 	pass_threshold?: number;
 	stale_after_minutes?: number;
@@ -69,19 +106,13 @@ const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'actio
 const DEFAULTS = {
 	language: 'en',
 	license: 'CC-BY-4.0',
-	composer: '',
 	required_validations: 1,
 	pass_threshold: 1,
 	stale_after_minutes: 120
 };
 
-// Escape the minimum needed to keep substituted header values well-formed XML.
-function xmlEscape(value: unknown): string {
-	return String(value ?? '')
-		.replaceAll('&', '&amp;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;');
-}
+/** The repo path a piece's MEI is committed to, and its tasks address. */
+export const piecePath = (id: string): string => `sources/${id}/score.mei`;
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
 function csvField(value: unknown): string {
@@ -97,25 +128,33 @@ function yamlStr(value: unknown): string {
 	return JSON.stringify(String(value ?? ''));
 }
 
-// Two source kinds, one fragmentation strategy and one schema version are
+// One fragmentation strategy, two piece kinds and one schema version are
 // implemented. Fail loudly rather than silently mis-initialising.
 export function assertSupported(config: CampaignConfig): void {
-	if (config?.schema_version !== 2) {
-		throw new Error(`Unsupported schema_version: ${config?.schema_version} (expected 2).`);
+	if (config?.schema_version !== 3) {
+		throw new Error(`Unsupported schema_version: ${config?.schema_version} (expected 3).`);
 	}
 	const strategy = config.fragmentation?.strategy;
-	if (strategy !== 'whole') {
-		throw new Error(`Unsupported fragmentation.strategy: ${strategy} (only 'whole' is implemented).`);
+	if (strategy !== 'by-piece') {
+		throw new Error(`Unsupported fragmentation.strategy: ${strategy} (only 'by-piece' is implemented).`);
 	}
-	const source = config.sources?.[0];
-	if (!source) throw new Error('config.sources must contain at least one source.');
-	if (source.kind !== 'mei-template' && source.kind !== 'facsimile') {
-		throw new Error(`Unsupported source kind: ${source.kind} (only 'mei-template' and 'facsimile' are implemented).`);
+	if (!config.pieces?.length) throw new Error('config.pieces must contain at least one piece.');
+	for (const piece of config.pieces) {
+		if (piece.kind !== 'facsimile' && piece.kind !== 'encoded') {
+			throw new Error(`Unsupported piece kind: ${piece.kind} (only 'facsimile' and 'encoded' are implemented).`);
+		}
+		if (!piece.path) throw new Error(`Piece ${piece.id} has no path.`);
+	}
+	// Two pieces sharing a path would make a submission ambiguous: the
+	// coordinator resolves a task by its fragment path alone.
+	const paths = config.pieces.map((piece) => piece.path);
+	if (new Set(paths).size !== paths.length) {
+		throw new Error('Each piece must have a distinct path.');
 	}
 }
 
 /**
- * Build the schema-v2 campaign config object from create-form fields, the
+ * Build the schema-v3 campaign config object from the wizard's fields, the
  * instigator's numeric account id, the central automation pointer, and the
  * campaign repo's numeric id. Unspecified optional fields fall back to defaults.
  */
@@ -125,9 +164,11 @@ export function buildCampaignConfig(
 	automation: AutomationPointer,
 	repoId: number
 ): CampaignConfig {
+	const header = fields.sourceHeader ?? {};
 	return {
-		schema_version: 2,
+		schema_version: 3,
 		campaign: {
+			name: fields.name ?? '',
 			title: fields.title ?? '',
 			description: fields.description ?? '',
 			instigator,
@@ -136,16 +177,23 @@ export function buildCampaignConfig(
 			license: fields.license ?? DEFAULTS.license
 		},
 		automation: { ...automation },
-		sources: [
-			{
-				id: 'src-1',
-				kind: fields.sourceKind ?? 'mei-template',
-				path: 'sources/score.mei',
-				template: 'templates/score.template.mei',
-				header: { composer: fields.composer ?? DEFAULTS.composer }
-			}
-		],
-		fragmentation: { strategy: 'whole' },
+		source: {
+			kind: fields.sourceKind ?? 'facsimile',
+			images: fields.images ?? [],
+			header: {
+				title: header.title ?? '',
+				composer: header.composer ?? '',
+				publisher: header.publisher ?? '',
+				date: header.date ?? ''
+			},
+			rights_acknowledged: fields.rightsAcknowledged ?? ''
+		},
+		pieces: (fields.pieces ?? []).map((piece) => ({
+			...piece,
+			path: piece.path || piecePath(piece.id),
+			zones: piece.zones ?? []
+		})),
+		fragmentation: { strategy: 'by-piece' },
 		validation: {
 			required_validations: fields.required_validations ?? DEFAULTS.required_validations,
 			pass_threshold: fields.pass_threshold ?? DEFAULTS.pass_threshold
@@ -154,13 +202,38 @@ export function buildCampaignConfig(
 	};
 }
 
-/** Serialise a schema-v2 config object to the canonical config.yaml text. */
+/** Serialise a schema-v3 config object to the canonical config.yaml text. */
 export function configToYaml(config: CampaignConfig): string {
-	const { campaign: c, sources, validation: v, locking: l } = config;
-	const src = sources[0];
+	const { campaign: c, source: s, validation: v, locking: l } = config;
+	const images = s.images.length
+		? s.images.map((image) => `    - ${yamlStr(image)}\n`).join('')
+		: '';
+	const pieces = config.pieces
+		.map((piece) => {
+			const zones = piece.zones.length
+				? piece.zones
+						.map(
+							(z) =>
+								`      - { surface: ${z.surface}, ulx: ${z.ulx}, uly: ${z.uly}, ` +
+								`lrx: ${z.lrx}, lry: ${z.lry} }\n`
+						)
+						.join('')
+				: '';
+			return (
+				`  - id: ${yamlStr(piece.id)}\n` +
+				`    kind: ${yamlStr(piece.kind)}\n` +
+				`    path: ${yamlStr(piece.path)}\n` +
+				`    zones:${zones ? `\n${zones}` : ' []\n'}` +
+				`    header:\n` +
+				`      title: ${yamlStr(piece.header.title)}\n` +
+				`      composer: ${yamlStr(piece.header.composer)}\n`
+			);
+		})
+		.join('');
 	return (
 		`schema_version: ${config.schema_version}\n` +
 		`campaign:\n` +
+		`  name: ${yamlStr(c.name)}\n` +
 		`  title: ${yamlStr(c.title)}\n` +
 		`  description: ${yamlStr(c.description)}\n` +
 		`  instigator: ${yamlStr(c.instigator)}\n` +
@@ -171,13 +244,16 @@ export function configToYaml(config: CampaignConfig): string {
 		`  central_repository: ${yamlStr(config.automation.central_repository)}\n` +
 		`  ref: ${yamlStr(config.automation.ref)}\n` +
 		`  path: ${yamlStr(config.automation.path)}\n` +
-		`sources:\n` +
-		`  - id: ${yamlStr(src.id)}\n` +
-		`    kind: ${yamlStr(src.kind)}\n` +
-		`    path: ${yamlStr(src.path)}\n` +
-		`    template: ${yamlStr(src.template)}\n` +
-		`    header:\n` +
-		`      composer: ${yamlStr(src.header.composer)}\n` +
+		`source:\n` +
+		`  kind: ${yamlStr(s.kind)}\n` +
+		`  images:${images ? `\n${images}` : ' []\n'}` +
+		`  header:\n` +
+		`    title: ${yamlStr(s.header.title)}\n` +
+		`    composer: ${yamlStr(s.header.composer)}\n` +
+		`    publisher: ${yamlStr(s.header.publisher)}\n` +
+		`    date: ${yamlStr(s.header.date)}\n` +
+		`  rights_acknowledged: ${yamlStr(s.rights_acknowledged)}\n` +
+		`pieces:${config.pieces.length ? `\n${pieces}` : ' []\n'}` +
 		`fragmentation:\n` +
 		`  strategy: ${yamlStr(config.fragmentation.strategy)}\n` +
 		`validation:\n` +
@@ -188,67 +264,86 @@ export function configToYaml(config: CampaignConfig): string {
 	);
 }
 
-/** Fill the {{TITLE}}/{{COMPOSER}}/{{LICENSE}} placeholders in the MEI template. */
-export function stampTemplate(
-	templateText: string,
-	{ title, composer, license }: { title?: string; composer?: string; license?: string }
-): string {
-	return templateText
-		.replaceAll('{{TITLE}}', xmlEscape(title))
-		.replaceAll('{{COMPOSER}}', xmlEscape(composer))
-		.replaceAll('{{LICENSE}}', xmlEscape(license));
+const taskId = (n: number): string => `T${String(n).padStart(4, '0')}`;
+const preTaskId = (n: number): string => `P${String(n).padStart(4, '0')}`;
+
+/**
+ * Per piece, the 1-based page numbers carrying at least one measure — the pages
+ * that become their own encoding task. Keyed by piece id.
+ */
+export type PieceSurfaces = Record<string, number[]>;
+
+/** The pages a facsimile piece is split by: measured pages, else the pages it covers. */
+function surfacesFor(piece: ConfigPiece, surfaces?: PieceSurfaces): number[] {
+	const measured = surfaces?.[piece.id];
+	if (measured) return [...measured].sort((a, b) => a - b);
+	return [...new Set(piece.zones.map((zone) => zone.surface))].sort((a, b) => a - b);
 }
 
-const taskId = (n: number): string => `T${String(n).padStart(4, '0')}`;
-
-// The 1-based page numbers (surface ids) that carry at least one measure, in
-// upload order — the pages that become their own encoding task. Empty when no
-// per-page counts were supplied.
-function pagesWithMeasures(pageMeasureCounts?: number[]): number[] {
-	return (pageMeasureCounts ?? []).flatMap((count, i) => (count > 0 ? [i + 1] : []));
+/** One planned task: the row pair the task and state tables each emit for it. */
+export interface PlannedTask {
+	id: string;
+	fragment: string;
+	locator: string;
+	dependsOn: string;
 }
 
 /**
- * Build the task table.
+ * The campaign's tasks, in table order.
  *
- * `mei-template` (`whole` strategy): one encoding task T0001 spanning the entire
- * source (task row, empty subtask_id) with one validation subtask S0001 — empty
- * locators address the whole file, allow/blocklists are open.
+ * Each facsimile piece opens with its own measure-correction pre-task
+ * (DESIGN.md §7a, locator `measure-zones`) covering measure boxes and numbers,
+ * page/system breaks and movement boundaries; its encoding is then split into
+ * one task per page carrying measures (locator `surface-N`, matching that
+ * page's `<pb>`), each depending on that piece's pre-task. A facsimile piece
+ * with no measured pages falls back to a single whole-file encoding task.
  *
- * A facsimile source prepends one pre-task (DESIGN.md §7a): P0001 corrects the
- * detected measures (locator `measure-zones`, with a validation subtask) —
- * measure boxes and numbers, page/system breaks, and movement boundaries in
- * one task. It then splits the encoding into one task per page that carries
- * measures (locator `surface-N`, matching the page's `<pb>`), each with its own
- * validation subtask and each depending on the pre-task; a page task's PR is
- * joined back into the shared score by page (mei-page-splice.ts). Without
- * per-page counts (e.g. re-init with no page data) it falls back to one whole
- * encoding task T0001.
+ * An encoded piece is already notated, so it gets one whole-file task and no
+ * pre-task.
+ *
+ * Task numbers run continuously across pieces while pre-task numbers run across
+ * facsimile pieces only, so every id is unique campaign-wide. Both tables are
+ * rendered from this one plan so they cannot fall out of step.
  */
-export function buildTaskCsv(config: CampaignConfig, pageMeasureCounts?: number[]): string {
-	const fragment = config.sources[0].path;
-	const lines = [csvRow(TASK_COLUMNS)];
-
-	if (config.sources[0].kind !== 'facsimile') {
-		lines.push(csvRow(['T0001', '', fragment, '', '', '', '']));
-		lines.push(csvRow(['T0001', 'S0001', fragment, '', '', '', '']));
-		return `${lines.join('\n')}\n`;
+export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): PlannedTask[] {
+	const planned: PlannedTask[] = [];
+	let tasks = 0;
+	let preTasks = 0;
+	for (const piece of config.pieces) {
+		if (piece.kind !== 'facsimile') {
+			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: '' });
+			continue;
+		}
+		const pre = preTaskId(++preTasks);
+		planned.push({ id: pre, fragment: piece.path, locator: 'measure-zones', dependsOn: '' });
+		const pages = surfacesFor(piece, surfaces);
+		if (pages.length === 0) {
+			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: pre });
+		} else {
+			for (const page of pages) {
+				planned.push({
+					id: taskId(++tasks),
+					fragment: piece.path,
+					locator: `surface-${page}`,
+					dependsOn: pre
+				});
+			}
+		}
 	}
+	return planned;
+}
 
-	lines.push(csvRow(['P0001', '', fragment, 'measure-zones', '', '', '']));
-	lines.push(csvRow(['P0001', 'S0001', fragment, 'measure-zones', '', '', '']));
-
-	const pages = pagesWithMeasures(pageMeasureCounts);
-	if (pages.length === 0) {
-		lines.push(csvRow(['T0001', '', fragment, '', '', '', 'P0001']));
-		lines.push(csvRow(['T0001', 'S0001', fragment, '', '', '', '']));
-	} else {
-		pages.forEach((page, i) => {
-			const id = taskId(i + 1);
-			const locator = `surface-${page}`;
-			lines.push(csvRow([id, '', fragment, locator, '', '', 'P0001']));
-			lines.push(csvRow([id, 'S0001', fragment, locator, '', '', '']));
-		});
+/**
+ * Build the task table: for every planned task a task row (empty subtask_id)
+ * and one validation subtask S0001. Empty locators address the whole fragment;
+ * allow/blocklists are open. A page task's PR is joined back into its piece's
+ * score by page (mei-page-splice.ts).
+ */
+export function buildTaskCsv(config: CampaignConfig, surfaces?: PieceSurfaces): string {
+	const lines = [csvRow(TASK_COLUMNS)];
+	for (const { id, fragment, locator, dependsOn } of planTasks(config, surfaces)) {
+		lines.push(csvRow([id, '', fragment, locator, '', '', dependsOn]));
+		lines.push(csvRow([id, 'S0001', fragment, locator, '', '', '']));
 	}
 	return `${lines.join('\n')}\n`;
 }
@@ -256,34 +351,16 @@ export function buildTaskCsv(config: CampaignConfig, pageMeasureCounts?: number[
 /**
  * Build the initial state table: task rows start at encoding_required,
  * validation subtasks at pending, with empty validate_status_1…n cells. Its
- * rows mirror buildTaskCsv one-for-one (same pre-task and per-page tasks).
+ * rows mirror buildTaskCsv one-for-one.
  */
-export function buildStateCsv(config: CampaignConfig, pageMeasureCounts?: number[]): string {
+export function buildStateCsv(config: CampaignConfig, surfaces?: PieceSurfaces): string {
 	const count = config.validation?.required_validations ?? 0;
 	const validationCols = Array.from({ length: count }, (_, i) => `validate_status_${i + 1}`);
-	const header = [...STATE_BASE_COLUMNS, ...validationCols];
 	const empty = validationCols.map(() => '');
-	const lines = [csvRow(header)];
-	const task = (id: string) => lines.push(csvRow([id, '', 'encoding_required', '', '', ...empty]));
-	const subtask = (id: string) => lines.push(csvRow([id, 'S0001', 'pending', '', '', ...empty]));
-
-	if (config.sources[0].kind !== 'facsimile') {
-		task('T0001');
-		subtask('T0001');
-		return `${lines.join('\n')}\n`;
-	}
-
-	task('P0001');
-	subtask('P0001');
-	const pages = pagesWithMeasures(pageMeasureCounts);
-	if (pages.length === 0) {
-		task('T0001');
-		subtask('T0001');
-	} else {
-		pages.forEach((_page, i) => {
-			task(taskId(i + 1));
-			subtask(taskId(i + 1));
-		});
+	const lines = [csvRow([...STATE_BASE_COLUMNS, ...validationCols])];
+	for (const { id } of planTasks(config, surfaces)) {
+		lines.push(csvRow([id, '', 'encoding_required', '', '', ...empty]));
+		lines.push(csvRow([id, 'S0001', 'pending', '', '', ...empty]));
 	}
 	return `${lines.join('\n')}\n`;
 }

@@ -111,6 +111,95 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 504)
         self.assertEqual(response.get_json(), {"error": "Upstream request timed out"})
 
+    @staticmethod
+    def iiif_response(content=b"{}", content_type="application/json", status=200):
+        return SimpleNamespace(
+            status_code=status,
+            is_redirect=False,
+            is_permanent_redirect=False,
+            headers={"content-type": content_type},
+            iter_content=lambda _size: [content],
+            close=lambda: None,
+        )
+
+    def test_iiif_requires_authentication_and_a_url(self):
+        self.assertEqual(self.client.get("/iiif?url=https://ex.test/m").status_code, 401)
+        self.authenticate()
+        self.assertEqual(self.client.get("/iiif").status_code, 400)
+
+    def test_iiif_rejects_non_https_and_unroutable_hosts(self):
+        self.authenticate()
+        # A plain-http target never reaches DNS resolution.
+        response = self.client.get("/iiif?url=http://ex.test/m")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "Only https URLs are allowed")
+
+        # Anything resolving to a private/loopback address is refused, so the
+        # relay cannot be steered at the broker's own network.
+        for address in ("127.0.0.1", "169.254.169.254", "10.0.0.5", "::1"):
+            with patch.object(
+                broker.socket,
+                "getaddrinfo",
+                return_value=[(None, None, None, None, (address, 0))],
+            ):
+                with patch.object(broker.requests, "get") as upstream:
+                    response = self.client.get("/iiif?url=https://ex.test/m")
+                self.assertEqual(response.status_code, 400, address)
+                upstream.assert_not_called()
+
+    def test_iiif_relays_without_credentials_and_caps_the_body(self):
+        self.authenticate()
+        with patch.object(broker, "resolves_to_public_address", return_value=True):
+            with patch.object(
+                broker.requests, "get", return_value=self.iiif_response(b'{"ok":1}')
+            ) as upstream:
+                response = self.client.get("/iiif?url=https://ex.test/manifest")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b'{"ok":1}')
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "iiif")
+        # The session's GitHub token must never be attached to a third party.
+        self.assertNotIn("Authorization", upstream.call_args.kwargs["headers"])
+        self.assertFalse(upstream.call_args.kwargs["allow_redirects"])
+
+        oversized = SimpleNamespace(
+            status_code=200,
+            is_redirect=False,
+            is_permanent_redirect=False,
+            headers={"content-type": "image/jpeg"},
+            iter_content=lambda _size: [b"x" * (broker.IIIF_MAX_BYTES + 1)],
+            close=lambda: None,
+        )
+        with patch.object(broker, "resolves_to_public_address", return_value=True):
+            with patch.object(broker.requests, "get", return_value=oversized):
+                response = self.client.get("/iiif?url=https://ex.test/big.jpg")
+        self.assertEqual(response.status_code, 413)
+
+    def test_iiif_rejects_unexpected_content_and_revalidates_redirects(self):
+        self.authenticate()
+        with patch.object(broker, "resolves_to_public_address", return_value=True):
+            with patch.object(
+                broker.requests,
+                "get",
+                return_value=self.iiif_response(b"<html>", "text/html"),
+            ):
+                response = self.client.get("/iiif?url=https://ex.test/page")
+        self.assertEqual(response.status_code, 415)
+
+        # A redirect to a private address must be caught on the second hop.
+        redirect = SimpleNamespace(
+            status_code=302,
+            is_redirect=True,
+            is_permanent_redirect=False,
+            headers={"location": "https://internal.test/secret"},
+            close=lambda: None,
+        )
+        with patch.object(
+            broker, "resolves_to_public_address", side_effect=[True, False]
+        ):
+            with patch.object(broker.requests, "get", return_value=redirect):
+                response = self.client.get("/iiif?url=https://ex.test/m")
+        self.assertEqual(response.status_code, 400)
+
     def test_logout_revokes_then_clears_the_session(self):
         self.authenticate()
         with patch.object(broker, "revoke_github_token") as revoke:
