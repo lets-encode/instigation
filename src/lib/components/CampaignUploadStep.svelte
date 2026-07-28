@@ -2,19 +2,18 @@
   Wizard step 2: what the campaign is built from — page images, PDFs, existing
   encodings, a IIIF manifest, or nothing at all.
 
-  This is where the campaign repository is created: on Continue the upload is
-  prepared and the page images are committed, so later steps work against a real
-  repository. The repository is created under the name the first step reserved,
-  and that same name is registered against it once it exists, so the repository
-  name and the campaign's address are one value rather than two that agree.
-  Configuration, tracking tables and the piece MEIs are written by the final
-  step, not here. Because the repository outlives a failure after it exists, a
-  retry re-runs only the commit rather than creating a second one.
+  This is where the campaign repository is created, under the name the first step
+  reserved: on Continue the upload is prepared and the page images are committed,
+  so later steps work against a real repository. The reservation keeps the name
+  through all of this; it is registered as a campaign by the final step, once
+  there is a campaign to register. Configuration, tracking tables and the piece
+  MEIs are written there too, not here. Because the repository outlives a failure
+  after it exists, a retry re-runs only the commit rather than creating a second
+  one.
 -->
 <script lang="ts">
   import { auth, forge } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import { registerCampaign } from "$lib/campaign-resolve.ts";
   import {
     prepareImages,
     fetchIiifCanvasUrls,
@@ -120,12 +119,8 @@
         };
         wizard.repo = repo;
 
-        // Tag it so it shows up in the listing (non-fatal: repo already exists).
-        try {
-          await f.setRepoTopics(repo.owner, repo.name, [provider.repoTopic]);
-        } catch (err) {
-          console.warn("Could not tag new repo with topic:", (err as Error).message);
-        }
+        // The listing topic is not stamped here: it marks a campaign, and this
+        // repository is not one until the final step has set it up.
         // Give the campaign's Actions a read/write token (non-fatal for org limits).
         try {
           await f.setActionsWorkflowPermissions(repo.owner, repo.name);
@@ -135,27 +130,6 @@
             (err as Error).message,
           );
         }
-      }
-
-      // Turn the held name into the live campaign now that there is a repo id to
-      // register it against. The name was held from the first step, so this is
-      // the claim being cashed in rather than a race being run: it can only fail
-      // if the hold ran out and somebody else took the name meanwhile.
-      progress = "Registering the campaign name…";
-      const registration = await registerCampaign(
-        claim.name,
-        repo.id,
-        provider.id,
-        claim.token,
-      );
-      if (registration !== "ok") {
-        error =
-          registration === "conflict"
-            ? `The reservation of “${claim.name}” ran out and the name went to another campaign. Your repository ${repo.full_name} was created, but no campaign can be reached under that name. Reload the page to start again under a different name; this repository can be deleted on ${provider.id}.`
-            : `The repository ${repo.full_name} was created, but its name could not be registered, so the campaign would not be reachable at its address. Try again.`;
-        progress = null;
-        busy = false;
-        return;
       }
 
       // Generating from a template is asynchronous — wait until the repo has

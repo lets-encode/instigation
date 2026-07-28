@@ -15,6 +15,7 @@
     resumableDrafts,
     type WizardDraft,
   } from "$lib/wizard-draft.ts";
+  import { releaseClaim } from "$lib/campaign-resolve.ts";
   import { WIZARD_STEPS, applyDraft, stepIndex } from "$lib/wizard.svelte.ts";
   import type { PageImage } from "$lib/prepare-images.ts";
 
@@ -44,7 +45,7 @@
       // The listing is read once, and this setup may have been finished or
       // discarded in another tab since. The stored record decides, not the row.
       const stored = readDraft(draft.handle);
-      if (!stored?.entries || stored.finishedSetup) {
+      if (!stored) {
         drafts = drafts.filter((d) => d.handle !== draft.handle);
         throw new Error("it has since been finished or discarded in this browser");
       }
@@ -69,10 +70,13 @@
     progress = null;
   }
 
-  function discard(draft: WizardDraft) {
+  async function discard(draft: WizardDraft) {
     discardDraft(draft.handle);
     drafts = drafts.filter((d) => d.handle !== draft.handle);
     confirming = null;
+    // Give the name back, so it is free again straight away instead of staying
+    // reserved until the reservation runs out on its own.
+    if (draft.claim) await releaseClaim(draft.claim.name, draft.claim.token);
   }
 </script>
 
@@ -122,6 +126,10 @@
               Its repository <a href={draft.repo.html_url} target="_blank" rel="noreferrer">
                 {draft.repo.full_name}
               </a> exists already, and is completed by finishing the setup.
+              {#if confirming === draft.handle}
+                Discarding frees the name but leaves the repository — delete it
+                yourself if you don't want it.
+              {/if}
             </p>
           {/if}
         </li>

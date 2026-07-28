@@ -18,6 +18,7 @@ export function createGitHubForge(token: string): ForgeClient {
 		waitForRepoContents: (owner, repo, path, opts) => gh.waitForRepoContents(token, owner, repo, path, opts),
 		commitFiles: (owner, repo, files, message, opts) => gh.commitFiles(token, owner, repo, files, message, opts),
 		getRepoFile: (owner, repo, path, ref) => gh.getRepoFile(token, owner, repo, path, ref),
+		getRepoFileBytes: (owner, repo, path, ref) => gh.getRepoFileBytes(token, owner, repo, path, ref),
 		getRepoFileDownloadUrl: (owner, repo, path, ref) => gh.getRepoFileDownloadUrl(token, owner, repo, path, ref),
 		getDirDownloadUrls: (owner, repo, dir, ref) => gh.getDirDownloadUrls(token, owner, repo, dir, ref),
 		getRepoHead: (owner, repo) => gh.getRepoHead(token, owner, repo),

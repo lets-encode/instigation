@@ -10,9 +10,9 @@
 // uploaded are not kept. Uploaded encodings are MEI text and are stored as they
 // are, since nothing else holds them until the final step commits them.
 //
-// Once the last step has committed the campaign the record is replaced by a
-// completion marker: `finishedSetup` stays behind so a finished setup is never
-// offered for continuing, and the entries it no longer needs are dropped.
+// A record exists only while a setup is unfinished: once the last step has
+// committed the campaign, the record is removed. So every record here describes
+// something that can be continued.
 
 import type { EncodingSource, PageImage } from './prepare-images.ts';
 import type { SourceMetadata } from './source-metadata.ts';
@@ -47,8 +47,6 @@ export interface WizardDraft {
 	owner: string;
 	/** The campaign's name, which is also this record's key. */
 	handle: string;
-	/** True once the wizard's last step has committed the campaign. */
-	finishedSetup: boolean;
 	/** ISO timestamp of the last write. */
 	updatedAt: string;
 	/**
@@ -59,8 +57,7 @@ export interface WizardDraft {
 	claim: WizardClaim | null;
 	/** The campaign repository, once the upload step has created it. */
 	repo: WizardRepo | null;
-	/** Absent on a finished setup's record. */
-	entries?: DraftEntries;
+	entries: DraftEntries;
 }
 
 const draftKey = (handle: string) => `${KEY_PREFIX}${handle}`;
@@ -70,7 +67,7 @@ const store = () => (typeof localStorage === 'undefined' ? null : localStorage);
 
 /**
  * A record from its stored JSON, or null if it is absent, unreadable, of another
- * version, or missing the entries an unfinished setup needs.
+ * version, or missing the entries a setup needs to be continued.
  */
 export function parseDraft(text: string | null): WizardDraft | null {
 	if (!text) return null;
@@ -85,7 +82,6 @@ export function parseDraft(text: string | null): WizardDraft | null {
 	if (draft.version !== DRAFT_VERSION) return null;
 	if (typeof draft.handle !== 'string' || !draft.handle) return null;
 	if (typeof draft.owner !== 'string') return null;
-	if (draft.finishedSetup) return draft;
 	const entries = draft.entries;
 	if (!entries || typeof entries !== 'object') return null;
 	if (!Array.isArray(entries.imagePaths)) return null;
@@ -120,24 +116,6 @@ export function discardDraft(handle: string): void {
 }
 
 /**
- * Replace a setup's record with its completion marker. Written even when no
- * draft was stored, so a setup that completed cannot be started again from a
- * record written afterwards.
- */
-export function finishDraft(handle: string, owner: string, repo: WizardRepo | null): string | null {
-	return writeDraft({
-		version: DRAFT_VERSION,
-		owner,
-		handle,
-		finishedSetup: true,
-		updatedAt: new Date().toISOString(),
-		// A finished setup has registered its name, so there is no claim left to keep.
-		claim: null,
-		repo
-	});
-}
-
-/**
  * The setups `owner` can continue, most recently changed first. Records of other
  * accounts are left out: continuing a setup creates the repository on the
  * account that is signed in.
@@ -150,7 +128,7 @@ export function resumableDrafts(owner: string): WizardDraft[] {
 		const key = storage.key(i);
 		if (!key?.startsWith(KEY_PREFIX)) continue;
 		const draft = parseDraft(storage.getItem(key));
-		if (draft && !draft.finishedSetup && draft.owner === owner) drafts.push(draft);
+		if (draft && draft.owner === owner) drafts.push(draft);
 	}
 	return drafts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -158,30 +136,34 @@ export function resumableDrafts(owner: string): WizardDraft[] {
 /**
  * The bytes of a draft's page images, read back from the repository the upload
  * step committed them to. The result follows `paths`, which is page order.
+ *
+ * Read through the API rather than from each file's download URL: a page
+ * displayed from raw.githubusercontent.com is an image the browser loads, while
+ * reading its bytes is a connection this app only makes to the API.
  */
 export async function fetchDraftImages(
-	forge: Pick<ForgeClient, 'getDirDownloadUrls'>,
+	forge: Pick<ForgeClient, 'getRepoFileBytes'>,
 	repo: { owner: string; name: string },
 	paths: string[],
 	onProgress?: (done: number, total: number) => void
 ): Promise<PageImage[]> {
-	// One listing per directory: the download URLs come from the directory
-	// listing, and every page image of a campaign sits in the same one.
-	const listings = new Map<string, Record<string, string>>();
 	const images: PageImage[] = [];
 	for (const path of paths) {
-		const slash = path.lastIndexOf('/');
-		const dir = slash < 0 ? '' : path.slice(0, slash);
-		const name = path.slice(slash + 1);
-		if (!listings.has(dir)) {
-			listings.set(dir, await forge.getDirDownloadUrls(repo.owner, repo.name, dir));
-		}
-		const url = listings.get(dir)?.[name];
-		if (!url) throw new Error(`${path} is no longer in ${repo.owner}/${repo.name}.`);
-		const response = await fetch(url);
-		if (!response.ok) throw new Error(`Could not read ${path} (${response.status}).`);
-		images.push({ path, blob: await response.blob() });
+		const blob = await forge.getRepoFileBytes(repo.owner, repo.name, path);
+		if (!blob) throw new Error(`${path} is no longer in ${repo.owner}/${repo.name}.`);
+		images.push({ path, blob: asImageBlob(blob, path) });
 		onProgress?.(images.length, paths.length);
 	}
 	return images;
+}
+
+/**
+ * The same bytes under an image media type, taken from the file's extension when
+ * they arrive under another one. A blob URL is displayed according to the type
+ * its blob records, so bytes labelled anything else do not render as an image.
+ */
+function asImageBlob(blob: Blob, path: string): Blob {
+	if (blob.type.startsWith('image/')) return blob;
+	const type = /\.png$/i.test(path) ? 'image/png' : 'image/jpeg';
+	return new Blob([blob], { type });
 }

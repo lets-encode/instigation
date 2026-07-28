@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import { auth, login } from "$lib/auth.svelte.ts";
-  import { draftEntries, saveDraft, wizard } from "$lib/wizard.svelte.ts";
+  import { draftSnapshot, saveDraft, wizard } from "$lib/wizard.svelte.ts";
   import CampaignNameStep from "$lib/components/CampaignNameStep.svelte";
   import CampaignLicenseStep from "$lib/components/CampaignLicenseStep.svelte";
   import CampaignUploadStep from "$lib/components/CampaignUploadStep.svelte";
@@ -23,16 +23,21 @@
   const atStart = $derived(!auth.user || wizard.step === "name");
 
   // Mirror the wizard's entries into the browser as they change, so a setup
-  // interrupted here can be continued from the listing above. The entries are
+  // interrupted here can be continued from the listing above. The draft is
   // collected on every change but written on a debounce, since one write
-  // serialises the whole draft.
+  // serialises all of it; a page about to go away — a Back press, a closed tab —
+  // writes what is pending first, so the last edits before it are kept.
   $effect(() => {
     const owner = auth.user?.login;
-    const handle = wizard.handle;
-    const entries = draftEntries();
+    const snapshot = draftSnapshot();
     if (!owner) return;
-    const timer = setTimeout(() => saveDraft(owner, handle, entries), 500);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(() => saveDraft(owner, snapshot), 500);
+    const flush = () => saveDraft(owner, snapshot);
+    addEventListener("pagehide", flush);
+    return () => {
+      clearTimeout(timer);
+      removeEventListener("pagehide", flush);
+    };
   });
 </script>
 

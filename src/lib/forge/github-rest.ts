@@ -492,6 +492,33 @@ export async function getRepoFile(
 }
 
 /**
+ * A repo file's bytes, read through the API rather than from a download URL, so
+ * the request goes to a host the browser is allowed to connect to and carries
+ * the session's credentials. The `raw` media type returns the file inline for
+ * anything up to 100 MB. Returns null if the path or ref is absent.
+ */
+export async function getRepoFileBytes(
+	token: string,
+	owner: string,
+	repo: string,
+	path: string,
+	ref?: string
+): Promise<Blob | null> {
+	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, {
+		headers: {
+			...baseHeaders,
+			...authHeaders(token),
+			Accept: 'application/vnd.github.raw'
+		},
+		cache: 'no-store'
+	});
+	if (res.status === 404) return null;
+	if (!res.ok) throw new Error(`Failed to fetch ${path} (${res.status})`);
+	return await res.blob();
+}
+
+/**
  * Get a temporary direct-download URL for a repo file (the Contents API's
  * `download_url`). For PRIVATE repos this is a raw.githubusercontent.com URL
  * with a short-lived `token` embedded, so it can be fetched without auth headers

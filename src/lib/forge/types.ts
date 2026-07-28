@@ -66,6 +66,8 @@ export interface ForgeClient {
 	): Promise<string>;
 	/** A repo file's UTF-8 content, or null if absent. */
 	getRepoFile(owner: string, repo: string, path: string, ref?: string): Promise<string | null>;
+
+	getRepoFileBytes(owner: string, repo: string, path: string, ref?: string): Promise<Blob | null>;
 	/** A temporary direct-download URL for a repo file (tokenised for private repos). */
 	getRepoFileDownloadUrl(owner: string, repo: string, path: string, ref?: string): Promise<string | null>;
 	/** A repo directory's files mapped to their temporary download URLs, in one request. */

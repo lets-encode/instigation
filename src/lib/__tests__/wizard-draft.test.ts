@@ -4,7 +4,6 @@ import {
 	DRAFT_VERSION,
 	discardDraft,
 	fetchDraftImages,
-	finishDraft,
 	parseDraft,
 	readDraft,
 	resumableDrafts,
@@ -55,7 +54,6 @@ const draft = (over: Partial<WizardDraft> = {}): WizardDraft => ({
 	version: DRAFT_VERSION,
 	owner: 'ada',
 	handle: 'symphony-9',
-	finishedSetup: false,
 	updatedAt: '2026-07-28T10:00:00.000Z',
 	claim: null,
 	repo: null,
@@ -82,7 +80,7 @@ test('rejects records that are unreadable, of another version, or incomplete', (
 	assert.equal(parseDraft('"a string"'), null);
 	assert.equal(parseDraft(JSON.stringify({ ...draft(), version: DRAFT_VERSION + 1 })), null);
 	assert.equal(parseDraft(JSON.stringify({ ...draft(), handle: '' })), null);
-	// An unfinished setup without its entries cannot be continued.
+	// A record without its entries cannot be continued, so it is not a record.
 	assert.equal(parseDraft(JSON.stringify({ ...draft(), entries: undefined })), null);
 	assert.equal(
 		parseDraft(JSON.stringify({ ...draft(), entries: { ...entries(), pieces: 'one' } })),
@@ -94,7 +92,6 @@ test('lists the signed-in account’s unfinished setups, most recently changed f
 	writeDraft(draft({ handle: 'older', updatedAt: '2026-07-01T00:00:00.000Z' }));
 	writeDraft(draft({ handle: 'newer', updatedAt: '2026-07-27T00:00:00.000Z' }));
 	writeDraft(draft({ handle: 'someone-elses', owner: 'grace' }));
-	writeDraft(draft({ handle: 'done', finishedSetup: true, entries: undefined }));
 	assert.deepEqual(
 		resumableDrafts('ada').map((d) => d.handle),
 		['newer', 'older']
@@ -102,22 +99,14 @@ test('lists the signed-in account’s unfinished setups, most recently changed f
 	assert.deepEqual(resumableDrafts('grace').map((d) => d.handle), ['someone-elses']);
 });
 
-test('finishing replaces the entries with the completion marker', () => {
-	writeDraft(draft({ repo: null }));
-	const repo = {
-		owner: 'ada',
-		name: 'symphony-9',
-		full_name: 'ada/symphony-9',
-		html_url: 'https://example.test/ada/symphony-9',
-		id: 42
-	};
-	finishDraft('symphony-9', 'ada', repo);
-	const stored = readDraft('symphony-9');
-	assert.equal(stored?.finishedSetup, true);
-	assert.equal(stored?.entries, undefined);
-	assert.deepEqual(stored?.repo, repo);
-	// A finished setup is never offered for continuing again.
+test('a finished setup leaves nothing to continue', () => {
+	// The wizard discards the record once the campaign is committed, so there is
+	// no trace of it here afterwards.
+	writeDraft(draft());
+	discardDraft('symphony-9');
+	assert.equal(readDraft('symphony-9'), null);
 	assert.deepEqual(resumableDrafts('ada'), []);
+	assert.deepEqual([...items.keys()], []);
 });
 
 test('reports the browser refusing a write rather than throwing', () => {
@@ -136,40 +125,44 @@ test('reports the browser refusing a write rather than throwing', () => {
 	assert.equal(writeDraft(draft()), 'quota exceeded');
 });
 
-test('reads the page images back in page order, listing each directory once', async () => {
-	const listed: string[] = [];
-	const fetched: string[] = [];
-	const original = globalThis.fetch;
-	globalThis.fetch = (async (url: string) => {
-		fetched.push(String(url));
-		return { ok: true, blob: async () => new Blob([String(url)]) };
-	}) as typeof fetch;
-	try {
-		const images = await fetchDraftImages(
-			{
-				getDirDownloadUrls: async (_owner, _repo, dir) => {
-					listed.push(dir);
-					return { '01.jpg': 'https://raw.test/01.jpg', '02.jpg': 'https://raw.test/02.jpg' };
-				}
-			},
-			{ owner: 'ada', name: 'symphony-9' },
-			['img/02.jpg', 'img/01.jpg']
-		);
-		assert.deepEqual(
-			images.map((image) => image.path),
-			['img/02.jpg', 'img/01.jpg']
-		);
-		assert.deepEqual(listed, ['img']);
-		assert.deepEqual(fetched, ['https://raw.test/02.jpg', 'https://raw.test/01.jpg']);
-	} finally {
-		globalThis.fetch = original;
-	}
+test('reads the page images back through the API, in page order', async () => {
+	const read: string[] = [];
+	const images = await fetchDraftImages(
+		{
+			getRepoFileBytes: async (_owner, _repo, path) => {
+				read.push(path);
+				return new Blob([path]);
+			}
+		},
+		{ owner: 'ada', name: 'symphony-9' },
+		['img/02.jpg', 'img/01.jpg']
+	);
+	assert.deepEqual(
+		images.map((image) => image.path),
+		['img/02.jpg', 'img/01.jpg']
+	);
+	assert.deepEqual(read, ['img/02.jpg', 'img/01.jpg']);
+});
+
+test('labels the bytes as an image, whatever media type they arrive under', async () => {
+	const images = await fetchDraftImages(
+		{
+			getRepoFileBytes: async (_owner, _repo, path) =>
+				new Blob([path], { type: 'application/vnd.github.raw' })
+		},
+		{ owner: 'ada', name: 'symphony-9' },
+		['img/01.jpg', 'img/02.PNG']
+	);
+	assert.deepEqual(
+		images.map((image) => image.blob.type),
+		['image/jpeg', 'image/png']
+	);
 });
 
 test('fails when an image is no longer in the repository', async () => {
 	await assert.rejects(
 		fetchDraftImages(
-			{ getDirDownloadUrls: async () => ({}) },
+			{ getRepoFileBytes: async () => null },
 			{ owner: 'ada', name: 'symphony-9' },
 			['img/01.jpg']
 		),

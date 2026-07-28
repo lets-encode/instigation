@@ -16,8 +16,6 @@ import { DEFAULT_LICENSE } from './licenses.ts';
 import {
 	DRAFT_VERSION,
 	discardDraft,
-	finishDraft,
-	readDraft,
 	writeDraft,
 	type DraftEntries,
 	type WizardDraft
@@ -164,45 +162,57 @@ export const draftStatus = $state<{ saveError: string | null }>({ saveError: nul
 // repository exists would otherwise leave its earlier draft behind.
 let savedHandle: string | null = null;
 
+/** Everything a draft record carries, apart from the account it belongs to. */
+export interface DraftSnapshot {
+	handle: string;
+	claim: WizardClaim | null;
+	repo: WizardRepo | null;
+	entries: DraftEntries;
+}
+
 /**
- * The entries to store, read out of the wizard state. Separate from storing them
- * so a caller can collect them reactively and write on a debounce.
+ * A draft's contents, read out of the wizard state. Every stored field is read
+ * here and nowhere else, so a caller collecting this inside a reactive effect
+ * depends on all of them, and can write the result on a debounce.
  */
-export function draftEntries(): DraftEntries {
+export function draftSnapshot(): DraftSnapshot {
 	return {
-		step: wizard.step,
-		title: wizard.title,
-		description: wizard.description,
-		license: wizard.license,
-		iiifManifestUrl: wizard.iiifManifestUrl,
-		copyrightAccepted: wizard.copyrightAccepted,
-		imagePaths: wizard.images.map((image) => image.path),
-		encodings: wizard.encodings.map((encoding) => ({ ...encoding })),
-		source: $state.snapshot(wizard.source),
-		pieces: $state.snapshot(wizard.pieces)
+		handle: wizard.handle,
+		claim: wizard.claim ? { ...wizard.claim } : null,
+		repo: wizard.repo ? { ...wizard.repo } : null,
+		entries: {
+			step: wizard.step,
+			title: wizard.title,
+			description: wizard.description,
+			license: wizard.license,
+			iiifManifestUrl: wizard.iiifManifestUrl,
+			copyrightAccepted: wizard.copyrightAccepted,
+			imagePaths: wizard.images.map((image) => image.path),
+			encodings: wizard.encodings.map((encoding) => ({ ...encoding })),
+			source: $state.snapshot(wizard.source),
+			pieces: $state.snapshot(wizard.pieces)
+		}
 	};
 }
 
 /**
  * Store what has been entered, under the campaign's name. Nothing is stored
  * while the name step is open, so a draft always has a name to be listed and
- * continued under, and nothing is stored once the setup has been finished.
+ * continued under.
  */
-export function saveDraft(owner: string, handle: string, entries: DraftEntries): void {
-	const name = handle.trim();
-	if (!owner || !name || entries.step === 'name') return;
-	if (readDraft(name)?.finishedSetup) return;
+export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
+	const name = snapshot.handle.trim();
+	if (!owner || !name || snapshot.entries.step === 'name') return;
 	if (savedHandle && savedHandle !== name) discardDraft(savedHandle);
 	savedHandle = name;
 	draftStatus.saveError = writeDraft({
 		version: DRAFT_VERSION,
 		owner,
 		handle: name,
-		finishedSetup: false,
 		updatedAt: new Date().toISOString(),
-		claim: wizard.claim ? { ...wizard.claim } : null,
-		repo: wizard.repo ? { ...wizard.repo } : null,
-		entries
+		claim: snapshot.claim,
+		repo: snapshot.repo,
+		entries: snapshot.entries
 	});
 }
 
@@ -234,8 +244,12 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
 }
 
 /**
- * Record that the setup completed, so it is not offered for continuing again.
+ * Clear a setup that has completed: its draft is dropped, since there is a
+ * campaign now and nothing left to continue, and the wizard is emptied for the
+ * next one. Emptying it is also what stops a later save from storing the finished
+ * setup again — saveDraft keeps nothing without a name.
  */
-export function markSetupFinished(owner: string): void {
-	finishDraft(wizard.handle.trim(), owner, wizard.repo);
+export function clearFinishedSetup(): void {
+	discardDraft(wizard.handle.trim());
+	resetWizard();
 }

@@ -17,7 +17,8 @@
   import type { RepoSummary } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
 
-  // Existing campaigns, to catch a name already used by one of them.
+  // Finished campaigns, to catch a name already used by one of them. Setups still
+  // in progress are not among them; the registry's reservations cover those.
   let campaignRepos = $state<RepoSummary[]>([]);
 
   $effect(() => {

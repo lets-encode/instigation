@@ -10,7 +10,8 @@
   import { onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { auth, forge } from "$lib/auth.svelte.ts";
-  import { automation, measureDetectorUrl } from "$lib/forge/config.ts";
+  import { provider, automation, measureDetectorUrl } from "$lib/forge/config.ts";
+  import { registerCampaign } from "$lib/campaign-resolve.ts";
   import { imageSize } from "$lib/prepare-images.ts";
   import {
     buildCampaignConfig,
@@ -40,8 +41,7 @@
   import {
     wizard,
     previousStep,
-    markSetupFinished,
-    resetWizard,
+    clearFinishedSetup,
     COPYRIGHT_ACKNOWLEDGEMENT,
   } from "$lib/wizard.svelte.ts";
   import type { FileChange } from "$lib/forge/types.ts";
@@ -138,9 +138,17 @@
     const user = auth.user;
     const f = forge();
     const repo = wizard.repo;
+    const claim = wizard.claim;
     if (busy) return;
     if (!user || !f) {
       error = "You are no longer signed in. Log in again to finish the campaign.";
+      return;
+    }
+    if (!claim) {
+      // The name is reserved by the first step and registered here; without it
+      // the campaign would have nowhere to live.
+      error =
+        "This campaign has no name reserved. Go back to the first step and continue from there.";
       return;
     }
     if (!repo) {
@@ -240,11 +248,50 @@
         "Initialise campaign",
       );
 
-      // The campaign is committed, so this setup is complete: its draft becomes
-      // a completion marker, and the wizard is emptied for the next campaign.
-      markSetupFinished(user.login);
+      // There is a campaign now, so the name it was reserved under becomes its
+      // address. This is the reservation being cashed in, not a race: the name
+      // has been held since the first step. It can only fail if the reservation
+      // ran out and somebody else took the name in the meantime — in which case
+      // the setup stays resumable rather than being marked finished.
+      progress = "Registering the campaign name…";
+      const registration = await registerCampaign(
+        claim.name,
+        repo.id,
+        provider.id,
+        claim.token,
+      );
+      if (registration !== "ok") {
+        error =
+          registration === "conflict"
+            ? `The reservation of “${claim.name}” ran out and the name went to another campaign. Everything was committed to ${repo.full_name}, but it cannot be reached under that name.`
+            : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
+        busy = false;
+        progress = null;
+        return;
+      }
+
+      // The topic is what puts a campaign in the listing, so a campaign missing it
+      // is not finished and the setup stays open. Retrying runs this whole step
+      // again, which both the commit and the registration tolerate.
+      progress = "Adding it to the list of campaigns…";
+      try {
+        await f.setRepoTopics(repo.owner, repo.name, [provider.repoTopic]);
+      } catch (err) {
+        console.error("Could not tag the campaign with its topic:", (err as Error).message);
+        error =
+          `Everything was committed to ${repo.full_name} and “${claim.name}” is registered, so ` +
+          `the campaign already works at /campaign/${claim.name}. It is not in the list of ` +
+          `campaigns yet, so the setup stays open — retry to add it: ${(err as Error).message}`;
+        busy = false;
+        progress = null;
+        return;
+      }
+
+      // The campaign is committed, reachable and listed, so the setup is done: it
+      // is cleared once the campaign has opened, since emptying the wizard while
+      // this step is still on screen would show the first step again.
       await goto(`/campaign/${repo.name}`);
-      resetWizard();
+      clearFinishedSetup();
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
       error = `Could not finish the campaign: ${(err as Error).message}`;

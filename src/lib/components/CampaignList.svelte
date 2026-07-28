@@ -2,6 +2,11 @@
   The campaigns built from this template, as the forge reports them. Anonymous
   visitors see the public ones; signing in also surfaces the viewer's own
   private repositories.
+
+  The listing is the repositories carrying the campaign topic, which the wizard
+  stamps only once a setup is finished — so a repository whose setup was abandoned
+  part-way is not listed here. Unfinished setups are offered for continuing by
+  CampaignDrafts instead.
 -->
 <script lang="ts">
   import { auth } from "$lib/auth.svelte.ts";
