@@ -5,10 +5,11 @@
 //
 // A record holds less than the wizard's state. `File` objects and image bytes
 // cannot be stored, so a draft keeps the repository-relative paths of the page
-// images the upload step committed and reads their bytes back from the
-// repository when the setup is continued; files that were picked but not yet
-// uploaded are not kept. Uploaded encodings are MEI text and are stored as they
-// are, since nothing else holds them until the final step commits them.
+// images the pages step committed and reads their bytes back from the repository
+// when the setup is continued; files that were picked but not yet uploaded, and
+// the candidate pages read from them, are not kept. Uploaded encodings are MEI
+// text and are stored as they are, since nothing else holds them until the final
+// step commits them.
 //
 // A record exists only while a setup is unfinished: once the last step has
 // committed the campaign, the record is removed. So every record here describes
@@ -55,7 +56,7 @@ export interface WizardDraft {
 	 * again and find it gone.
 	 */
 	claim: WizardClaim | null;
-	/** The campaign repository, once the upload step has created it. */
+	/** The campaign repository, once the pages step has created it. */
 	repo: WizardRepo | null;
 	entries: DraftEntries;
 }

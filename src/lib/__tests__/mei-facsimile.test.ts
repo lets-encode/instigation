@@ -5,6 +5,7 @@ import {
 	buildFacsimileMei,
 	initialFacsimileModel,
 	parseFacsimileMei,
+	relinkFacsimileImages,
 	sortReadingOrder,
 	nextLabel,
 	type FacsimilePage,
@@ -193,4 +194,46 @@ test('a page with no detected measures still emits its surface', () => {
 	);
 	assert.equal((mei.match(/<surface /g) ?? []).length, 1);
 	assert.equal((mei.match(/<zone /g) ?? []).length, 0);
+});
+
+test('parseFacsimileMei reads a body that carries attributes', () => {
+	const mei =
+		`<mei><meiHead><fileDesc/></meiHead><music><body xml:id="b1"><mdiv><score><section>` +
+		`<pb xml:id="p1" facs="#z1"/><measure xml:id="m1" facs="#z1" n="1"/>` +
+		`</section></score></mdiv></body></music>` +
+		`<facsimile><surface ulx="0" uly="0" lrx="799" lry="599">` +
+		`<graphic target="img/01.jpg" width="800" height="600"/>` +
+		`<zone xml:id="z1" type="measure" ulx="10" uly="20" lrx="110" lry="120"/>` +
+		`</surface></facsimile></mei>`;
+	const parsed = parseFacsimileMei(mei);
+	assert.equal(parsed.hasMeasures, true);
+	assert.equal(parsed.hasBreaks, true);
+	assert.equal(parsed.pages[0].zones[0].pb, true);
+});
+
+test('relinkFacsimileImages retargets each surface and scales it to the image', () => {
+	const mei =
+		`<facsimile><surface xml:id="s1" ulx="0" uly="0" lrx="1999" lry="2580">` +
+		`<graphic xml:id="g1" height="2581" target="img/01.jpg" width="2000"/>` +
+		`<zone xml:id="z1" type="measure" ulx="200" uly="258" lrx="1000" lry="1290"/>` +
+		`</surface><surface xml:id="s2">` +
+		`<graphic xml:id="g2" target="img/02.jpg" width="2000" height="2581"/>` +
+		`</surface></facsimile>`;
+	// Half the width and height the encoding was authored against.
+	const relinked = relinkFacsimileImages(mei, [
+		{ target: '../img/01.jpg', width: 1000, height: 1290 }
+	]);
+	assert.match(relinked, /<graphic xml:id="g1" height="1290" target="\.\.\/img\/01\.jpg" width="1000"\/>/);
+	assert.match(relinked, /<zone xml:id="z1" type="measure" ulx="100" uly="129" lrx="500" lry="645"\/>/);
+	assert.match(relinked, /<surface xml:id="s1" ulx="0" uly="0" lrx="1000" lry="1290">/);
+	// A surface past the end of the sequence is left alone.
+	assert.match(relinked, /<graphic xml:id="g2" target="img\/02\.jpg" width="2000" height="2581"\/>/);
+});
+
+test('relinkFacsimileImages leaves a surface whose graphic declares no size', () => {
+	const mei = `<facsimile><surface><graphic target="img/01.jpg"/><zone ulx="10" uly="20" lrx="30" lry="40"/></surface></facsimile>`;
+	const relinked = relinkFacsimileImages(mei, [{ target: '../img/01.jpg', width: 800, height: 600 }]);
+	assert.match(relinked, /<zone ulx="10" uly="20" lrx="30" lry="40"\/>/);
+	assert.match(relinked, /target="\.\.\/img\/01\.jpg"/);
+	assert.match(relinked, /width="800"/);
 });

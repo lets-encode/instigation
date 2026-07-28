@@ -12,6 +12,7 @@
   import CampaignNameStep from "$lib/components/CampaignNameStep.svelte";
   import CampaignLicenseStep from "$lib/components/CampaignLicenseStep.svelte";
   import CampaignUploadStep from "$lib/components/CampaignUploadStep.svelte";
+  import CampaignPagesStep from "$lib/components/CampaignPagesStep.svelte";
   import CampaignSourceStep from "$lib/components/CampaignSourceStep.svelte";
   import CampaignPiecesStep from "$lib/components/CampaignPiecesStep.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
@@ -69,8 +70,10 @@
       <CampaignNameStep />
     {:else if wizard.step === "license"}
       <CampaignLicenseStep />
-    {:else}
+    {:else if wizard.step === "upload"}
       <CampaignUploadStep />
+    {:else}
+      <CampaignPagesStep />
     {/if}
 
     {#if atStart}

@@ -1,5 +1,5 @@
 <!--
-  Wizard step 4: the works within the source. Each piece gets its own metadata
+  Wizard step 6: the works within the source. Each piece gets its own metadata
   and, when it is read from the facsimile, the regions of the pages it covers.
 
   Pieces are seeded from what the upload produced — one per uploaded encoding,
@@ -27,6 +27,7 @@
   import {
     buildFacsimileMei,
     initialFacsimileModel,
+    relinkFacsimileImages,
     replaceMeiHead,
   } from "$lib/mei-facsimile.ts";
   import {
@@ -44,15 +45,17 @@
     clearFinishedSetup,
     COPYRIGHT_ACKNOWLEDGEMENT,
   } from "$lib/wizard.svelte.ts";
+  import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import type { FileChange } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
+  import ProgressSteps from "./ProgressSteps.svelte";
 
   let selected = $state(0);
   let busy = $state(false);
-  let progress = $state<string | null>(null);
   let error = $state<string | null>(null);
+  const log = new ProgressLog();
   // Detection is the slow, failure-prone half of Finish. Its result is kept so
   // a retry after a commit failure does not re-run the detector.
   let detected: DetectedPage[] | null = null;
@@ -117,8 +120,9 @@
     const { sortReadingOrder } = await import("$lib/mei-facsimile.ts");
     const pagesOut: DetectedPage[] = [];
     for (const [i, image] of wizard.images.entries()) {
-      progress = `Detecting measures on page ${i + 1} of ${wizard.images.length}…`;
       const name = image.path.split("/").pop() ?? `${i + 1}.jpg`;
+      log.step(`Detecting measures on page ${i + 1} of ${wizard.images.length}`);
+      log.detail(name);
       const { width, height } = await imageSize(image.blob);
       const normalised = await detectMeasures(image.blob, name, measureDetectorUrl);
       // The detector returns 0..1 coordinates; regions and zones are in pixels.
@@ -128,7 +132,15 @@
         lrx: b.lrx * width,
         lry: b.lry * height,
       }));
-      pagesOut.push({ image: `img/${name}`, width, height, boxes });
+      log.detail(
+        boxes.length
+          ? `${name}: ${boxes.length} measure(s) found`
+          : `${name}: no measures found`,
+      );
+      // graphic @target is resolved relative to the score file, which sits in
+      // the piece's own directory (sources/<piece>/score.mei); the images are
+      // shared by every piece and committed at sources/img/.
+      pagesOut.push({ image: `../img/${name}`, width, height, boxes });
     }
     return pagesOut;
   }
@@ -152,26 +164,39 @@
       return;
     }
     if (!repo) {
-      // Reaching here without a repository means the upload step did not
+      // Reaching here without a repository means the pages step did not
       // complete; saying so beats a button that does nothing.
       error =
-        "This campaign has no repository yet. Go back to the upload step and complete it first.";
+        "This campaign has no repository yet. Go back to the pages step and complete it first.";
       return;
     }
 
     busy = true;
+    log.clear();
     try {
       if (!detected) detected = await detectAllPages();
 
-      progress = "Building the scores…";
       // Every piece is published under the campaign's licence, so it is stated
       // in each piece's header as well as in the config.
       const license = wizard.license;
       const split = partitionPages(wizard.pieces, detected);
+      // The committed pages, as an uploaded encoding's facsimile is relinked to
+      // them: detection has already measured every one at its committed size.
+      const images = detected.map((page) => ({
+        target: page.image,
+        width: page.width,
+        height: page.height,
+      }));
       const surfaces: PieceSurfaces = {};
       const scores: FileChange[] = [];
 
       wizard.pieces.forEach((piece, i) => {
+        const name = piece.meta.title.trim() || piece.id;
+        // Building a score is a string operation: it reports what it did, not
+        // how long it took.
+        log.step(`Building the score for ${name} (${i + 1} of ${wizard.pieces.length})`, {
+          timed: false,
+        });
         const head = buildPieceHead(
           {
             title: piece.meta.title,
@@ -183,12 +208,20 @@
         if (piece.kind === "encoded") {
           const encoding = wizard.encodings.find((e) => e.name === piece.encodingName);
           if (!encoding) throw new Error(`The encoding for ${piece.id} is no longer available.`);
-          scores.push({ path: piecePath(piece.id), content: replaceMeiHead(encoding.mei, head) });
+          log.detail(`from the encoding ${encoding.name}`);
+          // An uploaded encoding's facsimile references the files and pixel
+          // sizes it was authored against, so it is pointed at the pages this
+          // campaign committed: surface n to page n, coordinates scaled with it.
+          const relinked = relinkFacsimileImages(encoding.mei, images);
+          scores.push({ path: piecePath(piece.id), content: replaceMeiHead(relinked, head) });
           return;
         }
         // Stage A: facsimile and labelled zones only. The measure body is
         // generated once this piece's measure-correction pre-task validates.
         const model = initialFacsimileModel(split[i].pages, {});
+        log.detail(
+          `${split[i].pages.length} page(s), ${split[i].measuredSurfaces.length} with measures`,
+        );
         scores.push({
           path: piecePath(piece.id),
           content: buildFacsimileMei({ ...model, headXml: head }),
@@ -233,27 +266,23 @@
         repo.id,
       );
 
-      progress = "Committing the campaign…";
-      await f.commitFiles(
-        repo.owner,
-        repo.name,
-        [
-          { path: "config.yaml", content: configToYaml(config) },
-          ...scores,
-          { path: "tracking/task.csv", content: buildTaskCsv(config, surfaces) },
-          { path: "tracking/state.csv", content: buildStateCsv(config, surfaces) },
-          { path: "tracking/lock.csv", content: buildLockCsv() },
-          { path: "tracking/history.csv", content: buildHistoryCsv() },
-        ],
-        "Initialise campaign",
-      );
+      const files: FileChange[] = [
+        { path: "config.yaml", content: configToYaml(config) },
+        ...scores,
+        { path: "tracking/task.csv", content: buildTaskCsv(config, surfaces) },
+        { path: "tracking/state.csv", content: buildStateCsv(config, surfaces) },
+        { path: "tracking/lock.csv", content: buildLockCsv() },
+        { path: "tracking/history.csv", content: buildHistoryCsv() },
+      ];
+      log.step(`Committing the campaign (${files.length} file(s))`);
+      await f.commitFiles(repo.owner, repo.name, files, "Initialise campaign");
 
       // There is a campaign now, so the name it was reserved under becomes its
       // address. This is the reservation being cashed in, not a race: the name
       // has been held since the first step. It can only fail if the reservation
       // ran out and somebody else took the name in the meantime — in which case
       // the setup stays resumable rather than being marked finished.
-      progress = "Registering the campaign name…";
+      log.step(`Registering the campaign name “${claim.name}”`);
       const registration = await registerCampaign(
         claim.name,
         repo.id,
@@ -266,14 +295,14 @@
             ? `The reservation of “${claim.name}” ran out and the name went to another campaign. Everything was committed to ${repo.full_name}, but it cannot be reached under that name.`
             : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
         busy = false;
-        progress = null;
+        log.fail();
         return;
       }
 
       // The topic is what puts a campaign in the listing, so a campaign missing it
       // is not finished and the setup stays open. Retrying runs this whole step
       // again, which both the commit and the registration tolerate.
-      progress = "Adding it to the list of campaigns…";
+      log.step("Adding it to the list of campaigns");
       try {
         await f.setRepoTopics(repo.owner, repo.name, [provider.repoTopic]);
       } catch (err) {
@@ -283,20 +312,21 @@
           `the campaign already works at /campaign/${claim.name}. It is not in the list of ` +
           `campaigns yet, so the setup stays open — retry to add it: ${(err as Error).message}`;
         busy = false;
-        progress = null;
+        log.fail();
         return;
       }
 
       // The campaign is committed, reachable and listed, so the setup is done: it
       // is cleared once the campaign has opened, since emptying the wizard while
       // this step is still on screen would show the first step again.
+      log.done();
       await goto(`/campaign/${repo.name}`);
       clearFinishedSetup();
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
       error = `Could not finish the campaign: ${(err as Error).message}`;
       busy = false;
-      progress = null;
+      log.fail();
     }
   }
 
@@ -394,9 +424,7 @@
       {#if error}
         <p class="msg-error" role="alert">{error}</p>
       {/if}
-      {#if progress}
-        <p class="msg-progress" role="status" aria-live="polite">{progress}</p>
-      {/if}
+      <ProgressSteps {log} />
     </WizardCard>
   </div>
 

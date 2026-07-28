@@ -31,7 +31,9 @@
   } = $props();
 
   let zoom = $state(1);
-  let svgEls: SVGSVGElement[] = [];
+  // One entry per page, filled by bind:this. Reactive because binding writes
+  // into it after the element is created.
+  let svgEls = $state<SVGSVGElement[]>([]);
   let failed = $state<Record<number, boolean>>({});
 
   // The region being drawn, moved or resized, addressed by page, piece and
@@ -239,7 +241,7 @@
 
     <div class="page-strip">
       {#each pages as page, i (page.url)}
-        <figure style="height: {100 * zoom}%">
+        <figure style="height: {100 * zoom}%; --page-ratio: {page.width} / {page.height}">
           {#if failed[i]}
             <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
           {/if}
@@ -354,6 +356,7 @@
     flex: 1;
     min-height: 0;
     width: auto;
+    max-width: 100%;
     /* Scanned pages keep their own white ground in either theme. */
     background: var(--facsimile-paper);
     border: 1px solid var(--line);

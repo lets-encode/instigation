@@ -42,7 +42,8 @@
 
 <header>
   <a class="brand" href="/">
-    <img src="/lets-encode.png" alt="Let's Encode" />
+    <img class="brand-light" src="/logo.svg" alt="Let's Encode" width="1391" height="400" />
+    <img class="brand-dark" src="/logo-dark.svg" alt="" aria-hidden="true" width="1391" height="400" />
   </a>
   <div class="topbar-right">
     {#if auth.user}
@@ -132,6 +133,18 @@
   }
   .brand img {
     height: 36px;
+    width: auto;
+    display: block;
+  }
+  /* The two logo variants differ only in the wordmark colour: black text for
+     light backgrounds, cream for dark. Show the one matching the theme. */
+  .brand img.brand-dark {
+    display: none;
+  }
+  :global([data-theme='dark']) .brand img.brand-light {
+    display: none;
+  }
+  :global([data-theme='dark']) .brand img.brand-dark {
     display: block;
   }
   .user {

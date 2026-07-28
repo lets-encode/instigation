@@ -97,7 +97,7 @@
         Condition
         <input class="input" bind:value={meta.condition} placeholder="e.g. Foxing on the title page" />
       </label>
-      <label class="field wide">
+      <label class="field">
         Note about the source
         <textarea class="input" bind:value={meta.note} rows="3"></textarea>
       </label>
@@ -129,15 +129,11 @@
     padding: 0.35rem 0.9rem;
     border-radius: 999px;
   }
-  /* Fields pair up into columns wherever the container is wide enough for two. */
+  /* One field per row: a label reads with the control under it, and a long
+     value gets the full width of the card. */
   .fields {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-    column-gap: 1rem;
-  }
-  .fields > .wide,
-  fieldset {
-    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
   }
   label {
     margin-bottom: 1rem;

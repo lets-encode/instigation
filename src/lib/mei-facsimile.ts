@@ -314,7 +314,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 	// Which zones the body marks as system/page starts and as movement starts
 	// (stage C), keyed by zone id via each measure's facs link. A second or
 	// later <mdiv> flags its first measure; the first <mdiv> is implicit.
-	const body = /<body>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? '';
+	const body = /<body\b[^>]*>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? '';
 	const pbZones = new Set<string>();
 	const sbZones = new Set<string>();
 	const mdivZones = new Set<string>();
@@ -388,6 +388,70 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 	}
 
 	return { headXml, pages, hasMeasures, hasBreaks };
+}
+
+/** A committed page image a surface can be relinked to. */
+export interface FacsimileImage {
+	/** Written as the graphic @target; resolved relative to the score file. */
+	target: string;
+	/** The image's real pixel size, which the surface's coordinates become. */
+	width: number;
+	height: number;
+}
+
+/**
+ * Relink an MEI's facsimile to a given sequence of page images: the nth
+ * `<surface>` is pointed at the nth image, and that surface's coordinates are
+ * scaled from the size its `<graphic>` declared to the image's real pixel size.
+ * Surfaces past the end of the sequence, and any without a `<graphic>`, are left
+ * as they are.
+ *
+ * Used on an uploaded encoding, whose facsimile references the files and pixel
+ * sizes it was authored against rather than the copies committed alongside it.
+ */
+export function relinkFacsimileImages(mei: string, images: FacsimileImage[]): string {
+	let index = 0;
+	return mei.replace(/<surface\b[^>]*>[\s\S]*?<\/surface>/g, (surface) => {
+		const image = images[index++];
+		const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
+		if (!image || !graphic) return surface;
+		const width = Number(attr(graphic, 'width') ?? 0);
+		const height = Number(attr(graphic, 'height') ?? 0);
+		const sx = width > 0 ? image.width / width : 1;
+		const sy = height > 0 ? image.height / height : 1;
+		// The surface's own box and its zones are in the coordinate space the
+		// graphic declares, so both move with it.
+		return surface
+			.replace(/<(?:surface|zone)\b[^>]*>/g, (tag) => scaleBox(tag, sx, sy))
+			.replace(/<graphic\b[^>]*>/, () =>
+				setAttrs(graphic, { target: image.target, width: image.width, height: image.height })
+			);
+	});
+}
+
+// Scale a tag's bounding box, when it has one; a tag without stays as it is.
+function scaleBox(tag: string, sx: number, sy: number): string {
+	if (attr(tag, 'ulx') === null) return tag;
+	return setAttrs(tag, {
+		ulx: Math.round(Number(attr(tag, 'ulx') ?? 0) * sx),
+		uly: Math.round(Number(attr(tag, 'uly') ?? 0) * sy),
+		lrx: Math.round(Number(attr(tag, 'lrx') ?? 0) * sx),
+		lry: Math.round(Number(attr(tag, 'lry') ?? 0) * sy)
+	});
+}
+
+// Set attributes on an XML tag string: an attribute already present is
+// rewritten in place, one that is absent is appended.
+function setAttrs(tag: string, values: Record<string, string | number>): string {
+	let out = tag;
+	for (const [name, value] of Object.entries(values)) {
+		const attribute = `${name}="${xmlEscape(value)}"`;
+		const present = new RegExp(`\\b${name}="[^"]*"`);
+		out = present.test(out)
+			? out.replace(present, () => attribute)
+			: out.replace(/\s*\/?>$/, (end) => ` ${attribute}${end.trimStart()}`);
+	}
+	return out;
 }
 
 /**

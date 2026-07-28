@@ -3,7 +3,7 @@
   lower pane beneath the metadata steps so the organiser can read the source
   while describing it.
 
-  The images are the prepared pages the upload step produced, as object URLs —
+  The images are the pages the pages step committed, as object URLs —
   the committed copies are in the repository, but reading them back would cost
   a round trip per page for something already in memory. Using the prepared
   pages rather than the raw upload also covers PDFs and IIIF canvases, whose
@@ -21,6 +21,10 @@
   let { pages }: { pages: PageImage[] } = $props();
 
   let zoom = $state(1);
+
+  // Each page's shape decides how wide its slot in the strip is, and it is only
+  // known once the browser has decoded the image, so it is read from there.
+  let ratios = $state<Record<number, string>>({});
 
   // One object URL per page, cached so a re-render hands the same <img> the same
   // src. Revoking eagerly when the list changes would pull the URL out from
@@ -70,8 +74,13 @@
 
     <div class="page-strip">
       {#each urls as url, i (url)}
-        <figure style="height: {100 * zoom}%">
-          <img src={url} alt="Page {i + 1}" />
+        <figure style="height: {100 * zoom}%; --page-ratio: {ratios[i] ?? 'auto'}">
+          <img
+            src={url}
+            alt="Page {i + 1}"
+            onload={(e) =>
+              (ratios[i] = `${e.currentTarget.naturalWidth} / ${e.currentTarget.naturalHeight}`)}
+          />
           <figcaption>{i + 1}</figcaption>
         </figure>
       {/each}
@@ -98,8 +107,12 @@
     border-radius: 4px;
   }
   img {
-    height: 100%;
+    /* Takes the height the figure has left over the caption, and the width that
+       follows from it. */
+    flex: 1;
+    min-height: 0;
     width: auto;
+    max-width: 100%;
     display: block;
     /* Scanned pages keep their own white ground in either theme. */
     background: var(--facsimile-paper);

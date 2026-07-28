@@ -88,6 +88,9 @@
 /* ---- Form controls ----------------------------------------------------- */
 .input {
   display: block;
+  /* The padding and border are inside the width, so a full-width control stays
+     inside the column it is in. */
+  box-sizing: border-box;
   width: 100%;
   margin-top: 0.4rem;
   padding: 0.55rem 0.7rem;
@@ -182,6 +185,12 @@ textarea.input {
 .page-strip figure {
   flex: none;
   height: 100%;
+  /* The page's own ratio, set per figure, so the height the strip gives the
+     figure decides its width. Without it the width would come from the widest
+     child — the caption, or a raster's natural pixel width — and the page would
+     spill over its neighbours or sit in an over-wide box. */
+  aspect-ratio: var(--page-ratio, auto);
+  min-width: 0;
   margin: 0;
   display: flex;
   flex-direction: column;

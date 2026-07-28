@@ -3,13 +3,13 @@
 // here, so a step can read what earlier steps gathered without prop-threading.
 //
 // The flow has a pre-repo and a post-repo phase — the campaign repository is
-// created at the end of the upload step, and everything after it is held in the
+// created at the end of the pages step, and everything after it is held in the
 // browser until the final commit. `repo` records that crossing.
 //
 // What is collected is also mirrored into the browser's storage as a draft, so a
 // setup that is interrupted can be continued; see wizard-draft.ts.
 
-import type { EncodingSource, PageImage } from './prepare-images.ts';
+import type { EncodingSource, PageCandidate, PageImage } from './prepare-images.ts';
 import { emptySourceMetadata, type SourceMetadata } from './source-metadata.ts';
 import type { Piece } from './pieces.ts';
 import { DEFAULT_LICENSE } from './licenses.ts';
@@ -26,6 +26,7 @@ export const WIZARD_STEPS = [
 	{ id: 'name', label: 'Name' },
 	{ id: 'license', label: 'Licence' },
 	{ id: 'upload', label: 'Upload' },
+	{ id: 'pages', label: 'Pages' },
 	{ id: 'source', label: 'Source' },
 	{ id: 'pieces', label: 'Pieces' }
 ] as const;
@@ -46,7 +47,12 @@ export interface WizardClaim {
 	token: string;
 }
 
-/** The campaign repository, once the upload step has created it. */
+/** A page the upload offers, with whether the pages step keeps it. */
+export interface PageChoice extends PageCandidate {
+	include: boolean;
+}
+
+/** The campaign repository, once the pages step has created it. */
 export interface WizardRepo {
 	owner: string;
 	name: string;
@@ -85,11 +91,23 @@ export const wizard = $state<{
 	/** A IIIF Presentation manifest whose canvases are fetched and committed. */
 	iiifManifestUrl: string;
 	copyrightAccepted: boolean;
+	/**
+	 * Every page the upload offers, in the order they are to be committed, with
+	 * which of them the pages step keeps. A source is usually larger than the part
+	 * of it a campaign encodes, so this holds previews only — the pages kept are
+	 * fetched at committing size by the pages step.
+	 */
+	candidates: PageChoice[];
+	/**
+	 * What `candidates` was prepared from, so returning to the upload step and
+	 * continuing again does not read a long source a second time.
+	 */
+	uploadKey: string;
 	repo: WizardRepo | null;
 	/**
-	 * The page images committed by the upload step, kept with their bytes: later
+	 * The page images committed by the pages step, kept with their bytes: later
 	 * steps display them, and a PDF's rendered pages exist nowhere else in the
-	 * browser once the upload step has run.
+	 * browser once that step has run.
 	 */
 	images: PageImage[];
 	/**
@@ -111,6 +129,8 @@ export const wizard = $state<{
 	files: [],
 	iiifManifestUrl: '',
 	copyrightAccepted: false,
+	candidates: [],
+	uploadKey: '',
 	repo: null,
 	images: [],
 	encodings: [],
@@ -144,6 +164,8 @@ export function resetWizard(): void {
 	wizard.files = [];
 	wizard.iiifManifestUrl = '';
 	wizard.copyrightAccepted = false;
+	wizard.candidates = [];
+	wizard.uploadKey = '';
 	wizard.repo = null;
 	wizard.images = [];
 	wizard.encodings = [];
@@ -237,10 +259,16 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
 	wizard.encodings = entries.encodings;
 	wizard.images = images;
 	// Picked files are not part of a draft; the upload step collects them again.
+	// The candidate pages read from them go the same way.
 	wizard.files = [];
+	wizard.candidates = [];
+	wizard.uploadKey = '';
 	savedHandle = draft.handle;
 	draftStatus.saveError = null;
-	wizard.step = stepIndex(entries.step) < 0 ? 'name' : entries.step;
+	// Choosing pages needs the files they come from, so a setup left on that step
+	// is continued from the upload step, where they are picked again.
+	const step = entries.step === 'pages' ? 'upload' : entries.step;
+	wizard.step = stepIndex(step) < 0 ? 'name' : step;
 }
 
 /**
