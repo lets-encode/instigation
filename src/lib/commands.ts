@@ -202,7 +202,7 @@ async function waitForPrProcessed(
 			}
 			return { state: 'closed', verdict };
 		}
-		delayMs = Math.min(10_000, Math.ceil(delayMs * 1.5));
+		delayMs = Math.min(5_000, Math.ceil(delayMs * 1.5));
 	}
 	console.log('[pr] PR', pr.number, 'not processed within 90s (still in flight)');
 	return { state: 'timeout' };

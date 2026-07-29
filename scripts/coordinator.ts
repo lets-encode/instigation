@@ -102,7 +102,7 @@ async function attemptClaim(
 	intent: { task_id: string; subtask_id: string; kind: string } | null,
 	envelope: CommandEnvelope | null
 ): Promise<Verdict & { lock?: LockRow }> {
-	const { sha } = await getRepoHead(token, owner, repo);
+	const { branch, sha } = await getRepoHead(token, owner, repo);
 	const [taskCsv, stateCsv, lockCsv, historyCsv, configText] = await Promise.all([
 		getRepoFile(token, owner, repo, TASK_PATH, sha),
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
@@ -162,7 +162,7 @@ async function attemptClaim(
 		? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && '/' + verdict.lock!.subtask_id} for ${authorLabel} (${verdict.lock!.kind})`
 		: `Reject claim by ${authorLabel} (${verdict.reason})`;
 	// Non-fast-forward update fails if `main` moved since `sha` → we retry.
-	await commitFiles(token, owner, repo, files, message, { baseSha: sha });
+	await commitFiles(token, owner, repo, files, message, { baseSha: sha, branch });
 	return verdict;
 }
 
@@ -232,11 +232,14 @@ async function decideEncoding(
 	// Failing to assemble the MEI at all and assembling one the schema rejects
 	// are both `mei_invalid` submissions; which of the two it was survives only
 	// in `detail`, since the reason code is what the tables record.
-	const forkMei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
+	const isPageTask = task.locator.startsWith('surface-');
+	const [forkMei, baseMei] = await Promise.all([
+		getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
+		isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null
+	]);
 	let mei = forkMei;
 	let detail = forkMei == null ? `${task.fragment} is missing from the fork.` : '';
-	if (forkMei != null && task.locator.startsWith('surface-')) {
-		const baseMei = await getRepoFile(token, owner, repo, task.fragment, sha);
+	if (forkMei != null && isPageTask) {
 		if (baseMei == null) {
 			mei = null;
 			detail = `${task.fragment} is missing from the campaign.`;
@@ -347,7 +350,7 @@ async function attemptSubmit(
 	changedPaths: string[],
 	envelope: CommandEnvelope | null
 ): Promise<Verdict> {
-	const { sha } = await getRepoHead(token, owner, repo);
+	const { branch, sha } = await getRepoHead(token, owner, repo);
 	const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
 		getRepoFile(token, owner, repo, TASK_PATH, sha),
 		getRepoFile(token, owner, repo, STATE_PATH, sha),
@@ -383,7 +386,7 @@ async function attemptSubmit(
 	const message = outcome.ok
 		? outcome.message!
 		: `Reject ${kind} submission by ${authorLabel} (${outcome.reason})`;
-	await commitFiles(token, owner, repo, files, message, { baseSha: sha });
+	await commitFiles(token, owner, repo, files, message, { baseSha: sha, branch });
 	return outcome;
 }
 
@@ -417,7 +420,7 @@ async function runSubmit(
 // Reaper (scheduled / manually dispatched)
 
 async function attemptReap(): Promise<void> {
-	const { sha } = await getRepoHead(token, owner, repo);
+	const { branch, sha } = await getRepoHead(token, owner, repo);
 	const [lockCsv, historyCsv, configText] = await Promise.all([
 		getRepoFile(token, owner, repo, LOCK_PATH, sha),
 		getRepoFile(token, owner, repo, HISTORY_PATH, sha),
@@ -453,7 +456,7 @@ async function attemptReap(): Promise<void> {
 			{ path: HISTORY_PATH, content: appendHistory(historyCsv ?? '', history) }
 		],
 		`Release ${removed.length} stale lock(s): ${removed.map((l) => l.task_id).join(', ')}`,
-		{ baseSha: sha }
+		{ baseSha: sha, branch }
 	);
 	console.log(`Released ${removed.length} stale lock(s).`);
 }

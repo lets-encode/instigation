@@ -13,6 +13,7 @@
   import { provider, automation, measureDetectorUrl } from "$lib/forge/config.ts";
   import { registerCampaign } from "$lib/campaign-resolve.ts";
   import { imageSize } from "$lib/prepare-images.ts";
+  import { startDetection } from "$lib/measure-detection.ts";
   import {
     buildCampaignConfig,
     configToYaml,
@@ -70,6 +71,13 @@
     );
   }
 
+  // The pages are final once this step opens, so detection starts now and runs
+  // while the pieces are described — the piece regions play no part in it.
+  // Leaving the step stops pages that have not started; finished pages stay
+  // cached by content, so coming back re-detects only pages that changed.
+  const detection = startDetection(wizard.images, measureDetectorUrl);
+  onDestroy(() => detection.cancel());
+
   // The pages the editor draws on: object URLs over the prepared page images,
   // with the pixel size the regions are expressed in. Released on destroy.
   const objectUrls: string[] = [];
@@ -111,28 +119,18 @@
   }
 
   /**
-   * Detect measures once per page image, not once per piece: two pieces sharing
-   * a page would otherwise have the page analysed twice, and the detector is a
-   * shared service. Pages the detector fails on come back empty rather than
-   * failing the whole campaign.
+   * Collect every page's detection result, awaiting any the background pass
+   * has not finished. One result per page image, not per piece: two pieces
+   * sharing a page share its measures. Pages the detector fails on come back
+   * empty rather than failing the whole campaign.
    */
   async function detectAllPages(): Promise<DetectedPage[]> {
-    const { detectMeasures } = await import("$lib/facsimile-detect.ts");
-    const { sortReadingOrder } = await import("$lib/mei-facsimile.ts");
     const pagesOut: DetectedPage[] = [];
     for (const [i, image] of wizard.images.entries()) {
       const name = image.path.split("/").pop() ?? `${i + 1}.jpg`;
       log.step(`Detecting measures on page ${i + 1} of ${wizard.images.length}`);
       log.detail(name);
-      const { width, height } = await imageSize(image.blob);
-      const normalised = await detectMeasures(image.blob, name, measureDetectorUrl);
-      // The detector returns 0..1 coordinates; regions and zones are in pixels.
-      const boxes = sortReadingOrder(normalised ?? []).map((b) => ({
-        ulx: b.ulx * width,
-        uly: b.uly * height,
-        lrx: b.lrx * width,
-        lry: b.lry * height,
-      }));
+      const { width, height, boxes } = await detection.page(i);
       log.detail(
         boxes.length
           ? `${name}: ${boxes.length} measure(s) found`

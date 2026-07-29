@@ -313,7 +313,7 @@ async function pdfToImages(file: File, options: PdfRenderOptions): Promise<Blob[
  * Re-encode a raster so its long edge fits `maxEdge`. Images already within the
  * cap are returned unchanged, so an untouched upload is committed byte-for-byte.
  */
-async function downscaleImage(blob: Blob, maxEdge: number): Promise<Blob> {
+export async function downscaleImage(blob: Blob, maxEdge: number): Promise<Blob> {
 	const bitmap = await createImageBitmap(blob);
 	const longEdge = Math.max(bitmap.width, bitmap.height);
 	if (longEdge <= maxEdge) {

@@ -1,38 +1,35 @@
 // The MEI machine-check: well-formed XML AND valid against the pinned MEI
 // schema, via xmllint --relaxng (which implies the well-formedness check).
 //
-// Node-only (child process, filesystem, network), unlike the pure modules in
-// src/lib. Shared by the campaign coordinator, which applies the check to a
-// submission, and by the test that holds the generated MEI to the same standard.
+// Node-only (child process, filesystem), unlike the pure modules in src/lib.
+// Shared by the campaign coordinator, which applies the check to a submission,
+// and by the test that holds the generated MEI to the same standard.
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 // The schema version the campaign template declares in its <?xml-model?>
-// processing instruction, with the digest of the bytes served for it.
+// processing instruction. A copy is vendored at schema/mei-CMN.rng; the digest
+// pins the bytes it must contain.
 export const MEI_SCHEMA_URL = 'https://music-encoding.org/schema/5.0/mei-CMN.rng';
 export const MEI_SCHEMA_SHA256 = 'fa2081b4e0c858e1dcde339b1b733b8e6350212a46c0db50b94cc71bbe68ca4c';
 
 /**
- * Fetch the pinned schema and return its local path. Fetched once per process;
- * a fetch failure or a digest mismatch throws rather than letting content
+ * Return the local path of the vendored schema. Verified once per process; a
+ * missing file or a digest mismatch throws rather than letting content
  * through unchecked.
  */
 let schemaPath: string | null = null;
 export async function meiSchemaPath(): Promise<string> {
 	if (schemaPath) return schemaPath;
-	const res = await fetch(MEI_SCHEMA_URL);
-	if (!res.ok) throw new Error(`Failed to fetch MEI schema (${res.status} ${MEI_SCHEMA_URL})`);
-	const schema = new Uint8Array(await res.arrayBuffer());
+	const path = fileURLToPath(new URL('../schema/mei-CMN.rng', import.meta.url));
+	const schema = await readFile(path);
 	const digest = createHash('sha256').update(schema).digest('hex');
 	if (digest !== MEI_SCHEMA_SHA256) {
 		throw new Error(`MEI schema integrity check failed (expected ${MEI_SCHEMA_SHA256}, received ${digest})`);
 	}
-	const path = join(tmpdir(), 'mei-schema.rng');
-	await writeFile(path, schema);
 	schemaPath = path;
 	return path;
 }
