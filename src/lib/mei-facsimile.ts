@@ -1,6 +1,7 @@
 // The facsimile MEI model behind the pre-tasks. Pure functions: page geometry
 // and MEI text in, MEI text and models out. No DOM, filesystem or network
-// access (image rendering and measure detection live in facsimile-detect.ts).
+// access (measure detection lives in measure-detection.ts, image handling in
+// prepare-images.ts).
 //
 // A facsimile campaign's score.mei passes through stages, all emitted by
 // buildFacsimileMei from one model:
@@ -63,7 +64,7 @@ export interface FacsimileModel {
 	pages: PageModel[];
 }
 
-/** One page as produced by facsimile-detect.ts (boxes only, no labels yet). */
+/** One page as measure detection produces it (boxes only, no labels yet). */
 export interface FacsimilePage {
 	image: string;
 	width: number;

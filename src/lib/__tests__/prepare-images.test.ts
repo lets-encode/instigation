@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+	blobToBase64,
 	classifyUpload,
 	iiifCanvasUrl,
 	iiifImageUrl,
@@ -505,4 +506,8 @@ test('reports a manifest with no canvases rather than committing nothing', async
 		() => fetchIiifCanvases('https://iiif.example/manifest', '/auth', { fetchFn }),
 		/No canvas images were found/
 	);
+});
+
+test('blobToBase64 preserves arbitrary bytes', async () => {
+	assert.equal(await blobToBase64(new Blob([new Uint8Array([0, 1, 254, 255])])), 'AAH+/w==');
 });
