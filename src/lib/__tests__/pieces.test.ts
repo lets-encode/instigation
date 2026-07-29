@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import {
 	copyMetadata,
 	createPiece,
+	formatRanges,
 	initialPieces,
 	nextPieceId,
+	overlappingPiece,
 	pagesCovered,
 	pieceColour,
 	pieceForBox,
 	partitionPages,
+	zonesOverlap,
 	PIECE_COLOURS,
 	type Piece
 } from '../pieces.ts';
@@ -53,6 +56,37 @@ test('lists the pages a piece covers, deduplicated and in order', () => {
 		{ surface: 2, ...box(20, 20, 30, 30) }
 	]);
 	assert.deepEqual(pagesCovered(piece), [0, 2]);
+});
+
+test('writes page numbers as ranges', () => {
+	assert.equal(formatRanges([]), '');
+	assert.equal(formatRanges([4]), '4');
+	assert.equal(formatRanges([1, 2, 3]), '1–3');
+	assert.equal(formatRanges([1, 2, 4]), '1–2, 4');
+	assert.equal(formatRanges([1, 3, 5]), '1, 3, 5');
+	assert.equal(
+		formatRanges(Array.from({ length: 34 }, (_, i) => i + 1)),
+		'1–34',
+		'one unbroken run stays one range'
+	);
+});
+
+test('two regions overlap only where they share area on the same page', () => {
+	const a = { surface: 0, ...box(0, 0, 100, 100) };
+	assert.equal(zonesOverlap(a, { surface: 0, ...box(50, 50, 150, 150) }), true);
+	assert.equal(zonesOverlap(a, { surface: 1, ...box(50, 50, 150, 150) }), false, 'another page');
+	assert.equal(zonesOverlap(a, { surface: 0, ...box(100, 0, 200, 100) }), false, 'edge to edge');
+});
+
+test('finds the other piece a region overlaps', () => {
+	const pieces = [
+		facsimilePiece('piece-01', [{ surface: 0, ...box(0, 0, 100, 200) }]),
+		facsimilePiece('piece-02', [{ surface: 0, ...box(100, 0, 200, 200) }])
+	];
+	// Its own regions never count as a clash.
+	assert.equal(overlappingPiece(pieces, 0, { surface: 0, ...box(0, 0, 100, 200) }), -1);
+	assert.equal(overlappingPiece(pieces, 0, { surface: 0, ...box(90, 0, 150, 200) }), 1);
+	assert.equal(overlappingPiece(pieces, 0, { surface: 1, ...box(0, 0, 200, 200) }), -1);
 });
 
 test('assigns a measure box to the piece whose region contains its centre', () => {

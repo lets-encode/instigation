@@ -43,7 +43,7 @@
 </script>
 
 <!--
-  Steps that pin a page strip to the bottom manage their own layout; the rest
+  Steps that hold a page pane beside the form manage their own layout; the rest
   are centred in a scroller, since the route is a full-height surface.
 -->
 {#if auth.user && wizard.step === "source"}

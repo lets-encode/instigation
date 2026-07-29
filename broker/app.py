@@ -275,9 +275,13 @@ def logout():
 
 
 @app.route("/iiif", methods=["GET"])
-# Fetching a source is a handful of requests per campaign, not a poll loop.
+# Reading a source is one request per canvas, so a large manifest is a burst of
+# hundreds. The client spaces them to stay under this ceiling (see
+# IIIF_REQUESTS_PER_SECOND); the margin between the two rates leaves room for a
+# manifest fetch, or a second tab, alongside a run. Lowering this without
+# lowering the client's rate makes every large source fail partway.
 @limiter.limit(
-    "10 per second",
+    "20 per second",
     key_func=lambda: session.get("userLogin") or get_remote_address(),
 )
 def iiif_fetch():

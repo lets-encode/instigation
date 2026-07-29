@@ -9,6 +9,7 @@
 <script lang="ts">
   import { auth, forge } from "$lib/auth.svelte.ts";
   import {
+    MissingDraftImageError,
     discardDraft,
     fetchDraftImages,
     readDraft,
@@ -54,12 +55,20 @@
       if (stored.repo && paths.length) {
         const client = forge();
         if (!client) throw new Error("you are no longer signed in");
-        images = await fetchDraftImages(
-          client,
-          stored.repo,
-          paths,
-          (done, total) => (progress = `Loading page ${done} of ${total}…`),
-        );
+        try {
+          images = await fetchDraftImages(
+            client,
+            stored.repo,
+            paths,
+            (done, total) => (progress = `Loading page ${done} of ${total}…`),
+          );
+        } catch (err) {
+          // Pages that are not in the repository any more cannot be read back,
+          // but they can be uploaded again: the setup continues from the upload
+          // step, which is where applyDraft puts a setup without its images.
+          if (!(err instanceof MissingDraftImageError)) throw err;
+          images = [];
+        }
       }
       applyDraft(stored, images);
     } catch (err) {

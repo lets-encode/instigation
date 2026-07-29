@@ -144,12 +144,14 @@ export const stepIndex = (id: WizardStepId) => WIZARD_STEPS.findIndex((s) => s.i
 export function nextStep(): void {
 	const next = WIZARD_STEPS[stepIndex(wizard.step) + 1];
 	if (next) wizard.step = next.id;
+	draftStatus.resumeNotice = null;
 }
 
 /** Return to the previous step, if there is one. */
 export function previousStep(): void {
 	const previous = WIZARD_STEPS[stepIndex(wizard.step) - 1];
 	if (previous) wizard.step = previous.id;
+	draftStatus.resumeNotice = null;
 }
 
 /** Discard everything collected and return to the first step. */
@@ -178,7 +180,11 @@ export function resetWizard(): void {
 // setup can be continued. See wizard-draft.ts for what a record holds.
 
 /** Whether the setup's draft could be stored. Surfaced by the wizard frame. */
-export const draftStatus = $state<{ saveError: string | null }>({ saveError: null });
+export const draftStatus = $state<{
+	saveError: string | null;
+	/** Why a continued setup opened where it did, when that needs saying. */
+	resumeNotice: string | null;
+}>({ saveError: null, resumeNotice: null });
 
 // The name the draft was last stored under. A campaign renamed before its
 // repository exists would otherwise leave its earlier draft behind.
@@ -265,9 +271,16 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
 	wizard.uploadKey = '';
 	savedHandle = draft.handle;
 	draftStatus.saveError = null;
+	// Page images the draft records but that could not be read back: every step
+	// after the upload works on them, so there is nothing to continue from until
+	// they are uploaded again.
+	const withoutImages = entries.imagePaths.length > 0 && images.length === 0;
+	draftStatus.resumeNotice = withoutImages
+		? 'The page images this setup committed are no longer in its repository. Please upload the images again.'
+		: null;
 	// Choosing pages needs the files they come from, so a setup left on that step
 	// is continued from the upload step, where they are picked again.
-	const step = entries.step === 'pages' ? 'upload' : entries.step;
+	const step = entries.step === 'pages' || withoutImages ? 'upload' : entries.step;
 	wizard.step = stepIndex(step) < 0 ? 'name' : step;
 }
 

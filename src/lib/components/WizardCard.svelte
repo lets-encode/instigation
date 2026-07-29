@@ -22,6 +22,7 @@
     heading,
     intro,
     children,
+    fill = false,
     onBack,
     onNext,
     nextLabel = "Continue",
@@ -34,6 +35,12 @@
     /** Optional one-line explanation shown under the heading. */
     intro?: string;
     children: Snippet;
+    /**
+     * For a step whose content is images: the card takes the width and the height
+     * of the surface it is on, and its content scrolls inside it, so the footer's
+     * controls stay in view however much the step has to show.
+     */
+    fill?: boolean;
     /** Omitted on the first step, which has nothing to go back to. */
     onBack?: () => void;
     onNext?: () => void;
@@ -47,7 +54,7 @@
   const current = $derived(stepIndex(step));
 </script>
 
-<div class="card">
+<div class="card" class:fill>
   <ol class="steps">
     {#each WIZARD_STEPS as s, i (s.id)}
       <li
@@ -69,7 +76,10 @@
   </div>
 
   <!-- Every step draws the frame, so the one place to report that this setup is
-       no longer being kept for later is here. -->
+       no longer being kept for later — or why it opened where it did — is here. -->
+  {#if draftStatus.resumeNotice}
+    <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
+  {/if}
   {#if draftStatus.saveError}
     <p class="msg-warn" role="status">
       This setup can't be saved in your browser, so it won't be offered for
@@ -106,6 +116,23 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
+  }
+  .card.fill {
+    max-width: 1600px;
+    /* Held to the surface's height, minus the card's own margins, so the footer
+       sits at the bottom of the window rather than below it. */
+    box-sizing: border-box;
+    max-height: calc(100% - 3rem);
+    display: flex;
+    flex-direction: column;
+  }
+  /* The content is the part that gives way: it takes what the heading, the
+     footer and anything the step reports leave, and scrolls within it. */
+  .card.fill .content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
   .steps {
     display: flex;

@@ -57,6 +57,14 @@
 <style>
   .log {
     margin-top: 1.25rem;
+    /* An item of a flex column that scrolls can be shrunk to nothing, which
+       would leave the lines cut off. It keeps the height they need, and the
+       content above it gives way instead. */
+    flex: none;
+    /* A long run scrolls rather than growing without bound, so it cannot push
+       what sits below it out of view. */
+    max-height: 45vh;
+    overflow: auto;
     padding: 0.6rem 0.8rem;
     font-size: 0.85rem;
     color: var(--ink-soft);

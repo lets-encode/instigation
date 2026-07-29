@@ -6,17 +6,26 @@
   but the rectangles are far coarser — one per stretch of a page a piece
   occupies — and each is coloured and labelled by its piece. Regions drawn while
   a piece is selected belong to that piece, so a piece can span several pages
-  and two pieces can share one.
+  and two pieces can share one, as long as their regions do not overlap. A page
+  can therefore be given whole only to the piece that already has it to itself.
 
-  Every page is laid out at once in a left-to-right strip, so a piece that runs
-  across a page break can be marked without paging back and forth.
+  Every page is laid out at once, in rows of as many pages as the zoom asks for,
+  so a piece that runs across a page break can be marked without paging back and
+  forth. One page per row gives the whole pane's width to draw on.
 
   Coordinates are the page image's own pixels, which is what the detector
   returns boxes in, so no rescaling is needed when the boxes are partitioned.
 -->
 <script lang="ts">
-  import { pieceColour, type Piece, type PieceZone } from "$lib/pieces.ts";
-  import BottomPane from "./BottomPane.svelte";
+  import {
+    formatRanges,
+    overlappingPiece,
+    pieceColour,
+    type Piece,
+    type PieceZone,
+  } from "$lib/pieces.ts";
+  import SidePane from "./SidePane.svelte";
+  import PagesPerRow from "./PagesPerRow.svelte";
 
   let {
     pieces = $bindable(),
@@ -30,7 +39,8 @@
     selectedPiece: number;
   } = $props();
 
-  let zoom = $state(1);
+  // Drawing a region wants the width, so a row holds one page to begin with.
+  let perRow = $state(1);
   // One entry per page, filled by bind:this. Reactive because binding writes
   // into it after the element is created.
   let svgEls = $state<SVGSVGElement[]>([]);
@@ -49,6 +59,8 @@
   };
   let drag: Drag | null = null;
   let selectedZone = $state<{ piece: number; zone: number } | null>(null);
+  // What the last edit did or refused to do, shown until the next one.
+  let notice = $state<string | null>(null);
 
   /** Regions on one page, with the piece each belongs to. */
   const zonesOn = (surface: number) =>
@@ -145,17 +157,30 @@
 
   function pointerUp() {
     if (!drag) return;
-    const { kind, page, piece, zone } = drag;
+    const { kind, page, piece, zone: z, origin } = drag;
     drag = null;
-    if (kind !== "draw") return;
-    const drawn = pieces[piece].zones[zone];
+    notice = null;
+    const zone = pieces[piece].zones[z];
     const minSize = minSizeOn(page);
     // A tiny rectangle was a click on the background, not a region.
-    if (drawn.lrx - drawn.ulx < minSize || drawn.lry - drawn.uly < minSize) {
-      pieces[piece].zones.splice(zone, 1);
+    if (kind === "draw" && (zone.lrx - zone.ulx < minSize || zone.lry - zone.uly < minSize)) {
+      pieces[piece].zones.splice(z, 1);
       selectedZone = null;
+      return;
+    }
+    const clash = overlappingPiece(pieces, piece, zone);
+    if (clash === -1) return;
+    notice = overlapNotice(clash, page);
+    if (kind === "draw") {
+      pieces[piece].zones.splice(z, 1);
+      selectedZone = null;
+    } else {
+      Object.assign(zone, origin);
     }
   }
+
+  const overlapNotice = (clash: number, surface: number) =>
+    `Regions cannot overlap: ${labelFor(clash)} already covers part of that area on page ${surface + 1}.`;
 
   function zoneKeydown(e: KeyboardEvent, surface: number, p: number, z: number) {
     if (e.key === "Enter" || e.key === " ") {
@@ -178,24 +203,44 @@
     const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
     const w = zone.lrx - zone.ulx;
     const h = zone.lry - zone.uly;
-    zone.ulx = Math.max(0, Math.min(page.width - w, zone.ulx + dx));
-    zone.uly = Math.max(0, Math.min(page.height - h, zone.uly + dy));
-    zone.lrx = zone.ulx + w;
-    zone.lry = zone.uly + h;
+    const ulx = Math.max(0, Math.min(page.width - w, zone.ulx + dx));
+    const uly = Math.max(0, Math.min(page.height - h, zone.uly + dy));
+    const moved = { surface, ulx, uly, lrx: ulx + w, lry: uly + h };
+    const clash = overlappingPiece(pieces, p, moved);
+    notice = clash === -1 ? null : overlapNotice(clash, surface);
+    if (clash === -1) Object.assign(zone, moved);
   }
 
   function removeZone(p: number, z: number) {
     pieces[p].zones.splice(z, 1);
     selectedZone = null;
+    notice = null;
   }
 
-  /** Cover the given pages with one whole-page region each for the selected piece. */
+  /**
+   * Cover the given pages with one whole-page region each for the selected
+   * piece, replacing the regions it already had there.
+   *
+   * A page another piece has a region on is left alone: a whole-page region
+   * would overlap it. The other pages are still covered, so one shared page
+   * does not block the rest.
+   */
   function cover(surfaces: number[]) {
     const piece = pieces[selectedPiece];
     if (!piece || piece.kind !== "facsimile") return;
+    const blocked: number[] = [];
+    const blockers = new Set<string>();
+    for (const surface of surfaces) {
+      pieces.forEach((other, p) => {
+        if (p === selectedPiece || !other.zones.some((zone) => zone.surface === surface)) return;
+        if (!blocked.includes(surface)) blocked.push(surface);
+        blockers.add(labelFor(p));
+      });
+    }
+    const free = surfaces.filter((surface) => !blocked.includes(surface));
     piece.zones = [
-      ...piece.zones.filter((zone) => !surfaces.includes(zone.surface)),
-      ...surfaces.map((surface) => ({
+      ...piece.zones.filter((zone) => !free.includes(zone.surface)),
+      ...free.map((surface) => ({
         surface,
         ulx: 0,
         uly: 0,
@@ -204,26 +249,48 @@
       })),
     ];
     selectedZone = null;
+    const one = blocked.length === 1;
+    notice = blocked.length
+      ? `Page${one ? "" : "s"} ${formatRanges(blocked.map((s) => s + 1))} ${one ? "has" : "have"} ` +
+        `regions of ${[...blockers].join(", ")}. Remove them first to give ` +
+        `${one ? "the page" : "those pages"} to ${labelFor(selectedPiece)}.`
+      : null;
+  }
+
+  /** Drop every region of the selected piece, leaving the other pieces alone. */
+  function clearPiece() {
+    const piece = pieces[selectedPiece];
+    if (!piece || piece.kind !== "facsimile") return;
+    piece.zones = [];
+    selectedZone = null;
+    notice = null;
   }
 
   const labelFor = (p: number) => pieces[p].meta.title.trim() || pieces[p].id;
+  const marked = $derived(pieces[selectedPiece]?.zones.length ?? 0);
 </script>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} />
 
 {#if pages.length}
-  <BottomPane label="Piece regions">
-    <div class="strip-bar">
+  <SidePane label="Piece regions">
+    <div class="pane-bar">
       <p class="hint">
         Drag on a page to mark where
         <strong style="color: {pieceColour(selectedPiece)}">{labelFor(selectedPiece)}</strong>
-        begins and ends. A piece can cover several pages, and two pieces can share one.
+        begins and ends. A piece can cover several pages, and two pieces can share a page as
+        long as their regions do not overlap.
       </p>
 
       <div class="tools">
         <button type="button" class="btn btn-quiet" onclick={() => cover(pages.map((_, i) => i))}>
           Assign all pages to this piece
         </button>
+        {#if marked}
+          <button type="button" class="btn btn-quiet" onclick={clearPiece}>
+            Remove all regions of this piece
+          </button>
+        {/if}
         {#if selectedZone}
           <button
             type="button"
@@ -233,15 +300,17 @@
             Remove region
           </button>
         {/if}
-        <button type="button" class="btn btn-quiet" onclick={() => (zoom = Math.max(zoom / 1.25, 0.5))} aria-label="Zoom out">−</button>
-        <span class="zoomlabel">{Math.round(zoom * 100)}%</span>
-        <button type="button" class="btn btn-quiet" onclick={() => (zoom = Math.min(zoom * 1.25, 4))} aria-label="Zoom in">+</button>
+        <PagesPerRow bind:value={perRow} />
       </div>
+
+      {#if notice}
+        <p class="msg-warn" role="status">{notice}</p>
+      {/if}
     </div>
 
-    <div class="page-strip">
+    <div class="page-grid" style="--per-row: {perRow}">
       {#each pages as page, i (page.url)}
-        <figure style="height: {100 * zoom}%; --page-ratio: {page.width} / {page.height}">
+        <figure>
           {#if failed[i]}
             <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
           {/if}
@@ -310,7 +379,7 @@
         </figure>
       {/each}
     </div>
-  </BottomPane>
+  </SidePane>
 {:else}
   <p class="hint standalone">
     This campaign has no page images, so there are no regions to mark.
@@ -318,9 +387,8 @@
 {/if}
 
 <style>
-  .strip-bar {
+  .pane-bar {
     gap: 1rem;
-    flex-wrap: wrap;
   }
   .tools {
     display: flex;
@@ -333,10 +401,12 @@
   button {
     background: var(--card);
   }
-  .zoomlabel {
-    font-variant-numeric: tabular-nums;
-  }
   .hint {
+    margin: 0;
+  }
+  /* The bar is a wrapping row, so the notice takes a line of its own. */
+  .msg-warn {
+    flex-basis: 100%;
     margin: 0;
   }
   .hint.standalone {
@@ -353,10 +423,10 @@
   }
   svg {
     display: block;
-    flex: 1;
-    min-height: 0;
-    width: auto;
-    max-width: 100%;
+    /* The page takes its column's width; the inline aspect-ratio, which is the
+       page image's own, then decides its height. */
+    width: 100%;
+    height: auto;
     /* Scanned pages keep their own white ground in either theme. */
     background: var(--facsimile-paper);
     border: 1px solid var(--line);

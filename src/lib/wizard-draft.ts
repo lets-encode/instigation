@@ -135,6 +135,13 @@ export function resumableDrafts(owner: string): WizardDraft[] {
 }
 
 /**
+ * A page image a draft records is not in its repository. Its own type because a
+ * caller can carry on without the images — they can be uploaded again — where a
+ * request that failed for another reason is worth reporting and repeating.
+ */
+export class MissingDraftImageError extends Error {}
+
+/**
  * The bytes of a draft's page images, read back from the repository the upload
  * step committed them to. The result follows `paths`, which is page order.
  *
@@ -151,7 +158,8 @@ export async function fetchDraftImages(
 	const images: PageImage[] = [];
 	for (const path of paths) {
 		const blob = await forge.getRepoFileBytes(repo.owner, repo.name, path);
-		if (!blob) throw new Error(`${path} is no longer in ${repo.owner}/${repo.name}.`);
+		if (!blob)
+			throw new MissingDraftImageError(`${path} is no longer in ${repo.owner}/${repo.name}.`);
 		images.push({ path, blob: asImageBlob(blob, path) });
 		onProgress?.(images.length, paths.length);
 	}

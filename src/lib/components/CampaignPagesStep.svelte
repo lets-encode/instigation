@@ -19,20 +19,34 @@
   import { onDestroy } from "svelte";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import { resolvePages, blobToBase64 } from "$lib/prepare-images.ts";
-  import { wizard, nextStep, previousStep } from "$lib/wizard.svelte.ts";
+  import { IMAGE_DIR, resolvePages, blobToBase64 } from "$lib/prepare-images.ts";
+  import {
+    wizard,
+    draftSnapshot,
+    saveDraft,
+    nextStep,
+    previousStep,
+  } from "$lib/wizard.svelte.ts";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import type { FileChange } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
+  import PagesPerRow from "./PagesPerRow.svelte";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
+  // Whether the commit has been attempted here and stopped part way, which is
+  // what makes the next press a retry of it.
+  let failed = $state(false);
   const log = new ProgressLog();
+
+  let perRow = $state(4);
 
   // The page a range selection is measured from: the last one clicked on its own.
   let anchor: number | null = null;
+  // The page being dragged, and the one it is currently over.
   let dragIndex = $state<number | null>(null);
+  let overIndex = $state<number | null>(null);
 
   // One object URL per preview, cached so a re-render — a reorder, a change of
   // selection — hands the same <img> the same src. They are all released together
@@ -70,11 +84,13 @@
       .slice(0, 350),
   );
 
-  // A repository from a failed attempt means the commit is being retried.
+  // Only an attempt that stopped part way is a retry. A repository that already
+  // exists otherwise — a setup continued from a draft, a second pass through this
+  // step — is committed to the same way a new one is, so it reads the same.
   const continueLabel = $derived(
     busy
       ? "Working…"
-      : wizard.repo
+      : failed
         ? "Retry"
         : chosen.length
           ? `Use ${chosen.length} page${chosen.length === 1 ? "" : "s"}`
@@ -124,6 +140,7 @@
     }
 
     busy = true;
+    failed = false;
     log.clear();
     try {
       // Fetching and rendering happens before the repository is created, so an
@@ -161,6 +178,11 @@
           id: created.id,
         };
         wizard.repo = repo;
+        // The repository exists from here on, whatever happens next. The draft is
+        // stored on a debounce as entries change, which is too late for this: a
+        // setup continued without it would try to create a second repository
+        // under a name this one already has.
+        saveDraft(user.login, draftSnapshot());
 
         // The listing topic is not stamped here: it marks a campaign, and this
         // repository is not one until the final step has set it up.
@@ -184,23 +206,55 @@
         "templates/score.template.mei",
       );
 
-      if (images.length) {
+      // Pages the repository holds that this selection does not: the chosen ones
+      // are committed over the paths they had, but a shorter selection, or one
+      // whose pages are named differently, would leave the rest behind. The
+      // repository is asked rather than this browser, so pages committed by an
+      // attempt whose images are not held here are removed too.
+      //
+      // Only a run that had pages to choose from removes any: a continued setup
+      // cannot pick its files again, and reaches this step with nothing chosen,
+      // which says nothing about what the campaign's pages should be.
+      let stale: string[] = [];
+      if (wizard.candidates.length) {
+        log.step("Reading the pages already committed", { timed: false });
+        const held = await f.getDirDownloadUrls(repo.owner, repo.name, IMAGE_DIR);
+        stale = Object.keys(held)
+          .map((name) => `${IMAGE_DIR}/${name}`)
+          .filter((path) => !images.some((image) => image.path === path));
+      }
+
+      if (images.length || stale.length) {
         log.step(`Committing ${images.length} image(s)`);
         const files: FileChange[] = [];
         for (const image of images) {
-          log.detail(`encoding ${image.path} (${files.length + 1} of ${images.length})`);
+          log.detail(`encoding ${files.length + 1}/${images.length}`);
           files.push({
             path: image.path,
             contentBase64: await blobToBase64(image.blob),
           });
         }
-        log.detail("uploading");
-        await f.commitFiles(repo.owner, repo.name, files, "Add source images");
+        if (stale.length) log.detail(`removing ${stale.length} page(s) not kept`);
+        log.detail(`uploading 0/${images.length}`);
+        await f.commitFiles(
+          repo.owner,
+          repo.name,
+          files,
+          wizard.images.length ? "Update source images" : "Add source images",
+          {
+            deletePaths: stale,
+            onUpload: (done, total) => log.detail(`uploading ${done}/${total}`),
+          },
+        );
       }
       // Only a run that had pages to choose from replaces what the step already
       // produced. A continued setup, whose files cannot be picked again, keeps
       // the images the repository already holds instead of emptying them.
       if (wizard.candidates.length) wizard.images = images;
+      // Which pages the repository holds has just changed; the draft records
+      // their paths, and is read back against the repository when a setup is
+      // continued, so it is stored before the step moves on.
+      saveDraft(user.login, draftSnapshot());
 
       log.done();
       busy = false;
@@ -211,6 +265,7 @@
         ? `The repository ${wizard.repo.full_name} was created, but the upload didn't finish: ${(err as Error).message}`
         : `Could not commit the pages: ${(err as Error).message}`;
       log.fail();
+      failed = true;
       busy = false;
     }
   }
@@ -220,6 +275,7 @@
   step="pages"
   heading="Choose the pages"
   intro="Keep the pages the campaign encodes and put them in reading order. Only the pages you keep are downloaded at full size and committed."
+  fill
   onBack={previousStep}
   backDisabled={busy}
   onNext={commitAndContinue}
@@ -241,6 +297,7 @@
         {chosen.length} of {wizard.candidates.length} pages kept
       </span>
       <span class="controls">
+        <PagesPerRow bind:value={perRow} />
         <button
           type="button"
           class="btn btn-quiet"
@@ -264,19 +321,28 @@
       run of pages. Drag a page, or use its arrows, to move it.
     </p>
 
-    <ol class="grid">
+    <ol class="grid" style="--per-row: {perRow}">
       {#each wizard.candidates as page, i (page.id)}
         <li
           class:out={!page.include}
           class:dragging={dragIndex === i}
-          draggable={!busy}
-          ondragstart={() => (dragIndex = i)}
-          ondragend={() => (dragIndex = null)}
-          ondragover={(e) => e.preventDefault()}
+          class:drop-before={dragIndex !== null && overIndex === i && dragIndex > i}
+          class:drop-after={dragIndex !== null && overIndex === i && dragIndex < i}
+          ondragover={(e) => {
+            if (dragIndex === null) return;
+            // Accepting the drag is what makes this position a drop target.
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+            overIndex = i;
+          }}
+          ondragleave={() => {
+            if (overIndex === i) overIndex = null;
+          }}
           ondrop={(e) => {
             e.preventDefault();
             if (dragIndex !== null) move(dragIndex, i);
             dragIndex = null;
+            overIndex = null;
           }}
         >
           <button
@@ -285,9 +351,22 @@
             aria-pressed={page.include}
             disabled={busy}
             title={page.label}
+            draggable={!busy}
             onclick={(e) => toggle(i, e.shiftKey)}
+            ondragstart={(e) => {
+              dragIndex = i;
+              // Firefox starts a drag only once the transfer carries data.
+              e.dataTransfer?.setData("text/plain", String(i));
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+            }}
+            ondragend={() => {
+              dragIndex = null;
+              overIndex = null;
+            }}
           >
-            <img src={urls[i]} alt={page.label} />
+            <!-- An image is draggable in its own right, which would drag the
+                 picture instead of the page. -->
+            <img src={urls[i]} alt={page.label} draggable="false" />
             <span class="mark" aria-hidden="true">
               {page.include ? numbers[i] : "—"}
             </span>
@@ -345,21 +424,24 @@
     gap: 0.4rem;
   }
   .grid {
-    /* A long source is many pages, so the grid scrolls inside the card rather
-       than pushing the step's controls out of reach. */
-    max-height: 55vh;
+    /* The pages take the height the rest of the card leaves and scroll within
+       it, rather than pushing the step's controls out of reach. What the step
+       reports while it works grows into this space. */
+    flex: 1;
+    min-height: 0;
     overflow: auto;
     list-style: none;
     margin: 1rem 0 0;
     padding: 0.25rem;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+    grid-template-columns: repeat(var(--per-row), minmax(0, 1fr));
     gap: 0.75rem;
     border: 1px solid var(--line);
     border-radius: 6px;
     background: var(--bg-alt);
   }
   .grid li {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -367,6 +449,23 @@
   }
   .grid li.dragging {
     opacity: 0.4;
+  }
+  /* Where the dragged page lands: before or after the page it is over. */
+  .grid li.drop-before::before,
+  .grid li.drop-after::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+  .grid li.drop-before::before {
+    left: -0.375rem;
+  }
+  .grid li.drop-after::after {
+    right: -0.375rem;
   }
   .thumb {
     position: relative;
@@ -377,6 +476,8 @@
     border: 2px solid var(--accent);
     border-radius: 6px;
     cursor: pointer;
+    /* Safari drags an element from a form control only when told to. */
+    -webkit-user-drag: element;
   }
   li.out .thumb {
     border-color: var(--line);
@@ -387,7 +488,9 @@
   .thumb img {
     display: block;
     width: 100%;
-    height: 7rem;
+    /* The preview takes its tile's width, so the zoom level sets how large a
+       page is shown; the proportions of a page hold it to a fixed height. */
+    aspect-ratio: 3 / 4;
     object-fit: contain;
     /* Scanned pages keep their own white ground in either theme. */
     background: var(--facsimile-paper);

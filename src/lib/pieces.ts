@@ -77,6 +77,38 @@ export function pagesCovered(piece: Piece): number[] {
 }
 
 /**
+ * Ascending numbers without repeats, written as ranges: [1, 2, 3, 7, 8] becomes
+ * "1–3, 7–8". A run of one number stays a single number.
+ */
+export function formatRanges(numbers: number[]): string {
+	const runs: Array<[number, number]> = [];
+	for (const n of numbers) {
+		const last = runs.at(-1);
+		if (last && n === last[1] + 1) last[1] = n;
+		else runs.push([n, n]);
+	}
+	return runs.map(([from, to]) => (from === to ? `${from}` : `${from}–${to}`)).join(', ');
+}
+
+/** Whether two regions share any area of the same page. */
+export function zonesOverlap(a: PieceZone, b: PieceZone): boolean {
+	return (
+		a.surface === b.surface && a.ulx < b.lrx && b.ulx < a.lrx && a.uly < b.lry && b.uly < a.lry
+	);
+}
+
+/**
+ * The first piece other than `index` holding a region that overlaps `zone`, or
+ * -1 when none does. Regions of different pieces must not overlap: a measure
+ * inside two of them could belong to either.
+ */
+export function overlappingPiece(pieces: Piece[], index: number, zone: PieceZone): number {
+	return pieces.findIndex(
+		(piece, p) => p !== index && piece.zones.some((other) => zonesOverlap(other, zone))
+	);
+}
+
+/**
  * Which piece a measure box belongs to: the first piece with a region on that
  * page containing the box's centre. Returns -1 when no region covers it, so the
  * caller can drop boxes that fall outside every piece.

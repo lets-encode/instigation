@@ -33,6 +33,7 @@
   import {
     copyMetadata,
     createPiece,
+    formatRanges,
     initialPieces,
     pagesCovered,
     partitionPages,
@@ -331,6 +332,7 @@
   }
 
   const piece = $derived(wizard.pieces[selected]);
+  const label = $derived(piece ? piece.meta.title.trim() || piece.id : "");
   const covered = $derived(piece ? pagesCovered(piece) : []);
   // A facsimile piece with no regions would produce no tasks at all.
   const unmarked = $derived(
@@ -338,8 +340,8 @@
   );
 </script>
 
-<!-- Two panes over the full height: the pieces and their metadata scroll in the
-     top one, the region editor holds the bottom one. -->
+<!-- Two panes side by side over the full height: the pieces and their metadata
+     scroll in the left one, the region editor holds the right one. -->
 <div class="pane-split">
   <div class="pane-scroll">
     <WizardCard
@@ -390,22 +392,26 @@
       </div>
 
       {#if piece}
-        <h2>Metadata for this piece</h2>
+        <h2>
+          Metadata for <span style="color: {pieceColour(selected)}">{label}</span>
+        </h2>
         <MetadataForm bind:meta={wizard.pieces[selected].meta} />
 
         {#if piece.kind === "facsimile"}
           <p class="covered">
+            <strong style="color: {pieceColour(selected)}">{label}</strong>
             {#if covered.length}
-              Covers page{covered.length === 1 ? "" : "s"}
-              {covered.map((p) => p + 1).join(", ")}. Mark the regions in the pane
-              below.
+              covers page{covered.length === 1 ? "" : "s"}
+              {formatRanges(covered.map((p) => p + 1))}. Mark the regions in the pane
+              beside this one.
             {:else}
-              No regions marked yet. Mark them in the pane below.
+              has no regions marked yet. Mark them in the pane beside this one.
             {/if}
           </p>
         {:else}
           <p class="covered">
-            From the uploaded encoding <code>{piece.encodingName}</code>. It is
+            <strong style="color: {pieceColour(selected)}">{label}</strong>
+            comes from the uploaded encoding <code>{piece.encodingName}</code>. It is
             committed whole, so it needs no regions.
           </p>
         {/if}

@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	DRAFT_VERSION,
+	MissingDraftImageError,
 	discardDraft,
 	fetchDraftImages,
 	parseDraft,
@@ -159,13 +160,15 @@ test('labels the bytes as an image, whatever media type they arrive under', asyn
 	);
 });
 
-test('fails when an image is no longer in the repository', async () => {
+test('fails when an image is no longer in the repository, saying so by its type', async () => {
 	await assert.rejects(
 		fetchDraftImages(
 			{ getRepoFileBytes: async () => null },
 			{ owner: 'ada', name: 'symphony-9' },
 			['img/01.jpg']
 		),
-		/img\/01\.jpg is no longer in ada\/symphony-9/
+		(err: Error) =>
+			err instanceof MissingDraftImageError &&
+			/img\/01\.jpg is no longer in ada\/symphony-9/.test(err.message)
 	);
 });

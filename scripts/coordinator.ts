@@ -15,12 +15,6 @@
 //      (login, for commit messages only), HEAD_REPO ("owner/repo" of the PR head),
 //      HEAD_REPO_ID, HEAD_SHA, HEAD_REF.
 
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import {
 	parseTaskCsv,
 	parseStateCsv,
@@ -56,6 +50,7 @@ import {
 	getGitHubRequestTelemetry
 } from '../src/lib/forge/github-rest.ts';
 import type { FileChange } from '../src/lib/forge/github-rest.ts';
+import { validateMei } from './mei-validate.ts';
 
 const token = process.env.GH_TOKEN ?? '';
 const [owner, repo] = (process.env.BASE_REPO ?? '').split('/');
@@ -80,12 +75,9 @@ const CONFIG_PATH = 'config.yaml';
 const MAX_ATTEMPTS = 3;
 const DEFAULT_STALE_MINUTES = 120;
 
-// The machine-check schema, pinned to the version the campaign template
-// declares in its <?xml-model?> processing instruction.
-const MEI_SCHEMA_URL = 'https://music-encoding.org/schema/5.0/mei-CMN.rng';
-const MEI_SCHEMA_SHA256 = 'fa2081b4e0c858e1dcde339b1b733b8e6350212a46c0db50b94cc71bbe68ca4c';
-
-type Verdict = { ok: boolean; reason?: string };
+// A rejection's `reason` is the machine-readable code recorded in the history
+// table; `detail` is the human explanation behind it, for the PR comment only.
+type Verdict = { ok: boolean; reason?: string; detail?: string };
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -100,29 +92,6 @@ async function cleanupHeadBranch(): Promise<void> {
 	} catch (e) {
 		console.warn(`Branch cleanup skipped: ${(e as Error).message}`);
 	}
-}
-
-// Machine-check: well-formed XML AND valid against the pinned MEI schema, via
-// xmllint --relaxng (which implies the well-formedness check). The schema is
-// fetched once per run; a fetch failure fails the run loudly rather than
-// letting content through unchecked.
-let schemaPath: string | null = null;
-async function isValidMei(content: string): Promise<boolean> {
-	if (!schemaPath) {
-		const res = await fetch(MEI_SCHEMA_URL);
-		if (!res.ok) throw new Error(`Failed to fetch MEI schema (${res.status} ${MEI_SCHEMA_URL})`);
-		const schema = new Uint8Array(await res.arrayBuffer());
-		const digest = createHash('sha256').update(schema).digest('hex');
-		if (digest !== MEI_SCHEMA_SHA256) {
-			throw new Error(`MEI schema integrity check failed (expected ${MEI_SCHEMA_SHA256}, received ${digest})`);
-		}
-		const path = join(tmpdir(), 'mei-schema.rng');
-		await writeFile(path, schema);
-		schemaPath = path;
-	}
-	const r = spawnSync('xmllint', ['--noout', '--relaxng', schemaPath, '-'], { input: content });
-	if (r.status !== 0) console.warn(`MEI machine-check failed:\n${r.stderr}`);
-	return r.status === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,17 +228,36 @@ async function decideEncoding(
 	// A page task (locator `surface-N`) contributes only its page's measures: we
 	// splice the fork's page into the base score, leaving other pages as they
 	// stand. Whole-file tasks (empty locator) and pre-tasks take the fork verbatim.
+	//
+	// Failing to assemble the MEI at all and assembling one the schema rejects
+	// are both `mei_invalid` submissions; which of the two it was survives only
+	// in `detail`, since the reason code is what the tables record.
 	const forkMei = await getRepoFile(token, headOwner, headRepo, task.fragment, headSha);
 	let mei = forkMei;
+	let detail = forkMei == null ? `${task.fragment} is missing from the fork.` : '';
 	if (forkMei != null && task.locator.startsWith('surface-')) {
 		const baseMei = await getRepoFile(token, owner, repo, task.fragment, sha);
-		try {
-			mei = baseMei == null ? null : splicePage(baseMei, forkMei, task.locator);
-		} catch (err) {
-			console.warn(`Page splice failed for ${task.task_id} (${task.locator}): ${(err as Error).message}`);
+		if (baseMei == null) {
 			mei = null;
+			detail = `${task.fragment} is missing from the campaign.`;
+		} else {
+			try {
+				mei = splicePage(baseMei, forkMei, task.locator);
+			} catch (err) {
+				const message = (err as Error).message;
+				console.warn(`Page splice failed for ${task.task_id} (${task.locator}): ${message}`);
+				mei = null;
+				detail = `Could not splice page ${task.locator} into ${task.fragment}: ${message}`;
+			}
 		}
 	}
+	let meiValid = false;
+	if (mei != null) {
+		const check = await validateMei(mei);
+		meiValid = check.ok;
+		if (!check.ok) detail = `${task.fragment}:${check.error}`;
+	}
+
 	const verdict = checkEncoding({
 		tasks,
 		state,
@@ -277,7 +265,7 @@ async function decideEncoding(
 		intent: { task_id: task.task_id },
 		author,
 		changedPaths,
-		meiValid: mei != null && (await isValidMei(mei)),
+		meiValid,
 		now
 	});
 
@@ -290,7 +278,9 @@ async function decideEncoding(
 		outcome: verdict.ok ? 'accepted' : 'rejected',
 		detail: verdict.ok ? '' : verdict.reason
 	};
-	if (!verdict.ok) return { ok: false, reason: verdict.reason, history };
+	if (!verdict.ok) {
+		return { ok: false, reason: verdict.reason, detail: verdict.reason === 'mei_invalid' ? detail : '', history };
+	}
 
 	return {
 		ok: true,
@@ -417,7 +407,8 @@ async function runSubmit(
 
 	const body = verdict.ok
 		? `✅ Submission accepted (${kind}).`
-		: `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.`;
+		: `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.` +
+			(verdict.detail ? ` ${verdict.detail}` : '');
 	await commentAndClosePr(token, owner, repo, prNumber, body);
 	if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
 }

@@ -9,6 +9,8 @@ import {
 	prepareCandidates,
 	resolvePages,
 	fetchIiifCanvases,
+	IIIF_PREVIEW_REQUESTS,
+	IIIF_REQUESTS_PER_SECOND,
 	MAX_IMAGE_EDGE,
 	PREVIEW_IMAGE_EDGE,
 	type IiifCanvas,
@@ -25,13 +27,34 @@ const blob = (marker: string) => ({ marker }) as unknown as Blob;
 
 const service = (id: string): IiifCanvas => ({ service: id, url: `${id}/canvas.jpg` });
 
-// Injected browser steps: no canvas, pdf.js or verovio outside a browser.
+// Injected browser steps: no canvas, pdf.js or verovio outside a browser. `wait`
+// returns at once, so tests that are not about pacing do not pay for it.
 const stubs = {
 	renderPdf: async (file: File, options: PdfRenderOptions) =>
 		(options.pages ?? [1, 2]).map((page) => blob(`${file.name}-p${page}@${options.scale}`)),
 	downscale: async (b: Blob) => b,
-	toMei: async (f: File) => `<mei><!-- ${f.name} --></mei>`
+	toMei: async (f: File) => `<mei><!-- ${f.name} --></mei>`,
+	wait: async () => {}
 };
+
+/** The nth canvas a relay URL points at, from `.../img/<n>/...` escaped in it. */
+const canvasNumber = (input: RequestInfo | URL) =>
+	Number(String(input).match(/img%2F(\d+)/)?.[1] ?? 0);
+
+/** A failure carrying the broker's marker for whose answer the status is. */
+const marked = (status: number, upstream: string | null) =>
+	({
+		ok: false,
+		status,
+		headers: { get: (name: string) => (name === 'x-lets-encode-upstream' ? upstream : null) }
+	}) as unknown as Response;
+
+/** A status the relay passed through from the source server. */
+const relayed = (status: number) => marked(status, 'iiif');
+/** The relay's rate-limit refusal, which it marks as its own answer. */
+const refused = (status: number) => marked(status, 'broker');
+/** A relay error raised before reaching out, which carries no marker at all. */
+const unmarked = (status: number) => marked(status, null);
 
 const okFetch = (marker = 'iiif') => {
 	const requested: string[] = [];
@@ -171,7 +194,7 @@ test('reads a source at preview size only, leaving the committing-size work undo
 			brokerUrl: '/auth'
 		}
 	);
-	assert.deepEqual(scales, [0.5], 'PDF pages are rasterised at preview scale');
+	assert.deepEqual(scales, [1.5], 'PDF pages are rasterised at preview scale');
 	assert.ok(
 		requested[0].includes(encodeURIComponent(`!${PREVIEW_IMAGE_EDGE},${PREVIEW_IMAGE_EDGE}`)),
 		`expected a preview-size canvas request, got ${requested[0]}`
@@ -202,6 +225,143 @@ test('rejects when there is nothing to prepare', async () => {
 	await assert.rejects(() => prepareCandidates([], [], undefined, stubs), /No images or encodings/);
 });
 
+test('fetches canvas previews a few at a time, keeping the manifest order', async () => {
+	const canvases = Array.from({ length: 10 }, (_, i) => service(`https://iiif.example/img/${i + 1}`));
+	let inFlight = 0;
+	let peak = 0;
+	const fetchFn = async (input: RequestInfo | URL) => {
+		peak = Math.max(peak, ++inFlight);
+		// Answer in reverse: a later canvas comes back before an earlier one.
+		const nth = canvasNumber(input);
+		await new Promise((resolve) => setTimeout(resolve, (11 - nth) * 2));
+		inFlight--;
+		return { ok: true, blob: async () => blob(`canvas-${nth}`) } as unknown as Response;
+	};
+	const { candidates } = await prepareCandidates([], canvases, undefined, {
+		...stubs,
+		fetchFn,
+		brokerUrl: '/auth'
+	});
+	assert.ok(peak > 1, 'previews are fetched in parallel');
+	assert.ok(
+		peak <= IIIF_PREVIEW_REQUESTS,
+		`expected at most ${IIIF_PREVIEW_REQUESTS} requests in flight, saw ${peak}`
+	);
+	assert.deepEqual(
+		candidates.map((c) => (c.preview as unknown as { marker: string }).marker),
+		canvases.map((_, i) => `canvas-${i + 1}`)
+	);
+});
+
+test("spaces relay requests inside the broker's per-second budget", async () => {
+	const canvases = Array.from({ length: 30 }, (_, i) => service(`https://iiif.example/img/${i + 1}`));
+	// A virtual clock: waiting advances it rather than spending the time asked for.
+	let now = 0;
+	const starts: number[] = [];
+	const fetchFn = async () => {
+		starts.push(now);
+		return { ok: true, blob: async () => blob('canvas') } as unknown as Response;
+	};
+	await prepareCandidates([], canvases, undefined, {
+		...stubs,
+		fetchFn,
+		brokerUrl: '/auth',
+		wait: async (ms: number) => {
+			now += ms;
+		}
+	});
+	assert.equal(starts.length, canvases.length);
+	for (const start of starts) {
+		const inSecond = starts.filter((at) => at >= start && at < start + 1000).length;
+		assert.ok(
+			inSecond <= IIIF_REQUESTS_PER_SECOND,
+			`expected at most ${IIIF_REQUESTS_PER_SECOND} requests in any second, saw ${inSecond}`
+		);
+	}
+});
+
+test('waits longer and re-attempts a refused canvas, keeping the ones already fetched', async () => {
+	const canvases = Array.from({ length: 12 }, (_, i) => service(`https://iiif.example/img/${i + 1}`));
+	const waits: number[] = [];
+	let refusedOnce = false;
+	const fetchFn = async (input: RequestInfo | URL) => {
+		const nth = canvasNumber(input);
+		if (nth === 7 && !refusedOnce) {
+			refusedOnce = true;
+			return refused(429);
+		}
+		return { ok: true, blob: async () => blob(`canvas-${nth}`) } as unknown as Response;
+	};
+	const { candidates } = await prepareCandidates([], canvases, undefined, {
+		...stubs,
+		fetchFn,
+		brokerUrl: '/auth',
+		wait: async (ms: number) => {
+			waits.push(ms);
+		}
+	});
+	assert.deepEqual(
+		candidates.map((c) => (c.preview as unknown as { marker: string }).marker),
+		canvases.map((_, i) => `canvas-${i + 1}`)
+	);
+	const pacingInterval = 1000 / IIIF_REQUESTS_PER_SECOND;
+	assert.ok(
+		waits.some((ms) => ms > pacingInterval),
+		`expected a wait longer than the ${pacingInterval}ms pacing interval, got ${waits.join(', ')}`
+	);
+});
+
+test('gives up on a canvas the relay keeps refusing, blaming the relay not the source', async () => {
+	let requests = 0;
+	const fetchFn = async () => {
+		requests++;
+		return refused(429);
+	};
+	await assert.rejects(
+		() =>
+			prepareCandidates([], [service('https://iiif.example/img/1')], undefined, {
+				...stubs,
+				fetchFn,
+				brokerUrl: '/auth'
+			}),
+		/too many requests to the image relay .*\(429\)/
+	);
+	assert.ok(requests > 1, 'expected the refused canvas to be re-attempted');
+});
+
+test('tells a source server’s refusal apart from the relay’s own', async () => {
+	const canvas = { service: null, url: 'https://iiif.example/missing' };
+	const fails = (res: Response) =>
+		prepareCandidates([], [canvas], undefined, {
+			...stubs,
+			fetchFn: async () => res,
+			brokerUrl: '/auth'
+		});
+	// One status must not read the same from both sides: a relayed 429 is the
+	// source rationing its own service, the relay's own is this application's cap.
+	await assert.rejects(() => fails(refused(429)), /image relay/);
+	await assert.rejects(() => fails(relayed(429)), /source server returned 429/);
+	// An error the relay raises before reaching out is marked by its absence.
+	await assert.rejects(() => fails(unmarked(502)), /the image relay answered 502/);
+});
+
+test('stops fetching previews once one canvas has failed', async () => {
+	const canvases = Array.from({ length: 40 }, (_, i) => service(`https://iiif.example/img/${i + 1}`));
+	let requests = 0;
+	const fetchFn = async () => {
+		requests++;
+		return relayed(503);
+	};
+	await assert.rejects(
+		() => prepareCandidates([], canvases, undefined, { ...stubs, fetchFn, brokerUrl: '/auth' }),
+		/returned 503/
+	);
+	assert.ok(
+		requests <= IIIF_PREVIEW_REQUESTS,
+		`expected the pass to stop, but it made ${requests} requests`
+	);
+});
+
 test('refuses to fetch IIIF canvases without a broker to relay through', async () => {
 	const fetchFn = async () => {
 		throw new Error('must not reach the network');
@@ -216,7 +376,7 @@ test('refuses to fetch IIIF canvases without a broker to relay through', async (
 });
 
 test('surfaces a failed IIIF canvas fetch', async () => {
-	const fetchFn = async () => ({ ok: false, status: 404 }) as unknown as Response;
+	const fetchFn = async () => relayed(404);
 	await assert.rejects(
 		() =>
 			prepareCandidates([], [{ service: null, url: 'https://iiif.example/missing' }], undefined, {
@@ -224,7 +384,7 @@ test('surfaces a failed IIIF canvas fetch', async () => {
 				fetchFn,
 				brokerUrl: '/auth'
 			}),
-		/Could not fetch the IIIF image .* \(404\)/
+		/Could not fetch the IIIF image at https:\/\/iiif\.example\/missing: the source server returned 404\./
 	);
 });
 
@@ -326,6 +486,17 @@ test('fetches a manifest and returns its canvases', async () => {
 	assert.deepEqual(await fetchIiifCanvases('https://iiif.example/manifest', '/auth', { fetchFn }), [
 		{ service: 'https://iiif.example/img/9', url: '' }
 	]);
+});
+
+test('names the server that refused a manifest', async () => {
+	await assert.rejects(
+		() => fetchIiifCanvases('https://iiif.example/manifest', '/auth', { fetchFn: async () => refused(429) }),
+		/Could not fetch the IIIF manifest at https:\/\/iiif\.example\/manifest: too many requests to the image relay/
+	);
+	await assert.rejects(
+		() => fetchIiifCanvases('https://iiif.example/manifest', '/auth', { fetchFn: async () => relayed(404) }),
+		/the source server returned 404/
+	);
 });
 
 test('reports a manifest with no canvases rather than committing nothing', async () => {

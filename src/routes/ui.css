@@ -156,40 +156,42 @@ textarea.input {
 }
 
 /* ---- Full-height layout ------------------------------------------------
-   Routes that fill the window: .pane-split stacks a scrolling pane over a
-   pane pinned to the bottom, .pane-scroll is the scrolling one. */
+   Routes that fill the window: .pane-split sets a scrolling pane beside a pane
+   held against the right edge, .pane-scroll is the scrolling one. */
 .pane-split {
   display: flex;
-  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
 .pane-scroll {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 0 1.5rem;
 }
+/* Too narrow for two panes beside each other: they stack instead, the page pane
+   underneath. The same width is the breakpoint in SidePane.svelte. */
+@media (max-width: 52rem) {
+  .pane-split {
+    flex-direction: column;
+  }
+}
 
-/* ---- Page strip --------------------------------------------------------
-   Page images laid out left to right, each scaled to the strip's height. */
-.page-strip {
+/* ---- Page grid ---------------------------------------------------------
+   Page images in rows, as many per row as --per-row asks for. Each page takes
+   the width of its column, so fewer per row shows each one larger. */
+.page-grid {
   flex: 1;
   min-height: 0;
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: repeat(var(--per-row, 1), minmax(0, 1fr));
+  align-content: start;
   gap: 0.6rem;
   padding: 0 0.75rem 0.75rem;
   overflow: auto;
 }
-.page-strip figure {
-  flex: none;
-  height: 100%;
-  /* The page's own ratio, set per figure, so the height the strip gives the
-     figure decides its width. Without it the width would come from the widest
-     child — the caption, or a raster's natural pixel width — and the page would
-     spill over its neighbours or sit in an over-wide box. */
-  aspect-ratio: var(--page-ratio, auto);
+.page-grid figure {
   min-width: 0;
   margin: 0;
   display: flex;
@@ -197,14 +199,16 @@ textarea.input {
   align-items: center;
   gap: 0.25rem;
 }
-.page-strip figcaption {
+.page-grid figcaption {
   font-size: 0.75rem;
   color: var(--ink-faint);
 }
-/* The bar of controls above a strip. */
-.strip-bar {
+/* The bar of controls above a grid of pages. */
+.pane-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
   padding: 0.4rem 0.75rem 0.35rem;
 }

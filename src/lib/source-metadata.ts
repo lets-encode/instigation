@@ -7,9 +7,10 @@
 // re-emitted on the next build. That keeps an expert's hand-written additions
 // from being silently dropped without pretending the form models all of MEI.
 //
-// The boundary is deliberately simple: this module owns <fileDesc>; any other
+// The boundary is deliberately simple: this module owns <fileDesc> and the
+// <manifestationList> holding the source's physical description; any other
 // direct child of <meiHead> (<workList>, <extMeta>, …) is carried through
-// untouched. Unrecognised markup *inside* fileDesc is not preserved.
+// untouched. Unrecognised markup *inside* those two is not preserved.
 //
 // Same conventions as mei-facsimile.ts / mei-header.ts: pure regex and string
 // handling, no DOM, filesystem or network access.
@@ -37,7 +38,10 @@ export interface SourceMetadata {
 	condition: string;
 	/** Free-text note about the source. */
 	note: string;
-	/** Direct children of <meiHead> other than <fileDesc>, preserved verbatim. */
+	/**
+	 * Direct children of <meiHead> other than <fileDesc> and <manifestationList>,
+	 * preserved verbatim.
+	 */
 	extraHeadXml: string;
 }
 
@@ -102,6 +106,56 @@ function optional(tag: string, value: string, depth: number): string {
 	return value.trim() ? `${indent(depth)}<${tag}>${xmlEscape(value.trim())}</${tag}>\n` : '';
 }
 
+// The manifestation both headers describe: MEI's <source> carries only
+// bibliographic references (<bibl>/<biblStruct>), so the description of the
+// physical object goes in a <manifestation> that <sourceDesc> points at.
+const MANIFESTATION_ID = 'manifestation-1';
+
+/** <sourceDesc> referring to the manifestation, for use inside <fileDesc>. */
+const SOURCE_DESC_BLOCK =
+	`${indent(3)}<sourceDesc>\n` +
+	`${indent(4)}<source target="#${MANIFESTATION_ID}"/>\n` +
+	`${indent(3)}</sourceDesc>\n`;
+
+/**
+ * Wrap the manifestation's children (already indented, in MEI's order:
+ * titleStmt, pubStmt, physDesc, notesStmt) in <manifestationList>. Nothing
+ * known about the object means no manifestation at all.
+ */
+function manifestationListBlock(parts: string): string {
+	if (!parts) return '';
+	return (
+		`${indent(2)}<manifestationList>\n` +
+		`${indent(3)}<manifestation xml:id="${MANIFESTATION_ID}">\n` +
+		parts +
+		`${indent(3)}</manifestation>\n` +
+		`${indent(2)}</manifestationList>\n`
+	);
+}
+
+/** <physDesc> and <notesStmt> for a source's physical object, at depth 4. */
+function objectDescription(meta: Pick<SourceMetadata, 'extent' | 'condition' | 'note'>): string {
+	const physDesc = optional('extent', meta.extent, 5) + optional('condition', meta.condition, 5);
+	return (
+		(physDesc ? `${indent(4)}<physDesc>\n${physDesc}${indent(4)}</physDesc>\n` : '') +
+		(meta.note.trim()
+			? `${indent(4)}<notesStmt>\n` + optional('annot', meta.note, 5) + `${indent(4)}</notesStmt>\n`
+			: '')
+	);
+}
+
+/**
+ * Split preserved <meiHead> markup at the position <manifestationList> takes
+ * among its siblings: after <encodingDesc>/<workList>, before <extMeta> and
+ * <revisionDesc>. Emitting the manifestation at that boundary keeps the child
+ * order of a rebuilt header valid.
+ */
+function splitAtManifestationSlot(extra: string): [string, string] {
+	const tail = /<(extMeta|revisionDesc)\b/.exec(extra);
+	if (!tail) return [extra.trim(), ''];
+	return [extra.slice(0, tail.index).trim(), extra.slice(tail.index).trim()];
+}
+
 /**
  * Build the <meiHead> for a source. Empty fields are left out rather than
  * emitted blank, so the header states only what is actually known.
@@ -128,20 +182,9 @@ export function buildSourceHead(meta: SourceMetadata): string {
 		optional('pubPlace', meta.pubPlace, 4) +
 		optional('date', meta.date, 4);
 
-	const physDesc =
-		optional('extent', meta.extent, 6) + optional('condition', meta.condition, 6);
-	const sourceBody =
-		(physDesc ? `${indent(5)}<physDesc>\n${physDesc}${indent(5)}</physDesc>\n` : '') +
-		(meta.note.trim()
-			? `${indent(5)}<notesStmt>\n` +
-				optional('annot', meta.note, 6) +
-				`${indent(5)}</notesStmt>\n`
-			: '');
-	const sourceDesc = sourceBody
-		? `${indent(3)}<sourceDesc>\n${indent(4)}<source>\n${sourceBody}${indent(4)}</source>\n${indent(3)}</sourceDesc>\n`
-		: '';
+	const manifestation = manifestationListBlock(objectDescription(meta));
 
-	const extra = meta.extraHeadXml.trim();
+	const [before, after] = splitAtManifestationSlot(meta.extraHeadXml);
 	return (
 		`${indent(1)}<meiHead>\n` +
 		`${indent(2)}<fileDesc>\n` +
@@ -151,9 +194,11 @@ export function buildSourceHead(meta: SourceMetadata): string {
 		`${indent(3)}</titleStmt>\n` +
 		// pubStmt is required by MEI even when nothing is known about publication.
 		`${indent(3)}<pubStmt>\n${pubStmt}${indent(3)}</pubStmt>\n` +
-		sourceDesc +
+		(manifestation ? SOURCE_DESC_BLOCK : '') +
 		`${indent(2)}</fileDesc>\n` +
-		(extra ? `${extra}\n` : '') +
+		(before ? `${before}\n` : '') +
+		manifestation +
+		(after ? `${after}\n` : '') +
 		`${indent(1)}</meiHead>`
 	);
 }
@@ -168,7 +213,7 @@ export interface PieceHead {
 /**
  * Build the <meiHead> for one piece's MEI, self-contained: the piece's own
  * title and composer in <titleStmt>, and the whole source copied in as the
- * <source> of its <sourceDesc>.
+ * <manifestation> its <sourceDesc> points at.
  *
  * Each piece carries the source description rather than referring to a shared
  * file, so a piece MEI stays meaningful on its own — opened in an editor, or
@@ -187,38 +232,36 @@ export function buildPieceHead(piece: PieceHead, source: SourceMetadata): string
 			`${indent(4)}</availability>\n`
 		: '';
 
-	// The source, one level deeper than it sits in its own header.
+	// The source, as the manifestation the piece's <sourceDesc> points at.
 	const sourcePeople = [
 		...(source.composer.trim() ? [{ name: source.composer, role: 'composer' }] : []),
 		...source.contributors.filter((person) => person.name.trim())
 	];
 	const sourceResp = sourcePeople.length
-		? `${indent(6)}<respStmt>\n` +
+		? `${indent(5)}<respStmt>\n` +
 			sourcePeople
 				.map(
 					(person) =>
-						`${indent(7)}<persName role="${xmlEscape(person.role.trim())}">` +
+						`${indent(6)}<persName role="${xmlEscape(person.role.trim())}">` +
 						`${xmlEscape(person.name.trim())}</persName>\n`
 				)
 				.join('') +
-			`${indent(6)}</respStmt>\n`
+			`${indent(5)}</respStmt>\n`
+		: '';
+	const sourceTitle = source.title.trim()
+		? `${indent(5)}<title>${xmlEscape(source.title.trim())}</title>\n`
 		: '';
 	const sourcePub =
-		optional('publisher', source.publisher, 6) +
-		optional('pubPlace', source.pubPlace, 6) +
-		optional('date', source.date, 6);
-	const sourcePhys =
-		optional('extent', source.extent, 7) + optional('condition', source.condition, 7);
-	const sourceBody =
-		`${indent(5)}<titleStmt>\n` +
-		`${indent(6)}<title>${xmlEscape(source.title.trim())}</title>\n` +
-		sourceResp +
-		`${indent(5)}</titleStmt>\n` +
-		(sourcePub ? `${indent(5)}<pubStmt>\n${sourcePub}${indent(5)}</pubStmt>\n` : '') +
-		(sourcePhys ? `${indent(5)}<physDesc>\n${sourcePhys}${indent(5)}</physDesc>\n` : '') +
-		(source.note.trim()
-			? `${indent(5)}<notesStmt>\n` + optional('annot', source.note, 6) + `${indent(5)}</notesStmt>\n`
-			: '');
+		optional('publisher', source.publisher, 5) +
+		optional('pubPlace', source.pubPlace, 5) +
+		optional('date', source.date, 5);
+	const manifestation = manifestationListBlock(
+		(sourceTitle || sourceResp
+			? `${indent(4)}<titleStmt>\n${sourceTitle}${sourceResp}${indent(4)}</titleStmt>\n`
+			: '') +
+			(sourcePub ? `${indent(4)}<pubStmt>\n${sourcePub}${indent(4)}</pubStmt>\n` : '') +
+			objectDescription(source)
+	);
 
 	return (
 		`${indent(1)}<meiHead>\n` +
@@ -228,9 +271,7 @@ export function buildPieceHead(piece: PieceHead, source: SourceMetadata): string
 		respStmt +
 		`${indent(3)}</titleStmt>\n` +
 		`${indent(3)}<pubStmt>\n${availability}${indent(3)}</pubStmt>\n` +
-		`${indent(3)}<sourceDesc>\n` +
-		`${indent(4)}<source>\n${sourceBody}${indent(4)}</source>\n` +
-		`${indent(3)}</sourceDesc>\n` +
+		(manifestation ? SOURCE_DESC_BLOCK : '') +
 		`${indent(2)}</fileDesc>\n` +
 		`${indent(2)}<encodingDesc>\n` +
 		`${indent(3)}<appInfo>\n` +
@@ -239,6 +280,7 @@ export function buildPieceHead(piece: PieceHead, source: SourceMetadata): string
 		`${indent(4)}</application>\n` +
 		`${indent(3)}</appInfo>\n` +
 		`${indent(2)}</encodingDesc>\n` +
+		manifestation +
 		`${indent(1)}</meiHead>`
 	);
 }
@@ -274,13 +316,17 @@ export function parseSourceHead(xml: string): SourceMetadata {
 	meta.pubPlace = tagText(pubStmt, 'pubPlace');
 	meta.date = tagText(pubStmt, 'date');
 
-	const source = tagInner(tagInner(fileDesc, 'sourceDesc'), 'source');
-	const sourcePhysDesc = tagInner(source, 'physDesc');
-	meta.extent = tagText(sourcePhysDesc, 'extent');
-	meta.condition = tagText(sourcePhysDesc, 'condition');
-	meta.note = tagText(tagInner(source, 'notesStmt'), 'annot');
+	const manifestation = tagInner(tagInner(head, 'manifestationList'), 'manifestation');
+	const physDesc = tagInner(manifestation, 'physDesc');
+	meta.extent = tagText(physDesc, 'extent');
+	meta.condition = tagText(physDesc, 'condition');
+	meta.note = tagText(tagInner(manifestation, 'notesStmt'), 'annot');
 
-	// Anything beside <fileDesc> is markup the form does not model; keep it.
-	meta.extraHeadXml = head.replace(/<fileDesc\b[^>]*>[\s\S]*?<\/fileDesc>/, '').trim();
+	// Anything beside the blocks this module builds is markup the form does not
+	// model; keep it, in the two halves the next build emits it as.
+	const stripped = head
+		.replace(/<fileDesc\b[^>]*>[\s\S]*?<\/fileDesc>/, '')
+		.replace(/<manifestationList\b[^>]*>[\s\S]*?<\/manifestationList>/, '');
+	meta.extraHeadXml = splitAtManifestationSlot(stripped).filter(Boolean).join('\n');
 	return meta;
 }

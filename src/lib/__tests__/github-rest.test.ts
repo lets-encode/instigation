@@ -124,6 +124,69 @@ test('commitFiles builds one tree and advances the requested branch from the sup
 	assert.deepEqual(calls.at(-1)?.body, { sha: 'new-commit' });
 });
 
+test('commitFiles removes the paths it is told to delete in the same commit', async (t) => {
+	const calls: Array<{ url: string; body: unknown }> = [];
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = String(input);
+		calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+		if (url.endsWith('/git/commits/base-sha')) return Response.json({ tree: { sha: 'base-tree' } });
+		if (url.endsWith('/git/trees')) return Response.json({ sha: 'new-tree' });
+		if (url.endsWith('/git/commits')) return Response.json({ sha: 'new-commit' });
+		if (url.endsWith('/git/refs/heads/main')) return Response.json({});
+		throw new Error(`Unexpected request: ${url}`);
+	});
+
+	await commitFiles(
+		'token',
+		'owner',
+		'repo',
+		[{ path: 'sources/img/01.jpg', content: 'kept' }],
+		'Update source images',
+		{ baseSha: 'base-sha', branch: 'main', deletePaths: ['sources/img/02.jpg'] }
+	);
+	assert.deepEqual(calls.find((call) => call.url.endsWith('/git/trees'))?.body, {
+		base_tree: 'base-tree',
+		tree: [
+			{ path: 'sources/img/01.jpg', mode: '100644', type: 'blob', content: 'kept' },
+			{ path: 'sources/img/02.jpg', mode: '100644', type: 'blob', sha: null }
+		]
+	});
+});
+
+test('commitFiles reports each binary upload against the number of them', async (t) => {
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+		const url = String(input);
+		if (url.endsWith('/git/commits/base-sha')) return Response.json({ tree: { sha: 'base-tree' } });
+		if (url.endsWith('/git/blobs')) return Response.json({ sha: 'binary-blob' });
+		if (url.endsWith('/git/trees')) return Response.json({ sha: 'new-tree' });
+		if (url.endsWith('/git/commits')) return Response.json({ sha: 'new-commit' });
+		if (url.endsWith('/git/refs/heads/main')) return Response.json({});
+		throw new Error(`Unexpected request: ${url}`);
+	});
+
+	const progress: Array<[number, number]> = [];
+	await commitFiles(
+		'token',
+		'owner',
+		'repo',
+		[
+			{ path: 'sources/img/01.jpg', contentBase64: 'aW1hZ2U=' },
+			{ path: 'campaign.json', content: '{}' },
+			{ path: 'sources/img/02.jpg', contentBase64: 'aW1hZ2U=' }
+		],
+		'Add source images',
+		{
+			baseSha: 'base-sha',
+			branch: 'main',
+			onUpload: (uploaded, total) => progress.push([uploaded, total])
+		}
+	);
+	assert.deepEqual(progress, [
+		[1, 2],
+		[2, 2]
+	]);
+});
+
 test('commitFiles rejects ambiguous file content before making a request', async (t) => {
 	const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({}));
 	const commit = (file: { path: string; content?: string; contentBase64?: string }) =>

@@ -56,13 +56,22 @@ export interface ForgeClient {
 		path: string,
 		opts?: { attempts?: number; delayMs?: number }
 	): Promise<string>;
-	/** Commit several files in one commit; `opts.baseSha` enables optimistic concurrency. */
+	/**
+	 * Commit several files in one commit, removing `opts.deletePaths` in the same
+	 * one; `opts.baseSha` enables optimistic concurrency. `opts.onUpload` reports
+	 * how many of the binary files have been uploaded.
+	 */
 	commitFiles(
 		owner: string,
 		repo: string,
 		files: FileChange[],
 		message: string,
-		opts?: { baseSha?: string; branch?: string }
+		opts?: {
+			baseSha?: string;
+			branch?: string;
+			deletePaths?: string[];
+			onUpload?: (uploaded: number, total: number) => void;
+		}
 	): Promise<string>;
 	/** A repo file's UTF-8 content, or null if absent. */
 	getRepoFile(owner: string, repo: string, path: string, ref?: string): Promise<string | null>;

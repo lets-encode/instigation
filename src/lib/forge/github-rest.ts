@@ -831,12 +831,19 @@ export async function waitForRepoContents(
  * so files land atomically with one clean diff. `files` is an array of
  * { path, content } with UTF-8 string content. Returns the new commit SHA.
  *
+ * Pass `opts.deletePaths` to remove files in the same commit, so a set of files
+ * can be replaced by a smaller set without leaving the extra ones behind.
+ *
  * Pass `opts.baseSha` to commit on a specific parent: the ref update is
  * non-forced, so if the branch has moved past `baseSha` (a concurrent change)
  * the update fails rather than clobbering it — optimistic concurrency for the
  * tracking tables. Omit it to commit on the current branch head. Pass
  * `opts.branch` to target a branch other than the repo default (e.g. a feature
  * branch being prepared for a pull request).
+ *
+ * Binary files are uploaded one at a time, which for images is the long part of
+ * the commit; `opts.onUpload` is called after each one with how many of them are
+ * done, so a caller can report progress through them.
  * https://docs.github.com/en/rest/git
  */
 export async function commitFiles(
@@ -845,7 +852,17 @@ export async function commitFiles(
 	repo: string,
 	files: FileChange[],
 	message: string,
-	{ baseSha, branch }: { baseSha?: string; branch?: string } = {}
+	{
+		baseSha,
+		branch,
+		deletePaths = [],
+		onUpload
+	}: {
+		baseSha?: string;
+		branch?: string;
+		deletePaths?: string[];
+		onUpload?: (uploaded: number, total: number) => void;
+	} = {}
 ): Promise<string> {
 	for (const file of files) {
 		const hasText = file.content != null;
@@ -875,11 +892,14 @@ export async function commitFiles(
 	const headCommit = await gh<{ tree: { sha: string } }>(`/git/commits/${headSha}`);
 
 	// Text files go inline in the tree; binary files are uploaded as base64 blobs
-	// first (the tree API only accepts text inline) and referenced by SHA.
+	// first (the tree API only accepts text inline) and referenced by SHA. An
+	// entry with a null SHA takes its path out of the tree the commit is built on.
 	const treeEntries: Array<
-		{ path: string; mode: '100644'; type: 'blob'; sha: string } |
+		{ path: string; mode: '100644'; type: 'blob'; sha: string | null } |
 		{ path: string; mode: '100644'; type: 'blob'; content: string }
 	> = [];
+	const binaryCount = files.filter((f) => f.contentBase64 != null).length;
+	let uploaded = 0;
 	for (const f of files) {
 			const base = { path: f.path, mode: '100644' as const, type: 'blob' as const };
 			if (f.contentBase64 != null) {
@@ -888,9 +908,13 @@ export async function commitFiles(
 					body: JSON.stringify({ content: f.contentBase64, encoding: 'base64' })
 				});
 				treeEntries.push({ ...base, sha: blob.sha });
+				onUpload?.(++uploaded, binaryCount);
 				continue;
 			}
 			treeEntries.push({ ...base, content: f.content ?? '' });
+	}
+	for (const path of deletePaths) {
+		treeEntries.push({ path, mode: '100644', type: 'blob', sha: null });
 	}
 
 	// Build a tree off the current one, with our files added.

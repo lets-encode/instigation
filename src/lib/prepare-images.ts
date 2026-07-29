@@ -65,18 +65,36 @@ export interface PreparedUpload {
  */
 export type ProgressFn = (progress: { step?: string; detail?: string }) => void;
 
+// The directory a campaign's page images are committed to, shared by every piece
+// of it. It holds nothing else, so its contents are the campaign's pages.
+export const IMAGE_DIR = 'sources/img';
 // One shared ceiling for uploads, PDF renders and IIIF fetches, so commits stay
 // a reasonable size and later detector runs stay fast. Images already within
 // the cap are committed untouched.
 export const MAX_IMAGE_EDGE = 2000;
-// A preview only has to be recognisable as a page among others, so it is a
-// fraction of the size of the image that gets committed.
-export const PREVIEW_IMAGE_EDGE = 400;
+// A preview is what a page is judged by — whether it belongs to the piece, where
+// it comes in the order — and it is shown large enough to read a dense page from,
+// so it stays well above thumbnail size while remaining smaller than the image
+// that gets committed.
+export const PREVIEW_IMAGE_EDGE = 1000;
+// Previews of a whole digitised source are hundreds of small requests, so a few
+// are in flight at once. Kept low: they go to one institution's server.
+export const IIIF_PREVIEW_REQUESTS = 4;
+// The broker's relay admits twenty requests a second per session and answers 429
+// beyond that, which concurrency cannot get around. Requests are spaced to stay
+// under the ceiling, with room left for a manifest fetch beside them. Raising
+// this means raising the relay's own limit with it (see broker/app.py).
+export const IIIF_REQUESTS_PER_SECOND = 16;
+// Waits before re-attempting a canvas the relay refused, in ms, each longer than
+// the last. The pass as a whole waits, not just the refused request: the budget
+// a 429 reports exhausted is shared by every request in the pass.
+const IIIF_RETRY_WAITS = [500, 1000, 2000];
 const JPEG_QUALITY = 0.85;
 // Render PDF pages at scale 2 of the 72dpi default page box (~150dpi).
 const PDF_RENDER_SCALE = 2;
-// A preview render of the same page box, at roughly a quarter of that width.
-const PDF_PREVIEW_SCALE = 0.5;
+// A preview render of the same page box at ~108dpi: three quarters of the
+// committing width, which is what a dense page has to be read at.
+const PDF_PREVIEW_SCALE = 1.5;
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png)$/i;
 const ENCODING_EXTENSIONS = /\.(mei|musicxml|xml|mxl)$/i;
@@ -233,6 +251,8 @@ export interface PrepareImagesOptions {
 	toMei?: (file: File) => Promise<string>;
 	/** Network access, for IIIF manifests and canvases. */
 	fetchFn?: typeof fetch;
+	/** Sleep, for pacing relay requests; injectable so tests cost no real time. */
+	wait?: (ms: number) => Promise<void>;
 	maxEdge?: number;
 	/** Long edge of the previews the first pass produces. */
 	previewEdge?: number;
@@ -333,17 +353,100 @@ async function encodingToMei(file: File): Promise<string> {
 	return toolkit.getMEI();
 }
 
-/** Fetch a canvas's image at `maxEdge`, through the broker's relay. */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Admits its callers one at a time, `1000 / IIIF_REQUESTS_PER_SECOND` ms apart,
+ * so a pass over a manifest holds to that rate however many of its requests are
+ * in flight. `hold` puts a one-off wait in the same queue, which every caller
+ * still waiting for a turn waits out too.
+ */
+function createPacer(wait: (ms: number) => Promise<void>) {
+	let queue = Promise.resolve();
+	const enqueue = (ms: number) => (queue = queue.then(() => wait(ms)));
+	return {
+		take: () => enqueue(1000 / IIIF_REQUESTS_PER_SECOND),
+		hold: (ms: number) => enqueue(ms)
+	};
+}
+
+type Pacer = ReturnType<typeof createPacer>;
+
+// The broker names the origin of every status it returns from the relay: `iiif`
+// is the source server's own answer, passed through, and anything else — its own
+// marker, or no header on the errors it raises before reaching out — is the
+// broker's. So the header's value attributes a failure, not its presence.
+const RELAY_MARKER = 'x-lets-encode-upstream';
+const SOURCE_MARKER = 'iiif';
+
+/**
+ * Why a relayed request failed, naming the server that refused it. The relay
+ * caps how many requests a session may make per second and answers 429 past
+ * that, which says nothing about the source it was pointed at.
+ */
+function relayFailure(res: Response, what: string): string {
+	if (res.headers.get(RELAY_MARKER) === SOURCE_MARKER) {
+		return `${what}: the source server returned ${res.status}.`;
+	}
+	if (res.status === 429) {
+		return `${what}: too many requests to the image relay in too short a time (429).`;
+	}
+	return `${what}: the image relay answered ${res.status}.`;
+}
+
+/**
+ * Fetch a canvas's image at `maxEdge`, through the broker's relay, at the rate
+ * `pacer` allows. A refused request is re-attempted after a widening wait, so
+ * one exhausted budget costs the pass time rather than the canvases it has
+ * already fetched; every other failure is final.
+ */
 async function fetchIiifImage(
 	canvas: IiifCanvas,
 	maxEdge: number,
 	brokerUrl: string,
-	doFetch: typeof fetch
+	doFetch: typeof fetch,
+	pacer: Pacer
 ): Promise<Blob> {
 	const url = iiifCanvasUrl(canvas, maxEdge);
-	const res = await doFetch(iiifProxyUrl(url, brokerUrl));
-	if (!res.ok) throw new Error(`Could not fetch the IIIF image at ${url} (${res.status}).`);
-	return res.blob();
+	for (let attempt = 0; ; attempt++) {
+		await pacer.take();
+		const res = await doFetch(iiifProxyUrl(url, brokerUrl));
+		if (res.ok) return res.blob();
+		if (res.status !== 429 || attempt === IIIF_RETRY_WAITS.length) {
+			throw new Error(relayFailure(res, `Could not fetch the IIIF image at ${url}`));
+		}
+		await pacer.hold(IIIF_RETRY_WAITS[attempt]);
+	}
+}
+
+/**
+ * Fetch for every item, `IIIF_PREVIEW_REQUESTS` at a time, and return the
+ * results in the items' own order. The first failure is thrown and stops the
+ * rest from being started.
+ */
+async function fetchInParallel<T, R>(
+	items: T[],
+	fetchOne: (item: T) => Promise<R>,
+	onFetched: (fetched: number) => void
+): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let next = 0;
+	let fetched = 0;
+	let stopped = false;
+	const worker = async () => {
+		for (let i = next++; i < items.length && !stopped; i = next++) {
+			try {
+				results[i] = await fetchOne(items[i]);
+			} catch (err) {
+				stopped = true;
+				throw err;
+			}
+			onFetched(++fetched);
+		}
+	};
+	const workers = Math.min(IIIF_PREVIEW_REQUESTS, items.length);
+	await Promise.all(Array.from({ length: workers }, worker));
+	return results;
 }
 
 /**
@@ -366,7 +469,6 @@ export async function prepareCandidates(
 
 	const candidates: PageCandidate[] = [];
 	const encodings: EncodingSource[] = [];
-	const total = files.length + iiifCanvases.length;
 	let done = 0;
 
 	const addCandidate = async (raster: Blob, label: string, source: PageSource) => {
@@ -383,7 +485,7 @@ export async function prepareCandidates(
 		if (!kind) {
 			throw new Error(`Unsupported file: ${file.name}. Upload JPG, PNG, PDF, MEI or MusicXML.`);
 		}
-		const nth = `(${++done} of ${total})`;
+		const nth = `(${++done} of ${files.length})`;
 		if (kind === 'pdf') {
 			onProgress?.({ step: `Reading ${file.name} ${nth}` });
 			const rendered = await renderPdf(file, {
@@ -406,13 +508,20 @@ export async function prepareCandidates(
 		}
 	}
 
-	if (iiifCanvases.length && !options.brokerUrl) {
-		throw new Error('A broker URL is required to fetch IIIF images.');
-	}
-	for (const [i, canvas] of iiifCanvases.entries()) {
-		onProgress?.({ step: `Fetching canvas ${++done} of ${total}` });
-		const preview = await fetchIiifImage(canvas, previewEdge, options.brokerUrl!, doFetch);
-		await addCandidate(preview, `Canvas ${i + 1}`, { kind: 'iiif', canvas });
+	if (iiifCanvases.length) {
+		if (!options.brokerUrl) throw new Error('A broker URL is required to fetch IIIF images.');
+		onProgress?.({ step: `Fetching ${iiifCanvases.length} canvas image(s)` });
+		const pacer = createPacer(options.wait ?? sleep);
+		const previews = await fetchInParallel(
+			iiifCanvases,
+			(canvas) => fetchIiifImage(canvas, previewEdge, options.brokerUrl!, doFetch, pacer),
+			(fetched) => onProgress?.({ detail: `${fetched} of ${iiifCanvases.length}` })
+		);
+		// Added after the fetches, so the pages follow the manifest's order rather
+		// than the order the server happened to answer in.
+		for (const [i, preview] of previews.entries()) {
+			await addCandidate(preview, `Canvas ${i + 1}`, { kind: 'iiif', canvas: iiifCanvases[i] });
+		}
 	}
 
 	if (!candidates.length && !encodings.length) {
@@ -436,6 +545,7 @@ export async function resolvePages(
 	const downscale = options.downscale ?? downscaleImage;
 	const doFetch = options.fetchFn ?? fetch;
 	const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE;
+	const pacer = createPacer(options.wait ?? sleep);
 
 	// Opening a PDF is the expensive part of rendering one page of it, so the
 	// pages wanted from each document are collected and rendered together.
@@ -477,14 +587,20 @@ export async function resolvePages(
 				throw new Error('A broker URL is required to fetch IIIF images.');
 			}
 			onProgress?.({ step: `Fetching ${page.label} ${nth}` });
-			raster = await fetchIiifImage(page.source.canvas, maxEdge, options.brokerUrl, doFetch);
+			raster = await fetchIiifImage(
+				page.source.canvas,
+				maxEdge,
+				options.brokerUrl,
+				doFetch,
+				pacer
+			);
 		}
 		const scaled = await downscale(raster, maxEdge);
 		// A downscale re-encodes to JPEG, so the committed extension follows the
 		// bytes rather than the original file.
 		const finalExtension = scaled === raster ? extension : 'jpg';
 		images.push({
-			path: `sources/img/${pad2(images.length + 1)}.${finalExtension}`,
+			path: `${IMAGE_DIR}/${pad2(images.length + 1)}.${finalExtension}`,
 			blob: scaled
 		});
 	}
@@ -510,7 +626,9 @@ export async function fetchIiifCanvases(
 		// fetch() rejects with an opaque TypeError on network and CORS failures.
 		throw new Error(`Could not reach the IIIF manifest at ${manifestUrl}.`);
 	}
-	if (!res.ok) throw new Error(`The IIIF manifest returned ${res.status}.`);
+	if (!res.ok) {
+		throw new Error(relayFailure(res, `Could not fetch the IIIF manifest at ${manifestUrl}`));
+	}
 	let manifest: unknown;
 	try {
 		manifest = await res.json();

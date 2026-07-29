@@ -10,11 +10,12 @@
   import { wizard, nextStep, previousStep } from "$lib/wizard.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import MetadataForm from "./MetadataForm.svelte";
-  import FacsimileStrip from "./FacsimileStrip.svelte";
+  import FacsimilePages from "./FacsimilePages.svelte";
 </script>
 
-<!-- Two panes over the full height: the form scrolls in the top one, the page
-     strip holds the bottom one and carries the divider between them. -->
+<!-- Two panes side by side over the full height: the form scrolls in the left
+     one, the source pages hold the right one and carry the divider between
+     them. -->
 <div class="pane-split">
   <div class="pane-scroll">
     <WizardCard
@@ -28,5 +29,5 @@
     </WizardCard>
   </div>
 
-  <FacsimileStrip pages={wizard.images} />
+  <FacsimilePages pages={wizard.images} />
 </div>
