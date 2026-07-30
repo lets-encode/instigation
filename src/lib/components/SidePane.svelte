@@ -8,13 +8,11 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  // A starting width taken from the window, so both panes are usable before
-  // anything is dragged. Server rendering has no window to measure, and falls
-  // back to a width the client replaces as it hydrates.
+  // A starting width taken from the window — a third of it, so both panes are
+  // usable before anything is dragged. Server rendering has no window to
+  // measure, and falls back to a width the client replaces as it hydrates.
   const startingWidth = () =>
-    typeof window === "undefined"
-      ? 560
-      : Math.round(Math.min(Math.max(window.innerWidth * 0.45, 320), 720));
+    typeof window === "undefined" ? 560 : Math.round(Math.max(window.innerWidth / 3, 320));
 
   let {
     label,

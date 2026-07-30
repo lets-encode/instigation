@@ -6,7 +6,7 @@
   import { createForge } from "$lib/forge/index.ts";
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import { resolveCampaign } from "$lib/campaign-resolve.ts";
+  import { lookupSlug, resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type {
@@ -38,6 +38,10 @@
   let resolved = $state<ResolvedCampaign | null>(null);
   let resolving = $state(false);
   let notFound = $state(false);
+  // A name that is not (yet) a campaign: held by a setup in progress, reserved
+  // for the app's own routes, or blocked. A free name never renders here — it
+  // forwards to the wizard.
+  let slugState = $state<"pending" | "reserved" | "tombstoned" | null>(null);
   const owner = $derived(resolved?.owner ?? "");
   const repo = $derived(resolved?.repo ?? "");
   const repoId = $derived(resolved?.repoId ?? 0);
@@ -599,14 +603,37 @@
 
   // Resolve the campaign name to its repo before anything reads the tables. The
   // load effect below is gated on `owner`/`repo`, so it waits for this.
+  // The URL is the campaign's address (/<name>), so the name's registry state
+  // decides what the page is: a live campaign renders, a free name forwards to
+  // the wizard with the name prefilled, and a name that is held, reserved or
+  // blocked explains itself.
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolving) return;
+    if (auth.status === "loading" || resolved || notFound || slugState || resolving)
+      return;
     resolving = true;
-    resolveCampaign(readForge(), campaign)
-      .then((r) => (r ? (resolved = r) : (notFound = true)))
-      .catch(() => (notFound = true))
-      .finally(() => (resolving = false));
+    resolve().finally(() => (resolving = false));
   });
+
+  async function resolve() {
+    const info = await lookupSlug(campaign);
+    if (info?.status === "free") {
+      await goto(`/?slug=${encodeURIComponent(campaign)}`, { replaceState: true });
+      return;
+    }
+    if (
+      info?.status === "pending" ||
+      info?.status === "reserved" ||
+      info?.status === "tombstoned"
+    ) {
+      slugState = info.status;
+      return;
+    }
+    // Active — or the registry was unreachable / the name malformed, which
+    // resolveCampaign reports as null (notFound).
+    const r = await resolveCampaign(readForge(), campaign).catch(() => null);
+    if (r) resolved = r;
+    else notFound = true;
+  }
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
@@ -685,7 +712,7 @@
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
     if (isPreTask(locator ?? "") && result?.ok && !result.warn) {
-      await goto(`/campaign/${campaign}/zones/${task_id}`);
+      await goto(`/${campaign}/zones/${task_id}`);
     }
   };
 
@@ -1063,6 +1090,28 @@
               No campaign called <code>{campaign}</code> was found. It may have
               been removed, or the name may be misspelled.
               <a href="/">Back to all campaigns</a>.
+            </span>
+          </div>
+        {:else if slugState === "pending"}
+          <div class="banner warn">
+            <span>
+              Someone is setting up a campaign called <code>{campaign}</code>.
+              If they don't finish it, the name becomes free again.
+              <a href="/">Back to all campaigns</a>.
+            </span>
+          </div>
+        {:else if slugState === "reserved"}
+          <div class="banner err">
+            <span>
+              <code>{campaign}</code> is reserved and can't be used for a
+              campaign. <a href="/">Back to all campaigns</a>.
+            </span>
+          </div>
+        {:else if slugState === "tombstoned"}
+          <div class="banner err">
+            <span>
+              The name <code>{campaign}</code> has been blocked and can't be
+              used. <a href="/">Back to all campaigns</a>.
             </span>
           </div>
         {:else if !resolved}
@@ -1548,7 +1597,7 @@
                           <a
                             class="act"
                             class:primary={a.primary}
-                            href={`/campaign/${campaign}/zones/${selected.task}`}
+                            href={`/${campaign}/zones/${selected.task}`}
                             title={a.title}>{a.label}</a
                           >
                         {/if}

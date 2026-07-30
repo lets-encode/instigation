@@ -1,7 +1,7 @@
 // Resolve a campaign URL (which carries only the campaign NAME) to the repo it
-// addresses, and register/look up names in the slug registry (redirector).
+// addresses, and register/look up names in the slug registry.
 //
-// The registry (see redirector/) is the authoritative — and sole — name →
+// The registry (see broker/registry.py) is the authoritative — and sole — name →
 // repo-id map: the repo id is stable across renames/transfers, so resolving a
 // name to its id and then to the repo's current owner/name (getRepoById)
 // survives a rename that a bare name→search never could. The registry is reached

@@ -13,6 +13,10 @@ notification muting.
 - `POST /logout` — revokes the token at GitHub and clears the session.
 - `/proxy/<url>` — relays the SPA's GitHub API calls (`api.github.com` only),
   attaching the session's token server-side. Login-gated and rate-limited.
+- `/registry/…` — the campaign name registry blueprint: the name → (forge,
+  repo id) mapping behind every campaign address, with the claim/register
+  lifecycle around it. Claiming and registering are login-gated; resolving a
+  name is public. Routes, lifecycle and admin: `registry.py`.
 
 Sessions are files under `instance/sessions` (gitignored, `0700`), shared
 between gunicorn workers on the same host; set `SESSION_DIR` to override. The
@@ -25,10 +29,13 @@ The broker **must share the SPA's origin** — the session cookie
 (`HttpOnly; Secure; SameSite=Lax`) has to be first-party. Mount it under a path
 of the SPA's origin:
 
-- production: nginx proxies `/auth/` to the broker (see `deploy/nginx.conf`),
-- development: the Vite dev server proxies `/auth` (see `vite.config.js`).
+- production: nginx proxies `/auth/` and `/registry/` to the broker (see
+  `deploy/nginx.conf`),
+- development: the Vite dev server proxies `/auth` and `/registry` (see
+  `vite.config.js`).
 
-The SPA reaches it via `PUBLIC_BROKER_URL`, which defaults to `/auth`.
+The SPA reaches it via `PUBLIC_BROKER_URL` (default `/auth`) and
+`PUBLIC_REGISTRY_URL` (default `/registry`).
 
 ## Configure
 
@@ -42,6 +49,8 @@ Environment variables:
 | `REDIRECT_URL` | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/auth/authorize` — required outside development and must match the OAuth app's registered callback |
 | `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
 | `SESSION_DIR` | optional: session file directory |
+| `DB_PATH` | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it |
+| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `deploy/nginx.conf`). Unset ⇒ admin routes answer 503 |
 
 The broker loads these from its process environment. The simplest way locally is a
 `broker/.env` file (auto-loaded via python-dotenv, and gitignored):
@@ -71,7 +80,7 @@ gunicorn --bind 127.0.0.1:8787 app:app
 From the repository root, with the broker requirements installed:
 
 ```sh
-python -m unittest broker.test_app -v
+python -m unittest broker.test_app broker.test_registry -v
 ```
 
 ## GitHub API telemetry

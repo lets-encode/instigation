@@ -12,6 +12,8 @@ os.environ["FLASK_SECRET"] = "test-secret"
 os.environ["GITHUB_CLIENT_ID"] = "test-client"
 os.environ["GITHUB_CLIENT_SECRET"] = "test-client-secret"
 os.environ["SESSION_DIR"] = _session_dir.name
+# Keep the registry's import-time store out of broker/instance/ during tests.
+os.environ.setdefault("DB_PATH", os.path.join(_session_dir.name, "slugs.db"))
 
 from broker import app as broker  # noqa: E402
 

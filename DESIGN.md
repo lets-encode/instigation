@@ -403,7 +403,7 @@ ordinary crowd task: claimed (encoding-kind lock), submitted as an encoding-type
 the shared score by page, §6), validated through the normal machinery. Pages with no detected
 measures get no encoding task. An `mei-template` campaign keeps the single whole-file **T0001**.
 
-The **zone editor** (`/campaign/[campaign]/zones/[task]`) is the volunteer interface for the
+The **zone editor** (`/[campaign]/zones/[task]`) is the volunteer interface for the
 pre-task, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`). It has two
 steps within the one task, submitted together:
 

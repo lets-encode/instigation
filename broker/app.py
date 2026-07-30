@@ -98,6 +98,16 @@ Session(app)
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
 
+# The campaign name registry (see registry.py): the name → (forge, repo id)
+# mapping and the claim/register lifecycle around it. It lives in the broker
+# because claiming and registering require the GitHub session; the /registry
+# path is passed through unchanged by nginx and the Vite dev proxy.
+try:
+    from .registry import registry
+except ImportError:  # run as a top-level module (flask --app app run, gunicorn app:app)
+    from registry import registry
+app.register_blueprint(registry, url_prefix="/registry")
+
 
 @app.errorhandler(429)
 def broker_rate_limited(_error):

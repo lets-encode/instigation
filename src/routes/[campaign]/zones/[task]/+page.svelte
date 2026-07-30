@@ -225,7 +225,7 @@
     try {
       result = await command(ctx(f));
       if (opts.overviewOnSuccess && result.ok && !result.warn) {
-        await goto(`/campaign/${campaign}`);
+        await goto(`/${campaign}`);
         return;
       }
       busyMessage = "Reloading…";
@@ -698,7 +698,7 @@
     <div class="toolbar">
      <div class="toolbar-inner">
       <span class="tb-group tb-title">
-        <a href={`/campaign/${campaign}`} title="Back to the campaign console">← Console</a>
+        <a href={`/${campaign}`} title="Back to the campaign console">← Console</a>
         <span class="tb-task"><code>{taskId}</code></span>
         <span class="count">
           {measureCount} measure{measureCount === 1 ? "" : "s"}

@@ -105,7 +105,7 @@ the thing that would abuse this scope, so it matters more.
 ### M-1 — Stored XSS via Verovio SVG injected with `{@html}`
 **Severity: Medium (High impact, lower likelihood) · Status: new finding, fixable now**
 
-`instigation/src/routes/campaign/[campaign]/+page.svelte:1473` injects Verovio's
+`instigation/src/routes/[campaign]/+page.svelte:1473` injects Verovio's
 rendered notation with `{@html preview.svgs[p + 1] ?? ""}`. The SVG is produced by
 `verovio.renderToSVG(...)` from `score.mei`, whose content is attacker-supplied
 (merged from an accepted encoding PR). The rest of the UI is safe: the campaign

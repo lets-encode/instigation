@@ -118,6 +118,10 @@
     wizard.pieces[selected].meta = { ...copyMetadata(previous.meta), title };
   }
 
+  function copyFromSource() {
+    wizard.pieces[selected].meta = copyMetadata(wizard.source);
+  }
+
   /**
    * Collect every page's detection result, awaiting any the background pass
    * has not finished. One result per page image, not per piece: two pieces
@@ -308,7 +312,7 @@
         console.error("Could not tag the campaign with its topic:", (err as Error).message);
         error =
           `Everything was committed to ${repo.full_name} and “${claim.name}” is registered, so ` +
-          `the campaign already works at /campaign/${claim.name}. It is not in the list of ` +
+          `the campaign already works at /${claim.name}. It is not in the list of ` +
           `campaigns yet, so the setup stays open — retry to add it: ${(err as Error).message}`;
         busy = false;
         log.fail();
@@ -319,7 +323,7 @@
       // is cleared once the campaign has opened, since emptying the wizard while
       // this step is still on screen would show the first step again.
       log.done();
-      await goto(`/campaign/${repo.name}`);
+      await goto(`/${repo.name}`);
       clearFinishedSetup();
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
@@ -382,6 +386,11 @@
 
       <div class="actions">
         <button type="button" class="btn btn-quiet" onclick={addPiece}>Add piece</button>
+        {#if piece}
+          <button type="button" class="btn btn-quiet" onclick={copyFromSource}>
+            Copy metadata from the source
+          </button>
+        {/if}
         {#if selected > 0}
           <button type="button" class="btn btn-quiet" onclick={copyFromPrevious}>
             Copy metadata from previous piece

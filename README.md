@@ -5,8 +5,9 @@ repository from a template, and drive its encoding/validation from a console.
 
 It is a **static SPA** (SvelteKit); the only server-side piece is the **OAuth
 session broker** (`broker/`, Flask), which keeps the user's GitHub token out of
-the browser and relays the SPA's authenticated API calls. Full architecture:
-`DESIGN.md`.
+the browser, relays the SPA's authenticated API calls, and carries the
+**campaign name registry** (`broker/registry.py`) — the name → repo id map
+behind every campaign address. Full architecture: `DESIGN.md`.
 
 ## How it works
 
@@ -21,6 +22,13 @@ the browser and relays the SPA's authenticated API calls. Full architecture:
   browser only ever holds an httpOnly session cookie, so no script in the page
   can read the token. It must be mounted under the SPA's own origin (`/auth`)
   — see `broker/README.md`.
+- **Campaign name registry.** A campaign's address is `/<name>` on this origin.
+  The broker's `/registry` blueprint owns the name → (forge, repo id) mapping
+  and the claim/register lifecycle around it: the wizard holds a chosen name
+  while the setup runs and registers it against the created repo's stable
+  numeric id at the end, so the address survives repo renames and transfers.
+  Claiming and registering require the GitHub session; resolving a name is
+  public. State is one SQLite file (see `broker/registry.py`).
 - **Campaign automation** (claim/submit/validate/reaper) runs as GitHub Actions in
   each campaign repo, not here.
 
@@ -76,9 +84,10 @@ cp .env.example .env     # then fill in the values (see broker/README.md)
 flask --app app run --port 8787
 ```
 
-The Vite dev server proxies `/auth` to it, so SPA and broker share an origin.
-Plain `http://localhost` is fine for local dev (`FLASK_ENV=development` relaxes
-the cookie's HTTPS requirement); production needs HTTPS — see `broker/README.md`.
+The Vite dev server proxies `/auth` and `/registry` to it, so SPA, broker and
+registry share an origin. Plain `http://localhost` is fine for local dev
+(`FLASK_ENV=development` relaxes the cookie's HTTPS requirement); production
+needs HTTPS — see `broker/README.md`.
 
 **Terminal 2 — the SPA:**
 
@@ -87,9 +96,9 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173> → **Log in with GitHub** → create a campaign. On a
-clean creation you land on its console at `/campaign/<campaign>` (the campaign
-name; the repo it addresses is resolved from it).
+Open <http://localhost:5173> → pick a name on the landing page → **Log in with
+GitHub** → create a campaign. On a clean creation you land on its console at
+`/<campaign>` (the campaign name; the repo it addresses is resolved from it).
 
 ## 5. Build / preview / test
 
@@ -104,7 +113,7 @@ npm test          # pure campaign-logic unit tests (no network)
 - **SPA + broker, one origin:** the broker's session cookie must be first-party,
   so serve the static `./build` and the broker from the same origin —
   `deploy/nginx.conf` is a worked example that serves `build/` and proxies
-  `/auth/` to the broker (gunicorn) behind **HTTPS**.
+  `/auth/` and `/registry/` to the broker (gunicorn) behind **HTTPS**.
 - **Broker env:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `FLASK_SECRET`,
   and `REDIRECT_URL=https://<your-origin>/auth/authorize` (see `broker/README.md`).
 - **OAuth App:** update its callback URL to `<your-origin>/auth/authorize` (or

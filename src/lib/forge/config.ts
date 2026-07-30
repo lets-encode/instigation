@@ -31,11 +31,12 @@ export const provider: ProviderConfig = {
 };
 
 /**
- * The slug registry (redirector) mount, as a same-origin path so its calls need
- * no CORS — served under this path by nginx (prod) / the Vite dev proxy, the way
- * the session broker is mounted at /auth. It owns the campaign name → repo id
- * mapping: the app resolves a campaign URL through it and registers a new name
- * against its GitHub repo id after creating the repo.
+ * The slug registry's mount, as a same-origin path so its calls need no CORS.
+ * The registry is part of the session broker (see broker/registry.py); nginx
+ * (prod) and the Vite dev proxy pass this path through to it unchanged. It owns
+ * the campaign name → repo id mapping: the app resolves a campaign URL through
+ * it and registers a new name against its GitHub repo id after creating the
+ * repo.
  */
 export const registryUrl = env.PUBLIC_REGISTRY_URL || '/registry';
 

@@ -15,12 +15,11 @@ export default defineConfig({
 				target: 'http://127.0.0.1:8787',
 				rewrite: (path) => path.replace(/^\/auth/, '')
 			},
-			// Mount the slug registry (redirector) under the SPA's own origin, the
-			// same way, so its calls need no CORS. Run it with:
-			//   uvicorn app.asgi:app --port 8000  (in redirector/)
+			// The slug registry is part of the broker, as a blueprint mounted at
+			// /registry (see broker/registry.py), so the path passes through
+			// unchanged to the same server.
 			'/registry': {
-				target: 'http://127.0.0.1:8000',
-				rewrite: (path) => path.replace(/^\/registry/, '')
+				target: 'http://127.0.0.1:8787'
 			}
 		}
 	}

@@ -41,9 +41,10 @@
   {:else}
     <ul>
       {#each repos as repo (repo.full_name)}
-        <li>
+        <li class="card">
           <div class="row">
-            <a href={`/campaign/${repo.name}`}>{repo.full_name}</a>
+            <a href={`/${repo.name}`}>{repo.name}</a>
+            <span class="owner">by {repo.full_name.split("/")[0]}</span>
             {#if repo.private}
               <span class="badge" title="Private — only visible to its owner">
                 <svg
@@ -83,8 +84,6 @@
   .repos {
     max-width: 640px;
     margin: 0 auto 3rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--line);
   }
   h2 {
     font-size: 1.15rem;
@@ -95,11 +94,25 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.9rem;
+    gap: 0.75rem;
+  }
+  /* Same material as the landing card, one per campaign. */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.25rem;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .card:hover {
+    border-color: var(--accent-line-strong);
+    box-shadow: var(--shadow);
   }
   .row {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.6rem;
   }
   .row a {
@@ -109,6 +122,10 @@
   }
   .row a:hover {
     text-decoration: underline;
+  }
+  .owner {
+    font-size: 0.82rem;
+    color: var(--ink-faint);
   }
   .row a.gh-link {
     margin-left: auto;

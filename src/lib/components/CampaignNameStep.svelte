@@ -28,7 +28,7 @@
       .catch(() => (campaignRepos = []));
   });
 
-  // Arriving from the slug registry (letsenco.de) with a chosen name: prefill the
+  // Arriving from the landing page (/c?slug=) with a chosen name: prefill the
   // name field once, so later edits to it are not overwritten.
   let slugApplied = false;
   $effect(() => {
@@ -100,7 +100,7 @@
         ]);
         if (seq !== handleCheckSeq) return;
         if (slug && slug.status !== "free") {
-          handleCheck = { state: "taken", by: `letsenco.de/${h}` };
+          handleCheck = { state: "taken", by: "an existing campaign" };
         } else if (exists) {
           handleCheck = { state: "taken", by: `${user.login}/${h}` };
         } else if (!slug) {
