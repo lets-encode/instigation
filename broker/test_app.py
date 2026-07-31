@@ -81,8 +81,8 @@ class BrokerTest(unittest.TestCase):
                     headers={"Authorization": "Bearer browser-token", "X-Test": "kept"},
                 )
 
-        method, url = request_upstream.call_args.args
-        options = request_upstream.call_args.kwargs
+        method, url = request_upstream.call_args[0]
+        options = request_upstream.call_args[1]
         self.assertEqual((method, url), ("GET", "https://api.github.com/user?detail=full"))
         self.assertEqual(options["headers"]["Authorization"], "token server-side-token")
         self.assertNotIn("Cookie", options["headers"])
@@ -160,8 +160,8 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.data, b'{"ok":1}')
         self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "iiif")
         # The session's GitHub token must never be attached to a third party.
-        self.assertNotIn("Authorization", upstream.call_args.kwargs["headers"])
-        self.assertFalse(upstream.call_args.kwargs["allow_redirects"])
+        self.assertNotIn("Authorization", upstream.call_args[1]["headers"])
+        self.assertFalse(upstream.call_args[1]["allow_redirects"])
 
         oversized = SimpleNamespace(
             status_code=200,

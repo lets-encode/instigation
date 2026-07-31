@@ -10,9 +10,8 @@ reactively by staff via the admin tombstone (see registry.py), not filtered at
 registration.
 """
 
-from __future__ import annotations
-
 import re
+from typing import FrozenSet, Optional
 
 # Names that can never be registered as campaign slugs. A campaign lives at
 # /<name> on the app's own origin, so every top-level path the origin serves —
@@ -21,7 +20,7 @@ import re
 # shorter than 3 characters (e.g. _app, favicon.svg, robots.txt, /c) already
 # fail the shape rules, so only plain word paths need listing here.
 # test_registry.py checks the routes and mounts against this list.
-RESERVED_NAMES: frozenset[str] = frozenset(
+RESERVED_NAMES: FrozenSet[str] = frozenset(
     {
         # nginx/vite mounts on the app origin
         "auth",
@@ -58,7 +57,7 @@ ERR_SYNTAX = (
 ERR_RESERVED = "That name is reserved and cannot be used for a campaign."
 
 
-def syntax_error(name: str) -> str | None:
+def syntax_error(name: str) -> Optional[str]:
     """Return an error message if the name fails shape rules, else None."""
     if not isinstance(name, str) or not name:
         return ERR_SYNTAX
@@ -73,7 +72,7 @@ def syntax_error(name: str) -> str | None:
     return None
 
 
-def registration_error(name: str) -> str | None:
+def registration_error(name: str) -> Optional[str]:
     """Full check for registering a new campaign slug: shape, then reserved
     names. Abusive names are not filtered here — see the module docstring."""
     err = syntax_error(name)

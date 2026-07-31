@@ -52,6 +52,7 @@ return 503 (fail closed).
 import secrets
 import sqlite3
 from os import getenv, path
+from typing import Optional
 
 from flask import Blueprint, jsonify, request, session
 
@@ -81,7 +82,7 @@ store = Store(
 registry = Blueprint("registry", __name__)
 
 
-def _occupying(row: sqlite3.Row | None) -> bool:
+def _occupying(row: Optional[sqlite3.Row]) -> bool:
     """Whether a row still occupies its name. A claim that has run out does not:
     reads report the name as free, and the next write drops the row."""
     return row is not None and not (

@@ -34,7 +34,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 from authlib.integrations.flask_client import OAuth
-from cachelib.file import FileSystemCache
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, request, session
 from flask_limiter import Limiter
@@ -79,10 +78,9 @@ try:
         chmod(session_dir, 0o700)
 except OSError as e:
     sys.exit("Cannot create session directory {}: {}".format(session_dir, e))
-app.config["SESSION_TYPE"] = "cachelib"
-app.config["SESSION_CACHELIB"] = FileSystemCache(
-    cache_dir=session_dir, threshold=1000
-)
+app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_FILE_DIR"] = session_dir
+app.config["SESSION_FILE_THRESHOLD"] = 1000
 # Session cookie hygiene. Secure requires HTTPS, so switch it off for local
 # development by setting FLASK_ENV=development.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -96,7 +94,9 @@ app.config["SESSION_PERMANENT"] = False
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 Session(app)
 
-limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
+limiter = Limiter(
+    app=app, key_func=get_remote_address, default_limits=["20 per second"]
+)
 
 # The campaign name registry (see registry.py): the name → (forge, repo id)
 # mapping and the claim/register lifecycle around it. It lives in the broker
@@ -248,8 +248,14 @@ def authorize():
             with_auth_error(return_to, "Could not resolve the GitHub user.")
         )
     # Replace the pre-login session ID after authentication so an ID fixed by
-    # an attacker cannot become an authenticated session.
-    app.session_interface.regenerate(session)
+    # an attacker cannot become an authenticated session. Flask-Session 0.4 has
+    # no regenerate(): drop the server-side entry for the old ID and assign a
+    # fresh one; the request's save_session then writes the data under the new
+    # ID and re-sets the cookie.
+    interface = app.session_interface
+    interface.cache.delete(interface.key_prefix + session.sid)
+    session.sid = interface._generate_sid()
+    session.modified = True
     session["githubToken"] = token["access_token"]
     session["userLogin"] = resp.json().get("login", "")
     return redirect(return_to)

@@ -5,13 +5,11 @@ scale that is far cheaper than managing a pool, and it sidesteps every
 threading question. WAL mode keeps readers from blocking the odd write.
 """
 
-from __future__ import annotations
-
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, List, Optional
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS slugs (
@@ -66,7 +64,7 @@ class Store:
     def _now() -> str:
         return now_iso()
 
-    def get(self, name: str) -> sqlite3.Row | None:
+    def get(self, name: str) -> Optional[sqlite3.Row]:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM slugs WHERE name = ?", (name,)).fetchone()
 
@@ -95,7 +93,7 @@ class Store:
         except sqlite3.IntegrityError:
             raise SlugExists(name) from None
 
-    def activate(self, name: str, forge: str, repo_id: int, claim_token: str | None) -> bool:
+    def activate(self, name: str, forge: str, repo_id: int, claim_token: Optional[str]) -> bool:
         """Turn this name's claim into the live campaign it was held for. Returns
         False if the name has no claim matching `claim_token`, which includes a
         claim that ran out and was taken over by someone else."""
@@ -136,7 +134,7 @@ class Store:
         except sqlite3.IntegrityError:
             raise SlugExists(name) from None
 
-    def tombstone(self, name: str, notes: str | None) -> bool:
+    def tombstone(self, name: str, notes: Optional[str]) -> bool:
         """Mark a slug tombstoned, keeping the row so the name stays occupied.
         Returns False if no such slug exists."""
         with self._connect() as conn:
@@ -147,6 +145,6 @@ class Store:
             )
             return cur.rowcount > 0
 
-    def list_all(self) -> list[sqlite3.Row]:
+    def list_all(self) -> List[sqlite3.Row]:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM slugs ORDER BY created_at").fetchall()
