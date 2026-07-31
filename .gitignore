@@ -6,3 +6,5 @@ node_modules/
 broker/__pycache__/
 broker/instance/
 broker/.env
+.env.staging
+.env.testing
