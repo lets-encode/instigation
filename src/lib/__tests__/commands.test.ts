@@ -116,6 +116,39 @@ test('a headless claim carries its envelope and cleans its fork branch after acc
 	assert.deepEqual(deleted, ['volunteer', 'campaign', 'claim-P0001-abcd']);
 });
 
+test('a failed automation run surfaces as an error while the PR stays open', async () => {
+	const forge = fakeForge({
+		getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+		getRepoFile: async () => lockHeader,
+		openChangePr: async () => ({
+			number: 21,
+			html_url: 'https://example.test/pr/21',
+			headSha: 'abc123',
+			head: { owner: 'volunteer', repo: 'campaign', branch: 'claim-P0001-abcd' }
+		}),
+		getPullRequestState: async () => 'open',
+		listWorkflowRuns: async (_owner, _repo, _workflow, filter) => {
+			assert.equal(filter?.headSha, 'abc123');
+			return [
+				{
+					id: 7,
+					status: 'completed',
+					conclusion: 'failure',
+					created_at: new Date().toISOString(),
+					html_url: 'https://example.test/run/7'
+				}
+			];
+		}
+	});
+
+	const result = await withImmediateTimeouts(() =>
+		invoke(commands.claimTask, { task_id: 'P0001' }, context(forge))
+	);
+
+	assert.match(result.error ?? '', /automation run for PR #21 failed/);
+	assert.match(result.error ?? '', /example\.test\/run\/7/);
+});
+
 test('a closed PR without a coordinator verdict fails closed', async () => {
 	const forge = fakeForge({
 		getRepoSubscription: async () => ({ subscribed: false, ignored: true }),

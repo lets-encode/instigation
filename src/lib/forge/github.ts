@@ -32,7 +32,9 @@ export function createGitHubForge(token: string): ForgeClient {
 		dispatchWorkflow: (owner, repo, workflow, ref) => gh.dispatchWorkflow(token, owner, repo, workflow, ref),
 		getPullRequestState: (owner, repo, number) => gh.getPullRequestState(token, owner, repo, number),
 		getLastIssueComment: (owner, repo, number) => gh.getLastIssueComment(token, owner, repo, number),
-		getLatestWorkflowRun: (owner, repo, workflow, event) => gh.getLatestWorkflowRun(token, owner, repo, workflow, event),
+		listWorkflowRuns: (owner, repo, workflow, filter) => gh.listWorkflowRuns(token, owner, repo, workflow, filter),
+		getWorkflowRun: (owner, repo, runId) => gh.getWorkflowRun(token, owner, repo, runId),
+		getWorkflowRunJobs: (owner, repo, runId) => gh.getWorkflowRunJobs(token, owner, repo, runId),
 		getRepoSubscription: (owner, repo) => gh.getRepoSubscription(token, owner, repo),
 		ignoreRepoNotifications: (owner, repo) => gh.ignoreRepoNotifications(token, owner, repo)
 	};

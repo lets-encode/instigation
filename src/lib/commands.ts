@@ -30,6 +30,8 @@ import type { CommandEnvelope } from './command-envelope.ts';
 import { parseFacsimileMei, buildFacsimileMei } from './mei-facsimile.ts';
 import type { PageModel, ParsedFacsimile } from './mei-facsimile.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
+import { WorkflowRunWatch } from './run-watch.ts';
+import type { ProgressUpdate } from './run-watch.ts';
 
 const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
@@ -52,8 +54,12 @@ export interface CommandContext {
 	viewerLogin: string;
 	/** Editor instance used for the mei-friend hand-off. */
 	meiFriendUrl?: string;
-	/** Progress messages for a busy indicator; pass a no-op when headless. */
-	progress: (message: string) => void;
+	/**
+	 * Progress for a busy indicator: `step` opens a new stage, `detail` says
+	 * which part of the running stage is being worked on. Pass a no-op when
+	 * headless.
+	 */
+	progress: (update: ProgressUpdate) => void;
 }
 
 /** The result banner a command resolves to (never rejects). */
@@ -177,19 +183,33 @@ async function muteOnce(f: ForgeClient, repoId: number, owner: string, repo: str
 // user's own session.
 type PrProcessingResult =
 	| { state: 'closed'; verdict: string | null }
+	| { state: 'run_failed'; runUrl: string }
 	| { state: 'timeout' };
 
 async function waitForPrProcessed(
 	ctx: CommandContext,
 	pr: {
 		number: number;
+		headSha?: string;
 		head?: { owner: string; repo: string; branch: string };
 		cleanup?: 'always' | 'accepted';
 	}
 ): Promise<PrProcessingResult> {
 	const { forge: f, owner, repo } = ctx;
-	ctx.progress(`Campaign automation is processing PR #${pr.number}…`);
+	ctx.progress({ step: `Campaign automation is processing PR #${pr.number}…` });
 	console.log('[pr] waiting for automation to process PR', pr.number);
+	// Best-effort narration of the Actions run the PR triggered, identified by
+	// the PR's head commit. A watch failure never fails the command — the PR
+	// itself stays the source of truth.
+	let watch = pr.headSha
+		? new WorkflowRunWatch(
+				f,
+				owner,
+				repo,
+				{ workflow: 'caller.yml', event: 'pull_request_target', headSha: pr.headSha },
+				ctx.progress
+			)
+		: null;
 	const deadline = Date.now() + 90_000;
 	let delayMs = 2_000;
 	while (Date.now() < deadline) {
@@ -201,6 +221,20 @@ async function waitForPrProcessed(
 				await cleanupForkHeadBranch(ctx, pr.head);
 			}
 			return { state: 'closed', verdict };
+		}
+		if (watch) {
+			try {
+				await watch.tick();
+			} catch (e) {
+				console.warn('[pr] stopped watching the Actions run:', (e as Error).message);
+				watch = null;
+			}
+			// A failed run never closes the PR — report the failure rather than
+			// letting the wait time out as if the run were merely slow.
+			if (watch?.state.phase === 'completed' && watch.state.run.conclusion !== 'success') {
+				console.log('[pr] Actions run for PR', pr.number, 'failed:', watch.state.run.conclusion);
+				return { state: 'run_failed', runUrl: watch.state.run.html_url };
+			}
 		}
 		delayMs = Math.min(5_000, Math.ceil(delayMs * 1.5));
 	}
@@ -234,6 +268,12 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
 			warn: true,
 			prUrl,
 			message: `${fallback} PR #${prNumber} is still being processed — refresh the tables in a moment.`
+		};
+	}
+	if (result.state === 'run_failed') {
+		return {
+			error: `The campaign automation run for PR #${prNumber} failed — see ${result.runUrl}.`,
+			prUrl
 		};
 	}
 	if (!result.verdict) {
@@ -410,7 +450,7 @@ const claimValidation: CommandDef<{ task_id: string; subtask_id: string }, Resul
 	log: 'pr',
 	async run({ task_id, subtask_id }, ctx, envelope) {
 		try {
-			ctx.progress('Opening claim PR…');
+			ctx.progress({ step: 'Opening claim PR…' });
 			const pr = await openClaimPr(ctx, task_id, subtask_id, 'validation', envelope);
 			console.log('[claim] claim PR opened', pr.number, pr.html_url);
 			const verdict = await waitForPrProcessed(ctx, pr);
@@ -445,7 +485,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			const task = findRow(parseStateCsv(stateCsv ?? '').rows, task_id, '');
 			if (!fragment || !task) return { error: `Unknown task ${task_id}.` };
 
-			ctx.progress('Preparing the score for mei-friend…');
+			ctx.progress({ step: 'Preparing the score for mei-friend…' });
 			const { sha, canPush } = await f.getRepoHead(owner, repo);
 			console.log('[editor] task', task_id, 'fragment', fragment, 'mainHead', sha, 'canPush', canPush);
 
@@ -491,7 +531,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			let prUrl: string | undefined;
 			let message = 'Opening the score in mei-friend. After committing there, use “Submit encoding”.';
 			if (task.status === 'encoding_required' && !mine) {
-				ctx.progress('Opening the encoding claim PR…');
+				ctx.progress({ step: 'Opening the encoding claim PR…' });
 				const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
 				console.log('[editor] encoding claim PR opened', pr.number, pr.html_url);
 				prUrl = pr.html_url;
@@ -525,7 +565,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 		const { forge: f, repoId, owner, repo, viewerLogin } = ctx;
 		try {
 			await muteOnce(f, repoId, owner, repo);
-			ctx.progress('Opening the submission PR…');
+			ctx.progress({ step: 'Opening the submission PR…' });
 			const { branch: base, canPush } = await f.getRepoHead(owner, repo);
 			// The claim/editor flow put the encoding on `encode-<task_id>` — in the
 			// campaign repo for owners/collaborators, in the volunteer's fork
@@ -581,7 +621,7 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 				return { error: `No open validation slot on ${task_id}/${subtask_id}.` };
 			}
 			row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
-			ctx.progress('Opening the validation PR…');
+			ctx.progress({ step: 'Opening the validation PR…' });
 			const body = `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`;
 			console.log('[validate] opening validation PR', { task_id, subtask_id, verdict, slot });
 			const pr = await f.openChangePr(owner, repo, {
@@ -616,7 +656,7 @@ const rawLink: CommandDef<{ task_id: string }, Result> = {
 			const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
 			const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
 			if (!fragment) return { error: `Unknown task ${task_id}.` };
-			ctx.progress('Fetching the raw link…');
+			ctx.progress({ step: 'Fetching the raw link…' });
 			console.log('[rawlink] fetching raw link for', task_id, 'fragment', fragment);
 			const rawUrl = await f.getRepoFileDownloadUrl(owner, repo, fragment);
 			if (!rawUrl) return { error: `Could not get a raw link for ${fragment}.` };
@@ -637,27 +677,30 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
 	async run(_input, ctx) {
 		const { forge: f, owner, repo } = ctx;
 		try {
-			ctx.progress('Dispatching the stale-lock reaper…');
+			ctx.progress({ step: 'Dispatching the stale-lock reaper…' });
 			const { branch } = await f.getRepoHead(owner, repo);
 			const dispatchedAt = Date.now();
 			console.log('[reaper] dispatching caller.yml on', branch);
 			await f.dispatchWorkflow(owner, repo, 'caller.yml', branch);
-			ctx.progress('Waiting for the reaper run to finish…');
+			ctx.progress({ step: 'Waiting for the reaper run to start…' });
+			// Only a run created after our dispatch counts (the watch applies
+			// clock-skew slack to `since`).
+			const watch = new WorkflowRunWatch(
+				f,
+				owner,
+				repo,
+				{ workflow: 'caller.yml', event: 'workflow_dispatch', since: dispatchedAt },
+				ctx.progress
+			);
 			const deadline = Date.now() + 90_000;
 			while (Date.now() < deadline) {
 				await sleep(3000);
-				const runInfo = await f.getLatestWorkflowRun(owner, repo, 'caller.yml', 'workflow_dispatch');
-				// Only a run created after our dispatch counts (15s clock-skew slack).
-				if (
-					runInfo &&
-					Date.parse(runInfo.created_at) >= dispatchedAt - 15_000 &&
-					runInfo.status === 'completed'
-				) {
-					console.log('[reaper] run finished with conclusion:', runInfo.conclusion);
-					if (runInfo.conclusion !== 'success') {
-						return {
-							error: `The reaper run finished with "${runInfo.conclusion}" — check the repository's Actions log.`
-						};
+				await watch.tick();
+				if (watch.state.phase === 'completed') {
+					const { conclusion, html_url } = watch.state.run;
+					console.log('[reaper] run finished with conclusion:', conclusion);
+					if (conclusion !== 'success') {
+						return { error: `The reaper run finished with "${conclusion}" — see ${html_url}.` };
 					}
 					return { ok: true, message: 'Stale-lock reaper finished.' };
 				}
@@ -759,7 +802,7 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 	log: 'pr',
 	async run({ task_id }, ctx, envelope) {
 		try {
-			ctx.progress('Opening claim PR…');
+			ctx.progress({ step: 'Opening claim PR…' });
 			const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
 			console.log('[claim] claim PR opened', pr.number, pr.html_url);
 			const verdict = await waitForPrProcessed(ctx, pr);
@@ -802,7 +845,7 @@ async function submitFacsimile(
 		if (content === current) {
 			return { ok: true, warn: true, message: 'Nothing to submit — the score already matches this step.' };
 		}
-		ctx.progress('Opening the correction PR…');
+		ctx.progress({ step: 'Opening the correction PR…' });
 		const title = `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
 		console.log('[zones] opening PR', { task_id });

@@ -757,24 +757,92 @@ export async function getLastIssueComment(
 	return (Array.isArray(data) ? data : [])[0]?.body ?? null;
 }
 
-/** The most recent run of `workflow` for `event`, or null if none yet. */
-export async function getLatestWorkflowRun(
+/** A workflow run, as far as the console follows it. */
+export interface WorkflowRunInfo {
+	id: number;
+	/** queued | in_progress | completed (GitHub also has waiting/pending states). */
+	status: string;
+	conclusion: string | null;
+	created_at: string;
+	html_url: string;
+}
+
+/** One job of a workflow run, with its steps in execution order. */
+export interface WorkflowJobInfo {
+	name: string;
+	status: string;
+	conclusion: string | null;
+	steps: Array<{ name: string; status: string; conclusion: string | null }>;
+}
+
+const pickRun = (r: WorkflowRunInfo): WorkflowRunInfo => ({
+	id: r.id,
+	status: r.status,
+	conclusion: r.conclusion ?? null,
+	created_at: r.created_at,
+	html_url: r.html_url
+});
+
+/**
+ * The most recent runs of `workflow`, newest first. `event` narrows to one
+ * trigger (e.g. workflow_dispatch), `headSha` to runs of one head commit —
+ * which is how the run a PR triggered is found.
+ */
+export async function listWorkflowRuns(
 	token: string,
 	owner: string,
 	repo: string,
 	workflow: string,
-	event: string
-): Promise<{ status: string; conclusion: string | null; created_at: string } | null> {
-	const { ok, data } = await ghGet<{
-		workflow_runs?: Array<{ status: string; conclusion: string | null; created_at: string }>;
-		message?: string;
-	}>(
-		`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?event=${encodeURIComponent(event)}&per_page=1`,
+	filter: { event?: string; headSha?: string } = {}
+): Promise<WorkflowRunInfo[]> {
+	const params = new URLSearchParams({ per_page: '5' });
+	if (filter.event) params.set('event', filter.event);
+	if (filter.headSha) params.set('head_sha', filter.headSha);
+	const { ok, data } = await ghGet<{ workflow_runs?: WorkflowRunInfo[]; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?${params}`,
 		token
 	);
 	if (!ok) throw new Error(data?.message || 'Failed to read workflow runs');
-	const run = data?.workflow_runs?.[0];
-	return run ? { status: run.status, conclusion: run.conclusion ?? null, created_at: run.created_at } : null;
+	return (data?.workflow_runs ?? []).map(pickRun);
+}
+
+/** One workflow run by id. */
+export async function getWorkflowRun(
+	token: string,
+	owner: string,
+	repo: string,
+	runId: number
+): Promise<WorkflowRunInfo> {
+	const { ok, data } = await ghGet<WorkflowRunInfo & { message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/actions/runs/${runId}`,
+		token
+	);
+	if (!ok) throw new Error(data?.message || 'Failed to read workflow run');
+	return pickRun(data);
+}
+
+/** A workflow run's jobs with their steps, in execution order. */
+export async function getWorkflowRunJobs(
+	token: string,
+	owner: string,
+	repo: string,
+	runId: number
+): Promise<WorkflowJobInfo[]> {
+	const { ok, data } = await ghGet<{ jobs?: WorkflowJobInfo[]; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`,
+		token
+	);
+	if (!ok) throw new Error(data?.message || 'Failed to read workflow run jobs');
+	return (data?.jobs ?? []).map((j) => ({
+		name: j.name,
+		status: j.status,
+		conclusion: j.conclusion ?? null,
+		steps: (j.steps ?? []).map((s) => ({
+			name: s.name,
+			status: s.status,
+			conclusion: s.conclusion ?? null
+		}))
+	}));
 }
 
 /** Post a comment on a pull request and then close it (used to resolve claims). */
@@ -992,13 +1060,16 @@ export async function deleteBranch(token: string, owner: string, repo: string, b
 	throw new Error(`${data.message || 'Failed to delete branch'} (${res.status} DELETE ref heads/${branch})`);
 }
 
-/** Open a pull request. Returns { number, html_url }. */
+/**
+ * Open a pull request. Returns { number, html_url, headSha } — the head commit
+ * SHA is what identifies the workflow run the PR triggers.
+ */
 export async function createPullRequest(
 	token: string,
 	owner: string,
 	repo: string,
 	{ title, head, base, body }: { title: string; head: string; base: string; body: string }
-): Promise<{ number: number; html_url: string }> {
+): Promise<{ number: number; html_url: string; headSha: string }> {
 	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls`, {
 		method: 'POST',
 		headers: { ...baseHeaders, ...authHeaders(token) },
@@ -1007,6 +1078,7 @@ export async function createPullRequest(
 	const data: {
 		number: number;
 		html_url: string;
+		head?: { sha?: string };
 		message?: string;
 		errors?: Array<{ message?: string }>;
 	} = await res.json().catch(() => ({}));
@@ -1018,7 +1090,7 @@ export async function createPullRequest(
 			`${data.message || 'Failed to open pull request'}${detail ? `: ${detail}` : ''} (${res.status} POST pulls)`
 		);
 	}
-	return { number: data.number, html_url: data.html_url };
+	return { number: data.number, html_url: data.html_url, headSha: data.head?.sha ?? '' };
 }
 
 /**
@@ -1038,7 +1110,12 @@ export async function openChangePr(
 	owner: string,
 	repo: string,
 	{ branch, files, message, title, body }: { branch: string; files: FileChange[]; message: string; title: string; body: string }
-): Promise<{ number: number; html_url: string; head: { owner: string; repo: string; branch: string } }> {
+): Promise<{
+	number: number;
+	html_url: string;
+	headSha: string;
+	head: { owner: string; repo: string; branch: string };
+}> {
 	const { branch: base, sha, canPush } = await getRepoHead(token, owner, repo);
 	const target = canPush ? { owner, repo } : await ensureFork(token, owner, repo);
 

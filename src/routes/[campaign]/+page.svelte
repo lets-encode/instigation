@@ -31,6 +31,7 @@
   import { buildSpreads } from "$lib/page-spreads.ts";
   import type { Selection, PanelAction } from "$lib/campaign-graph.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import { ProgressLog } from "$lib/progress-log.svelte.ts";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
   // from it (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -72,7 +73,7 @@
   const taskRows = $derived(rows.filter((r) => r.subtask_id === ""));
 
   let busy = $state(false);
-  let busyMessage = $state("");
+  const busyLog = new ProgressLog();
   let result = $state<Result | null>(null);
 
   // UI-only state: everything else derives from the tracking tables.
@@ -549,7 +550,8 @@
 
   const readForge = () => forge() ?? createForge("");
 
-  // The context every command runs against; progress messages feed the busy overlay.
+  // The context every command runs against; progress updates feed the busy
+  // overlay's step log.
   const ctx = (f: ForgeClient): CommandContext => ({
     forge: f,
     repoId,
@@ -558,7 +560,10 @@
     viewer,
     viewerLogin,
     meiFriendUrl,
-    progress: (m) => (busyMessage = m),
+    progress: (u) => {
+      if (u.step) busyLog.step(u.step);
+      if (u.detail) busyLog.detail(u.detail);
+    },
   });
 
   // Read the tracking tables (and privacy/config) for the console. Only the
@@ -686,16 +691,16 @@
     const f = forge();
     if (!f) return;
     busy = true;
-    busyMessage = "Working…";
+    busyLog.clear();
     try {
       result = await command(ctx(f));
       if (refresh) {
-        busyMessage = "Refreshing tables…";
+        busyLog.step("Refreshing tables…");
         await load();
       }
     } finally {
+      busyLog.done();
       busy = false;
-      busyMessage = "";
     }
   }
 
@@ -811,7 +816,7 @@
 {/snippet}
 
 {#if busy}
-  <LoadingOverlay message={busyMessage} />
+  <LoadingOverlay log={busyLog} />
 {/if}
 
 <div class="console">

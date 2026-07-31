@@ -3,9 +3,17 @@
 // per-deployment values in config.ts. The GitHub implementation is github.ts,
 // built over the REST calls in github-rest.ts.
 
-import type { FileChange, GitHubUser, RepoData, RepoSummary, RepoRef } from './github-rest.ts';
+import type {
+	FileChange,
+	GitHubUser,
+	RepoData,
+	RepoSummary,
+	RepoRef,
+	WorkflowRunInfo,
+	WorkflowJobInfo
+} from './github-rest.ts';
 
-export type { FileChange, GitHubUser, RepoData, RepoSummary, RepoRef };
+export type { FileChange, GitHubUser, RepoData, RepoSummary, RepoRef, WorkflowRunInfo, WorkflowJobInfo };
 
 /** A repo's default branch, its head commit SHA, and whether the user can push. */
 export interface RepoHead {
@@ -18,6 +26,8 @@ export interface RepoHead {
 export interface ChangeRequest {
 	number: number;
 	html_url: string;
+	/** The head commit SHA — identifies the CI run the request triggers. */
+	headSha?: string;
 }
 
 /** A ChangeRequest whose head branch the client created itself. */
@@ -122,11 +132,15 @@ export interface ForgeClient {
 	): Promise<{ subscribed: boolean; ignored: boolean } | null>;
 	/** Mute all of the repo's notifications (web + email) for the authenticated user. */
 	ignoreRepoNotifications(owner: string, repo: string): Promise<void>;
-	/** The most recent CI run of `workflow` for `event`, or null if none yet. */
-	getLatestWorkflowRun(
+	/** The most recent CI runs of `workflow`, newest first, optionally narrowed by trigger event or head commit. */
+	listWorkflowRuns(
 		owner: string,
 		repo: string,
 		workflow: string,
-		event: string
-	): Promise<{ status: string; conclusion: string | null; created_at: string } | null>;
+		filter?: { event?: string; headSha?: string }
+	): Promise<WorkflowRunInfo[]>;
+	/** One CI run by id. */
+	getWorkflowRun(owner: string, repo: string, runId: number): Promise<WorkflowRunInfo>;
+	/** A CI run's jobs with their steps, in execution order. */
+	getWorkflowRunJobs(owner: string, repo: string, runId: number): Promise<WorkflowJobInfo[]>;
 }

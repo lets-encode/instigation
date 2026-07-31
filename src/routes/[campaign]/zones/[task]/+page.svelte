@@ -9,6 +9,7 @@
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import { createForge } from "$lib/forge/index.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
@@ -61,7 +62,7 @@
   const active = $derived(hovered ?? selected);
 
   let busy = $state(false);
-  let busyMessage = $state("");
+  const busyLog = new ProgressLog();
   let result = $state<Result | null>(null);
 
   // Alternating system tint / accent: even systems blue, odd green.
@@ -117,7 +118,10 @@
     repo,
     viewer,
     viewerLogin: auth.user?.login ?? "",
-    progress: (m) => (busyMessage = m),
+    progress: (u) => {
+      if (u.step) busyLog.step(u.step);
+      if (u.detail) busyLog.detail(u.detail);
+    },
   });
 
   const readForge = () => forge() ?? createForge("");
@@ -221,19 +225,19 @@
     const f = forge();
     if (!f) return;
     busy = true;
-    busyMessage = "Working…";
+    busyLog.clear();
     try {
       result = await command(ctx(f));
       if (opts.overviewOnSuccess && result.ok && !result.warn) {
         await goto(`/${campaign}`);
         return;
       }
-      busyMessage = "Reloading…";
+      busyLog.step("Reloading…");
       data = null;
       await load();
     } finally {
+      busyLog.done();
       busy = false;
-      busyMessage = "";
     }
   }
 
@@ -670,7 +674,7 @@
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
 
 {#if busy}
-  <LoadingOverlay message={busyMessage} />
+  <LoadingOverlay log={busyLog} />
 {/if}
 
 {#if notFound}
