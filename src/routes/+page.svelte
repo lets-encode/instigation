@@ -52,8 +52,8 @@
 </script>
 
 <!--
-  Steps that hold a page pane beside the form manage their own layout; the rest
-  are centred in a scroller, since the route is a full-height surface.
+  Every step renders the full workbench shell itself; this route only decides
+  which step is on screen.
 -->
 {#if landing}
   <!-- The landing keeps the redirector's look: the card centred on the hero
@@ -67,42 +67,45 @@
       <CampaignList />
     </div>
   </div>
-{:else if auth.user && wizard.step === "source"}
+{:else if auth.status === "loading"}
+  <p class="note checking">Checking your session…</p>
+{:else if !auth.user}
+  <WizardCard step="name" heading="Start a new encoding campaign">
+    <p class="note login-note">
+      Log in with GitHub to create a campaign. Its score, configuration and
+      progress live in a repository on your account.
+    </p>
+    {#snippet footer()}
+      <button type="button" class="btn btn-primary" onclick={() => login()}>
+        Log in with GitHub
+      </button>
+    {/snippet}
+  </WizardCard>
+{:else if wizard.step === "name"}
+  <CampaignNameStep />
+{:else if wizard.step === "license"}
+  <CampaignLicenseStep />
+{:else if wizard.step === "upload"}
+  <CampaignUploadStep />
+{:else if wizard.step === "pages"}
+  <CampaignPagesStep />
+{:else if wizard.step === "source"}
   <CampaignSourceStep />
-{:else if auth.user && wizard.step === "pieces"}
-  <CampaignPiecesStep />
 {:else}
-  <div class="pane-scroll">
-    {#if auth.status === "loading"}
-      <p class="note">Checking your session…</p>
-    {:else if !auth.user}
-      <WizardCard step="name" heading="Start a new encoding campaign">
-        <p class="note">
-          Log in with GitHub to create a campaign. Its score, configuration and
-          progress live in a repository on your account.
-        </p>
-        {#snippet footer()}
-          <button type="button" class="btn btn-primary" onclick={() => login()}>
-            Log in with GitHub
-          </button>
-        {/snippet}
-      </WizardCard>
-    {:else if wizard.step === "name"}
-      <CampaignNameStep />
-    {:else if wizard.step === "license"}
-      <CampaignLicenseStep />
-    {:else if wizard.step === "upload"}
-      <CampaignUploadStep />
-    {:else}
-      <CampaignPagesStep />
-    {/if}
-  </div>
+  <CampaignPiecesStep />
 {/if}
 
 <style>
   .note {
     margin: 0;
     color: var(--ink-soft);
+  }
+  .checking {
+    padding: 2rem 1.5rem;
+  }
+  .login-note {
+    margin-top: 16px;
+    font-size: 13.5px;
   }
   /* The scroll surface itself carries the hero gradient (ported from the
      redirector's landing), so it runs edge to edge behind card and listing. */

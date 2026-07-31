@@ -18,6 +18,8 @@
   step="license"
   heading="Choose a licence"
   intro="How others may use the finished encoding. It applies to every contribution volunteers make."
+  status={selected.name.split(" — ")[0]}
+  materialHint="The licence comes first — it governs what volunteers agree to when they contribute."
   onBack={previousStep}
   onNext={nextStep}
 >
@@ -39,17 +41,21 @@
 </WizardCard>
 
 <style>
+  .field {
+    margin-top: 22px;
+  }
   .info {
-    margin: 1rem 0 0;
-    padding: 0.8rem 0.9rem;
-    font-size: 0.9rem;
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    line-height: 1.55;
     color: var(--ink-soft);
-    background: var(--bg-tint);
-    border-radius: 6px;
+    background: var(--bg-alt);
+    border-radius: 8px;
   }
   .more {
-    margin: 0.6rem 0 0;
-    font-size: 0.85rem;
+    margin: 9px 0 0;
+    font-size: 12.5px;
   }
   .more a {
     color: var(--link);

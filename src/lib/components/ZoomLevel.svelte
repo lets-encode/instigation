@@ -1,34 +1,37 @@
 <!--
-  How many pages a row of previews holds. A tile takes an equal share of the
-  width it has, so fewer per row shows each page larger: this is the zoom for
-  every screen that lays pages out in rows.
+  Zoom for a pane of pages, in percent. The pages' grid is laid out at this
+  share of the pane's width, so above 100% it grows past the pane and scrolls.
 -->
 <script lang="ts">
   let {
     value = $bindable(),
-    most = 5,
+    least = 50,
+    most = 400,
   }: {
-    /** Pages per row, between 1 and `most`. */
+    /** Percent, between `least` and `most`. */
     value: number;
+    least?: number;
     most?: number;
   } = $props();
+
+  const STEP = 25;
 </script>
 
 <span class="stepper">
   <button
     type="button"
-    aria-label="Show the pages smaller"
-    disabled={value >= most}
-    onclick={() => value++}
+    aria-label="Zoom out"
+    disabled={value <= least}
+    onclick={() => (value = Math.max(least, value - STEP))}
   >
     −
   </button>
-  <span class="per-row">{value} per row</span>
+  <span class="level">{value}%</span>
   <button
     type="button"
-    aria-label="Show the pages larger"
-    disabled={value <= 1}
-    onclick={() => value--}
+    aria-label="Zoom in"
+    disabled={value >= most}
+    onclick={() => (value = Math.min(most, value + STEP))}
   >
     +
   </button>
@@ -59,7 +62,7 @@
     opacity: 0.4;
     cursor: not-allowed;
   }
-  .per-row {
+  .level {
     font-size: 12px;
     line-height: 30px;
     padding: 0 8px;
@@ -68,5 +71,7 @@
     font-variant-numeric: tabular-nums;
     color: var(--ink-soft);
     white-space: nowrap;
+    min-width: 38px;
+    text-align: center;
   }
 </style>

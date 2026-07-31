@@ -178,6 +178,8 @@
     step="name"
     heading="Name your campaign"
     intro="The name identifies the campaign to volunteers and becomes its address."
+    status="choosing the name"
+    materialHint="Your pages will appear here once you add a source at step 3."
   >
     <label class="field">
       Campaign name
@@ -258,15 +260,22 @@
     <!-- Continue submits the form, so this step draws its own footer. -->
     {#snippet footer()}
       <button type="submit" class="btn btn-primary" disabled={!canAdvance || claiming}>
-        {claiming ? "Reserving the name…" : "Continue"}
+        {claiming ? "Reserving the name…" : "Continue →"}
       </button>
     {/snippet}
   </WizardCard>
 </form>
 
 <style>
+  form {
+    /* The workbench inside lays the screen out; the form only submits it. */
+    display: contents;
+  }
   .field {
-    margin-bottom: 1.25rem;
+    margin-top: 16px;
+  }
+  .field:first-child {
+    margin-top: 22px;
   }
   /* Sits under the field's hints rather than beside the input. */
   .btn-inline {

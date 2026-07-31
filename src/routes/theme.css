@@ -25,6 +25,20 @@
   --accent-dark: #1b49a0;
   --link: #2f68c4;
 
+  /* Filled action buttons carry their own pair: the fill can differ from the
+     accent used for text and borders, which needs more contrast on dark. */
+  --accent-btn: #2563c9;
+  --accent-btn-hover: #1b49a0;
+  --ok-btn: #1a7f4b;
+  --ok-btn-hover: #146239;
+
+  /* Form control outlines, a step heavier than --line. */
+  --line-input: #d0d5e2;
+  /* Functional orange: XML attribute names, piece highlights. */
+  --orange-deep: #e07b39;
+  /* Recessed surfaces inside a card: page grids, the XML editor. */
+  --bg-inset: #f7f8fb;
+
   --maxw: 1080px;
   --radius: 14px;
   --shadow: 0 1px 2px rgba(31, 36, 51, .06), 0 8px 28px rgba(31, 36, 51, .07);
@@ -102,23 +116,34 @@
 
 /* Dark theme. Applied via [data-theme="dark"] on <html>, which an inline head
    script sets before first paint (no flash) and the nav bulb toggle flips for
-   the current visit. Only an explicit pick is persisted (localStorage "theme"). */
+   the current visit. Only an explicit pick is persisted (localStorage "theme").
+   Near-black blue base, cards one step lighter, brand accents brightened for
+   contrast. */
 [data-theme="dark"] {
-  --ink: #ecebe6;
-  --ink-soft: #bcc1d1;
-  --ink-faint: #8b92a8;
-  --line: #333c53;
-  --bg: #1b2030;
-  --bg-alt: #212739;
-  --bg-tint: #253150;
-  --card: #283048;
-  --topbar-bg: rgba(27, 32, 48, .85);
+  --ink: #e8eaf2;
+  --ink-soft: #b6bccf;
+  --ink-faint: #8f96ad;
+  --line: #2a2e3d;
+  --bg: #161a26;
+  --bg-alt: #0f1118;
+  --bg-tint: #232736;
+  --card: #1c1f2b;
+  --topbar-bg: rgba(20, 23, 32, .85);
 
-  --accent: #7bb0f7;
-  --accent-dark: #a9ccff;
-  --link: #8fbcff;
+  --accent: #6ea3f5;
+  --accent-dark: #93b9f8;
+  --link: #6ea3f5;
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 10px 30px rgba(0, 0, 0, .4);
+  --accent-btn: #3b76e0;
+  --accent-btn-hover: #2f68c4;
+  --ok-btn: #22995c;
+  --ok-btn-hover: #1d7f4d;
+
+  --line-input: #3a4054;
+  --orange-deep: #f0924f;
+  --bg-inset: #12141d;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 28px rgba(0, 0, 0, .45);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, .45);
   --shadow-lg: 0 8px 22px rgba(0, 0, 0, .5);
@@ -127,32 +152,35 @@
   /* Lifted so they stay legible against the dark surfaces. Their fills are
      translucent so they tint whatever surface they sit on rather than
      punching a light patch into it. */
-  --ok: #5cbf95;
-  --ok-bg: rgba(92, 191, 149, .14);
-  --ok-line: rgba(92, 191, 149, .42);
+  --ok: #5fd08a;
+  --ok-bg: rgba(46, 160, 92, .15);
+  --ok-line: #2e5c42;
   --ok-soft: #4e9d7b;
   --warn: #e0b45c;
   --warn-bg: rgba(224, 180, 92, .14);
   --warn-line: rgba(224, 180, 92, .42);
-  --danger: #f08a80;
-  --danger-bg: rgba(240, 138, 128, .14);
-  --danger-line: rgba(240, 138, 128, .42);
+  --danger: #e5533f;
+  --danger-bg: rgba(229, 83, 63, .14);
+  --danger-line: rgba(229, 83, 63, .42);
   --info: #9dc2f5;
-  --info-bg: rgba(123, 176, 247, .14);
-  --info-line: rgba(123, 176, 247, .42);
+  --info-bg: rgba(110, 163, 245, .14);
+  --info-line: rgba(110, 163, 245, .42);
   --note: #cfc6ae;
   --note-bg: rgba(207, 198, 174, .1);
   --note-line: rgba(207, 198, 174, .3);
   --pre: #c39ce8;
   --pre-bg: rgba(195, 156, 232, .14);
 
-  --accent-tint: rgba(123, 176, 247, .07);
-  --accent-tint-strong: rgba(123, 176, 247, .16);
-  --accent-line: rgba(123, 176, 247, .3);
-  --accent-line-strong: rgba(123, 176, 247, .55);
-  --accent-wash: rgba(123, 176, 247, .28);
+  --accent-tint: rgba(110, 163, 245, .07);
+  --accent-tint-strong: rgba(110, 163, 245, .16);
+  --accent-line: rgba(110, 163, 245, .3);
+  --accent-line-strong: rgba(110, 163, 245, .55);
+  --accent-wash: rgba(110, 163, 245, .28);
 
-  --line-strong: #46506b;
+  --line-strong: #3a4054;
+  /* Page scans stay light — they are paper — but warmed a step so they do not
+     glare against the dark surfaces. */
+  --facsimile-paper: #f2f0ea;
   /* Inverted the other way round in this theme: a pressed toggle goes light. */
   --invert-bg: #ecebe6;
   --invert-ink: #1b2030;

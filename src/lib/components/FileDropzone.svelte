@@ -1,8 +1,10 @@
 <!--
   Drag-and-drop / picker for the files a campaign is built from: page images,
-  PDFs, and existing encodings. Unsupported files are rejected with a note
-  rather than silently dropped. The list is additive, so several drops (or a
-  drop plus a pick) build one sequence, in the order the pages should read.
+  PDFs, and existing encodings. Fills the material pane: a full-height drop
+  target with the queued files listed under it. Unsupported files are rejected
+  with a note rather than silently dropped. The list is additive, so several
+  drops (or a drop plus a pick) build one sequence, in the order the pages
+  should read.
 -->
 <script lang="ts">
   import { classifyUpload } from "$lib/prepare-images.ts";
@@ -51,11 +53,19 @@
   function remove(index: number) {
     files = files.filter((_, i) => i !== index);
   }
+
+  /** The file-type label on a row's chip, from the file's extension. */
+  const kindOf = (name: string) =>
+    (name.match(/\.([^.]+)$/)?.[1] ?? "file").toUpperCase().slice(0, 4);
+
+  const sizeOf = (bytes: number) =>
+    bytes >= 1024 * 1024
+      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 </script>
 
 <div
-  class="dropzone"
-  class:drag={dragActive}
+  class="upload"
   role="group"
   aria-label="File upload"
   ondragover={(e) => {
@@ -65,112 +75,158 @@
   ondragleave={() => (dragActive = false)}
   ondrop={onDrop}
 >
-  <p class="prompt">Drag page images, a PDF or an encoding here</p>
-  <label class="btn picker">
-    <input type="file" accept={ACCEPT} multiple onchange={onPick} />
-    Choose files…
-  </label>
-  <p class="types">JPG, PNG, PDF, MEI, MusicXML or MXL</p>
+  {#each files as file, i (`${file.name}:${file.size}`)}
+    <div class="file-row">
+      <div class="kind">{kindOf(file.name)}</div>
+      <div class="file-text">
+        <div class="name">{file.name}</div>
+        <div class="meta">{sizeOf(file.size)} · read on Continue</div>
+      </div>
+      <button
+        type="button"
+        class="remove"
+        onclick={() => remove(i)}
+        aria-label="Remove {file.name}"
+      >
+        ×
+      </button>
+    </div>
+  {/each}
+
+  {#if note}
+    <p class="note">{note}</p>
+  {/if}
+
+  <div class="dropzone" class:drag={dragActive}>
+    <div class="zone-inner">
+      <div class="arrow" aria-hidden="true">⤓</div>
+      <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
+      <div class="types">You can combine them — or continue without any.</div>
+      <label class="picker">
+        <input type="file" accept={ACCEPT} multiple onchange={onPick} />
+        Browse files
+      </label>
+    </div>
+  </div>
 </div>
 
-{#if note}
-  <p class="note">{note}</p>
-{/if}
-
-{#if files.length}
-  <ol class="files">
-    {#each files as file, i (`${file.name}:${file.size}`)}
-      <li>
-        <span class="name">{file.name}</span>
-        <button
-          type="button"
-          class="btn btn-quiet btn-danger"
-          onclick={() => remove(i)}
-          aria-label="Remove {file.name}"
-        >
-          Remove
-        </button>
-      </li>
-    {/each}
-  </ol>
-{/if}
-
 <style>
-  .dropzone {
+  .upload {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
+    gap: 14px;
+    overflow: auto;
+  }
+  .dropzone {
+    flex: 1;
+    min-height: 260px;
+    display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 1.75rem 1rem;
-    text-align: center;
-    border: 1px dashed var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-alt);
+    justify-content: center;
+    border: 2px dashed var(--accent-line-strong);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--bg-tint) 55%, transparent);
   }
   .dropzone.drag {
     border-color: var(--accent);
     background: var(--bg-tint);
   }
+  .zone-inner {
+    text-align: center;
+    max-width: 420px;
+    padding: 24px;
+  }
+  .arrow {
+    font-size: 36px;
+    color: var(--accent);
+  }
   .prompt {
-    margin: 0;
-    color: var(--ink-soft);
+    font-size: 15px;
+    font-weight: 600;
+    margin-top: 10px;
   }
   .types {
-    margin: 0;
-    font-size: 0.8rem;
+    font-size: 12.5px;
     color: var(--ink-faint);
+    margin-top: 6px;
   }
   .picker {
-    font-weight: 600;
-    font-size: 0.9rem;
-    padding: 0.45rem 1rem;
+    display: inline-block;
+    cursor: pointer;
+    margin-top: 14px;
+    font: 600 13px var(--font);
+    padding: 8px 20px;
+    color: var(--accent);
     background: var(--card);
+    border: 1px solid var(--accent-line);
     border-radius: 999px;
   }
   .picker:hover {
-    border-color: var(--accent);
-    color: var(--accent);
+    background: var(--bg-tint);
   }
   .picker input {
     display: none;
   }
   .note {
-    margin: 0.6rem 0 0;
-    font-size: 0.85rem;
+    flex: none;
+    margin: 0;
+    font-size: 12px;
     color: var(--warn);
   }
-  .files {
-    list-style: none;
-    margin: 1rem 0 0;
-    padding: 0;
-    display: grid;
-    gap: 0.4rem;
-    counter-reset: page;
-  }
-  .files li {
+  .file-row {
+    flex: none;
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.45rem 0.7rem;
-    font-size: 0.9rem;
+    gap: 12px;
+    background: var(--card);
     border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--bg);
+    border-radius: 12px;
+    padding: 12px 16px;
   }
-  .files li::before {
-    counter-increment: page;
-    content: counter(page);
+  .kind {
     flex: none;
-    min-width: 1.4rem;
-    color: var(--ink-faint);
-    font-variant-numeric: tabular-nums;
+    width: 34px;
+    height: 42px;
+    box-sizing: border-box;
+    background: var(--card);
+    border: 1px solid var(--accent-line);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 600 9px var(--font);
+    color: var(--accent);
+  }
+  .file-text {
+    min-width: 0;
   }
   .name {
-    flex: 1;
-    overflow-wrap: anywhere;
+    font: 12.5px ui-monospace, Menlo, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .files button {
+  .meta {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+  }
+  .remove {
     flex: none;
-    padding: 0.2rem 0.6rem;
+    margin-left: auto;
+    cursor: pointer;
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    color: var(--ink-faint);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .remove:hover {
+    color: var(--danger);
+    border-color: var(--danger);
   }
 </style>

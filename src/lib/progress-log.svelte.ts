@@ -17,6 +17,12 @@ export interface ProgressStep {
 	endedAt?: number;
 	/** False for a step whose duration says nothing, so it is not reported. */
 	timed: boolean;
+	/**
+	 * A duration the action measured itself, reported instead of how long the
+	 * step was open. For work that runs in parallel with other work, the time
+	 * spent waiting on it says nothing about the work itself.
+	 */
+	tookMs?: number;
 	/** Set on the step an action stopped in. */
 	failed: boolean;
 }
@@ -51,8 +57,14 @@ export class ProgressLog {
 		if (step && step.endedAt === undefined) step.detail = detail;
 	}
 
-	/** Close the running step: the action got through it. */
-	done() {
+	/**
+	 * Close the running step: the action got through it. Pass `tookMs` to
+	 * report a duration the action measured itself instead of how long the
+	 * step was open.
+	 */
+	done(tookMs?: number) {
+		const step = this.steps.at(-1);
+		if (step && step.endedAt === undefined && tookMs !== undefined) step.tookMs = tookMs;
 		this.stop();
 	}
 

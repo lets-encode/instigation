@@ -40,8 +40,17 @@
     !busy && (!hasUpload || wizard.copyrightAccepted),
   );
   const continueLabel = $derived(
-    busy ? "Working…" : hasUpload ? "Continue" : "Continue without images",
+    busy ? "Working…" : hasUpload ? "Continue →" : "Continue without images",
   );
+
+  // What the rail reports while this step is open.
+  const railStatus = $derived.by(() => {
+    const parts: string[] = [];
+    if (wizard.files.length)
+      parts.push(`${wizard.files.length} file${wizard.files.length === 1 ? "" : "s"} added`);
+    if (manifestUrl) parts.push("IIIF manifest");
+    return parts.join(" · ") || "adding material";
+  });
 
   // What the pages already read were read from. A file is identified by name and
   // size, which is what the dropzone treats as one file too.
@@ -106,14 +115,17 @@
 <WizardCard
   step="upload"
   heading="Add your source"
-  intro="Page images or a PDF to encode from, an existing encoding, or a IIIF manifest. You can combine them, or continue without any."
+  intro="Drop material in the pane on the left, or point at a IIIF manifest. You pick which pages to keep next."
+  status={railStatus}
   onBack={previousStep}
   backDisabled={busy}
   onNext={continueToNextStep}
   nextDisabled={!canContinue}
   nextLabel={continueLabel}
 >
-  <FileDropzone bind:files={wizard.files} />
+  {#snippet material()}
+    <FileDropzone bind:files={wizard.files} />
+  {/snippet}
 
   <label class="field manifest">
     IIIF manifest URL
@@ -130,32 +142,54 @@
     </span>
   </label>
 
-  {#if hasUpload}
-    <label class="ack">
-      <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
-      <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
-    </label>
+  <div class="spacer"></div>
+
+  {#if hasUpload && !busy && !log.steps.length}
+    <div class="status-box">
+      {wizard.files.length
+        ? `${wizard.files.length} file${wizard.files.length === 1 ? "" : "s"} ready`
+        : "1 manifest ready"} — pages are read when you continue.
+    </div>
   {/if}
 
   {#if error}
     <p class="msg-error" role="alert">{error}</p>
   {/if}
   <ProgressSteps {log} />
+
+  <!-- Last before the footer, so it keeps its place when the report above it
+       changes: the acknowledgement gates Continue and sits right above it. -->
+  {#if hasUpload}
+    <label class="ack">
+      <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
+      <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
+    </label>
+  {/if}
 </WizardCard>
 
 <style>
   .manifest {
-    margin-top: 1.5rem;
+    margin-top: 22px;
   }
   .ack {
     display: flex;
     align-items: flex-start;
-    gap: 0.6rem;
-    margin-top: 1.5rem;
-    font-size: 0.9rem;
-    color: var(--ink-soft);
+    gap: 9px;
+    margin-top: 14px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--warn);
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+    border-radius: 8px;
+    cursor: pointer;
   }
   .ack input {
-    margin-top: 0.2rem;
+    margin-top: 2px;
+  }
+  /* Pushes the status report to the card's foot, above the buttons. */
+  .spacer {
+    flex: 1;
   }
 </style>

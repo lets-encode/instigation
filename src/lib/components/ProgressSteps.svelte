@@ -19,7 +19,8 @@
   });
 
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
-  const took = (step: ProgressStep) => seconds((step.endedAt ?? now) - step.startedAt);
+  const took = (step: ProgressStep) =>
+    seconds(step.tookMs ?? (step.endedAt ?? now) - step.startedAt);
   const total = $derived.by(() => {
     const first = log.steps[0];
     const last = log.steps.at(-1);
@@ -34,7 +35,13 @@
       {#each log.steps as step, i (i)}
         <li class:failed={step.failed} class:running={step.endedAt === undefined}>
           <span class="mark" aria-hidden="true">
-            {step.failed ? "×" : step.endedAt === undefined ? "…" : "✓"}
+            {#if step.failed}
+              ×
+            {:else if step.endedAt === undefined}
+              <span class="spinner"></span>
+            {:else}
+              ✓
+            {/if}
           </span>
           <span class="what">
             {step.label}{#if step.detail}<span class="detail">{step.detail}</span>{/if}
@@ -56,7 +63,7 @@
 
 <style>
   .log {
-    margin-top: 1.25rem;
+    margin-top: 14px;
     /* An item of a flex column that scrolls can be shrunk to nothing, which
        would leave the lines cut off. It keeps the height they need, and the
        content above it gives way instead. */
@@ -65,12 +72,12 @@
        what sits below it out of view. */
     max-height: 45vh;
     overflow: auto;
-    padding: 0.6rem 0.8rem;
-    font-size: 0.85rem;
+    padding: 10px 12px;
+    font-size: 12px;
     color: var(--ink-soft);
     background: var(--bg-alt);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
   }
   ol {
     list-style: none;
@@ -91,6 +98,27 @@
   }
   li.running .mark {
     color: var(--ink-faint);
+  }
+  /* The open step's marker: a small spinning ring. */
+  .spinner {
+    display: inline-block;
+    box-sizing: border-box;
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--line-strong);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+    }
   }
   li.failed {
     color: var(--danger);

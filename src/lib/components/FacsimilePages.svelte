@@ -1,7 +1,9 @@
 <!--
-  The campaign's page images, in rows beside the metadata steps so the organiser
-  can read the source while describing it. How many pages a row holds is the
-  zoom: one per row fills the pane with a single page.
+  The campaign's page images, filling the material pane beside the metadata
+  step so the organiser can read the source while describing it. The pages are
+  committed by this point, so the toolbar says so: this view is for reference,
+  nothing here edits them. How many pages a row holds is the zoom: one per row
+  fills the pane with a single page.
 
   The images are the pages the pages step committed, as object URLs —
   the committed copies are in the repository, but reading them back would cost
@@ -10,18 +12,21 @@
   page images exist nowhere else in the browser. The URLs are revoked when the
   panel goes away.
 
-  Pages always sit on white: a scanned score is ink on paper, and tinting it to
-  match a dark UI would misrepresent the source.
+  Pages always sit on paper-light ground: a scanned score is ink on paper, and
+  tinting it to match a dark UI would misrepresent the source.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
   import type { PageImage } from "$lib/prepare-images.ts";
-  import SidePane from "./SidePane.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ZoomLevel from "./ZoomLevel.svelte";
 
   let { pages }: { pages: PageImage[] } = $props();
 
+  // One page per row: the imprint has to be readable while it is copied into
+  // the form beside it.
   let perRow = $state(1);
+  let zoom = $state(100);
 
   // One object URL per page, cached so a re-render hands the same <img> the same
   // src. Revoking eagerly when the list changes would pull the URL out from
@@ -45,34 +50,44 @@
 </script>
 
 {#if pages.length}
-  <SidePane label="Source pages">
-    <div class="pane-bar">
-      <span class="count">{pages.length} page{pages.length === 1 ? "" : "s"}</span>
+  <div class="material-card">
+    <div class="material-toolbar">
+      <span class="toolbar-name">{pages.length} page{pages.length === 1 ? "" : "s"} · committed</span>
+      <span class="chip">Pages are set — for reference</span>
+      <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
+      <ZoomLevel bind:value={zoom} />
     </div>
-
-    <div class="page-grid" style="--per-row: {perRow}">
-      {#each urls as url, i (url)}
-        <figure>
-          <img src={url} alt="Page {i + 1}" />
-          <figcaption>{i + 1}</figcaption>
-        </figure>
-      {/each}
+    <div class="material-body">
+      <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+        {#each urls as url, i (url)}
+          <figure>
+            <img src={url} alt="Page {i + 1}" />
+            <figcaption class="page-caption">p. {i + 1}</figcaption>
+          </figure>
+        {/each}
+      </div>
     </div>
-  </SidePane>
+  </div>
 {/if}
 
 <style>
-  .count {
-    font-size: 0.8rem;
-    color: var(--ink-faint);
+  figure {
+    min-width: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
   img {
     display: block;
     width: 100%;
     height: auto;
-    /* Scanned pages keep their own white ground in either theme. */
+    box-sizing: border-box;
+    /* Scanned pages keep their own light ground in either theme. */
     background: var(--facsimile-paper);
     border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: var(--shadow-sm);
   }
 </style>

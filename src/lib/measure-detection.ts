@@ -22,6 +22,11 @@ export interface PageMeasures {
 	width: number;
 	height: number;
 	boxes: MeasureBox[];
+	/**
+	 * How long detecting this page took, from when its request left the queue
+	 * to its result. A cached result keeps the time its detection took.
+	 */
+	tookMs: number;
 }
 
 export interface DetectionOptions {
@@ -81,6 +86,7 @@ export async function detectPageMeasures(
 		const downscale = options.downscale ?? downscaleImage;
 		await acquire();
 		try {
+			const startedAt = performance.now();
 			const [size, copy] = await Promise.all([
 				getImageSize(blob),
 				downscale(blob, DETECTOR_IMAGE_EDGE)
@@ -92,7 +98,12 @@ export async function detectPageMeasures(
 				lrx: b.lrx * size.width,
 				lry: b.lry * size.height
 			}));
-			return { width: size.width, height: size.height, boxes };
+			return {
+				width: size.width,
+				height: size.height,
+				boxes,
+				tookMs: performance.now() - startedAt
+			};
 		} finally {
 			release();
 		}

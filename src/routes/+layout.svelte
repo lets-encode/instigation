@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { auth, initAuth, logout } from '$lib/auth.svelte.ts';
+  import { auth, initAuth, login, logout } from '$lib/auth.svelte.ts';
   import './theme.css';
   import './ui.css';
 
@@ -54,6 +54,8 @@
         <span>{auth.user.login}</span>
         <button type="button" class="btn btn-soft" onclick={() => logout()}>Log out</button>
       </div>
+    {:else if auth.status === 'anonymous'}
+      <button type="button" class="btn btn-soft" onclick={() => login()}>Log in with GitHub</button>
     {/if}
     <button
       class="theme-toggle"
@@ -109,22 +111,20 @@
     height: 100dvh;
     display: flex;
     flex-direction: column;
-    font-family:
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      sans-serif;
+    font-family: var(--font);
     color: var(--ink);
     background: var(--bg-alt);
   }
   header {
     flex: none;
+    box-sizing: border-box;
+    height: 56px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.75rem 1.5rem;
+    padding: 0 20px;
     border-bottom: 1px solid var(--line);
-    background: var(--card);
+    background: var(--topbar-bg);
   }
   .topbar-right {
     display: flex;
@@ -132,7 +132,7 @@
     gap: 1.25rem;
   }
   .brand img {
-    height: 36px;
+    height: 30px;
     width: auto;
     display: block;
   }
@@ -150,12 +150,17 @@
   .user {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    font-size: 0.9rem;
+    gap: 8px;
+    font-size: 13.5px;
+  }
+  .user :global(.btn) {
+    font-size: 14px;
+    padding: 6px 13px;
+    background: var(--bg-alt);
   }
   .avatar {
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
   }
   .auth-error {

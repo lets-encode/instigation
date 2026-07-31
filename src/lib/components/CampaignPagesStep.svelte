@@ -97,6 +97,15 @@
           : "Continue without pages",
   );
 
+  // The material toolbar names what the pages came from.
+  const sourceName = $derived(
+    wizard.files.length === 1
+      ? wizard.files[0].name
+      : wizard.files.length
+        ? `${wizard.files.length} files`
+        : wizard.iiifManifestUrl.trim() || "",
+  );
+
   /**
    * Keep or leave out a page. Holding shift extends from the page last clicked
    * on its own, so a run of pages in a long source is chosen in two clicks.
@@ -274,14 +283,93 @@
 <WizardCard
   step="pages"
   heading="Choose the pages"
-  intro="Keep the pages the campaign encodes and put them in reading order. Only the pages you keep are downloaded at full size and committed."
-  fill
+  intro="Keep what gets encoded, in reading order. Only the pages you keep are downloaded at full size and committed."
+  status="{chosen.length} of {wizard.candidates.length} kept"
+  materialHint="There are no page images in this upload."
   onBack={previousStep}
   backDisabled={busy}
   onNext={commitAndContinue}
   nextDisabled={busy}
   nextLabel={continueLabel}
 >
+  {#snippet material()}
+    {#if wizard.candidates.length}
+      <div class="material-card">
+        <div class="material-toolbar">
+          {#if sourceName}
+            <span class="toolbar-name">{sourceName}</span>
+          {/if}
+          <div class="toolbar-gap"></div>
+          <PagesPerRow bind:value={perRow} />
+          <div class="toolbar-rule"></div>
+          <button type="button" class="tbtn" onclick={() => setAll(true)} disabled={busy}>
+            Keep all
+          </button>
+          <button type="button" class="tbtn" onclick={() => setAll(false)} disabled={busy}>
+            Keep none
+          </button>
+        </div>
+        <ol class="material-body material-grid" style="--per-row: {perRow}">
+          {#each wizard.candidates as page, i (page.id)}
+            <li
+              class:out={!page.include}
+              class:dragging={dragIndex === i}
+              class:drop-before={dragIndex !== null && overIndex === i && dragIndex > i}
+              class:drop-after={dragIndex !== null && overIndex === i && dragIndex < i}
+              ondragover={(e) => {
+                if (dragIndex === null) return;
+                // Accepting the drag is what makes this position a drop target.
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                overIndex = i;
+              }}
+              ondragleave={() => {
+                if (overIndex === i) overIndex = null;
+              }}
+              ondrop={(e) => {
+                e.preventDefault();
+                if (dragIndex !== null) move(dragIndex, i);
+                dragIndex = null;
+                overIndex = null;
+              }}
+            >
+              <button
+                type="button"
+                class="thumb"
+                aria-pressed={page.include}
+                disabled={busy}
+                title={page.label}
+                draggable={!busy}
+                onclick={(e) => toggle(i, e.shiftKey)}
+                ondragstart={(e) => {
+                  dragIndex = i;
+                  // Firefox starts a drag only once the transfer carries data.
+                  e.dataTransfer?.setData("text/plain", String(i));
+                  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+                }}
+                ondragend={() => {
+                  dragIndex = null;
+                  overIndex = null;
+                }}
+              >
+                <!-- An image is draggable in its own right, which would drag the
+                     picture instead of the page. -->
+                <img src={urls[i]} alt={page.label} draggable="false" />
+                <span class="mark" aria-hidden="true">
+                  {page.include ? numbers[i] : "—"}
+                </span>
+                {#if !page.include}
+                  <span class="left-out" aria-hidden="true"><span>left out</span></span>
+                {/if}
+              </button>
+              <span class="page-caption">p. {i + 1}</span>
+            </li>
+          {/each}
+        </ol>
+      </div>
+    {/if}
+  {/snippet}
+
   {#if !wizard.candidates.length}
     <p class="note">
       There are no page images in this upload.
@@ -292,110 +380,26 @@
       Continuing creates the campaign's repository.
     </p>
   {:else}
-    <div class="bar">
-      <span class="count">
-        {chosen.length} of {wizard.candidates.length} pages kept
-      </span>
-      <span class="controls">
-        <PagesPerRow bind:value={perRow} />
-        <button
-          type="button"
-          class="btn btn-quiet"
-          onclick={() => setAll(true)}
-          disabled={busy}
-        >
-          Keep all
-        </button>
-        <button
-          type="button"
-          class="btn btn-quiet"
-          onclick={() => setAll(false)}
-          disabled={busy}
-        >
-          Keep none
-        </button>
-      </span>
+    <div class="count-row">
+      <span class="count">{chosen.length}</span>
+      <span class="count-of">of {wizard.candidates.length} pages kept</span>
     </div>
-    <p class="hint">
-      Click a page to keep it or leave it out; shift-click to do the same to a
-      run of pages. Drag a page, or use its arrows, to move it.
-    </p>
-
-    <ol class="grid" style="--per-row: {perRow}">
-      {#each wizard.candidates as page, i (page.id)}
-        <li
-          class:out={!page.include}
-          class:dragging={dragIndex === i}
-          class:drop-before={dragIndex !== null && overIndex === i && dragIndex > i}
-          class:drop-after={dragIndex !== null && overIndex === i && dragIndex < i}
-          ondragover={(e) => {
-            if (dragIndex === null) return;
-            // Accepting the drag is what makes this position a drop target.
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-            overIndex = i;
-          }}
-          ondragleave={() => {
-            if (overIndex === i) overIndex = null;
-          }}
-          ondrop={(e) => {
-            e.preventDefault();
-            if (dragIndex !== null) move(dragIndex, i);
-            dragIndex = null;
-            overIndex = null;
-          }}
-        >
-          <button
-            type="button"
-            class="thumb"
-            aria-pressed={page.include}
-            disabled={busy}
-            title={page.label}
-            draggable={!busy}
-            onclick={(e) => toggle(i, e.shiftKey)}
-            ondragstart={(e) => {
-              dragIndex = i;
-              // Firefox starts a drag only once the transfer carries data.
-              e.dataTransfer?.setData("text/plain", String(i));
-              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-            }}
-            ondragend={() => {
-              dragIndex = null;
-              overIndex = null;
-            }}
-          >
-            <!-- An image is draggable in its own right, which would drag the
-                 picture instead of the page. -->
-            <img src={urls[i]} alt={page.label} draggable="false" />
-            <span class="mark" aria-hidden="true">
-              {page.include ? numbers[i] : "—"}
-            </span>
-          </button>
-          <span class="label">{page.label}</span>
-          <span class="move">
-            <button
-              type="button"
-              class="btn btn-quiet"
-              disabled={busy || i === 0}
-              aria-label="Move {page.label} earlier"
-              onclick={() => move(i, i - 1)}
-            >
-              ←
-            </button>
-            <button
-              type="button"
-              class="btn btn-quiet"
-              disabled={busy || i === wizard.candidates.length - 1}
-              aria-label="Move {page.label} later"
-              onclick={() => move(i, i + 1)}
-            >
-              →
-            </button>
-          </span>
-        </li>
-      {/each}
-    </ol>
+    <div class="progress">
+      <div
+        class="progress-fill"
+        style="width: {wizard.candidates.length
+          ? (chosen.length / wizard.candidates.length) * 100
+          : 0}%"
+      ></div>
+    </div>
+    <ul class="how">
+      <li>Click a page to keep or leave it out</li>
+      <li>Shift-click marks a whole run</li>
+      <li>Drag a page to move it</li>
+    </ul>
   {/if}
+
+  <div class="spacer"></div>
 
   {#if error}
     <p class="msg-error" role="alert">{error}</p>
@@ -405,54 +409,67 @@
 
 <style>
   .note {
-    margin: 0;
+    margin: 22px 0 0;
+    font-size: 13.5px;
     color: var(--ink-soft);
   }
-  .bar {
+  .count-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 22px;
   }
   .count {
-    font-size: 0.9rem;
-    font-weight: 600;
+    font-size: 34px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
-  .controls {
-    display: flex;
-    gap: 0.4rem;
+  .count-of {
+    font-size: 14px;
+    color: var(--ink-faint);
   }
-  .grid {
-    /* The pages take the height the rest of the card leaves and scroll within
-       it, rather than pushing the step's controls out of reach. What the step
-       reports while it works grows into this space. */
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
+  .progress {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-tint);
+    margin-top: 10px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--green));
+  }
+  .how {
     list-style: none;
-    margin: 1rem 0 0;
-    padding: 0.25rem;
+    margin: 22px 0 0;
+    padding: 0;
     display: grid;
-    grid-template-columns: repeat(var(--per-row), minmax(0, 1fr));
-    gap: 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--bg-alt);
+    gap: 9px;
+    font-size: 12.5px;
+    color: var(--ink-soft);
   }
-  .grid li {
+  .spacer {
+    flex: 1;
+  }
+
+  /* ---- Page tiles in the material pane ---- */
+  ol.material-grid {
+    list-style: none;
+    margin: 0;
+  }
+  li {
     position: relative;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.2rem;
+    gap: 5px;
+    min-width: 0;
   }
-  .grid li.dragging {
+  li.dragging {
     opacity: 0.4;
   }
   /* Where the dragged page lands: before or after the page it is over. */
-  .grid li.drop-before::before,
-  .grid li.drop-after::after {
+  li.drop-before::before,
+  li.drop-after::after {
     content: "";
     position: absolute;
     top: 0;
@@ -460,72 +477,85 @@
     width: 3px;
     background: var(--accent);
     border-radius: 2px;
+    z-index: 1;
   }
-  .grid li.drop-before::before {
-    left: -0.375rem;
+  li.drop-before::before {
+    left: -8px;
   }
-  .grid li.drop-after::after {
-    right: -0.375rem;
+  li.drop-after::after {
+    right: -8px;
   }
   .thumb {
     position: relative;
     display: block;
     width: 100%;
-    padding: 0.25rem;
-    background: var(--card);
-    border: 2px solid var(--accent);
+    padding: 0;
+    background: var(--facsimile-paper);
+    border: 1px solid var(--accent-line);
     border-radius: 6px;
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
     cursor: pointer;
     /* Safari drags an element from a form control only when told to. */
     -webkit-user-drag: element;
   }
   li.out .thumb {
     border-color: var(--line);
+    opacity: 0.8;
   }
   li.out img {
-    opacity: 0.35;
+    opacity: 0.55;
   }
   .thumb img {
     display: block;
     width: 100%;
     /* The preview takes its tile's width, so the zoom level sets how large a
        page is shown; the proportions of a page hold it to a fixed height. */
-    aspect-ratio: 3 / 4;
+    aspect-ratio: 0.73;
     object-fit: contain;
-    /* Scanned pages keep their own white ground in either theme. */
-    background: var(--facsimile-paper);
   }
   .mark {
     position: absolute;
-    top: 0.35rem;
-    left: 0.35rem;
-    min-width: 1.3rem;
-    padding: 0 0.2rem;
-    font-size: 0.75rem;
+    top: 8px;
+    left: 8px;
+    box-sizing: border-box;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    /* Reads against the accent in either theme, as the step header's dots do. */
-    color: var(--card);
-    background: var(--accent);
-    border-radius: 999px;
+    color: #fff;
+    background: var(--accent-btn);
+    border-radius: 10px;
   }
   li.out .mark {
-    color: var(--ink-soft);
+    color: var(--ink-faint);
     background: var(--line);
   }
-  .label {
-    max-width: 100%;
-    font-size: 0.72rem;
-    color: var(--ink-faint);
-    text-align: center;
-    overflow-wrap: anywhere;
-  }
-  .move {
+  /* Diagonal stripes and a pill over a page that is left out. */
+  .left-out {
+    position: absolute;
+    inset: 0;
     display: flex;
-    gap: 0.2rem;
+    align-items: center;
+    justify-content: center;
+    background: repeating-linear-gradient(
+      45deg,
+      rgba(121, 128, 154, 0.08) 0 8px,
+      transparent 8px 16px
+    );
   }
-  .move button {
-    padding: 0.1rem 0.4rem;
-    line-height: 1.2;
+  .left-out span {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+    background: var(--card);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 3px 10px;
   }
 </style>

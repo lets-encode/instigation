@@ -1,31 +1,27 @@
 <!--
-  Mark which regions of the page images belong to which piece.
+  Mark which regions of the page images belong to which piece. Fills the
+  material pane: a toolbar naming the piece being marked, and the pages in a
+  grid under it.
 
   A sibling of the measure zone editor: the same SVG rectangle model (draw on
   the background, drag to move, corner handle to resize, arrow keys to nudge),
   but the rectangles are far coarser — one per stretch of a page a piece
   occupies — and each is coloured and labelled by its piece. Regions drawn while
   a piece is selected belong to that piece, so a piece can span several pages
-  and two pieces can share one, as long as their regions do not overlap. A page
-  can therefore be given whole only to the piece that already has it to itself.
-
-  Every page is laid out at once, in rows of as many pages as the zoom asks for,
-  so a piece that runs across a page break can be marked without paging back and
-  forth. One page per row gives the whole pane's width to draw on.
+  and two pieces can share one, as long as their regions do not overlap.
 
   Coordinates are the page image's own pixels, which is what the detector
   returns boxes in, so no rescaling is needed when the boxes are partitioned.
 -->
 <script lang="ts">
   import {
-    formatRanges,
     overlappingPiece,
     pieceColour,
     type Piece,
     type PieceZone,
   } from "$lib/pieces.ts";
-  import SidePane from "./SidePane.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ZoomLevel from "./ZoomLevel.svelte";
 
   let {
     pieces = $bindable(),
@@ -41,6 +37,7 @@
 
   // Drawing a region wants the width, so a row holds one page to begin with.
   let perRow = $state(1);
+  let zoom = $state(100);
   // One entry per page, filled by bind:this. Reactive because binding writes
   // into it after the element is created.
   let svgEls = $state<SVGSVGElement[]>([]);
@@ -217,209 +214,128 @@
     notice = null;
   }
 
-  /**
-   * Cover the given pages with one whole-page region each for the selected
-   * piece, replacing the regions it already had there.
-   *
-   * A page another piece has a region on is left alone: a whole-page region
-   * would overlap it. The other pages are still covered, so one shared page
-   * does not block the rest.
-   */
-  function cover(surfaces: number[]) {
-    const piece = pieces[selectedPiece];
-    if (!piece || piece.kind !== "facsimile") return;
-    const blocked: number[] = [];
-    const blockers = new Set<string>();
-    for (const surface of surfaces) {
-      pieces.forEach((other, p) => {
-        if (p === selectedPiece || !other.zones.some((zone) => zone.surface === surface)) return;
-        if (!blocked.includes(surface)) blocked.push(surface);
-        blockers.add(labelFor(p));
-      });
-    }
-    const free = surfaces.filter((surface) => !blocked.includes(surface));
-    piece.zones = [
-      ...piece.zones.filter((zone) => !free.includes(zone.surface)),
-      ...free.map((surface) => ({
-        surface,
-        ulx: 0,
-        uly: 0,
-        lrx: pages[surface].width,
-        lry: pages[surface].height,
-      })),
-    ];
-    selectedZone = null;
-    const one = blocked.length === 1;
-    notice = blocked.length
-      ? `Page${one ? "" : "s"} ${formatRanges(blocked.map((s) => s + 1))} ${one ? "has" : "have"} ` +
-        `regions of ${[...blockers].join(", ")}. Remove them first to give ` +
-        `${one ? "the page" : "those pages"} to ${labelFor(selectedPiece)}.`
-      : null;
-  }
-
-  /** Drop every region of the selected piece, leaving the other pieces alone. */
-  function clearPiece() {
-    const piece = pieces[selectedPiece];
-    if (!piece || piece.kind !== "facsimile") return;
-    piece.zones = [];
-    selectedZone = null;
-    notice = null;
-  }
-
   const labelFor = (p: number) => pieces[p].meta.title.trim() || pieces[p].id;
-  const marked = $derived(pieces[selectedPiece]?.zones.length ?? 0);
 </script>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} />
 
-{#if pages.length}
-  <SidePane label="Piece regions">
-    <div class="pane-bar">
-      <p class="hint">
-        Drag on a page to mark where
+<div class="material-card">
+  <div class="material-toolbar">
+    <span class="drag-hint">
+      {#if pieces[selectedPiece]?.kind === "facsimile"}
+        Drag on a page to give a region to
         <strong style="color: {pieceColour(selectedPiece)}">{labelFor(selectedPiece)}</strong>
-        begins and ends. A piece can cover several pages, and two pieces can share a page as
-        long as their regions do not overlap.
-      </p>
-
-      <div class="tools">
-        <button type="button" class="btn btn-quiet" onclick={() => cover(pages.map((_, i) => i))}>
-          Assign all pages to this piece
-        </button>
-        {#if marked}
-          <button type="button" class="btn btn-quiet" onclick={clearPiece}>
-            Remove all regions of this piece
-          </button>
-        {/if}
-        {#if selectedZone}
-          <button
-            type="button"
-            class="btn btn-quiet"
-            onclick={() => removeZone(selectedZone!.piece, selectedZone!.zone)}
-          >
-            Remove region
-          </button>
-        {/if}
-        <PagesPerRow bind:value={perRow} />
-      </div>
-
-      {#if notice}
-        <p class="msg-warn" role="status">{notice}</p>
+      {:else}
+        <strong style="color: {pieceColour(selectedPiece)}">{labelFor(selectedPiece)}</strong>
+        is an uploaded encoding — it needs no regions
       {/if}
-    </div>
+    </span>
+    <div class="toolbar-gap"></div>
+    {#if selectedZone}
+      <button
+        type="button"
+        class="tbtn"
+        onclick={() => removeZone(selectedZone!.piece, selectedZone!.zone)}
+      >
+        Remove region
+      </button>
+    {/if}
+    <PagesPerRow bind:value={perRow} />
+    <ZoomLevel bind:value={zoom} />
+  </div>
 
-    <div class="page-grid" style="--per-row: {perRow}">
-      {#each pages as page, i (page.url)}
-        <figure>
-          {#if failed[i]}
-            <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
-          {/if}
-          <svg
-            bind:this={svgEls[i]}
-            viewBox={`0 0 ${page.width} ${page.height}`}
-            style="aspect-ratio: {page.width} / {page.height}"
-            role="application"
-            aria-label={`Page ${i + 1}: piece regions`}
-            onpointerdown={(e) => backgroundPointerDown(e, i)}
-          >
-            <image
-              href={page.url}
-              width={page.width}
-              height={page.height}
-              onerror={() => (failed[i] = true)}
+  {#if notice}
+    <p class="msg-warn notice" role="status">{notice}</p>
+  {/if}
+
+  <div class="material-body">
+    <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+    {#each pages as page, i (page.url)}
+      <figure>
+        {#if failed[i]}
+          <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
+        {/if}
+        <svg
+          bind:this={svgEls[i]}
+          viewBox={`0 0 ${page.width} ${page.height}`}
+          style="aspect-ratio: {page.width} / {page.height}"
+          role="application"
+          aria-label={`Page ${i + 1}: piece regions`}
+          onpointerdown={(e) => backgroundPointerDown(e, i)}
+        >
+          <image
+            href={page.url}
+            width={page.width}
+            height={page.height}
+            onerror={() => (failed[i] = true)}
+          />
+          {#each zonesOn(i) as { zone, p, z } (`${p}:${z}`)}
+            {@const fs = Math.max(page.width / 40, 12)}
+            {@const label = labelFor(p)}
+            <rect
+              class="zone"
+              class:selected={selectedZone?.piece === p && selectedZone?.zone === z}
+              style="--piece: {pieceColour(p)}"
+              role="button"
+              tabindex={0}
+              aria-label={`${label}: region on page ${i + 1}`}
+              x={zone.ulx}
+              y={zone.uly}
+              width={Math.max(0, zone.lrx - zone.ulx)}
+              height={Math.max(0, zone.lry - zone.uly)}
+              onpointerdown={(e) => zonePointerDown(e, i, p, z)}
+              onkeydown={(e) => zoneKeydown(e, i, p, z)}
             />
-            {#each zonesOn(i) as { zone, p, z } (`${p}:${z}`)}
-              {@const fs = Math.max(page.width / 40, 12)}
-              {@const label = labelFor(p)}
-              <rect
-                class="zone"
-                class:selected={selectedZone?.piece === p && selectedZone?.zone === z}
+            <rect
+              class="labelbg"
+              style="--piece: {pieceColour(p)}"
+              x={zone.ulx + 4}
+              y={zone.uly + 4}
+              width={label.length * fs * 0.6 + fs}
+              height={fs * 1.5}
+              rx={fs * 0.75}
+            />
+            <text class="label" x={zone.ulx + 4 + fs * 0.5} y={zone.uly + 4 + fs * 1.1} font-size={fs}>
+              {label}
+            </text>
+            {#if selectedZone?.piece === p && selectedZone?.zone === z}
+              <circle
+                class="handle"
                 style="--piece: {pieceColour(p)}"
                 role="button"
                 tabindex={0}
-                aria-label={`${label}: region on page ${i + 1}`}
-                x={zone.ulx}
-                y={zone.uly}
-                width={Math.max(0, zone.lrx - zone.ulx)}
-                height={Math.max(0, zone.lry - zone.uly)}
-                onpointerdown={(e) => zonePointerDown(e, i, p, z)}
-                onkeydown={(e) => zoneKeydown(e, i, p, z)}
+                aria-label={`${label}: resize region`}
+                cx={zone.lrx}
+                cy={zone.lry}
+                r={Math.max(10, page.width / 90)}
+                onpointerdown={(e) => handlePointerDown(e, i, p, z)}
               />
-              <rect
-                class="labelbg"
-                style="--piece: {pieceColour(p)}"
-                x={zone.ulx + 4}
-                y={zone.uly + 4}
-                width={label.length * fs * 0.6 + fs}
-                height={fs * 1.5}
-                rx={fs * 0.25}
-              />
-              <text class="label" x={zone.ulx + 4 + fs * 0.5} y={zone.uly + 4 + fs * 1.1} font-size={fs}>
-                {label}
-              </text>
-              {#if selectedZone?.piece === p && selectedZone?.zone === z}
-                <circle
-                  class="handle"
-                  style="--piece: {pieceColour(p)}"
-                  role="button"
-                  tabindex={0}
-                  aria-label={`${label}: resize region`}
-                  cx={zone.lrx}
-                  cy={zone.lry}
-                  r={Math.max(10, page.width / 90)}
-                  onpointerdown={(e) => handlePointerDown(e, i, p, z)}
-                />
-              {/if}
-            {/each}
-          </svg>
-          <figcaption>
-            <span>{i + 1}</span>
-            <button type="button" class="btn btn-quiet" onclick={() => cover([i])}>Whole page</button>
-          </figcaption>
+            {/if}
+          {/each}
+        </svg>
+          <figcaption class="page-caption">p. {i + 1}</figcaption>
         </figure>
       {/each}
     </div>
-  </SidePane>
-{:else}
-  <p class="hint standalone">
-    This campaign has no page images, so there are no regions to mark.
-  </p>
-{/if}
+  </div>
+</div>
 
 <style>
-  .pane-bar {
-    gap: 1rem;
-  }
-  .tools {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.85rem;
+  .drag-hint {
+    font-size: 12px;
     color: var(--ink-soft);
   }
-  /* The pane's buttons sit on its tinted background, so they carry a fill. */
-  button {
-    background: var(--card);
-  }
-  .hint {
+  .notice {
     margin: 0;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
   }
-  /* The bar is a wrapping row, so the notice takes a line of its own. */
-  .msg-warn {
-    flex-basis: 100%;
+  figure {
+    min-width: 0;
     margin: 0;
-  }
-  .hint.standalone {
-    padding: 0.75rem 1.5rem;
-  }
-  figcaption {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  figcaption button {
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
+    flex-direction: column;
+    gap: 5px;
   }
   svg {
     display: block;
@@ -427,9 +343,12 @@
        page image's own, then decides its height. */
     width: 100%;
     height: auto;
-    /* Scanned pages keep their own white ground in either theme. */
+    box-sizing: border-box;
+    /* Scanned pages keep their own light ground in either theme. */
     background: var(--facsimile-paper);
     border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: var(--shadow-sm);
     touch-action: none;
   }
   .zone {

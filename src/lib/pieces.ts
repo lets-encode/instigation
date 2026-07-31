@@ -135,6 +135,46 @@ export function pieceForBox(
 	);
 }
 
+/**
+ * Cover the given pages with one whole-page region each for the piece at
+ * `index`, replacing the regions it already had there.
+ *
+ * A page another piece has a region on is left alone: a whole-page region
+ * would overlap it. The other pages are still covered, so one shared page does
+ * not block the rest. Returns which pages were blocked, and by which pieces,
+ * for reporting.
+ */
+export function coverPages(
+	pieces: Piece[],
+	index: number,
+	surfaces: number[],
+	sizes: Array<{ width: number; height: number }>
+): { blocked: number[]; blockers: string[] } {
+	const piece = pieces[index];
+	if (!piece || piece.kind !== 'facsimile') return { blocked: [], blockers: [] };
+	const blocked: number[] = [];
+	const blockers = new Set<string>();
+	for (const surface of surfaces) {
+		pieces.forEach((other, p) => {
+			if (p === index || !other.zones.some((zone) => zone.surface === surface)) return;
+			if (!blocked.includes(surface)) blocked.push(surface);
+			blockers.add(other.meta.title.trim() || other.id);
+		});
+	}
+	const free = surfaces.filter((surface) => !blocked.includes(surface) && sizes[surface]);
+	piece.zones = [
+		...piece.zones.filter((zone) => !free.includes(zone.surface)),
+		...free.map((surface) => ({
+			surface,
+			ulx: 0,
+			uly: 0,
+			lrx: sizes[surface].width,
+			lry: sizes[surface].height
+		}))
+	];
+	return { blocked, blockers: [...blockers] };
+}
+
 /** A detected page: the committed image, its size, and the boxes found on it. */
 export interface DetectedPage {
 	/** The MEI graphic target, relative to the piece's score file. */

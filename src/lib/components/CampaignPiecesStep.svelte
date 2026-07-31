@@ -33,6 +33,7 @@
   } from "$lib/mei-facsimile.ts";
   import {
     copyMetadata,
+    coverPages,
     createPiece,
     formatRanges,
     initialPieces,
@@ -110,6 +111,37 @@
     selected = Math.max(0, Math.min(selected, wizard.pieces.length - 1));
   }
 
+  // Bulk page actions, always scoped to the selected piece.
+  let bulkNotice = $state<string | null>(null);
+  let confirmingClear = $state(false);
+
+  function assignAllPages() {
+    confirmingClear = false;
+    const { blocked, blockers } = coverPages(
+      wizard.pieces,
+      selected,
+      pages.map((_, i) => i),
+      pages,
+    );
+    const one = blocked.length === 1;
+    bulkNotice = blocked.length
+      ? `Page${one ? "" : "s"} ${formatRanges(blocked.map((s) => s + 1))} ${one ? "has" : "have"} ` +
+        `regions of ${blockers.join(", ")}. Remove them first to give ` +
+        `${one ? "the page" : "those pages"} to ${label}.`
+      : null;
+  }
+
+  function clearRegions() {
+    if (!confirmingClear) {
+      confirmingClear = true;
+      return;
+    }
+    confirmingClear = false;
+    bulkNotice = null;
+    const piece = wizard.pieces[selected];
+    if (piece) piece.zones = [];
+  }
+
   function copyFromPrevious() {
     const previous = wizard.pieces[selected - 1];
     if (!previous) return;
@@ -134,12 +166,15 @@
       const name = image.path.split("/").pop() ?? `${i + 1}.jpg`;
       log.step(`Detecting measures on page ${i + 1} of ${wizard.images.length}`);
       log.detail(name);
-      const { width, height, boxes } = await detection.page(i);
+      const { width, height, boxes, tookMs } = await detection.page(i);
       log.detail(
         boxes.length
           ? `${name}: ${boxes.length} measure(s) found`
           : `${name}: no measures found`,
       );
+      // Detection runs in the background and two pages at a time, so how long
+      // this await took says nothing; the job reports its own duration.
+      log.done(tookMs);
       // graphic @target is resolved relative to the score file, which sits in
       // the piece's own directory (sources/<piece>/score.mei); the images are
       // shared by every piece and committed at sources/img/.
@@ -340,172 +375,280 @@
   const unmarked = $derived(
     wizard.pieces.filter((p) => p.kind === "facsimile" && p.zones.length === 0),
   );
+
+  const labelOf = (p: (typeof wizard.pieces)[number]) => p.meta.title.trim() || p.id;
+  const rangeOf = (p: (typeof wizard.pieces)[number]) => {
+    if (p.kind === "encoded") return "encoding";
+    const on = pagesCovered(p);
+    return on.length ? `pages ${formatRanges(on.map((s) => s + 1))}` : "no regions";
+  };
+
+  const railStatus = $derived.by(() => {
+    const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
+    if (!wizard.images.length) return count;
+    const marked = new Set(wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)));
+    const open = wizard.images.filter((_, i) => !marked.has(i)).length;
+    return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
+  });
+
+  function selectPiece(index: number) {
+    selected = index;
+    bulkNotice = null;
+    confirmingClear = false;
+  }
 </script>
 
-<!-- Two panes side by side over the full height: the pieces and their metadata
-     scroll in the left one, the region editor holds the right one. -->
-<div class="pane-split">
-  <div class="pane-scroll">
-    <WizardCard
-      step="pieces"
-      heading="Mark the pieces"
-      intro="The separate works in this source. Each becomes its own score and its own set of tasks."
-      onBack={previousStep}
-      backDisabled={busy}
-      onNext={finish}
-      nextDisabled={busy || !wizard.pieces.length}
-      nextLabel={busy ? "Working…" : error ? "Retry" : "Finish"}
-    >
-      <ul class="pieces">
-        {#each wizard.pieces as p, i (p.id)}
-          <li>
-            <button
-              type="button"
-              class="tab"
-              class:active={selected === i}
-              style="--piece: {pieceColour(i)}"
-              onclick={() => (selected = i)}
-            >
-              <span class="swatch"></span>
-              <span class="name">{p.meta.title.trim() || p.id}</span>
-              <span class="kind">{p.kind === "encoded" ? "encoding" : `${pagesCovered(p).length} page(s)`}</span>
-            </button>
-            {#if wizard.pieces.length > 1}
-              <button
-                type="button"
-                class="btn btn-quiet btn-danger"
-                onclick={() => removePiece(i)}
-                aria-label="Remove {p.id}"
-              >
-                ×
-              </button>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+{#snippet material()}
+  <PieceZoneEditor bind:pieces={wizard.pieces} {pages} selectedPiece={selected} />
+{/snippet}
 
-      <div class="actions">
-        <button type="button" class="btn btn-quiet" onclick={addPiece}>Add piece</button>
-        {#if piece}
-          <button type="button" class="btn btn-quiet" onclick={copyFromSource}>
-            Copy metadata from the source
-          </button>
-        {/if}
-        {#if selected > 0}
-          <button type="button" class="btn btn-quiet" onclick={copyFromPrevious}>
-            Copy metadata from previous piece
-          </button>
-        {/if}
-      </div>
-
-      {#if piece}
-        <h2>
-          Metadata for <span style="color: {pieceColour(selected)}">{label}</span>
-        </h2>
-        <MetadataForm bind:meta={wizard.pieces[selected].meta} />
-
-        {#if piece.kind === "facsimile"}
-          <p class="covered">
-            <strong style="color: {pieceColour(selected)}">{label}</strong>
-            {#if covered.length}
-              covers page{covered.length === 1 ? "" : "s"}
-              {formatRanges(covered.map((p) => p + 1))}. Mark the regions in the pane
-              beside this one.
-            {:else}
-              has no regions marked yet. Mark them in the pane beside this one.
-            {/if}
-          </p>
-        {:else}
-          <p class="covered">
-            <strong style="color: {pieceColour(selected)}">{label}</strong>
-            comes from the uploaded encoding <code>{piece.encodingName}</code>. It is
-            committed whole, so it needs no regions.
-          </p>
-        {/if}
-      {:else}
-        <p class="covered">Add a piece to describe what this campaign encodes.</p>
-      {/if}
-
-      {#if unmarked.length}
-        <p class="msg-warn" role="status">
-          {unmarked.map((p) => p.meta.title.trim() || p.id).join(", ")}
-          {unmarked.length === 1 ? "has" : "have"} no regions marked, so
-          {unmarked.length === 1 ? "it" : "they"} would produce no tasks.
-        </p>
-      {/if}
-
-      {#if error}
-        <p class="msg-error" role="alert">{error}</p>
-      {/if}
-      <ProgressSteps {log} />
-    </WizardCard>
+<WizardCard
+  step="pieces"
+  heading="Mark the pieces"
+  intro="The separate works in this source. Each becomes its own score and its own set of tasks."
+  status={railStatus}
+  materialHint="This campaign has no page images, so there are no regions to mark."
+  material={pages.length ? material : undefined}
+  onBack={previousStep}
+  backDisabled={busy}
+  onNext={finish}
+  nextDisabled={busy || !wizard.pieces.length}
+  nextLabel={busy ? "Working…" : error ? "Retry" : "Finish ✓"}
+  finish
+>
+  <div class="pieces-head">
+    <span class="pieces-count">Pieces · {wizard.pieces.length}</span>
+    <button type="button" class="pill pill-sm" onclick={addPiece}>+ Add piece</button>
   </div>
 
-  {#if piece?.kind === "facsimile"}
-    <PieceZoneEditor bind:pieces={wizard.pieces} {pages} selectedPiece={selected} />
+  <div class="pieces">
+    {#each wizard.pieces as p, i (p.id)}
+      {#if selected === i}
+        <div class="piece selected" style="--piece: {pieceColour(i)}">
+          <button type="button" class="piece-head" onclick={() => selectPiece(i)}>
+            <span class="swatch"></span>
+            <span class="name">{labelOf(p)}</span>
+            <span class="range">{rangeOf(p)}</span>
+          </button>
+          {#if p.kind === "facsimile" && pages.length}
+            <div class="piece-actions">
+              <button type="button" class="pill pill-sm" onclick={assignAllPages} disabled={busy}>
+                Assign all pages
+              </button>
+              <button
+                type="button"
+                class="pill pill-sm"
+                class:confirming={confirmingClear}
+                onclick={clearRegions}
+                disabled={busy || !p.zones.length}
+              >
+                {confirmingClear ? "Really clear all regions?" : "Clear regions"}
+              </button>
+            </div>
+            {#if bulkNotice}
+              <p class="msg-warn bulk-notice" role="status">{bulkNotice}</p>
+            {/if}
+          {/if}
+        </div>
+      {:else}
+        <div class="piece" style="--piece: {pieceColour(i)}">
+          <button type="button" class="piece-head" onclick={() => selectPiece(i)}>
+            <span class="swatch"></span>
+            <span class="name plain">{labelOf(p)}</span>
+            <span class="range">{rangeOf(p)}</span>
+          </button>
+          {#if wizard.pieces.length > 1}
+            <button
+              type="button"
+              class="delete"
+              onclick={() => removePiece(i)}
+              aria-label="Remove {p.id}"
+            >
+              ×
+            </button>
+          {/if}
+        </div>
+      {/if}
+    {/each}
+  </div>
+
+  {#if piece}
+    <MetadataForm bind:meta={wizard.pieces[selected].meta}>
+      {#snippet heading()}
+        <span class="meta-for">
+          Metadata for <span style="color: {pieceColour(selected)}">{label}</span>
+        </span>
+      {/snippet}
+    </MetadataForm>
+
+    <div class="copy-row">
+      <button type="button" class="pill pill-sm" onclick={copyFromSource}>
+        Copy from the source
+      </button>
+      {#if selected > 0}
+        <button type="button" class="pill pill-sm" onclick={copyFromPrevious}>
+          Copy from previous piece
+        </button>
+      {/if}
+    </div>
+
+    {#if piece.kind === "facsimile"}
+      <p class="covered">
+        <strong style="color: {pieceColour(selected)}">{label}</strong>
+        {#if covered.length}
+          covers page{covered.length === 1 ? "" : "s"}
+          {formatRanges(covered.map((p) => p + 1))}. Adjust its regions in the
+          pane on the left.
+        {:else}
+          has no regions marked yet. Mark them in the pane on the left.
+        {/if}
+      </p>
+    {:else}
+      <p class="covered">
+        <strong style="color: {pieceColour(selected)}">{label}</strong>
+        comes from the uploaded encoding <code>{piece.encodingName}</code>. It is
+        committed whole, so it needs no regions.
+      </p>
+    {/if}
+  {:else}
+    <p class="covered">Add a piece to describe what this campaign encodes.</p>
   {/if}
-</div>
+
+  {#if unmarked.length}
+    <p class="msg-warn" role="status">
+      {unmarked.map((p) => p.meta.title.trim() || p.id).join(", ")}
+      {unmarked.length === 1 ? "has" : "have"} no regions marked, so
+      {unmarked.length === 1 ? "it" : "they"} would produce no tasks.
+    </p>
+  {/if}
+
+  {#if error}
+    <p class="msg-error" role="alert">{error}</p>
+  {/if}
+  <ProgressSteps {log} />
+</WizardCard>
 
 <style>
-  .pieces {
-    list-style: none;
-    margin: 0 0 0.75rem;
-    padding: 0;
-    display: grid;
-    gap: 0.4rem;
-  }
-  .pieces li {
+  .pieces-head {
     display: flex;
-    align-items: stretch;
-    gap: 0.35rem;
+    align-items: center;
+    gap: 10px;
+    margin-top: 16px;
   }
-  .tab {
+  .pieces-count {
+    flex: 1;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .pieces {
+    display: grid;
+    gap: 7px;
+    margin-top: 9px;
+  }
+  .piece {
+    display: flex;
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .piece:hover:not(.selected) {
+    border-color: var(--accent);
+  }
+  .piece.selected {
+    display: block;
+    border: 1.5px solid var(--piece);
+    background: color-mix(in srgb, var(--piece) 7%, var(--card));
+  }
+  .piece-head {
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
     cursor: pointer;
     font: inherit;
+    color: inherit;
     text-align: left;
-    padding: 0.5rem 0.75rem;
-    color: var(--ink);
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-  }
-  .tab.active {
-    border-color: var(--piece);
-    background: var(--bg-tint);
+    padding: 9px 12px;
+    background: none;
+    border: none;
   }
   .swatch {
     flex: none;
-    width: 0.85rem;
-    height: 0.85rem;
+    width: 13px;
+    height: 13px;
     border-radius: 3px;
     background: var(--piece);
   }
   .name {
     flex: 1;
+    font-size: 13.5px;
     font-weight: 600;
-    font-size: 0.9rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .kind {
-    font-size: 0.8rem;
+  .name.plain {
+    color: var(--ink-soft);
+  }
+  .range {
+    font-size: 11.5px;
     color: var(--ink-faint);
+    white-space: nowrap;
   }
-  .actions {
+  .delete {
+    flex: none;
+    cursor: pointer;
+    width: 22px;
+    height: 22px;
+    margin-right: 8px;
+    font-size: 12px;
+    color: var(--ink-faint);
+    background: none;
+    border: none;
+  }
+  .delete:hover {
+    color: var(--danger);
+  }
+  .piece-actions {
     display: flex;
-    gap: 0.5rem;
+    gap: 6px;
     flex-wrap: wrap;
-    margin-bottom: 1.5rem;
+    padding: 0 12px 10px 35px;
+  }
+  .piece-actions .pill:hover:not(:disabled):not(.confirming) {
+    color: var(--piece);
+    border-color: var(--piece);
+  }
+  .piece-actions .confirming {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .bulk-notice {
+    margin: 0;
+    padding: 0 12px 10px 35px;
+    font-size: 11.5px;
+  }
+  .meta-for {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .copy-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 11px;
   }
   .covered {
-    margin: 0.6rem 0 0;
-    font-size: 0.85rem;
+    margin: 12px 0 0;
+    font-size: 12px;
     color: var(--ink-faint);
-  }
-  h2 {
-    margin: 1.75rem 0 1rem;
-    font-size: 1rem;
   }
 </style>

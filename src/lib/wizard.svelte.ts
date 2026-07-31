@@ -157,6 +157,7 @@ export function previousStep(): void {
 /** Discard everything collected and return to the first step. */
 export function resetWizard(): void {
 	savedHandle = null;
+	draftStatus.savedAt = null;
 	wizard.step = 'name';
 	wizard.handle = '';
 	wizard.claim = null;
@@ -182,9 +183,11 @@ export function resetWizard(): void {
 /** Whether the setup's draft could be stored. Surfaced by the wizard frame. */
 export const draftStatus = $state<{
 	saveError: string | null;
+	/** When the draft was last written, as epoch milliseconds. */
+	savedAt: number | null;
 	/** Why a continued setup opened where it did, when that needs saying. */
 	resumeNotice: string | null;
-}>({ saveError: null, resumeNotice: null });
+}>({ saveError: null, savedAt: null, resumeNotice: null });
 
 // The name the draft was last stored under. A campaign renamed before its
 // repository exists would otherwise leave its earlier draft behind.
@@ -242,6 +245,7 @@ export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
 		repo: snapshot.repo,
 		entries: snapshot.entries
 	});
+	if (!draftStatus.saveError) draftStatus.savedAt = Date.now();
 }
 
 /**
