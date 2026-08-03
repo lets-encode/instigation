@@ -11,6 +11,11 @@ export default defineConfig(({ mode }) => {
 			exclude: ['verovio/wasm', 'verovio/esm']
 		},
 		server: {
+			// The build output is not part of the served app; without this, a
+			// `vite build` while the dev server runs force-reloads its clients.
+			watch: {
+				ignored: ['**/build/**']
+			},
 			// Mount the session broker under the SPA's own origin, mirroring the
 			// production nginx /auth/ block — its session cookie must be
 			// first-party. Run it with:  flask --app app run --port 8787  (in broker/)
