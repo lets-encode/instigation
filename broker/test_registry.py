@@ -244,7 +244,7 @@ class RegistryTest(unittest.TestCase):
         # top-level path the origin serves must never be claimable as a
         # campaign name: it must fail slug syntax or be reserved. Covers the
         # SvelteKit routes, the static root files, SvelteKit's own mounts, and
-        # the nginx/vite proxy mounts (deploy/nginx.conf, vite.config.js).
+        # the reverse-proxy / vite mounts (deploy/apache.conf, vite.config.js).
         root = Path(__file__).resolve().parent.parent
         names = {
             entry.name

@@ -29,8 +29,9 @@ The broker **must share the SPA's origin** — the session cookie
 (`HttpOnly; Secure; SameSite=Lax`) has to be first-party. Mount it under a path
 of the SPA's origin:
 
-- production: nginx proxies `/auth/` and `/registry/` to the broker (see
-  `deploy/nginx.conf`),
+- production: Apache proxies `/auth/` and `/registry/` to the broker (see
+  `deploy/apache.conf`; `deploy/nginx.conf` is the equivalent worked example for
+  deployers running nginx),
 - development: the Vite dev server proxies `/auth` and `/registry` (see
   `vite.config.js`).
 
@@ -50,7 +51,7 @@ Environment variables:
 | `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
 | `SESSION_DIR` | optional: session file directory |
 | `DB_PATH` | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it |
-| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `deploy/nginx.conf`). Unset ⇒ admin routes answer 503 |
+| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `deploy/apache.conf`). Unset ⇒ admin routes answer 503 |
 
 The broker loads these from its process environment. The simplest way locally is a
 `broker/.env` file (auto-loaded via python-dotenv, and gitignored):
@@ -71,9 +72,14 @@ pip install -r requirements.txt
 # development (reads broker/.env; the Vite proxy makes it same-origin)
 flask --app app run --port 8787
 
-# production (behind the TLS-terminating nginx — see deploy/nginx.conf)
-gunicorn --bind 127.0.0.1:8787 app:app
+# production (behind the reverse proxy — see deploy/apache.conf)
+gunicorn -c gunicorn_config.py wsgi:app
 ```
+
+`wsgi.py` is a thin shim re-exporting `app`, so service managers can point at the
+conventional `wsgi:app` target; `gunicorn_config.py` holds the bind address and
+worker settings. Only the proxy needs to reach the bind address — keep it on
+loopback, or firewalled to the proxy host.
 
 ## Test
 
@@ -99,7 +105,17 @@ they are reported separately from GitHub primary or secondary limits.
 ## Deployment notes
 
 - **HTTPS is required** — the session cookie is marked `Secure` outside
-  development, and the OAuth code travels over this connection.
+  development, and the OAuth code travels over this connection. It is the scheme
+  the *browser* used that matters, so TLS terminating at a proxy or appliance in
+  front is fine.
+- **Trust the forwarded client IP** — behind a proxy every request appears to
+  come from that proxy, which would turn the rate limits into one bucket shared
+  by all users. Wrap the app in `ProxyFix` (`x_for` set to the number of proxies
+  in front) and confirm `request.remote_addr` resolves to a real client.
+- **Nothing may rewrite the session cookie** — the production cookie name uses
+  the `__Host-` prefix, which browsers reject outright unless the cookie is
+  `Secure`, scoped to `Path=/`, and carries no `Domain` attribute. A proxy that
+  rewrites cookies will break login with no error in any log.
 - **Keep the secrets only here** — the client secret and `FLASK_SECRET` never
   appear in the SPA build.
 - **Bandwidth** — every authenticated GitHub API call is relayed through this

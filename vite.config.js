@@ -8,8 +8,9 @@ export default defineConfig({
 	},
 	server: {
 		// Mount the session broker under the SPA's own origin, mirroring the
-		// production nginx /auth/ block — its session cookie must be
-		// first-party. Run it with:  flask --app app run --port 8787  (in broker/)
+		// production /auth/ proxy block (deploy/apache.conf) — its session
+		// cookie must be first-party. Run it with:
+		//   flask --app app run --port 8787   (in broker/)
 		proxy: {
 			'/auth': {
 				target: 'http://127.0.0.1:8787',

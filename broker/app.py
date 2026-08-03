@@ -6,8 +6,8 @@ token is stored in a server-side session, and the browser holds only an opaque
 httpOnly session cookie. All authenticated GitHub API traffic from the SPA
 flows through /proxy/<url>, which attaches the token from the session.
 
-The broker must be served under the SAME origin as the SPA (e.g. mounted at
-/oauth by nginx in production, or by the Vite dev proxy) so the session cookie
+The broker must be served under the SAME origin as the SPA (mounted at /auth by
+the reverse proxy in production, or by the Vite dev proxy) so the session cookie
 is first-party and CORS never comes into play.
 
 Config (environment variables, loaded from broker/.env if present):
@@ -19,7 +19,13 @@ Config (environment variables, loaded from broker/.env if present):
   SESSION_DIR            where session files live (default: instance/sessions)
   FLASK_ENV              set to "development" to allow the cookie over plain HTTP
 
-See README.md for setup, and deploy/nginx.conf for the production mount.
+See README.md for setup, and deploy/apache.conf for the production mount
+(deploy/nginx.conf is the equivalent for deployers running nginx).
+
+Behind a reverse proxy the client address Flask sees is the proxy's own, so the
+rate limits below would collapse into a single shared bucket. Wrap the app in
+werkzeug's ProxyFix to read X-Forwarded-For, matching x_for to the number of
+proxies actually in front of it.
 """
 
 import ipaddress
@@ -101,7 +107,8 @@ limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
 # The campaign name registry (see registry.py): the name → (forge, repo id)
 # mapping and the claim/register lifecycle around it. It lives in the broker
 # because claiming and registering require the GitHub session; the /registry
-# path is passed through unchanged by nginx and the Vite dev proxy.
+# path is passed through unchanged by the production reverse proxy and by the
+# Vite dev proxy.
 try:
     from .registry import registry
 except ImportError:  # run as a top-level module (flask --app app run, gunicorn app:app)

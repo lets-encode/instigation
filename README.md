@@ -71,7 +71,7 @@ PUBLIC_MEI_FRIEND_URL=https://mei-friend.mdw.ac.at
 
 The OAuth credentials live only in the broker's env (next step). The SPA reaches
 the broker at `PUBLIC_BROKER_URL` (default `/auth`, proxied to the broker
-by the Vite dev server and by nginx in production).
+by the Vite dev server, and by Apache in production).
 
 ## 4. Run locally (two processes)
 
@@ -112,8 +112,15 @@ npm test          # pure campaign-logic unit tests (no network)
 
 - **SPA + broker, one origin:** the broker's session cookie must be first-party,
   so serve the static `./build` and the broker from the same origin —
-  `deploy/nginx.conf` is a worked example that serves `build/` and proxies
-  `/auth/` and `/registry/` to the broker (gunicorn) behind **HTTPS**.
+  `deploy/apache.conf` serves `build/` and proxies `/auth/` and `/registry/` to
+  the broker (gunicorn) behind **HTTPS**. `deploy/nginx.conf` is the equivalent
+  worked example for deployers running nginx.
+- **Deploying the SPA is a file copy:** `npm run build` writes a static tree with
+  no server side, so a deployment is `rsync`-ing `build/` into place. Copy into a
+  fresh directory and swap a symlink (`ln -sfn` then `mv -T`) rather than writing
+  over the live tree, so no request ever sees a half-copied build. Every
+  `PUBLIC_*` value — and the CSP in `svelte.config.js` — is baked in at build
+  time, so a config change needs a rebuild, not just a re-copy.
 - **Broker env:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `FLASK_SECRET`,
   and `REDIRECT_URL=https://<your-origin>/auth/authorize` (see `broker/README.md`).
 - **OAuth App:** update its callback URL to `<your-origin>/auth/authorize` (or

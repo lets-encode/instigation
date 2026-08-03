@@ -32,8 +32,9 @@ export const provider: ProviderConfig = {
 
 /**
  * The slug registry's mount, as a same-origin path so its calls need no CORS.
- * The registry is part of the session broker (see broker/registry.py); nginx
- * (prod) and the Vite dev proxy pass this path through to it unchanged. It owns
+ * The registry is part of the session broker (see broker/registry.py); the
+ * production reverse proxy (deploy/apache.conf) and the Vite dev proxy pass this
+ * path through to it unchanged. It owns
  * the campaign name → repo id mapping: the app resolves a campaign URL through
  * it and registers a new name against its GitHub repo id after creating the
  * repo.

@@ -16,14 +16,15 @@ import re
 
 # Names that can never be registered as campaign slugs. A campaign lives at
 # /<name> on the app's own origin, so every top-level path the origin serves —
-# SvelteKit routes, nginx mounts (deploy/nginx.conf), and likely future routes —
+# SvelteKit routes, reverse-proxy mounts (deploy/apache.conf), and likely
+# future routes —
 # must be unregistrable. Paths containing characters outside [a-z0-9-] or
 # shorter than 3 characters (e.g. _app, favicon.svg, robots.txt, /c) already
 # fail the shape rules, so only plain word paths need listing here.
 # test_registry.py checks the routes and mounts against this list.
 RESERVED_NAMES: frozenset[str] = frozenset(
     {
-        # nginx/vite mounts on the app origin
+        # reverse-proxy / vite mounts on the app origin
         "auth",
         "registry",
         # current and likely future top-level routes / root paths
