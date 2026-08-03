@@ -3,8 +3,8 @@
 // the same code (scripts/mei-validate.ts). The other MEI tests assert on the
 // strings emitted; these assert that the strings are MEI.
 //
-// The check needs the schema (vendored) and xmllint (installed), so these tests
-// skip rather than fail when either is unavailable.
+// The check needs the schema (downloaded) and xmllint (installed), so these
+// tests skip rather than fail when either is unavailable.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
