@@ -3,9 +3,15 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { loadEnv } from 'vite';
 
 // Hosts the app talks to are deployment config — read them from the same env
-// files Vite gives the app. The session broker needs no CSP entry: it is
-// mounted on the SPA's own origin, covered by 'self'.
-const env = loadEnv(process.env.NODE_ENV ?? 'production', process.cwd(), 'PUBLIC_');
+// files Vite gives the app. VITE_CONFIG_MODE carries Vite's mode over from
+// vite.config.js (NODE_ENV is 'production' for every build, regardless of
+// mode). The session broker needs no CSP entry: it is mounted on the SPA's
+// own origin, covered by 'self'.
+const env = loadEnv(
+	process.env.VITE_CONFIG_MODE ?? process.env.NODE_ENV ?? 'production',
+	process.cwd(),
+	'PUBLIC_'
+);
 // The measure-detector the campaign scaffolder POSTs page images to.
 const detectorOrigin = new URL(
 	env.PUBLIC_MEASURE_DETECTOR_URL || 'https://measure-detector.edirom.de'

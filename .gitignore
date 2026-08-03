@@ -9,3 +9,4 @@ broker/.env
 .env.staging
 .env.testing
 .env.production
+.env.development
