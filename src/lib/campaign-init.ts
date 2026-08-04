@@ -12,8 +12,10 @@
 //   - sources/<piece>/score.mei  (one per piece; built by mei-facsimile.ts)
 //   - tracking/task.csv      (buildTaskCsv: per piece, a measure-correction
 //                             pre-task plus one encoding task per covered page
-//                             for a facsimile piece, or one whole-file task for
-//                             an encoded piece; each with a validation subtask)
+//                             for a facsimile piece; one whole-file task for an
+//                             encoded piece; per-page or whole-file tasks —
+//                             never a pre-task — for a physical piece; each
+//                             with a validation subtask)
 //   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
@@ -38,12 +40,17 @@ export interface ConfigZone {
 /** One work within the source: its own MEI, its own tasks. */
 export interface ConfigPiece {
 	id: string;
-	/** 'facsimile' (regions volunteers encode) or 'encoded' (an uploaded score). */
+	/**
+	 * 'facsimile' (regions volunteers encode), 'encoded' (an uploaded score) or
+	 * 'physical-only' (transcribed from the physical source; no images).
+	 */
 	kind: string;
 	/** Repo path of this piece's MEI — the `fragment` its tasks address. */
 	path: string;
-	/** Regions this piece covers. Empty for an encoded piece. */
+	/** Regions this piece covers. Empty for encoded and physical pieces. */
 	zones: ConfigZone[];
+	/** For a physical piece, how many pages of the source it spans; unset = unknown. */
+	pages?: number;
 	header: { title: string; composer: string };
 }
 
@@ -128,7 +135,7 @@ function yamlStr(value: unknown): string {
 	return JSON.stringify(String(value ?? ''));
 }
 
-// One fragmentation strategy, two piece kinds and one schema version are
+// One fragmentation strategy, three piece kinds and one schema version are
 // implemented. Fail loudly rather than silently mis-initialising.
 export function assertSupported(config: CampaignConfig): void {
 	if (config?.schema_version !== 3) {
@@ -140,8 +147,10 @@ export function assertSupported(config: CampaignConfig): void {
 	}
 	if (!config.pieces?.length) throw new Error('config.pieces must contain at least one piece.');
 	for (const piece of config.pieces) {
-		if (piece.kind !== 'facsimile' && piece.kind !== 'encoded') {
-			throw new Error(`Unsupported piece kind: ${piece.kind} (only 'facsimile' and 'encoded' are implemented).`);
+		if (piece.kind !== 'facsimile' && piece.kind !== 'encoded' && piece.kind !== 'physical-only') {
+			throw new Error(
+				`Unsupported piece kind: ${piece.kind} (only 'facsimile', 'encoded' and 'physical-only' are implemented).`
+			);
 		}
 		if (!piece.path) throw new Error(`Piece ${piece.id} has no path.`);
 	}
@@ -223,6 +232,7 @@ export function configToYaml(config: CampaignConfig): string {
 				`  - id: ${yamlStr(piece.id)}\n` +
 				`    kind: ${yamlStr(piece.kind)}\n` +
 				`    path: ${yamlStr(piece.path)}\n` +
+				(piece.pages ? `    pages: ${piece.pages}\n` : '') +
 				`    zones:${zones ? `\n${zones}` : ' []\n'}` +
 				`    header:\n` +
 				`      title: ${yamlStr(piece.header.title)}\n` +
@@ -301,6 +311,11 @@ export interface PlannedTask {
  * An encoded piece is already notated, so it gets one whole-file task and no
  * pre-task.
  *
+ * A physical piece is transcribed from the source itself: there is no facsimile
+ * to correct measures on, so it gets no pre-task. A known page count splits its
+ * encoding into one task per page (locator `surface-N`, matching the blank
+ * score's `<pb>` markers); without one it gets a single whole-file task.
+ *
  * Task numbers run continuously across pieces while pre-task numbers run across
  * facsimile pieces only, so every id is unique campaign-wide. Both tables are
  * rendered from this one plan so they cannot fall out of step.
@@ -310,6 +325,22 @@ export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): Pla
 	let tasks = 0;
 	let preTasks = 0;
 	for (const piece of config.pieces) {
+		if (piece.kind === 'physical-only') {
+			const count = piece.pages ?? 0;
+			if (count < 1) {
+				planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: '' });
+			} else {
+				for (let page = 1; page <= count; page++) {
+					planned.push({
+						id: taskId(++tasks),
+						fragment: piece.path,
+						locator: `surface-${page}`,
+						dependsOn: ''
+					});
+				}
+			}
+			continue;
+		}
 		if (piece.kind !== 'facsimile') {
 			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: '' });
 			continue;

@@ -6,6 +6,7 @@ import {
 	addedRowFromPatch,
 	classifyPullRequest,
 	numberFromConfig,
+	pieceKindForPath,
 	resolveEncodingTask,
 	shouldCleanupSubmission,
 	singleCellDiff,
@@ -104,6 +105,24 @@ test('shared-fragment encoding tasks resolve by envelope, branch, or one active 
 		'P0001'
 	);
 	assert.equal(resolveEncodingTask({ ...base, envelope: null, headRef: 'unrelated' }), undefined);
+});
+
+test('pieceKindForPath reads the piece kind from the canonical config shape', () => {
+	const config =
+		'pieces:\n' +
+		'  - id: "piece-01"\n' +
+		'    kind: "facsimile"\n' +
+		'    path: "sources/piece-01/score.mei"\n' +
+		'    zones: []\n' +
+		'  - id: "piece-02"\n' +
+		'    kind: "physical-only"\n' +
+		'    path: "sources/piece-02/score.mei"\n' +
+		'    pages: 3\n' +
+		'    zones: []\n';
+	assert.equal(pieceKindForPath(config, 'sources/piece-01/score.mei'), 'facsimile');
+	assert.equal(pieceKindForPath(config, 'sources/piece-02/score.mei'), 'physical-only');
+	assert.equal(pieceKindForPath(config, 'sources/piece-09/score.mei'), null);
+	assert.equal(pieceKindForPath(null, 'sources/piece-01/score.mei'), null);
 });
 
 test('numeric config reads use the configured value or the supplied fallback', () => {

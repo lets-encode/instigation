@@ -8,6 +8,23 @@ export function numberFromConfig(configText: string | null, key: string, fallbac
 	return match ? Number(match[1]) : fallback;
 }
 
+/**
+ * The kind of the config.yaml piece whose path is `path`, or null when no
+ * piece carries it. Reads the canonical shape configToYaml emits — each piece
+ * entry opens with `- id:` and lists `kind:` and `path:` as quoted scalars —
+ * so the coordinator can tell a physical piece (page spans joined wholesale)
+ * from a facsimile one (measures matched by id) without a YAML parser.
+ */
+export function pieceKindForPath(configText: string | null, path: string): string | null {
+	for (const entry of (configText ?? '').split(/^\s*- id:/m).slice(1)) {
+		const kind = /^\s*kind:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
+		const entryPath = /^\s*path:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
+		if (!kind || !entryPath) continue;
+		if (JSON.parse(`"${entryPath[1]}"`) === path) return JSON.parse(`"${kind[1]}"`);
+	}
+	return null;
+}
+
 /** Return the sole added CSV row in a patch that removes no rows. */
 export function addedRowFromPatch(patch: string | undefined): string | null {
 	if (!patch) return null;

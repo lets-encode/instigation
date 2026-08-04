@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SyntaxValidator } from 'fast-xml-validator';
 import {
+	buildBlankScoreMei,
 	buildFacsimileMei,
+	buildMeiHead,
 	initialFacsimileModel,
 	parseFacsimileMei,
 	relinkFacsimileImages,
@@ -236,4 +238,26 @@ test('relinkFacsimileImages leaves a surface whose graphic declares no size', ()
 	assert.match(relinked, /<zone ulx="10" uly="20" lrx="30" lry="40"\/>/);
 	assert.match(relinked, /target="\.\.\/img\/01\.jpg"/);
 	assert.match(relinked, /width="800"/);
+});
+
+test('buildBlankScoreMei: one pb and one seed measure per page, no facsimile', () => {
+	const mei = buildBlankScoreMei(buildMeiHead({ title: 'Blank' }), 3);
+	assert.equal(SyntaxValidator.validate(mei), true);
+	assert.ok(!mei.includes('<facsimile>'));
+	assert.equal((mei.match(/<pb /g) ?? []).length, 3);
+	assert.ok(mei.includes('facs="#surface-2"'));
+	assert.equal((mei.match(/<measure /g) ?? []).length, 3);
+	// The parser sees encoded breaks and measures but no facsimile pages, which
+	// is what makes the console preview paginate on the pb markers.
+	const parsed = parseFacsimileMei(mei);
+	assert.equal(parsed.pages.length, 0);
+	assert.equal(parsed.hasBreaks, true);
+	assert.equal(parsed.hasMeasures, true);
+});
+
+test('buildBlankScoreMei without a page count seeds a single unpaged measure', () => {
+	const mei = buildBlankScoreMei(buildMeiHead({ title: 'Blank' }), 0);
+	assert.equal(SyntaxValidator.validate(mei), true);
+	assert.ok(!mei.includes('<pb '));
+	assert.equal((mei.match(/<measure /g) ?? []).length, 1);
 });

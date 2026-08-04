@@ -4,13 +4,15 @@
 
   Continuing reads the upload: a PDF is rasterised to one page per document page,
   a manifest's canvases are listed, and each page gets a small preview. Nothing
-  is fetched at committing size and no repository exists yet — the next step
-  chooses which of these pages the campaign keeps, and creates the repository
-  from that choice. Reading a long source is the expensive part of this step, so
-  coming back to it and continuing again with the same upload keeps the pages
-  already read.
+  is fetched at committing size — the next step chooses which of these pages the
+  campaign keeps, and creates the repository from that choice. An upload with no
+  page images has nothing to choose, so that step is skipped: the repository is
+  created here instead and the flow continues at the source step. Reading a long
+  source is the expensive part of this step, so coming back to it and continuing
+  again with the same upload keeps the pages already read.
 -->
 <script lang="ts">
+  import { auth, forge } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import {
     prepareCandidates,
@@ -23,6 +25,7 @@
     previousStep,
     COPYRIGHT_ACKNOWLEDGEMENT,
   } from "$lib/wizard.svelte.ts";
+  import { ensureCampaignRepo } from "$lib/campaign-repo.ts";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import FileDropzone from "./FileDropzone.svelte";
@@ -30,6 +33,9 @@
 
   let busy = $state(false);
   let error = $state<string | null>(null);
+  // Whether creating the repository stopped part way, which is what makes the
+  // next press a retry of it.
+  let failed = $state(false);
   const log = new ProgressLog();
 
   const manifestUrl = $derived(wizard.iiifManifestUrl.trim());
@@ -40,7 +46,13 @@
     !busy && (!hasUpload || wizard.copyrightAccepted),
   );
   const continueLabel = $derived(
-    busy ? "Working…" : hasUpload ? "Continue →" : "Continue without images",
+    busy
+      ? "Working…"
+      : failed
+        ? "Retry"
+        : hasUpload
+          ? "Continue →"
+          : "Continue without images",
   );
 
   // What the rail reports while this step is open.
@@ -58,17 +70,54 @@
     [...wizard.files.map((f) => `${f.name}:${f.size}`), manifestUrl].join("|"),
   );
 
+  // An upload with no page images skips the pages step, so the repository that
+  // step would have created is created here before moving on. Idempotent — a
+  // retry, or a setup whose repository already exists, passes straight through.
+  async function continueWithoutPages(): Promise<void> {
+    const user = auth.user;
+    const f = forge();
+    if (!user || !f) {
+      error = "You are signed out. Log in with GitHub to continue.";
+      return;
+    }
+    busy = true;
+    failed = false;
+    try {
+      await ensureCampaignRepo(f, user.login, ({ step, detail }) => {
+        if (step) log.step(step);
+        if (detail) log.detail(detail);
+      });
+      log.done();
+      busy = false;
+      nextStep();
+    } catch (err) {
+      console.error("Upload step failed:", (err as Error).message);
+      error = `Could not create the campaign's repository: ${(err as Error).message}`;
+      log.fail();
+      failed = true;
+      busy = false;
+    }
+  }
+
   async function continueToNextStep() {
     error = null;
     if (!hasUpload) {
       wizard.candidates = [];
       wizard.uploadKey = "";
-      nextStep();
+      log.clear();
+      await continueWithoutPages();
       return;
     }
     // The same upload as last time: its pages are still held, previews and all.
-    if (wizard.candidates.length && wizard.uploadKey === uploadKey) {
-      nextStep();
+    // One that offered no pages needs no re-reading either — only the
+    // repository it continues into (a retry lands here).
+    if (wizard.uploadKey === uploadKey && uploadKey !== "") {
+      if (wizard.candidates.length) {
+        nextStep();
+        return;
+      }
+      log.clear();
+      await continueWithoutPages();
       return;
     }
 
@@ -100,6 +149,14 @@
       wizard.encodings = prepared.encodings;
       wizard.uploadKey = uploadKey;
 
+      // Nothing but encodings to choose between: the pages step is skipped, so
+      // the repository is created before the flow continues past it.
+      if (!wizard.candidates.length) {
+        busy = false;
+        await continueWithoutPages();
+        return;
+      }
+
       log.done();
       busy = false;
       nextStep();
@@ -115,17 +172,14 @@
 <WizardCard
   step="upload"
   heading="Add your source"
-  intro="Drop material in the pane on the left, or point at a IIIF manifest. You pick which pages to keep next."
+  intro="Drop material here, or point at a IIIF manifest. You pick which pages to keep next."
   status={railStatus}
-  onBack={previousStep}
-  backDisabled={busy}
-  onNext={continueToNextStep}
-  nextDisabled={!canContinue}
-  nextLabel={continueLabel}
 >
-  {#snippet material()}
-    <FileDropzone bind:files={wizard.files} />
-  {/snippet}
+  <FileDropzone bind:files={wizard.files} />
+
+  <div class="divider" aria-hidden="true">
+    <span>or from a IIIF server</span>
+  </div>
 
   <label class="field manifest">
     IIIF manifest URL
@@ -137,59 +191,81 @@
     />
     <span class="hint">
       Its canvases are downloaded and committed with the campaign, so it keeps
-      working if the source server does not. You pick which of them on the next
-      step.
+      working if the source server does not.
     </span>
   </label>
-
-  <div class="spacer"></div>
-
-  {#if hasUpload && !busy && !log.steps.length}
-    <div class="status-box">
-      {wizard.files.length
-        ? `${wizard.files.length} file${wizard.files.length === 1 ? "" : "s"} ready`
-        : "1 manifest ready"} — pages are read when you continue.
-    </div>
-  {/if}
 
   {#if error}
     <p class="msg-error" role="alert">{error}</p>
   {/if}
   <ProgressSteps {log} />
 
-  <!-- Last before the footer, so it keeps its place when the report above it
-       changes: the acknowledgement gates Continue and sits right above it. -->
-  {#if hasUpload}
-    <label class="ack">
-      <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
-      <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
-    </label>
-  {/if}
+  <!-- The footer is this step's own: the acknowledgement gating Continue sits
+       on the buttons' row, left of them. -->
+  {#snippet footer()}
+    {#if hasUpload}
+      <label class="ack">
+        <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
+        <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
+      </label>
+    {/if}
+    <button
+      type="button"
+      class="btn btn-secondary"
+      onclick={previousStep}
+      disabled={busy}
+    >
+      Back
+    </button>
+    <button
+      type="button"
+      class="btn btn-primary"
+      onclick={continueToNextStep}
+      disabled={!canContinue}
+    >
+      {continueLabel}
+    </button>
+  {/snippet}
 </WizardCard>
 
 <style>
-  .manifest {
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 14px;
     margin-top: 22px;
+  }
+  .divider::before,
+  .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+  .divider span {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .manifest {
+    margin-top: 14px;
   }
   .ack {
     display: flex;
     align-items: flex-start;
+    align-self: center;
     gap: 9px;
-    margin-top: 14px;
-    padding: 10px 12px;
+    margin-right: auto;
+    max-width: 480px;
     font-size: 12.5px;
+    font-weight: 400;
     line-height: 1.5;
-    color: var(--warn);
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
-    border-radius: 8px;
+    color: var(--ink-soft);
     cursor: pointer;
   }
   .ack input {
     margin-top: 2px;
-  }
-  /* Pushes the status report to the card's foot, above the buttons. */
-  .spacer {
-    flex: 1;
   }
 </style>

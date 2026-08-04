@@ -1,13 +1,15 @@
 <!--
-  The wizard's shared frame: a fixed three-zone workbench. Step rail on the
-  left, the step's material (pages, dropzone, XML) in the centre, and the work
-  card with the step's controls on the right, so the primary action always sits
-  bottom-right. Every wizard screen uses it so they read as one flow.
+  The wizard's shared frame. Step rail on the left throughout; what fills the
+  rest depends on whether the step has material. A step with material (pages,
+  XML) gets the three-zone workbench: material pane in the centre, work card
+  fixed on the right, so the primary action always sits bottom-right. A step
+  without material gets its card centered in the freed area instead, with a
+  "Step N of 6" kicker — the upload step widens that to a bare hero column for
+  its dropzone.
 
   The rail is derived from the wizard store: completed steps show a one-line
   summary of what they collected and navigate back on click; upcoming steps are
-  disabled. A step passes its material pane content as the `material` snippet;
-  steps without material show a dashed placeholder with a step-specific hint.
+  disabled.
 
   The footer is built here from the handlers a step passes, so the buttons are
   written once. A step whose controls do not fit that shape — the name step,
@@ -15,9 +17,10 @@
   styles the buttons with the shared .btn classes.
 -->
 <script module lang="ts">
-  // The work card's width, module-level so a drag survives moving between
-  // steps: each step mounts its own instance of this frame.
-  let workWidth = $state(472);
+  // The work card's width once dragged, module-level so the drag survives
+  // moving between steps: each step mounts its own instance of this frame.
+  // Until then the card takes its fluid default width.
+  let workWidth = $state<number | null>(null);
 </script>
 
 <script lang="ts">
@@ -41,7 +44,6 @@
     intro,
     children,
     material,
-    materialHint,
     status,
     onBack,
     onNext,
@@ -58,8 +60,6 @@
     children: Snippet;
     /** The step's content for the material pane, filling it. */
     material?: Snippet;
-    /** Shown in the material placeholder when the step has no material. */
-    materialHint?: string;
     /** What the step is doing right now, shown under its rail entry. */
     status?: string;
     /** Omitted on the first step, which has nothing to go back to. */
@@ -232,83 +232,91 @@
     </div>
   </nav>
 
-  <div class="material">
-    {#if material}
+  {#if material}
+    <div class="material">
       {@render material()}
-    {:else}
-      <div class="placeholder">
-        <div class="placeholder-note">♪</div>
-        <div class="placeholder-title">No material yet</div>
-        {#if materialHint}
-          <div class="placeholder-hint">{materialHint}</div>
-        {/if}
-      </div>
-    {/if}
-  </div>
+    </div>
 
-  <div
-    class="grip"
-    role="separator"
-    aria-label="Resize the work card"
-    aria-orientation="vertical"
-    onpointerdown={startResize}
-    onpointermove={onResize}
-    onpointerup={endResize}
-    onpointercancel={endResize}
-  ></div>
+    <div
+      class="grip"
+      role="separator"
+      aria-label="Resize the work card"
+      aria-orientation="vertical"
+      onpointerdown={startResize}
+      onpointermove={onResize}
+      onpointerup={endResize}
+      onpointercancel={endResize}
+    ></div>
 
-  <div class="work" style="--work-width: {workWidth}px">
-    <section class="card" aria-label={heading}>
-      <h1>{heading}</h1>
-      {#if intro}<p class="intro">{intro}</p>{/if}
-
-      <div class="card-body">
-        {@render children()}
-      </div>
-
-      <!-- Every step draws the frame, so the one place to report that this setup
-           is no longer being kept for later — or why it opened where it did — is
-           here. -->
-      {#if draftStatus.resumeNotice}
-        <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
-      {/if}
-      {#if draftStatus.saveError}
-        <p class="msg-warn" role="status">
-          This setup can't be saved in your browser, so it won't be offered for
-          continuing if you leave: {draftStatus.saveError}
-        </p>
-      {/if}
-
-      <div class="footer">
-        {#if footer}
-          {@render footer()}
-        {:else}
-          {#if onBack}
-            <button
-              type="button"
-              class="btn btn-secondary"
-              onclick={onBack}
-              disabled={backDisabled}
-            >
-              Back
-            </button>
-          {/if}
-          {#if onNext}
-            <button
-              type="button"
-              class="btn btn-primary"
-              class:btn-finish={finish}
-              onclick={onNext}
-              disabled={nextDisabled}
-            >
-              {nextLabel}
-            </button>
-          {/if}
-        {/if}
-      </div>
-    </section>
-  </div>
+    <div
+      class="work"
+      style={workWidth === null ? undefined : `--work-width: ${workWidth}px`}
+    >
+      {@render workCard(false)}
+    </div>
+  {:else}
+    <!-- No material: the card takes the stage alone, centered. The upload
+         step's card is a step wider, to give the dropzone room. -->
+    <div class="stage">
+      {@render workCard(true)}
+    </div>
+  {/if}
 </div>
+
+{#snippet workCard(solo: boolean)}
+  <section class="card" class:solo class:wide={solo && step === "upload"} aria-label={heading}>
+    {#if solo}
+      <div class="kicker">Step {current + 1} of {WIZARD_STEPS.length}</div>
+    {/if}
+    <h1>{heading}</h1>
+    {#if intro}<p class="intro">{intro}</p>{/if}
+
+    <div class="card-body">
+      {@render children()}
+    </div>
+
+    <!-- Every step draws the frame, so the one place to report that this setup
+         is no longer being kept for later — or why it opened where it did — is
+         here. -->
+    {#if draftStatus.resumeNotice}
+      <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
+    {/if}
+    {#if draftStatus.saveError}
+      <p class="msg-warn" role="status">
+        This setup can't be saved in your browser, so it won't be offered for
+        continuing if you leave: {draftStatus.saveError}
+      </p>
+    {/if}
+
+    <div class="footer">
+      {#if footer}
+        {@render footer()}
+      {:else}
+        {#if onBack}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onclick={onBack}
+            disabled={backDisabled}
+          >
+            Back
+          </button>
+        {/if}
+        {#if onNext}
+          <button
+            type="button"
+            class="btn btn-primary"
+            class:btn-finish={finish}
+            onclick={onNext}
+            disabled={nextDisabled}
+          >
+            {nextLabel}
+          </button>
+        {/if}
+      {/if}
+    </div>
+  </section>
+{/snippet}
 
 <style>
   .workbench {
@@ -497,34 +505,6 @@
     flex-direction: column;
     margin: 24px 0 24px 12px;
   }
-  .placeholder {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    border: 1.5px dashed var(--line-input);
-    border-radius: 14px;
-    background: color-mix(in srgb, var(--card) 50%, transparent);
-  }
-  .placeholder-note {
-    font-size: 34px;
-    color: var(--line-input);
-  }
-  .placeholder-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--ink-faint);
-    margin-top: 8px;
-  }
-  .placeholder-hint {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    opacity: 0.8;
-    margin-top: 5px;
-    max-width: 380px;
-  }
 
   /* ---- Work card ---------------------------------------------------------- */
   /* The divider between the material pane and the work card: a grab bar with a
@@ -550,7 +530,7 @@
   }
   .work {
     flex: none;
-    width: var(--work-width, 472px);
+    width: var(--work-width, clamp(472px, 30vw, 680px));
     box-sizing: border-box;
     padding: 24px 24px 24px 3px;
     display: flex;
@@ -577,6 +557,61 @@
     margin: 8px 0 0;
     font-size: 13.5px;
     color: var(--ink-soft);
+  }
+
+  /* ---- Centered stage (steps without material) --------------------------- */
+  /* The area right of the rail; the card centres in it, sitting a little above
+     the vertical middle. Auto margins on the card keep its top reachable when
+     it is taller than the stage. */
+  .stage {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 24px 24px 60px;
+  }
+  .card.solo {
+    flex: none;
+    margin: auto;
+    width: 680px;
+    max-width: 100%;
+    padding: 36px 42px;
+  }
+  /* The upload step's card, sized for the dropzone. */
+  .card.wide {
+    width: 920px;
+  }
+  .kicker {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .card.solo h1 {
+    margin-top: 8px;
+    font-size: 26px;
+    line-height: 1.2;
+  }
+  .card.solo .intro {
+    margin-top: 9px;
+    font-size: 14px;
+  }
+  /* A content-height card scrolls with the stage, not within itself. */
+  .card.solo .card-body {
+    flex: none;
+    overflow: visible;
+    margin: 0;
+    padding: 0;
+  }
+  .card.solo .footer {
+    margin-top: 26px;
+    padding-top: 16px;
+  }
+  .card.solo .card-body :global(.input) {
+    font-size: 15px;
+    padding: 11px 14px;
   }
   /* The body takes what the heading and footer leave, and scrolls within it,
      so the step's primary action stays in view however much it has to show.
@@ -632,6 +667,13 @@
     }
     .card-body {
       overflow: visible;
+    }
+    .stage {
+      overflow: visible;
+      padding: 16px;
+    }
+    .card.solo {
+      padding: 24px 20px;
     }
   }
 </style>

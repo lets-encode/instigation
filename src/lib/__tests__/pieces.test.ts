@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	copyMetadata,
+	createEncodedPiece,
 	createPiece,
 	formatRanges,
 	initialPieces,
@@ -178,6 +179,15 @@ test('starts a facsimile-only campaign with one piece', () => {
 	assert.deepEqual(pieces[0].zones, []);
 });
 
+test('createEncodedPiece links the upload and takes its title from the file name', () => {
+	const existing = [createPiece([], 'physical-only')];
+	const piece = createEncodedPiece(existing, 'sonata.musicxml');
+	assert.equal(piece.kind, 'encoded');
+	assert.equal(piece.encodingName, 'sonata.musicxml');
+	assert.equal(piece.meta.title, 'sonata');
+	assert.equal(piece.id, 'piece-02');
+});
+
 test('starts one encoded piece per upload, titled from the file name', () => {
 	const pieces = initialPieces(['prelude.musicxml', 'fugue.mei'], false);
 	assert.deepEqual(
@@ -197,6 +207,17 @@ test('combines encoded uploads with a facsimile piece for the page images', () =
 	);
 });
 
-test('creates no pieces when there is neither an encoding nor an image', () => {
-	assert.deepEqual(initialPieces([], false), []);
+test('seeds one physical piece when there is neither an encoding nor an image', () => {
+	const pieces = initialPieces([], false);
+	assert.equal(pieces.length, 1);
+	assert.equal(pieces[0].kind, 'physical-only');
+	assert.equal(pieces[0].zones.length, 0);
+});
+
+test('encodings without images seed no physical piece alongside them', () => {
+	const pieces = initialPieces(['sonata.mei'], false);
+	assert.deepEqual(
+		pieces.map((piece) => piece.kind),
+		['encoded']
+	);
 });

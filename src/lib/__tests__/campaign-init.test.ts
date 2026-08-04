@@ -29,6 +29,18 @@ function encoded(id: string, title = ''): ConfigPiece {
 	return { id, kind: 'encoded', path: piecePath(id), zones: [], header: { title, composer: '' } };
 }
 
+/** A physical piece (no facsimile), optionally with a known page count. */
+function physical(id: string, pages?: number, title = ''): ConfigPiece {
+	return {
+		id,
+		kind: 'physical-only',
+		path: piecePath(id),
+		zones: [],
+		...(pages ? { pages } : {}),
+		header: { title, composer: '' }
+	};
+}
+
 // The wizard's fields for the worked example (one-note test case; DESIGN.md §6).
 const WORKED_EXAMPLE_FIELDS = {
 	name: 'test-campaign-one-note',
@@ -188,6 +200,31 @@ test('several pieces: ids stay unique and every task addresses its own piece', (
 		{ id: 'T0004', fragment: 'sources/piece-03/score.mei', locator: 'surface-2', dependsOn: 'P0002' },
 		{ id: 'T0005', fragment: 'sources/piece-03/score.mei', locator: 'surface-3', dependsOn: 'P0002' }
 	]);
+});
+
+test('a physical piece with a page count: one task per page, no pre-task', () => {
+	const config = build({ pieces: [physical('piece-01', 3)] });
+	assert.deepEqual(planTasks(config), [
+		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: 'surface-1', dependsOn: '' },
+		{ id: 'T0002', fragment: 'sources/piece-01/score.mei', locator: 'surface-2', dependsOn: '' },
+		{ id: 'T0003', fragment: 'sources/piece-01/score.mei', locator: 'surface-3', dependsOn: '' }
+	]);
+});
+
+test('a physical piece without a page count is one whole-file task', () => {
+	const config = build({ pieces: [physical('piece-01')] });
+	assert.deepEqual(planTasks(config), [
+		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: '', dependsOn: '' }
+	]);
+	assert.equal(assertSupported(config), undefined);
+});
+
+test('configToYaml: a physical piece records its page count', () => {
+	const yaml = configToYaml(build({ pieces: [physical('piece-01', 4)] }));
+	assert.ok(yaml.includes('    kind: "physical-only"\n'));
+	assert.ok(yaml.includes('    pages: 4\n'));
+	// Without a count, no pages line is written.
+	assert.ok(!configToYaml(build({ pieces: [physical('piece-02')] })).includes('pages:'));
 });
 
 test('two pieces may share a page without sharing a task', () => {

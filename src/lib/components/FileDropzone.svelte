@@ -1,10 +1,9 @@
 <!--
   Drag-and-drop / picker for the files a campaign is built from: page images,
-  PDFs, and existing encodings. Fills the material pane: a full-height drop
-  target with the queued files listed under it. Unsupported files are rejected
-  with a note rather than silently dropped. The list is additive, so several
-  drops (or a drop plus a pick) build one sequence, in the order the pages
-  should read.
+  PDFs, and existing encodings. A hero drop target with the queued files listed
+  under it. Unsupported files are rejected with a note rather than silently
+  dropped. The list is additive, so several drops (or a drop plus a pick) build
+  one sequence, in the order the pages should read.
 -->
 <script lang="ts">
   import { classifyUpload } from "$lib/prepare-images.ts";
@@ -75,6 +74,20 @@
   ondragleave={() => (dragActive = false)}
   ondrop={onDrop}
 >
+  <div class="dropzone" class:drag={dragActive}>
+    <div class="arrow" aria-hidden="true">⤓</div>
+    <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
+    <div class="types">You can combine them — or continue without any.</div>
+    <label class="picker">
+      <input type="file" accept={ACCEPT} multiple onchange={onPick} />
+      Browse files
+    </label>
+  </div>
+
+  {#if note}
+    <p class="note">{note}</p>
+  {/if}
+
   {#each files as file, i (`${file.name}:${file.size}`)}
     <div class="file-row">
       <div class="kind">{kindOf(file.name)}</div>
@@ -92,39 +105,22 @@
       </button>
     </div>
   {/each}
-
-  {#if note}
-    <p class="note">{note}</p>
-  {/if}
-
-  <div class="dropzone" class:drag={dragActive}>
-    <div class="zone-inner">
-      <div class="arrow" aria-hidden="true">⤓</div>
-      <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
-      <div class="types">You can combine them — or continue without any.</div>
-      <label class="picker">
-        <input type="file" accept={ACCEPT} multiple onchange={onPick} />
-        Browse files
-      </label>
-    </div>
-  </div>
 </div>
 
 <style>
   .upload {
-    flex: 1;
-    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    overflow: auto;
+    margin-top: 20px;
   }
   .dropzone {
-    flex: 1;
-    min-height: 260px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    text-align: center;
+    padding: 56px 40px;
     border: 2px dashed var(--accent-line-strong);
     border-radius: 14px;
     background: color-mix(in srgb, var(--bg-tint) 55%, transparent);
@@ -133,31 +129,26 @@
     border-color: var(--accent);
     background: var(--bg-tint);
   }
-  .zone-inner {
-    text-align: center;
-    max-width: 420px;
-    padding: 24px;
-  }
   .arrow {
-    font-size: 36px;
+    font-size: 40px;
     color: var(--accent);
   }
   .prompt {
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 600;
-    margin-top: 10px;
+    margin-top: 12px;
   }
   .types {
-    font-size: 12.5px;
+    font-size: 13px;
     color: var(--ink-faint);
     margin-top: 6px;
   }
   .picker {
     display: inline-block;
     cursor: pointer;
-    margin-top: 14px;
-    font: 600 13px var(--font);
-    padding: 8px 20px;
+    margin-top: 16px;
+    font: 600 13.5px var(--font);
+    padding: 9px 24px;
     color: var(--accent);
     background: var(--card);
     border: 1px solid var(--accent-line);

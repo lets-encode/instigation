@@ -23,6 +23,7 @@ export function createGitHubForge(token: string): ForgeClient {
 		getDirDownloadUrls: (owner, repo, dir, ref) => gh.getDirDownloadUrls(token, owner, repo, dir, ref),
 		getRepoHead: (owner, repo) => gh.getRepoHead(token, owner, repo),
 		getRepoAccess: (owner, repo) => gh.getRepoAccess(token, owner, repo),
+		getRepoInfo: (owner, repo) => gh.getRepoInfo(token, owner, repo),
 		ensureFork: (owner, repo, opts) => gh.ensureFork(token, owner, repo, opts),
 		createBranch: (owner, repo, branch, fromSha) => gh.createBranch(token, owner, repo, branch, fromSha),
 		fastForwardBranch: (owner, repo, branch, sha) => gh.fastForwardBranch(token, owner, repo, branch, sha),

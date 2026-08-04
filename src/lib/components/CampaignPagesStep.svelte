@@ -13,13 +13,15 @@
   there is a campaign to register. Configuration, tracking tables and the piece
   MEIs are written there too, not here. Because the repository outlives a failure
   after it exists, a retry re-runs only the commit rather than creating a second
-  one.
+  one. An upload with no page images never reaches this step — navigation skips
+  it, and the upload step creates the repository instead (campaign-repo.ts).
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { IMAGE_DIR, resolvePages, blobToBase64 } from "$lib/prepare-images.ts";
+  import { ensureCampaignRepo } from "$lib/campaign-repo.ts";
   import {
     wizard,
     draftSnapshot,
@@ -75,15 +77,6 @@
     return wizard.candidates.map((page) => (page.include ? ++n : 0));
   });
 
-  // The repository's "About" carries the campaign's title and description
-  // together. GitHub rejects a description longer than 350 characters.
-  const repoAbout = $derived(
-    [wizard.title.trim(), wizard.description.trim()]
-      .filter(Boolean)
-      .join(" — ")
-      .slice(0, 350),
-  );
-
   // Only an attempt that stopped part way is a retry. A repository that already
   // exists otherwise — a setup continued from a draft, a second pass through this
   // step — is committed to the same way a new one is, so it reads the same.
@@ -137,14 +130,8 @@
     error = null;
     const user = auth.user;
     const f = forge();
-    if (!user || !f) return;
-
-    // The held name is the campaign's name, for the repository and the registry
-    // alike. Without it there is nothing to create the repository under.
-    const claim = wizard.claim;
-    if (!claim) {
-      error =
-        "This campaign has no name reserved yet. Go back to the first step and continue from there.";
+    if (!user || !f) {
+      error = "You are signed out. Log in with GitHub to continue.";
       return;
     }
 
@@ -166,54 +153,10 @@
           )
         : [];
 
-      // The repository may already exist from an earlier attempt that failed
-      // after creating it; reuse it rather than creating a second one.
-      let repo = wizard.repo;
-      if (!repo) {
-        log.step("Creating the repository");
-        const created = await f.createRepoFromTemplate({
-          templateOwner: provider.template.owner,
-          templateRepo: provider.template.repo,
-          owner: user.login,
-          name: claim.name,
-          description: repoAbout,
-          isPrivate: false,
-        });
-        repo = {
-          owner: created.owner.login,
-          name: created.name,
-          full_name: created.full_name,
-          html_url: created.html_url,
-          id: created.id,
-        };
-        wizard.repo = repo;
-        // The repository exists from here on, whatever happens next. The draft is
-        // stored on a debounce as entries change, which is too late for this: a
-        // setup continued without it would try to create a second repository
-        // under a name this one already has.
-        saveDraft(user.login, draftSnapshot());
-
-        // The listing topic is not stamped here: it marks a campaign, and this
-        // repository is not one until the final step has set it up.
-        // Give the campaign's Actions a read/write token (non-fatal for org limits).
-        try {
-          await f.setActionsWorkflowPermissions(repo.owner, repo.name);
-        } catch (err) {
-          console.warn(
-            "Could not set Actions workflow permissions:",
-            (err as Error).message,
-          );
-        }
-      }
-
-      // Generating from a template is asynchronous — wait until the repo has
-      // contents before committing onto it.
-      log.step("Waiting for the repository");
-      await f.waitForRepoContents(
-        repo.owner,
-        repo.name,
-        "templates/score.template.mei",
-      );
+      const repo = await ensureCampaignRepo(f, user.login, ({ step, detail }) => {
+        if (step) log.step(step);
+        if (detail) log.detail(detail);
+      });
 
       // Pages the repository holds that this selection does not: the chosen ones
       // are committed over the paths they had, but a shorter selection, or one
@@ -280,96 +223,94 @@
   }
 </script>
 
+{#snippet material()}
+  <div class="material-card">
+    <div class="material-toolbar">
+      {#if sourceName}
+        <span class="toolbar-name">{sourceName}</span>
+      {/if}
+      <div class="toolbar-gap"></div>
+      <PagesPerRow bind:value={perRow} />
+      <div class="toolbar-rule"></div>
+      <button type="button" class="tbtn" onclick={() => setAll(true)} disabled={busy}>
+        Keep all
+      </button>
+      <button type="button" class="tbtn" onclick={() => setAll(false)} disabled={busy}>
+        Keep none
+      </button>
+    </div>
+    <ol class="material-body material-grid" style="--per-row: {perRow}">
+      {#each wizard.candidates as page, i (page.id)}
+        <li
+          class:out={!page.include}
+          class:dragging={dragIndex === i}
+          class:drop-before={dragIndex !== null && overIndex === i && dragIndex > i}
+          class:drop-after={dragIndex !== null && overIndex === i && dragIndex < i}
+          ondragover={(e) => {
+            if (dragIndex === null) return;
+            // Accepting the drag is what makes this position a drop target.
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+            overIndex = i;
+          }}
+          ondragleave={() => {
+            if (overIndex === i) overIndex = null;
+          }}
+          ondrop={(e) => {
+            e.preventDefault();
+            if (dragIndex !== null) move(dragIndex, i);
+            dragIndex = null;
+            overIndex = null;
+          }}
+        >
+          <button
+            type="button"
+            class="thumb"
+            aria-pressed={page.include}
+            disabled={busy}
+            title={page.label}
+            draggable={!busy}
+            onclick={(e) => toggle(i, e.shiftKey)}
+            ondragstart={(e) => {
+              dragIndex = i;
+              // Firefox starts a drag only once the transfer carries data.
+              e.dataTransfer?.setData("text/plain", String(i));
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+            }}
+            ondragend={() => {
+              dragIndex = null;
+              overIndex = null;
+            }}
+          >
+            <!-- An image is draggable in its own right, which would drag the
+                 picture instead of the page. -->
+            <img src={urls[i]} alt={page.label} draggable="false" />
+            <span class="mark" aria-hidden="true">
+              {page.include ? numbers[i] : "—"}
+            </span>
+            {#if !page.include}
+              <span class="left-out" aria-hidden="true"><span>left out</span></span>
+            {/if}
+          </button>
+          <span class="page-caption">p. {i + 1}</span>
+        </li>
+      {/each}
+    </ol>
+  </div>
+{/snippet}
+
 <WizardCard
   step="pages"
   heading="Choose the pages"
   intro="Keep what gets encoded, in reading order. Only the pages you keep are downloaded at full size and committed."
   status="{chosen.length} of {wizard.candidates.length} kept"
-  materialHint="There are no page images in this upload."
   onBack={previousStep}
   backDisabled={busy}
   onNext={commitAndContinue}
   nextDisabled={busy}
   nextLabel={continueLabel}
+  material={wizard.candidates.length ? material : undefined}
 >
-  {#snippet material()}
-    {#if wizard.candidates.length}
-      <div class="material-card">
-        <div class="material-toolbar">
-          {#if sourceName}
-            <span class="toolbar-name">{sourceName}</span>
-          {/if}
-          <div class="toolbar-gap"></div>
-          <PagesPerRow bind:value={perRow} />
-          <div class="toolbar-rule"></div>
-          <button type="button" class="tbtn" onclick={() => setAll(true)} disabled={busy}>
-            Keep all
-          </button>
-          <button type="button" class="tbtn" onclick={() => setAll(false)} disabled={busy}>
-            Keep none
-          </button>
-        </div>
-        <ol class="material-body material-grid" style="--per-row: {perRow}">
-          {#each wizard.candidates as page, i (page.id)}
-            <li
-              class:out={!page.include}
-              class:dragging={dragIndex === i}
-              class:drop-before={dragIndex !== null && overIndex === i && dragIndex > i}
-              class:drop-after={dragIndex !== null && overIndex === i && dragIndex < i}
-              ondragover={(e) => {
-                if (dragIndex === null) return;
-                // Accepting the drag is what makes this position a drop target.
-                e.preventDefault();
-                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-                overIndex = i;
-              }}
-              ondragleave={() => {
-                if (overIndex === i) overIndex = null;
-              }}
-              ondrop={(e) => {
-                e.preventDefault();
-                if (dragIndex !== null) move(dragIndex, i);
-                dragIndex = null;
-                overIndex = null;
-              }}
-            >
-              <button
-                type="button"
-                class="thumb"
-                aria-pressed={page.include}
-                disabled={busy}
-                title={page.label}
-                draggable={!busy}
-                onclick={(e) => toggle(i, e.shiftKey)}
-                ondragstart={(e) => {
-                  dragIndex = i;
-                  // Firefox starts a drag only once the transfer carries data.
-                  e.dataTransfer?.setData("text/plain", String(i));
-                  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-                }}
-                ondragend={() => {
-                  dragIndex = null;
-                  overIndex = null;
-                }}
-              >
-                <!-- An image is draggable in its own right, which would drag the
-                     picture instead of the page. -->
-                <img src={urls[i]} alt={page.label} draggable="false" />
-                <span class="mark" aria-hidden="true">
-                  {page.include ? numbers[i] : "—"}
-                </span>
-                {#if !page.include}
-                  <span class="left-out" aria-hidden="true"><span>left out</span></span>
-                {/if}
-              </button>
-              <span class="page-caption">p. {i + 1}</span>
-            </li>
-          {/each}
-        </ol>
-      </div>
-    {/if}
-  {/snippet}
-
   {#if !wizard.candidates.length}
     <p class="note">
       There are no page images in this upload.

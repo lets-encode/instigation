@@ -659,6 +659,18 @@ export async function repoExists(owner: string, repo: string, token?: string): P
 	return true;
 }
 
+/** A repository's data by owner/name, or null if it doesn't exist (404). */
+export async function getRepoInfo(
+	token: string,
+	owner: string,
+	repo: string
+): Promise<RepoData | null> {
+	const { status, ok, data } = await ghGet<RepoData>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
+	if (status === 404) return null;
+	if (!ok) throw new Error(data?.message || 'Failed to read repository');
+	return data;
+}
+
 /** Repository visibility and whether the current authenticated user can push. */
 export async function getRepoAccess(
 	token: string,

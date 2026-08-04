@@ -1,7 +1,9 @@
 // The pieces a campaign is divided into: the distinct works within one physical
 // source. A facsimile piece is defined by the regions of the page images it
 // covers; an encoded piece comes from an uploaded MEI or MusicXML and has no
-// regions. Each piece becomes one MEI and one group of tasks.
+// regions; a physical piece is encoded straight from the source in front of the
+// organiser — no images, just metadata and an optional page count. Each piece
+// becomes one MEI and one group of tasks.
 //
 // Pure data and helpers — no DOM, forge or network access.
 
@@ -19,19 +21,25 @@ export interface PieceZone {
 
 /**
  * How a piece's notation reaches the campaign: regions of the facsimile that
- * volunteers encode, or an encoding the organiser already had.
+ * volunteers encode, an encoding the organiser already had, or transcription
+ * from the physical source itself (no digital facsimile).
  */
-export type PieceKind = 'facsimile' | 'encoded';
+export type PieceKind = 'facsimile' | 'encoded' | 'physical-only';
 
 export interface Piece {
 	/** Stable within a campaign; also the directory its MEI is written to. */
 	id: string;
 	kind: PieceKind;
-	/** Regions this piece covers. Always empty for an encoded piece. */
+	/** Regions this piece covers. Always empty for encoded and physical pieces. */
 	zones: PieceZone[];
 	meta: SourceMetadata;
 	/** For an encoded piece, the uploaded file it came from. */
 	encodingName?: string;
+	/**
+	 * For a physical piece, how many pages of the source it spans; 0 = unknown.
+	 * A known count splits its encoding into one task per page.
+	 */
+	pages?: number;
 }
 
 /** How many distinct colours the editor cycles through for piece regions. */
@@ -58,6 +66,18 @@ export function nextPieceId(pieces: Piece[]): string {
 
 export function createPiece(pieces: Piece[], kind: PieceKind = 'facsimile'): Piece {
 	return { id: nextPieceId(pieces), kind, zones: [], meta: emptySourceMetadata() };
+}
+
+/**
+ * An encoded piece for an uploaded encoding, titled from its file name. Used
+ * to seed the initial pieces and to re-add an encoding whose piece was removed.
+ */
+export function createEncodedPiece(pieces: Piece[], encodingName: string): Piece {
+	const piece = createPiece(pieces, 'encoded');
+	piece.encodingName = encodingName;
+	// The file name is the only title known before the organiser edits it.
+	piece.meta.title = encodingName.replace(/\.[^.]+$/, '');
+	return piece;
 }
 
 /**
@@ -228,18 +248,16 @@ export function partitionPages(pieces: Piece[], detected: DetectedPage[]): Piece
 
 /**
  * The pieces a fresh campaign starts with: one per uploaded encoding, plus a
- * single facsimile piece covering the pages when there are any. An organiser
- * with one work per source then has nothing to add.
+ * single facsimile piece covering the pages when there are any — or, with
+ * nothing uploaded at all, a single physical piece to be encoded straight from
+ * the source. An organiser with one work per source then has nothing to add.
  */
 export function initialPieces(encodingNames: string[], hasImages: boolean): Piece[] {
 	const pieces: Piece[] = [];
 	for (const name of encodingNames) {
-		const piece = createPiece(pieces, 'encoded');
-		piece.encodingName = name;
-		// The file name is the only title known before the organiser edits it.
-		piece.meta.title = name.replace(/\.[^.]+$/, '');
-		pieces.push(piece);
+		pieces.push(createEncodedPiece(pieces, name));
 	}
 	if (hasImages) pieces.push(createPiece(pieces, 'facsimile'));
+	else if (!pieces.length) pieces.push(createPiece(pieces, 'physical-only'));
 	return pieces;
 }

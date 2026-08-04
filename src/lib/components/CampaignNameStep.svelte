@@ -179,7 +179,6 @@
     heading="Name your campaign"
     intro="The name identifies the campaign to volunteers and becomes its address."
     status="choosing the name"
-    materialHint="Your pages will appear here once you add a source at step 3."
   >
     <label class="field">
       Campaign name
@@ -272,10 +271,10 @@
     display: contents;
   }
   .field {
-    margin-top: 16px;
+    margin-top: 18px;
   }
   .field:first-child {
-    margin-top: 22px;
+    margin-top: 26px;
   }
   /* Sits under the field's hints rather than beside the input. */
   .btn-inline {

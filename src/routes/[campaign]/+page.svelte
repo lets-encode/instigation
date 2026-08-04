@@ -499,12 +499,17 @@
           fragment,
           parsed.pages.map((page) => page.image),
         );
-        facs = parsed.pages.map((pg, index) => ({
-          url: urls[index],
-          w: pg.width,
-          h: pg.height,
-          zones: pg.zones.map((z) => ({ box: z.box, label: z.label })),
-        }));
+        // A facsimile whose images are all unreachable (an encoding uploaded
+        // without its page images) gets no facsimile pane — there is nothing
+        // to show on it.
+        if (urls.some((url) => url)) {
+          facs = parsed.pages.map((pg, index) => ({
+            url: urls[index],
+            w: pg.width,
+            h: pg.height,
+            zones: pg.zones.map((z) => ({ box: z.box, label: z.label })),
+          }));
+        }
       }
 
       // A score without facsimile pages is rendered as-is; a facsimile score

@@ -28,12 +28,13 @@ import { envelopeFromPrBody, envelopeColumns } from '../src/lib/command-envelope
 import type { CommandEnvelope } from '../src/lib/command-envelope.ts';
 import { checkClaim } from '../src/lib/campaign-claim.ts';
 import { checkEncoding, checkValidation } from '../src/lib/campaign-submit.ts';
-import { splicePage } from '../src/lib/mei-page-splice.ts';
+import { splicePage, splicePageSpan } from '../src/lib/mei-page-splice.ts';
 import { reapLocks } from '../src/lib/campaign-reaper.ts';
 import {
 	addedRowFromPatch,
 	classifyPullRequest,
 	numberFromConfig,
+	pieceKindForPath,
 	resolveEncodingTask,
 	shouldCleanupSubmission,
 	singleCellDiff,
@@ -225,17 +226,21 @@ async function decideEncoding(
 	const task = resolveEncodingTask({ tasks, locks, changedPaths, envelope, headRef, author });
 	if (!task) return { ok: false, reason: 'unknown_task' };
 
-	// A page task (locator `surface-N`) contributes only its page's measures: we
-	// splice the fork's page into the base score, leaving other pages as they
-	// stand. Whole-file tasks (empty locator) and pre-tasks take the fork verbatim.
+	// A page task (locator `surface-N`) contributes only its page: we splice the
+	// fork's page into the base score, leaving other pages as they stand. A
+	// facsimile piece's page is joined measure by measure (matched by xml:id —
+	// its measure grid is fixed by the measure correction); a physical piece has
+	// no grid, so its page span is taken from the fork wholesale. Whole-file
+	// tasks (empty locator) and pre-tasks take the fork verbatim.
 	//
 	// Failing to assemble the MEI at all and assembling one the schema rejects
 	// are both `mei_invalid` submissions; which of the two it was survives only
 	// in `detail`, since the reason code is what the tables record.
 	const isPageTask = task.locator.startsWith('surface-');
-	const [forkMei, baseMei] = await Promise.all([
+	const [forkMei, baseMei, configText] = await Promise.all([
 		getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
-		isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null
+		isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null,
+		isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null
 	]);
 	let mei = forkMei;
 	let detail = forkMei == null ? `${task.fragment} is missing from the fork.` : '';
@@ -245,7 +250,10 @@ async function decideEncoding(
 			detail = `${task.fragment} is missing from the campaign.`;
 		} else {
 			try {
-				mei = splicePage(baseMei, forkMei, task.locator);
+				const physical = pieceKindForPath(configText, task.fragment) === 'physical-only';
+				mei = physical
+					? splicePageSpan(baseMei, forkMei, task.locator)
+					: splicePage(baseMei, forkMei, task.locator);
 			} catch (err) {
 				const message = (err as Error).message;
 				console.warn(`Page splice failed for ${task.task_id} (${task.locator}): ${message}`);

@@ -91,7 +91,6 @@
   heading="Describe the source"
   intro="What the pages were taken from. Every piece inherits this, and can add its own details next."
   status={view === "xml" ? "editing the XML" : "describing the source"}
-  materialHint="No pages were committed, so there is nothing to read from."
   material={wizard.images.length || view === "xml" ? material : undefined}
   onBack={() => leave(previousStep)}
   onNext={() => leave(nextStep)}

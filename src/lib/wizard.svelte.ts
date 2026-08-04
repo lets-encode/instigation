@@ -140,17 +140,28 @@ export const wizard = $state<{
 
 export const stepIndex = (id: WizardStepId) => WIZARD_STEPS.findIndex((s) => s.id === id);
 
-/** Advance to the next step, if there is one. */
+// The pages step exists to choose between page images; an upload that offers
+// none has nothing to choose, so navigation passes over it in both directions.
+// The repository it would have created is created by the upload step instead.
+const skipped = (id: WizardStepId) => id === 'pages' && wizard.candidates.length === 0;
+
+/** Advance to the next step (passing over steps with nothing to do), if there is one. */
 export function nextStep(): void {
-	const next = WIZARD_STEPS[stepIndex(wizard.step) + 1];
-	if (next) wizard.step = next.id;
+	for (let i = stepIndex(wizard.step) + 1; i < WIZARD_STEPS.length; i++) {
+		if (skipped(WIZARD_STEPS[i].id)) continue;
+		wizard.step = WIZARD_STEPS[i].id;
+		break;
+	}
 	draftStatus.resumeNotice = null;
 }
 
-/** Return to the previous step, if there is one. */
+/** Return to the previous step (passing over steps with nothing to do), if there is one. */
 export function previousStep(): void {
-	const previous = WIZARD_STEPS[stepIndex(wizard.step) - 1];
-	if (previous) wizard.step = previous.id;
+	for (let i = stepIndex(wizard.step) - 1; i >= 0; i--) {
+		if (skipped(WIZARD_STEPS[i].id)) continue;
+		wizard.step = WIZARD_STEPS[i].id;
+		break;
+	}
 	draftStatus.resumeNotice = null;
 }
 

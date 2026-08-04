@@ -89,6 +89,7 @@
   });
 </script>
 
+<div class="metaform">
 <div class="views-row">
   {#if heading}{@render heading()}{/if}
   <div class="views" role="tablist" aria-label="Metadata detail">
@@ -146,38 +147,56 @@
       Title
       <input class="input" bind:value={meta.title} placeholder="Title as printed on the source" />
     </label>
-    <label class="field">
-      Composer
-      <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
-    </label>
-    <div class="pair">
-      <label class="field grow">
-        Publisher
-        <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
-      </label>
-      <label class="field year">
-        Year
-        <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
-      </label>
-    </div>
-
-    {#if view === "long"}
+    {#if view === "short"}
       <label class="field">
-        Place of publication
-        <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
+        Composer
+        <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
       </label>
-      <label class="field">
-        Extent
-        <input class="input" bind:value={meta.extent} placeholder="e.g. 48 pages" />
-      </label>
-      <label class="field">
-        Condition
-        <input class="input" bind:value={meta.condition} placeholder="e.g. Foxing on the title page" />
-      </label>
-      <label class="field">
-        Note about the source
-        <textarea class="input" bind:value={meta.note} rows="3"></textarea>
-      </label>
+      <div class="pair">
+        <label class="field grow">
+          Publisher
+          <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
+        </label>
+        <label class="field year">
+          Year
+          <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
+        </label>
+      </div>
+    {:else}
+      <div class="row">
+        <label class="field grow">
+          Composer
+          <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
+        </label>
+        <label class="field grow">
+          Place of publication
+          <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="field grow">
+          Publisher
+          <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
+        </label>
+        <label class="field year">
+          Year
+          <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
+        </label>
+        <label class="field grow">
+          Extent
+          <input class="input" bind:value={meta.extent} placeholder="e.g. 48 pages" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="field grow">
+          Condition
+          <input class="input" bind:value={meta.condition} placeholder="e.g. Foxing on the title page" />
+        </label>
+        <label class="field grow">
+          Note about the source
+          <textarea class="input" bind:value={meta.note} rows="3"></textarea>
+        </label>
+      </div>
 
       <fieldset>
         <legend>Other contributors</legend>
@@ -195,8 +214,14 @@
     {/if}
   </div>
 {/if}
+</div>
 
 <style>
+  /* Sizing container for the field rows below: the detailed view pairs fields
+     per row once the form is wide enough. */
+  .metaform {
+    container-type: inline-size;
+  }
   .views-row {
     display: flex;
     align-items: center;
@@ -229,6 +254,26 @@
   .pair .year {
     flex: none;
     width: 110px;
+  }
+  /* Detailed-view rows: stacked by default, side by side once the form is wide
+     enough for pairs (a work card of roughly 560px and up). */
+  .row {
+    display: flex;
+    flex-direction: column;
+  }
+  @container (min-width: 500px) {
+    .row {
+      flex-direction: row;
+      gap: 12px;
+    }
+    .row .grow {
+      flex: 1;
+      min-width: 0;
+    }
+    .row .year {
+      flex: none;
+      width: 110px;
+    }
   }
   .xml-note {
     margin: 14px 0 0;

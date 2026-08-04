@@ -285,6 +285,56 @@ export function buildFacsimileMei(
 	);
 }
 
+/**
+ * Emit the blank score of a physical piece — one transcribed from the source
+ * itself, with no facsimile. With a page count, each page opens with a
+ * `<pb facs="#surface-N"/>` marker and holds one seed measure, so per-page
+ * tasks address the same `surface-N` locators a facsimile campaign uses (the
+ * page-span join replaces a page's content wholesale; see mei-page-splice.ts).
+ * Without one, a single seed measure gives the encoder a valid file to start
+ * from. xml:ids are deterministic so rebuilds are stable and diffable.
+ */
+export function buildBlankScoreMei(headXml: string, pages = 0): string {
+	const parts: string[] = [];
+	for (let p = 1; p <= Math.max(1, pages); p++) {
+		if (pages > 0) {
+			parts.push(`               <pb xml:id="pb-${p}" n="${p}" facs="#surface-${p}"/>`);
+		}
+		parts.push(
+			`               <measure xml:id="measure-${p}" n="${p}">\n` +
+				`                  <staff n="1">\n` +
+				`                     <layer n="1">\n` +
+				`                        <mRest/>\n` +
+				`                     </layer>\n` +
+				`                  </staff>\n` +
+				`               </measure>`
+		);
+	}
+	return (
+		`<?xml version="1.0" encoding="UTF-8"?>\n` +
+		`<?xml-model href="https://music-encoding.org/schema/5.0/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
+		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0">\n` +
+		headXml +
+		`\n   <music>\n` +
+		`      <body>\n` +
+		`         <mdiv xml:id="mdiv-1" n="1">\n` +
+		`            <score>\n` +
+		`               <scoreDef>\n` +
+		`                  <staffGrp>\n` +
+		`                     <staffDef n="1" lines="5" clef.shape="G" clef.line="2" meter.count="4" meter.unit="4"/>\n` +
+		`                  </staffGrp>\n` +
+		`               </scoreDef>\n` +
+		`               <section>\n` +
+		parts.join('\n') +
+		`\n               </section>\n` +
+		`            </score>\n` +
+		`         </mdiv>\n` +
+		`      </body>\n` +
+		`   </music>\n` +
+		`</mei>`
+	);
+}
+
 // One attribute's value from an XML tag string, unescaped; null if absent.
 function attr(tag: string, name: string): string | null {
 	const m = new RegExp(`\\b${name}="([^"]*)"`).exec(tag);

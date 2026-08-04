@@ -95,6 +95,8 @@ export interface ForgeClient {
 	getRepoHead(owner: string, repo: string): Promise<RepoHead>;
 	/** The current user's repository access and the repository visibility. */
 	getRepoAccess(owner: string, repo: string): Promise<{ isPrivate: boolean; canPush: boolean }>;
+	/** A repository's data by owner/name, or null if it doesn't exist. */
+	getRepoInfo(owner: string, repo: string): Promise<RepoData | null>;
 	/** Ensure the user has a fork, waiting until it's ready. */
 	ensureFork(
 		owner: string,

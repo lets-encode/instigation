@@ -26,6 +26,7 @@
   } from "$lib/campaign-init.ts";
   import { buildPieceHead } from "$lib/source-metadata.ts";
   import {
+    buildBlankScoreMei,
     buildFacsimileMei,
     initialFacsimileModel,
     relinkFacsimileImages,
@@ -34,6 +35,7 @@
   import {
     copyMetadata,
     coverPages,
+    createEncodedPiece,
     createPiece,
     formatRanges,
     initialPieces,
@@ -102,11 +104,38 @@
   onDestroy(() => objectUrls.forEach((url) => URL.revokeObjectURL(url)));
 
   function addPiece() {
-    wizard.pieces = [...wizard.pieces, createPiece(wizard.pieces)];
+    // With no page images there are no regions to mark, so an added piece is
+    // transcribed from the physical source instead.
+    const kind = wizard.images.length ? "facsimile" : "physical-only";
+    wizard.pieces = [...wizard.pieces, createPiece(wizard.pieces, kind)];
     selected = wizard.pieces.length - 1;
   }
 
+  // Uploaded encodings whose piece was removed: they are still held by the
+  // wizard, so their pieces can be re-added rather than being lost.
+  const unusedEncodings = $derived(
+    wizard.encodings.filter(
+      (encoding) => !wizard.pieces.some((p) => p.encodingName === encoding.name),
+    ),
+  );
+
+  function readdEncoding(name: string) {
+    wizard.pieces = [...wizard.pieces, createEncodedPiece(wizard.pieces, name)];
+    selected = wizard.pieces.length - 1;
+  }
+
+  // Removing a piece is confirmed in place: the first press arms the button,
+  // the second removes. An encoded piece cannot be re-added without discarding
+  // the setup, so an accidental press must not already be a loss.
+  let confirmingRemove = $state<string | null>(null);
+
   function removePiece(index: number) {
+    const piece = wizard.pieces[index];
+    if (confirmingRemove !== piece.id) {
+      confirmingRemove = piece.id;
+      return;
+    }
+    confirmingRemove = null;
     wizard.pieces = wizard.pieces.filter((_, i) => i !== index);
     selected = Math.max(0, Math.min(selected, wizard.pieces.length - 1));
   }
@@ -202,10 +231,10 @@
       return;
     }
     if (!repo) {
-      // Reaching here without a repository means the pages step did not
+      // Reaching here without a repository means the upload/pages step did not
       // complete; saying so beats a button that does nothing.
       error =
-        "This campaign has no repository yet. Go back to the pages step and complete it first.";
+        "This campaign has no repository yet. Go back to the upload step and continue from there.";
       return;
     }
 
@@ -254,6 +283,20 @@
           scores.push({ path: piecePath(piece.id), content: replaceMeiHead(relinked, head) });
           return;
         }
+        if (piece.kind === "physical-only") {
+          // A blank score to transcribe the physical source into. A known page
+          // count writes one page-break marker per page, matching the per-page
+          // tasks planTasks derives from config; no measure-correction pre-task
+          // exists, since there is no facsimile to correct measures on.
+          const count = piece.pages ?? 0;
+          log.detail(
+            count > 0
+              ? `blank score, ${count} page(s) from the physical source`
+              : "blank score, transcribed from the physical source",
+          );
+          scores.push({ path: piecePath(piece.id), content: buildBlankScoreMei(head, count) });
+          return;
+        }
         // Stage A: facsimile and labelled zones only. The measure body is
         // generated once this piece's measure-correction pre-task validates.
         const model = initialFacsimileModel(split[i].pages, {});
@@ -273,7 +316,11 @@
           title: wizard.title.trim(),
           description: wizard.description.trim(),
           license,
-          sourceKind: wizard.images.length ? "facsimile" : "mei-template",
+          sourceKind: wizard.images.length
+            ? "facsimile"
+            : wizard.encodings.length
+              ? "mei-template"
+              : "physical-only",
           sourceHeader: {
             title: wizard.source.title,
             composer: wizard.source.composer,
@@ -288,6 +335,9 @@
             id: piece.id,
             kind: piece.kind,
             path: piecePath(piece.id),
+            ...(piece.kind === "physical-only" && piece.pages
+              ? { pages: piece.pages }
+              : {}),
             zones: piece.zones.map((zone) => ({
               // config records the source's page numbers, 1-based.
               surface: zone.surface + 1,
@@ -379,9 +429,18 @@
   const labelOf = (p: (typeof wizard.pieces)[number]) => p.meta.title.trim() || p.id;
   const rangeOf = (p: (typeof wizard.pieces)[number]) => {
     if (p.kind === "encoded") return "encoding";
+    if (p.kind === "physical-only") {
+      return p.pages ? `${p.pages} page${p.pages === 1 ? "" : "s"}` : "physical only";
+    }
     const on = pagesCovered(p);
     return on.length ? `pages ${formatRanges(on.map((s) => s + 1))}` : "no regions";
   };
+
+  // The page count of a physical piece; empty or invalid input means unknown.
+  function setPageCount(value: string) {
+    const n = Math.floor(Number(value));
+    wizard.pieces[selected].pages = Number.isFinite(n) && n > 0 ? n : undefined;
+  }
 
   const railStatus = $derived.by(() => {
     const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
@@ -395,6 +454,7 @@
     selected = index;
     bulkNotice = null;
     confirmingClear = false;
+    confirmingRemove = null;
   }
 </script>
 
@@ -404,10 +464,9 @@
 
 <WizardCard
   step="pieces"
-  heading="Mark the pieces"
+  heading={wizard.images.length ? "Mark the pieces" : "Describe the pieces"}
   intro="The separate works in this source. Each becomes its own score and its own set of tasks."
   status={railStatus}
-  materialHint="This campaign has no page images, so there are no regions to mark."
   material={pages.length ? material : undefined}
   onBack={previousStep}
   backDisabled={busy}
@@ -423,54 +482,79 @@
 
   <div class="pieces">
     {#each wizard.pieces as p, i (p.id)}
-      {#if selected === i}
-        <div class="piece selected" style="--piece: {pieceColour(i)}">
+      <div class="piece" class:selected={selected === i} style="--piece: {pieceColour(i)}">
+        <div class="piece-row">
           <button type="button" class="piece-head" onclick={() => selectPiece(i)}>
             <span class="swatch"></span>
-            <span class="name">{labelOf(p)}</span>
-            <span class="range">{rangeOf(p)}</span>
-          </button>
-          {#if p.kind === "facsimile" && pages.length}
-            <div class="piece-actions">
-              <button type="button" class="pill pill-sm" onclick={assignAllPages} disabled={busy}>
-                Assign all pages
-              </button>
-              <button
-                type="button"
-                class="pill pill-sm"
-                class:confirming={confirmingClear}
-                onclick={clearRegions}
-                disabled={busy || !p.zones.length}
-              >
-                {confirmingClear ? "Really clear all regions?" : "Clear regions"}
-              </button>
-            </div>
-            {#if bulkNotice}
-              <p class="msg-warn bulk-notice" role="status">{bulkNotice}</p>
-            {/if}
-          {/if}
-        </div>
-      {:else}
-        <div class="piece" style="--piece: {pieceColour(i)}">
-          <button type="button" class="piece-head" onclick={() => selectPiece(i)}>
-            <span class="swatch"></span>
-            <span class="name plain">{labelOf(p)}</span>
+            <span class="name" class:plain={selected !== i}>{labelOf(p)}</span>
             <span class="range">{rangeOf(p)}</span>
           </button>
           {#if wizard.pieces.length > 1}
-            <button
-              type="button"
-              class="delete"
-              onclick={() => removePiece(i)}
-              aria-label="Remove {p.id}"
-            >
-              ×
-            </button>
+            {#if confirmingRemove === p.id}
+              <button
+                type="button"
+                class="delete confirming"
+                onclick={() => removePiece(i)}
+                disabled={busy}
+              >
+                Really remove {labelOf(p)}?
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="delete"
+                onclick={() => removePiece(i)}
+                disabled={busy}
+                aria-label="Remove {labelOf(p)}"
+                title="Remove this piece"
+              >
+                ×
+              </button>
+            {/if}
           {/if}
         </div>
-      {/if}
+        {#if selected === i && p.kind === "facsimile" && pages.length}
+          <div class="piece-actions">
+            <button type="button" class="pill pill-sm" onclick={assignAllPages} disabled={busy}>
+              Assign all pages
+            </button>
+            <button
+              type="button"
+              class="pill pill-sm"
+              class:confirming={confirmingClear}
+              onclick={clearRegions}
+              disabled={busy || !p.zones.length}
+            >
+              {confirmingClear ? "Really clear all regions?" : "Clear regions"}
+            </button>
+          </div>
+          {#if bulkNotice}
+            <p class="msg-warn bulk-notice" role="status">{bulkNotice}</p>
+          {/if}
+        {/if}
+      </div>
     {/each}
   </div>
+
+  {#if unusedEncodings.length}
+    <div class="unused">
+      {#each unusedEncodings as encoding (encoding.name)}
+        <div class="unused-row">
+          <span class="unused-name">
+            <code>{encoding.name}</code> is uploaded but belongs to no piece.
+          </span>
+          <button
+            type="button"
+            class="pill pill-sm"
+            onclick={() => readdEncoding(encoding.name)}
+            disabled={busy}
+          >
+            Add as a piece
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   {#if piece}
     <MetadataForm bind:meta={wizard.pieces[selected].meta}>
@@ -503,11 +587,32 @@
           has no regions marked yet. Mark them in the pane on the left.
         {/if}
       </p>
+    {:else if piece.kind === "physical-only"}
+      <p class="covered">
+        <strong style="color: {pieceColour(selected)}">{label}</strong>
+        is transcribed from the physical source — encoding starts from a blank
+        score.
+      </p>
+      <label class="field pages-field">
+        Pages in this piece
+        <input
+          class="input pages-input"
+          type="number"
+          min="1"
+          step="1"
+          value={piece.pages ?? ""}
+          oninput={(e) => setPageCount((e.target as HTMLInputElement).value)}
+          disabled={busy}
+        />
+        <span class="hint">
+          Optional. With a page count, each page becomes its own encoding task;
+          without one, the piece is a single task.
+        </span>
+      </label>
     {:else}
       <p class="covered">
         <strong style="color: {pieceColour(selected)}">{label}</strong>
-        comes from the uploaded encoding <code>{piece.encodingName}</code>. It is
-        committed whole, so it needs no regions.
+        comes from the uploaded encoding <code>{piece.encodingName}</code>.
       </p>
     {/if}
   {:else}
@@ -549,8 +654,6 @@
     margin-top: 9px;
   }
   .piece {
-    display: flex;
-    align-items: center;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -560,9 +663,12 @@
     border-color: var(--accent);
   }
   .piece.selected {
-    display: block;
     border: 1.5px solid var(--piece);
     background: color-mix(in srgb, var(--piece) 7%, var(--card));
+  }
+  .piece-row {
+    display: flex;
+    align-items: center;
   }
   .piece-head {
     flex: 1;
@@ -617,6 +723,18 @@
   .delete:hover {
     color: var(--danger);
   }
+  .delete.confirming {
+    width: auto;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 3px 10px;
+    color: var(--danger);
+    border: 1px solid var(--danger-line);
+    border-radius: 999px;
+    background: var(--danger-bg);
+  }
   .piece-actions {
     display: flex;
     gap: 6px;
@@ -650,5 +768,31 @@
     margin: 12px 0 0;
     font-size: 12px;
     color: var(--ink-faint);
+  }
+  .pages-field {
+    margin-top: 11px;
+  }
+  .pages-input {
+    max-width: 110px;
+  }
+  .unused {
+    display: grid;
+    gap: 7px;
+    margin-top: 9px;
+  }
+  .unused-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 8px;
+  }
+  .unused-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
   }
 </style>
