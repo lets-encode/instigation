@@ -30,6 +30,7 @@ RESERVED_NAMES: frozenset[str] = frozenset(
         # current and likely future top-level routes / root paths
         "campaign",
         "campaigns",
+        "dashboard",
         "search",
         "admin",
         "api",

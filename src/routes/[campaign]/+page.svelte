@@ -32,6 +32,7 @@
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PlanEditor from "$lib/components/PlanEditor.svelte";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
@@ -76,6 +77,8 @@
 
   // UI-only state: everything else derives from the tracking tables.
   let view = $state<"board" | "tables">("board");
+  // Plan mode: task.csv as an editable table over the board's place (owners).
+  let planEditing = $state(false);
   let showInfo = $state(false);
   // Columns the viewer expanded past the card cap.
   let expanded = $state<Partial<Record<ColumnKey, boolean>>>({});
@@ -669,6 +672,27 @@
 
   const reaper = () => run((c) => invoke(commands.runReaper, {}, c));
 
+  // Save the edited plan; a clean save leaves plan mode (run() has already
+  // refreshed the tables, so the board reflects the new plan).
+  async function savePlan(tasks: TaskRow[]) {
+    await run((c) => invoke(commands.savePlan, { tasks }, c));
+    if (result?.ok) planEditing = false;
+  }
+
+  // Deep links from the dashboards, read once after the first load: ?task=
+  // opens that task's overlay, ?claim=next claims the first open task.
+  let deepLinked = false;
+  $effect(() => {
+    if (!loaded || deepLinked) return;
+    deepLinked = true;
+    const task = page.url.searchParams.get("task");
+    if (task && findRow(taskDefs, task, "")) {
+      openOverlay(task);
+      return;
+    }
+    if (page.url.searchParams.get("claim") === "next" && nextCard) actOnNext();
+  });
+
   // "Claim the next task": act on the first card the viewer can work on — a
   // claim when it is open, otherwise its overlay (their claimed or reviewable
   // work lives there).
@@ -1049,6 +1073,16 @@
                 </div>
               </div>
               <div class="hero-acts">
+                {#if auth.user && canPush && view === "board"}
+                  <button
+                    type="button"
+                    class="pillbtn"
+                    disabled={busy}
+                    title="Add, remove, rewire or reorder the tasks nobody has worked on yet"
+                    onclick={() => (planEditing = !planEditing)}
+                    >{planEditing ? "Back to the board" : "Edit the plan"}</button
+                  >
+                {/if}
                 <button
                   type="button"
                   class="pillbtn primary"
@@ -1064,7 +1098,18 @@
             </div>
           </div>
 
-          {#if view === "board"}
+          {#if view === "board" && planEditing}
+            <PlanEditor
+              {taskDefs}
+              {rows}
+              {validationColumns}
+              {locks}
+              {logins}
+              {busy}
+              onsave={savePlan}
+              oncancel={() => (planEditing = false)}
+            />
+          {:else if view === "board"}
             <div class="board">
               {#each board.columns as col (col.key)}
                 <div class="bcol">

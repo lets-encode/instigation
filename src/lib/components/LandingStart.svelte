@@ -11,6 +11,9 @@
   import { lookupSlug } from "$lib/campaign-resolve.ts";
   import { isValidHandle } from "$lib/campaign-handle.ts";
 
+  /** Rail variant: no wordmark, tighter spacing (the dashboard's start card). */
+  let { compact = false }: { compact?: boolean } = $props();
+
   const host = location.host;
 
   let name = $state("");
@@ -98,7 +101,7 @@
   }
 </script>
 
-<form class="panel" onsubmit={submit}>
+<form class="panel" class:compact onsubmit={submit}>
   <img
     class="wordmark wordmark-light"
     src="/logo.svg"
@@ -179,6 +182,32 @@
   }
   .wordmark-dark {
     display: none;
+  }
+  /* The rail card: the wordmark is already in the app bar, the heading and
+     spacing come down a step so the card reads as one panel among others. */
+  .panel.compact {
+    padding: 30px 30px 24px;
+    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.07);
+  }
+  .panel.compact .wordmark {
+    display: none;
+  }
+  .panel.compact h1 {
+    font-size: 21px;
+    margin-bottom: 0.5rem;
+  }
+  .panel.compact .lead {
+    font-size: 13.5px;
+    margin-bottom: 0.75rem;
+  }
+  .panel.compact .name-form {
+    margin: 1rem 0 0.9rem;
+  }
+  .panel.compact .actions {
+    margin-bottom: 0.9rem;
+  }
+  .panel.compact .rules {
+    font-size: 11.5px;
   }
   :global([data-theme="dark"]) .wordmark-light {
     display: none;

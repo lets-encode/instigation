@@ -164,6 +164,12 @@ export function parseTaskCsv(text: string): TaskRow[] {
 	return parseRows<TaskRow>(text, TASK_COLUMNS);
 }
 
+/** Serialise task rows back to task.csv text (header + one line per row). */
+export function serializeTaskCsv(rows: TaskRow[]): string {
+	const lines = [csvRow(TASK_COLUMNS), ...rows.map((r) => csvRow(TASK_COLUMNS.map((c) => r[c as keyof TaskRow])))];
+	return `${lines.join('\n')}\n`;
+}
+
 /**
  * Parse state.csv. Returns { header, validationColumns, rows } where each row
  * is an object keyed by column name. validationColumns is the

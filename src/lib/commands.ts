@@ -23,10 +23,12 @@ import {
 	serializeStateCsv,
 	serializeLockCsv,
 	serializeCommentCsv,
+	serializeTaskCsv,
 	appendComments,
 	appendHistory,
 	findRow
 } from './campaign-tables.ts';
+import { checkPlan } from './campaign-plan.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
@@ -862,6 +864,64 @@ const rawLink: CommandDef<{ task_id: string }, Result> = {
 	}
 };
 
+// Rewrite the task plan (task.csv + the matching state.csv rows) from the
+// console's plan editor. Owner-only: the rewrite is committed directly, so it
+// requires push access; checkPlan re-validates against fresh tables so a claim
+// that landed while editing rejects the save rather than being overwritten.
+const PLAN_REJECTIONS: Record<string, string> = {
+	empty_plan: 'The plan has no tasks — a campaign needs at least one.',
+	duplicate_row: 'The plan lists the same task twice.',
+	missing_task_id: 'A task row has no id.',
+	missing_fragment: 'Every task needs a score file (fragment).',
+	orphan_subtask: 'A validation subtask points at a task that is not in the plan.',
+	unknown_dependency: 'A task depends on a task that is not in the plan.',
+	dependency_cycle: 'The dependencies run in a circle — no task could ever be claimed.',
+	task_in_progress:
+		'A task someone has already worked on or claimed was changed or removed — refresh and edit again.'
+};
+
+const savePlan: CommandDef<{ tasks: TaskRow[] }, Result> = {
+	id: 'campaign.savePlan',
+	version: 1,
+	log: 'direct',
+	envelopeInput: ({ tasks }) => ({
+		tasks: tasks.filter((t) => t.subtask_id === '').map((t) => t.task_id)
+	}),
+	async run({ tasks }, ctx) {
+		const { forge: f, owner, repo } = ctx;
+		try {
+			ctx.progress({ step: 'Checking the plan against the current tables…' });
+			const { sha, canPush } = await f.getRepoHead(owner, repo);
+			if (!canPush) return { error: 'Only someone with push access can edit the plan.' };
+			const [taskCsv, stateCsv, lockCsv] = await Promise.all([
+				f.getRepoFile(owner, repo, TASK_PATH, sha),
+				f.getRepoFile(owner, repo, STATE_PATH, sha),
+				f.getRepoFile(owner, repo, LOCK_PATH, sha)
+			]);
+			if (taskCsv == null || stateCsv == null) return { error: 'Could not read the tracking tables.' };
+			const state = parseStateCsv(stateCsv);
+			const verdict = checkPlan(parseTaskCsv(taskCsv), state, parseLockCsv(lockCsv ?? ''), tasks);
+			if (!verdict.ok) {
+				return { error: PLAN_REJECTIONS[verdict.reason] ?? `Plan rejected: ${verdict.reason}.` };
+			}
+			ctx.progress({ step: 'Committing the new plan…' });
+			await f.commitFiles(
+				owner,
+				repo,
+				[
+					{ path: TASK_PATH, content: serializeTaskCsv(tasks) },
+					{ path: STATE_PATH, content: serializeStateCsv({ header: state.header, rows: verdict.stateRows }) }
+				],
+				'Edit the task plan',
+				{ baseSha: sha }
+			);
+			return { ok: true, message: 'The plan is saved.' };
+		} catch (e) {
+			return { error: `Saving the plan failed: ${(e as Error).message}` };
+		}
+	}
+};
+
 // Manually dispatch the scheduled reaper, then wait for its run to finish
 // (there is no PR to watch — poll the dispatched workflow run instead).
 // Dispatching requires push access, so the invocation is logged directly.
@@ -1087,6 +1147,7 @@ export const commands = {
 	resolveComment,
 	sendBack,
 	rawLink,
+	savePlan,
 	runReaper,
 	readFacsimile,
 	claimTask,

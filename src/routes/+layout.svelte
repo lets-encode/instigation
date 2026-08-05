@@ -31,7 +31,11 @@
   // narrow reading column. Matching on the route rather than the path is what
   // makes the wizard full-height at /c?slug=, whose URL keeps its own path
   // while hooks.ts reroutes it to / (see src/hooks.ts).
-  const wide = $derived(page.route.id === '/[campaign]/zones/[task]');
+  const wide = $derived(
+    page.route.id === '/[campaign]/zones/[task]' ||
+      page.route.id === '/campaigns' ||
+      page.route.id === '/dashboard'
+  );
   const full = $derived(page.route.id === '/' || page.route.id === '/[campaign]');
 
   // Resolve any existing broker session once the app mounts (client-only).
