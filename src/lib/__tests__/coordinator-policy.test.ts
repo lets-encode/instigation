@@ -1,15 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseStateCsv, type LockRow, type TaskRow } from '../campaign-tables.ts';
+import { parseCommentCsv, parseStateCsv, type CommentRow, type LockRow, type TaskRow } from '../campaign-tables.ts';
 import {
 	addedRowFromPatch,
+	appendedComments,
 	classifyPullRequest,
 	numberFromConfig,
 	pieceKindForPath,
 	resolveEncodingTask,
+	resolvedCommentDiff,
 	shouldCleanupSubmission,
 	singleCellDiff,
+	taskResetDiff,
 	validationVerdict
 } from '../coordinator-policy.ts';
 
@@ -63,6 +66,68 @@ test('pull requests are classified by their mutation table', () => {
 	assert.equal(classifyPullRequest(['tracking/state.csv']), 'validation');
 	assert.equal(classifyPullRequest(['sources/score.mei']), 'encoding');
 	assert.equal(classifyPullRequest(['sources/score.mei', 'tracking/lock.csv']), 'claim');
+	assert.equal(classifyPullRequest(['tracking/comment.csv']), 'comment');
+	// A fail validation carries its comment in the same PR — still a validation.
+	assert.equal(classifyPullRequest(['tracking/state.csv', 'tracking/comment.csv']), 'validation');
+});
+
+test('a send-back PR reads as the reset of exactly one task', () => {
+	const failedCsv =
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+		'T0001,,validation_required,encoder,t,\n' +
+		'T0001,S0001,validation_required,,,fail|carol|t\n' +
+		'T0002,,encoding_required,,,\n';
+	const resetCsv =
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+		'T0001,,encoding_required,,,\n' +
+		'T0001,S0001,pending,,,\n' +
+		'T0002,,encoding_required,,,\n';
+	const base = parseStateCsv(failedCsv);
+	assert.deepEqual(taskResetDiff(base, parseStateCsv(resetCsv)), { task_id: 'T0001' });
+	// No change at all is not a reset.
+	assert.equal(taskResetDiff(base, parseStateCsv(failedCsv)), null);
+	// A reset that also touches another task is not a send-back.
+	assert.equal(
+		taskResetDiff(base, parseStateCsv(resetCsv.replace('T0002,,encoding_required', 'T0002,,completed'))),
+		null
+	);
+	// A "reset" that keeps the encoder is malformed.
+	assert.equal(
+		taskResetDiff(base, parseStateCsv(resetCsv.replace('T0001,,encoding_required,,,', 'T0001,,encoding_required,encoder,,'))),
+		null
+	);
+	// A single-cell verdict is not a reset.
+	assert.equal(
+		taskResetDiff(base, parseStateCsv(failedCsv.replace('T0002,,encoding_required', 'T0002,,completed'))),
+		null
+	);
+});
+
+const COMMENT_HEADER =
+	'comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n';
+const c1 = 'c1,T0001,S0001,question,,,,carol,t1,,,Question?\n';
+
+test('a comment PR is a verbatim append or a single resolve flip', () => {
+	const base = parseCommentCsv(COMMENT_HEADER + c1);
+	const appended = parseCommentCsv(COMMENT_HEADER + c1 + ',T0001,,addition,,,,me,,,,A note\n');
+	const added = appendedComments(base, appended);
+	assert.equal(added?.length, 1);
+	assert.equal(added?.[0].body, 'A note');
+	// Rewriting an existing row is not an append.
+	assert.equal(
+		appendedComments(base, parseCommentCsv(COMMENT_HEADER + c1.replace('Question?', 'Edited') + ',T0001,,addition,,,,me,,,,x\n')),
+		null
+	);
+	assert.equal(appendedComments(base, base), null);
+
+	const resolved = parseCommentCsv(COMMENT_HEADER + c1.replace(',t1,,,', ',t1,true,,'));
+	assert.deepEqual(resolvedCommentDiff(base, resolved), { comment_id: 'c1' });
+	// Any other edit alongside the flip is rejected.
+	assert.equal(
+		resolvedCommentDiff(base, parseCommentCsv(COMMENT_HEADER + c1.replace(',t1,,,Question?', ',t1,true,,Edited'))),
+		null
+	);
+	assert.equal(resolvedCommentDiff(base, base), null);
 });
 
 test('rejected encoding branches are retained for correction', () => {

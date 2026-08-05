@@ -19,12 +19,15 @@ import {
 	parseStateCsv,
 	parseLockCsv,
 	parseHistoryCsv,
+	parseCommentCsv,
 	serializeStateCsv,
 	serializeLockCsv,
+	serializeCommentCsv,
+	appendComments,
 	appendHistory,
 	findRow
 } from './campaign-tables.ts';
-import type { TaskRow, StateRow, LockRow, HistoryRow } from './campaign-tables.ts';
+import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
 import { parseFacsimileMei, buildFacsimileMei } from './mei-facsimile.ts';
@@ -37,6 +40,7 @@ const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
 const LOCK_PATH = 'tracking/lock.csv';
 const HISTORY_PATH = 'tracking/history.csv';
+const COMMENT_PATH = 'tracking/comment.csv';
 const MAX_LOG_ATTEMPTS = 3;
 const DEFAULT_MEI_FRIEND_URL = 'https://mei-friend.mdw.ac.at';
 
@@ -345,6 +349,8 @@ export interface CampaignTables {
 	validationColumns: string[];
 	locks: LockRow[];
 	history: HistoryRow[];
+	/** The comment log (fail explanations and discussion); [] when comment.csv is absent. */
+	comments: CommentRow[];
 	/** campaign.title from config.yaml; '' when unreadable. */
 	title: string;
 	/** campaign.description from config.yaml; '' when unreadable or unset. */
@@ -369,12 +375,19 @@ async function resolveLogins(
 	f: ForgeClient,
 	rows: StateRow[],
 	locks: LockRow[],
-	history: HistoryRow[]
+	history: HistoryRow[],
+	comments: CommentRow[]
 ): Promise<Record<string, string>> {
 	const ids = new Set<string>();
 	for (const r of rows) if (r.encoder) ids.add(r.encoder);
 	for (const l of locks) if (l.user_id) ids.add(l.user_id);
 	for (const h of history) if (h.user_id) ids.add(h.user_id);
+	for (const c of comments) if (c.author_id) ids.add(c.author_id);
+	for (const r of rows) {
+		for (const cell of Object.values(r)) {
+			if (/^(pass|fail)\|/.test(cell)) ids.add(cell.split('|')[1]);
+		}
+	}
 	const logins: Record<string, string> = {};
 	await Promise.all(
 		[...ids].map(async (id) => {
@@ -397,11 +410,12 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 	log: 'none',
 	async run(_input, ctx) {
 		const { forge: f, owner, repo } = ctx;
-		const [taskCsv, stateCsv, lockCsv, historyCsv, configYaml, access] = await Promise.all([
+		const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml, access] = await Promise.all([
 			f.getRepoFile(owner, repo, TASK_PATH),
 			f.getRepoFile(owner, repo, STATE_PATH),
 			f.getRepoFile(owner, repo, LOCK_PATH),
 			f.getRepoFile(owner, repo, HISTORY_PATH),
+			f.getRepoFile(owner, repo, COMMENT_PATH),
 			f.getRepoFile(owner, repo, 'config.yaml'),
 			f.getRepoAccess(owner, repo)
 		]);
@@ -416,6 +430,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 				validationColumns: [],
 				locks: [],
 				history: [],
+				comments: [],
 				title: '',
 				description: '',
 				license: '',
@@ -426,6 +441,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 		const state = parseStateCsv(stateCsv);
 		const locks = parseLockCsv(lockCsv);
 		const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
+		const comments = commentCsv ? parseCommentCsv(commentCsv) : [];
 		return {
 			notInitialised: false,
 			isPrivate: access.isPrivate,
@@ -435,11 +451,12 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			validationColumns: state.validationColumns,
 			locks,
 			history,
+			comments,
 			title: stringFromConfig(configYaml, 'title'),
 			description: stringFromConfig(configYaml, 'description'),
 			license: stringFromConfig(configYaml, 'license'),
 			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1,
-			logins: await resolveLogins(f, state.rows, locks, history)
+			logins: await resolveLogins(f, state.rows, locks, history, comments)
 		};
 	}
 };
@@ -601,16 +618,34 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 	}
 };
 
+/** The measure-anchored explanation a fail verdict must carry. */
+export interface FailComment {
+	body: string;
+	/** 1-based facsimile page the comment anchors to; '' = unanchored. */
+	page: string;
+	measure_start: string;
+	measure_end: string;
+}
+
 // Open a PR that sets the subtask's first open validation cell (pass/fail).
-const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdict: string }, Result> = {
+// A fail carries its mandatory comment as one appended comment.csv row in the
+// same PR; the automation rejects a fail without one.
+const submitValidation: CommandDef<
+	{ task_id: string; subtask_id: string; verdict: string; comment?: FailComment },
+	Result
+> = {
 	id: 'campaign.submitValidation',
-	version: 1,
+	version: 2,
 	log: 'pr',
-	async run({ task_id, subtask_id, verdict }, ctx, envelope) {
+	envelopeInput: ({ task_id, subtask_id, verdict }) => ({ task_id, subtask_id, verdict }),
+	async run({ task_id, subtask_id, verdict, comment }, ctx, envelope) {
 		const { forge: f, repoId, owner, repo } = ctx;
 		try {
 			if (verdict !== 'pass' && verdict !== 'fail') {
 				return { error: `Invalid validation verdict: ${verdict}.` };
+			}
+			if (verdict === 'fail' && !comment?.body.trim()) {
+				return { error: 'A fail needs a comment saying why — nothing was submitted.' };
 			}
 			await muteOnce(f, repoId, owner, repo);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
@@ -621,12 +656,36 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 				return { error: `No open validation slot on ${task_id}/${subtask_id}.` };
 			}
 			row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
+			const files = [{ path: STATE_PATH, content: serializeStateCsv(state) }];
+			if (verdict === 'fail') {
+				// The id, author and timestamp are the Action's to write.
+				const commentCsv = (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '';
+				files.push({
+					path: COMMENT_PATH,
+					content: appendComments(commentCsv, [
+						{
+							comment_id: '',
+							task_id,
+							subtask_id,
+							kind: 'fail',
+							page: comment!.page,
+							measure_start: comment!.measure_start,
+							measure_end: comment!.measure_end,
+							author_id: '',
+							timestamp: '',
+							resolved: '',
+							parent_id: '',
+							body: comment!.body.trim()
+						}
+					])
+				});
+			}
 			ctx.progress({ step: 'Opening the validation PR…' });
 			const body = `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`;
 			console.log('[validate] opening validation PR', { task_id, subtask_id, verdict, slot });
 			const pr = await f.openChangePr(owner, repo, {
 				branch: `validate-${task_id}-${subtask_id}-${rand()}`,
-				files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
+				files,
 				message: `Validate ${task_id}/${subtask_id} (${verdict})`,
 				title: `Validate ${task_id}/${subtask_id} (${verdict})`,
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
@@ -641,6 +700,142 @@ const submitValidation: CommandDef<{ task_id: string; subtask_id: string; verdic
 			);
 		} catch (e) {
 			return { error: `Validate failed: ${(e as Error).message}` };
+		}
+	}
+};
+
+// Open a PR that appends one discussion comment (question / addition / reply)
+// to comment.csv. The Action re-authors id, author and timestamp.
+const submitComment: CommandDef<
+	{
+		task_id: string;
+		subtask_id: string;
+		kind: string;
+		body: string;
+		page: string;
+		measure_start: string;
+		measure_end: string;
+		parent_id: string;
+	},
+	Result
+> = {
+	id: 'campaign.submitComment',
+	version: 1,
+	log: 'pr',
+	envelopeInput: ({ task_id, subtask_id, kind, parent_id }) => ({ task_id, subtask_id, kind, parent_id }),
+	async run(input, ctx, envelope) {
+		const { forge: f, repoId, owner, repo } = ctx;
+		try {
+			if (!input.body.trim()) return { error: 'The comment is empty — nothing was sent.' };
+			await muteOnce(f, repoId, owner, repo);
+			const commentCsv = (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '';
+			const content = appendComments(commentCsv, [
+				{
+					comment_id: '',
+					task_id: input.task_id,
+					subtask_id: input.subtask_id,
+					kind: input.kind,
+					page: input.page,
+					measure_start: input.measure_start,
+					measure_end: input.measure_end,
+					author_id: '',
+					timestamp: '',
+					resolved: '',
+					parent_id: input.parent_id,
+					body: input.body.trim()
+				}
+			]);
+			ctx.progress({ step: 'Sending the comment…' });
+			const body = `Adds a ${input.kind} comment on ${input.task_id}. Opened from the campaign console.`;
+			const pr = await f.openChangePr(owner, repo, {
+				branch: `comment-${input.task_id}-${rand()}`,
+				files: [{ path: COMMENT_PATH, content }],
+				message: `Comment on ${input.task_id} (${input.kind})`,
+				title: `Comment on ${input.task_id} (${input.kind})`,
+				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+			});
+			console.log('[comment] comment PR opened', pr.number, pr.html_url);
+			const outcome = await waitForPrProcessed(ctx, pr);
+			return verdictResult(outcome, pr.number, pr.html_url, `Opened comment PR #${pr.number} for ${input.task_id}.`);
+		} catch (e) {
+			return { error: `Comment failed: ${(e as Error).message}` };
+		}
+	}
+};
+
+// Open a PR that marks one comment resolved (author or push access only —
+// the automation enforces it).
+const resolveComment: CommandDef<{ comment_id: string }, Result> = {
+	id: 'campaign.resolveComment',
+	version: 1,
+	log: 'pr',
+	async run({ comment_id }, ctx, envelope) {
+		const { forge: f, repoId, owner, repo } = ctx;
+		try {
+			await muteOnce(f, repoId, owner, repo);
+			const comments = parseCommentCsv((await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '');
+			const row = comments.find((c) => c.comment_id === comment_id);
+			if (!row) return { error: `Unknown comment ${comment_id}.` };
+			if (row.resolved === 'true') return { ok: true, warn: true, message: 'Already resolved.' };
+			row.resolved = 'true';
+			ctx.progress({ step: 'Resolving the comment…' });
+			const body = `Resolves comment ${comment_id} on ${row.task_id}. Opened from the campaign console.`;
+			const pr = await f.openChangePr(owner, repo, {
+				branch: `resolve-${comment_id}-${rand()}`,
+				files: [{ path: COMMENT_PATH, content: serializeCommentCsv(comments) }],
+				message: `Resolve comment ${comment_id}`,
+				title: `Resolve comment ${comment_id}`,
+				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+			});
+			console.log('[comment] resolve PR opened', pr.number, pr.html_url);
+			const outcome = await waitForPrProcessed(ctx, pr);
+			return verdictResult(outcome, pr.number, pr.html_url, `Opened resolve PR #${pr.number}.`);
+		} catch (e) {
+			return { error: `Resolve failed: ${(e as Error).message}` };
+		}
+	}
+};
+
+// Open a PR that sends a failed task back for encoding: the task resets to
+// encoding_required, its subtasks to pending, and every validation cell
+// clears. Allowed for a failing validator or anyone with push access — the
+// automation enforces it.
+const sendBack: CommandDef<{ task_id: string }, Result> = {
+	id: 'campaign.sendBack',
+	version: 1,
+	log: 'pr',
+	async run({ task_id }, ctx, envelope) {
+		const { forge: f, repoId, owner, repo } = ctx;
+		try {
+			await muteOnce(f, repoId, owner, repo);
+			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
+			const row = findRow(state.rows, task_id, '');
+			if (!row) return { error: `Unknown task ${task_id}.` };
+			for (const r of state.rows) {
+				if (r.task_id !== task_id) continue;
+				if (r.subtask_id === '') {
+					r.status = 'encoding_required';
+					r.encoder = '';
+					r.encoded_at = '';
+				} else {
+					r.status = 'pending';
+				}
+				for (const column of state.validationColumns) r[column] = '';
+			}
+			ctx.progress({ step: 'Opening the send-back PR…' });
+			const body = `Sends ${task_id} back for encoding after a failed validation. Opened from the campaign console.`;
+			const pr = await f.openChangePr(owner, repo, {
+				branch: `sendback-${task_id}-${rand()}`,
+				files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
+				message: `Send ${task_id} back for encoding`,
+				title: `Send ${task_id} back for encoding`,
+				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+			});
+			console.log('[sendback] PR opened', pr.number, pr.html_url);
+			const outcome = await waitForPrProcessed(ctx, pr);
+			return verdictResult(outcome, pr.number, pr.html_url, `Opened send-back PR #${pr.number} for ${task_id}.`);
+		} catch (e) {
+			return { error: `Send back failed: ${(e as Error).message}` };
 		}
 	}
 };
@@ -888,6 +1083,9 @@ export const commands = {
 	openEditor,
 	submitEncoding,
 	submitValidation,
+	submitComment,
+	resolveComment,
+	sendBack,
 	rawLink,
 	runReaper,
 	readFacsimile,

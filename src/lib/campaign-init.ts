@@ -108,6 +108,7 @@ const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist
 const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
 const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
 const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
+const COMMENT_COLUMNS = ['comment_id', 'task_id', 'subtask_id', 'kind', 'page', 'measure_start', 'measure_end', 'author_id', 'timestamp', 'resolved', 'parent_id', 'body'];
 
 // Defaults for fields the create form does not surface.
 const DEFAULTS = {
@@ -404,4 +405,9 @@ export function buildLockCsv(): string {
 /** Build the initial history table: header only. */
 export function buildHistoryCsv(): string {
 	return `${csvRow(HISTORY_COLUMNS)}\n`;
+}
+
+/** Build the initial comment table: header only. */
+export function buildCommentCsv(): string {
+	return `${csvRow(COMMENT_COLUMNS)}\n`;
 }

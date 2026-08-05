@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -14,22 +13,24 @@
     StateRow,
     LockRow,
     HistoryRow,
+    CommentRow,
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
-  import type { CommandContext, Result } from "$lib/commands.ts";
+  import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
+  import { statusPill, isPreTask } from "$lib/campaign-graph.ts";
   import {
-    buildGraph,
-    buildPanel,
-    statusPill,
-    isPreTask,
-  } from "$lib/campaign-graph.ts";
+    buildBoard,
+    buildRecord,
+    buildThreads,
+    elapsed,
+  } from "$lib/campaign-board.ts";
+  import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
-  import type { Selection, PanelAction } from "$lib/campaign-graph.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
 
@@ -61,6 +62,7 @@
   let validationColumns = $state<string[]>([]);
   let locks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
+  let comments = $state<CommentRow[]>([]);
   // Numeric user id → login, for displaying the people the tables reference.
   let logins = $state<Record<string, string>>({});
   let title = $state("");
@@ -68,19 +70,16 @@
   let license = $state("");
   let passThreshold = $state(1);
 
-  // Rows with an empty subtask_id address the whole task (the encoding unit);
-  // the others are its validation subtasks.
-  const taskRows = $derived(rows.filter((r) => r.subtask_id === ""));
-
   let busy = $state(false);
   const busyLog = new ProgressLog();
   let result = $state<Result | null>(null);
 
   // UI-only state: everything else derives from the tracking tables.
-  let view = $state<"graph" | "tables">("graph");
-  let selected = $state<Selection | null>(null);
-  let expert = $state(false);
+  let view = $state<"board" | "tables">("board");
   let showInfo = $state(false);
+  // Columns the viewer expanded past the card cap.
+  let expanded = $state<Partial<Record<ColumnKey, boolean>>>({});
+  const CARD_CAP = 5;
 
   // The score's <meiHead> fields, fetched on first open of the info panel.
   let scoreHead = $state<MeiHeader | null>(null);
@@ -108,6 +107,139 @@
     [...new Set(history.map((h) => h.user_id))].filter(Boolean),
   );
 
+  const graphData = $derived({
+    taskDefs,
+    rows,
+    validationColumns,
+    locks,
+    passThreshold,
+  });
+  const board = $derived(
+    buildBoard(graphData, comments, history, viewer, logins),
+  );
+  const allCards = $derived(board.columns.flatMap((c) => c.cards));
+  const nextCard = $derived(
+    board.nextUp
+      ? (allCards.find((c) => c.task === board.nextUp) ?? null)
+      : null,
+  );
+
+  // ------------------------------------------------------------ the overlay
+  // Task preview overlay: opens from a board card; the board stays behind it.
+  let overlayTask = $state<string | null>(null);
+  const overlayCard = $derived(
+    overlayTask ? (allCards.find((c) => c.task === overlayTask) ?? null) : null,
+  );
+  const record = $derived(
+    overlayCard ? buildRecord(overlayCard, comments, viewer, logins) : [],
+  );
+  const threads = $derived(
+    overlayTask ? buildThreads(comments, overlayTask) : [],
+  );
+  const mineEncoding = $derived(
+    overlayTask != null &&
+      viewer !== "" &&
+      locks.some(
+        (l) =>
+          l.task_id === overlayTask &&
+          l.subtask_id === "" &&
+          l.kind === "encoding" &&
+          l.user_id === viewer,
+      ),
+  );
+
+  // The measure range a fail refers to, highlighted in both preview panes.
+  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  // The inline form a fail verdict fills in (its mandatory comment).
+  let failForm = $state<{
+    sub: string;
+    body: string;
+    page: string;
+    m1: string;
+    m2: string;
+  } | null>(null);
+  // Composer state for the discussion thread.
+  let composerText = $state("");
+  let composerKind = $state<"question" | "addition">("question");
+  let replyTo = $state<CommentRow | null>(null);
+
+  function openOverlay(task: string) {
+    overlayTask = task;
+    anchor = null;
+    failForm = null;
+    replyTo = null;
+    composerText = "";
+    // A per-page task opens on its page; whole-file tasks open on page 1.
+    const locator = findRow(taskDefs, task, "")?.locator ?? "";
+    const pg = /^surface-(\d+)$/.exec(locator);
+    const startPage = pg ? Number(pg[1]) - 1 : 0;
+    if (preview?.taskId !== task) {
+      loadPreview(task, startPage);
+    } else {
+      pvFirstVisible = Math.min(startPage, Math.max(0, pvPageTotal - 1));
+      renderSpread();
+    }
+  }
+  function closeOverlay() {
+    overlayTask = null;
+    preview = null;
+    anchor = null;
+    failForm = null;
+    replyTo = null;
+  }
+
+  function showAnchorFor(c: CommentRow) {
+    const m1 = Number(c.measure_start);
+    const m2 = Number(c.measure_end || c.measure_start);
+    anchor = {
+      page: Number(c.page),
+      m1: Number.isFinite(m1) ? m1 : 0,
+      m2: Number.isFinite(m2) ? m2 : 0,
+    };
+    showZones = true;
+    if (anchor.page >= 1 && anchor.page <= pvPageTotal) {
+      pvFirstVisible = anchor.page - 1;
+      renderSpread();
+    }
+  }
+  const anchorLabel = (c: CommentRow): string => {
+    const range =
+      c.measure_end && c.measure_end !== c.measure_start
+        ? `m. ${c.measure_start}–${c.measure_end}`
+        : `m. ${c.measure_start}`;
+    return `${c.page ? `p. ${c.page} · ` : ""}${range}`;
+  };
+  const hasAnchor = (c: CommentRow): boolean =>
+    c.measure_start !== "" || c.page !== "";
+
+  // Whether a facsimile zone falls in the anchored measure range (zone labels
+  // carry the measure numbers).
+  function zoneFlagged(label: string): boolean {
+    if (!anchor) return false;
+    const a = anchor;
+    return (label.match(/\d+/g) ?? []).some((s) => {
+      const n = Number(s);
+      return n >= a.m1 && n <= a.m2;
+    });
+  }
+  // Mark the anchored measures in a rendered encoding page (Verovio writes the
+  // measure number as data-n — see svgAdditionalAttribute below).
+  function flagSvg(svg: string): string {
+    if (!anchor || !svg) return svg;
+    const a = anchor;
+    try {
+      const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+      for (const g of doc.querySelectorAll("g.measure")) {
+        const n = Number(g.getAttribute("data-n"));
+        if (Number.isFinite(n) && n >= a.m1 && n <= a.m2)
+          g.classList.add("m-flag");
+      }
+      return new XMLSerializer().serializeToString(doc);
+    } catch {
+      return svg;
+    }
+  }
+
   /** One facsimile page in the preview: image plus its measure zones. */
   type PreviewPage = {
     url: string;
@@ -127,241 +259,20 @@
     svgs: Record<number, string>;
   } | null>(null);
 
-  const graphData = $derived({
-    taskDefs,
-    rows,
-    validationColumns,
-    locks,
-    passThreshold,
-  });
-  const graph = $derived(buildGraph(graphData, viewer, logins));
-
-  // Manual node placement: buildGraph auto-lays the nodes, but the user can
-  // drag any node to a new spot. Overrides are keyed by task id and outlive
-  // table refreshes; nodes without an override keep their auto-layout position.
-  let nodePos = $state<Record<string, { x: number; y: number }>>({});
-  let drag = $state<{
-    task: string;
-    startX: number;
-    startY: number;
-    origX: number;
-    origY: number;
-    w: number;
-    h: number;
-  } | null>(null);
-  // Set while a drag actually moves the node, so the pointerup's click does not
-  // also select the node.
-  let dragMoved = $state(false);
-  // The canvas-wrap is the visible graph frame: its box excludes the side panels
-  // and preview dock, and (unlike the scroller inside it) is not a scroll
-  // container, so its size never feeds back through a scrollbar. frameW/frameH
-  // track it reactively to drive zoom-to-fit.
-  let wrapEl = $state<HTMLDivElement | null>(null);
-  let frameW = $state(0);
-  let frameH = $state(0);
-  // Read the frame size, writing only on an actual change so a no-op resize
-  // callback cannot feed back into another resize.
-  function measureFrame() {
-    if (!wrapEl) return;
-    if (wrapEl.clientWidth !== frameW) frameW = wrapEl.clientWidth;
-    if (wrapEl.clientHeight !== frameH) frameH = wrapEl.clientHeight;
-  }
-
-  const laidNodes = $derived(
-    graph.nodes.map((n) => {
-      const p = nodePos[n.task];
-      return p ? { ...n, x: p.x, y: p.y } : n;
-    }),
-  );
-  // NODE_BORDER is the node's 1px border on each side: node widths/heights are
-  // content-box, so the rendered box extends 2px past n.w / n.h, and any box
-  // sized to the nodes must include it or a corner-parked node overflows by
-  // those 2px into a scrollbar.
-  const NODE_BORDER = 2;
-  // Inset the frame by this much when placing nodes, so a node's connector ports
-  // (6px outside its box) and "next step" badge (9px above) stay clear of the
-  // edge.
-  const EDGE_PAD = 10;
-  // Auto-fit shrinks to fit the frame but not past AUTO_MIN_ZOOM — below that
-  // the nodes get too small to read, so it stops there (the graph then scrolls)
-  // and the viewer takes over with the manual zoom controls, which reach down to
-  // MANUAL_MIN_ZOOM to see a large graph whole.
-  const AUTO_MIN_ZOOM = 0.6;
-  const MANUAL_MIN_ZOOM = 0.25;
-  const MAX_ZOOM = 1;
-  // null = follow auto-fit; a number = the viewer's manual zoom.
-  let userZoom = $state<number | null>(null);
-
-  // The auto-fit bounding box, from the auto-layout (graph.nodes, so it is stable
-  // while the viewer drags individual nodes).
-  const fitBox = $derived.by(() => {
-    const ns = graph.nodes;
-    if (!ns.length) return { w: 1, h: 1 };
-    const minX = Math.min(...ns.map((n) => n.x));
-    const minY = Math.min(...ns.map((n) => n.y));
-    const maxX = Math.max(...ns.map((n) => n.x + n.w + NODE_BORDER));
-    const maxY = Math.max(...ns.map((n) => n.y + n.h + NODE_BORDER));
-    return { w: maxX - minX + 2 * EDGE_PAD, h: maxY - minY + 2 * EDGE_PAD };
-  });
-  const fitZoom = (fw: number, fh: number) =>
-    fw && fh
-      ? Math.max(
-          AUTO_MIN_ZOOM,
-          Math.min(MAX_ZOOM, fw / fitBox.w, fh / fitBox.h),
-        )
-      : 1;
-  const zoom = $derived(
-    userZoom != null
-      ? Math.min(MAX_ZOOM, Math.max(MANUAL_MIN_ZOOM, userZoom))
-      : fitZoom(frameW, frameH),
-  );
-  // The world (unscaled canvas) holds the nodes; it is at least the frame mapped
-  // into world units (frame / zoom) so the nodes fill the frame once scaled, and
-  // grows further only if a node sits past that (e.g. at the MIN_ZOOM floor).
-  const worldW = $derived(
-    Math.max(
-      EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.x + n.w + NODE_BORDER)),
-      frameW / zoom,
-    ),
-  );
-  const worldH = $derived(
-    Math.max(
-      EDGE_PAD + Math.max(0, ...laidNodes.map((n) => n.y + n.h + NODE_BORDER)),
-      frameH / zoom,
-    ),
-  );
-
-  // headH / 2 — the header midline the ports and edge anchors sit on (matches
-  // the 43px port offset in the CSS and headH in campaign-graph.ts).
-  const HEAD_MID = 43;
-  const edgePath = (x1: number, y1: number, x2: number, y2: number): string => {
-    const dx = Math.max(18, (x2 - x1) * 0.5);
-    return `M${x1} ${y1} C${x1 + dx} ${y1},${x2 - dx} ${y2},${x2} ${y2}`;
-  };
-  // Re-route each dependency edge through its endpoints' current (possibly
-  // dragged) positions so edges track their nodes.
-  const laidEdges = $derived(
-    graph.edges.map((e) => {
-      const a = laidNodes.find((n) => n.task === e.from);
-      const b = laidNodes.find((n) => n.task === e.to);
-      if (!a || !b) return { kind: e.kind, d: e.d };
-      return {
-        kind: e.kind,
-        d: edgePath(a.x + a.w, a.y + HEAD_MID, b.x, b.y + HEAD_MID),
-      };
-    }),
-  );
-
-  function startDrag(
-    e: PointerEvent,
-    n: { task: string; x: number; y: number },
-  ) {
-    const p = nodePos[n.task];
-    // Clamp against the node's rendered border-box (offsetWidth/Height includes
-    // the border), so a corner-parked node lands flush with the frame edge and
-    // does not overflow it into a scrollbar.
-    const el = e.currentTarget as HTMLElement;
-    drag = {
-      task: n.task,
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: p?.x ?? n.x,
-      origY: p?.y ?? n.y,
-      w: el.offsetWidth,
-      h: el.offsetHeight,
-    };
-    dragMoved = false;
-  }
-  // Keep the node (with its decorations) inside the padded frame:
-  // [PAD, extent - nodeSize - PAD]; collapses to PAD when the node is larger
-  // than the frame.
-  const clampAxis = (v: number, extent: number, size: number) =>
-    Math.min(
-      Math.max(v, EDGE_PAD),
-      Math.max(EDGE_PAD, extent - size - EDGE_PAD),
-    );
-  function dragMove(e: PointerEvent) {
-    if (!drag) return;
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-    if (!dragMoved && Math.abs(dx) + Math.abs(dy) < 3) return;
-    dragMoved = true;
-    // Pointer travel is in screen px; divide by the zoom to move in world units,
-    // and clamp to the frame mapped into world units so the node stays visible.
-    const z = zoom || 1;
-    const fw = wrapEl ? wrapEl.clientWidth / z : Infinity;
-    const fh = wrapEl ? wrapEl.clientHeight / z : Infinity;
-    nodePos = {
-      ...nodePos,
-      [drag.task]: {
-        x: clampAxis(drag.origX + dx / z, fw, drag.w),
-        y: clampAxis(drag.origY + dy / z, fh, drag.h),
-      },
-    };
-  }
-  // Reorder: restore the auto-layout, centred in the frame (mapped into world
-  // units). The frame already excludes the side panels and preview dock, and
-  // zoom-to-fit then scales the whole thing to fit.
-  function reorder() {
-    // Reorder returns to auto-fit as well as the auto-layout. Measure the frame
-    // first so the derived auto-zoom is correct straight away (the observer can
-    // lag on first paint).
-    userZoom = null;
-    measureFrame();
-    const ns = graph.nodes;
-    if (!ns.length) {
-      nodePos = {};
-      return;
-    }
-    const minX = Math.min(...ns.map((n) => n.x));
-    const minY = Math.min(...ns.map((n) => n.y));
-    const contentW = Math.max(...ns.map((n) => n.x + n.w)) - minX;
-    const contentH = Math.max(...ns.map((n) => n.y + n.h)) - minY;
-    // Measure and fit synchronously (the reactive zoom may not have caught up
-    // when reorder runs right after the panels open).
-    const pxW = wrapEl?.clientWidth ?? 0;
-    const pxH = wrapEl?.clientHeight ?? 0;
-    const z = pxW && pxH ? fitZoom(pxW, pxH) : zoom || 1;
-    const fw = pxW ? pxW / z : contentW + 2 * EDGE_PAD;
-    const fh = pxH ? pxH / z : contentH + 2 * EDGE_PAD;
-    const offX = EDGE_PAD + Math.max(0, (fw - 2 * EDGE_PAD - contentW) / 2);
-    const offY = EDGE_PAD + Math.max(0, (fh - 2 * EDGE_PAD - contentH) / 2);
-    const next: Record<string, { x: number; y: number }> = {};
-    for (const n of ns)
-      next[n.task] = { x: n.x - minX + offX, y: n.y - minY + offY };
-    nodePos = next;
-  }
-
-  // Manual zoom: step from the current effective zoom, switching out of auto-fit.
-  // Fit (and Reorder) hand control back to auto-fit.
-  const ZOOM_STEP = 0.1;
-  function zoomBy(step: number) {
-    userZoom = Math.min(MAX_ZOOM, Math.max(MANUAL_MIN_ZOOM, zoom + step));
-  }
-  const fitToView = () => (userZoom = null);
-
-  const panel = $derived(
-    buildPanel(
-      graphData,
-      history,
-      selected,
-      viewer,
-      selected != null && preview?.taskId === selected.task,
-      logins,
-    ),
-  );
-  const tasksDone = $derived(
-    taskRows.filter((r) => r.status === "completed").length,
-  );
-
-  // Preview display state: book-style paging shared by both panes, per-pane
-  // zoom, and the zone overlay toggle.
+  // Preview display state: book-style paging shared by both panes, one zoom
+  // for both, and the zone overlay toggle.
   let pvView = $state<"single" | "double">("single");
   let pvFirstOnRight = $state(true);
   let pvFirstVisible = $state(0);
-  let facsZoom = $state(1);
-  let encZoom = $state(1);
+  let pvZoom = $state(1);
   let showZones = $state(true);
+  const PV_ZOOM_MIN = 0.5;
+  const PV_ZOOM_MAX = 4;
+  const pvZoomBy = (step: number) =>
+    (pvZoom = Math.min(
+      PV_ZOOM_MAX,
+      Math.max(PV_ZOOM_MIN, Math.round((pvZoom + step) * 100) / 100),
+    ));
 
   const pvPageTotal = $derived(
     preview ? Math.max(preview.facs?.length ?? 0, preview.pageCount) : 0,
@@ -410,44 +321,11 @@
     renderSpread();
   }
 
-  // Drag-resize state: the preview dock's share of the stage height and the
-  // detail and info panels' widths.
-  let dockFrac = $state(0.55);
-  let panelW = $state(360);
+  // Drag-resize state for the info panel's width.
   let infoW = $state(300);
-  let resizing = $state<"dock" | "panel" | "info" | null>(null);
-  let stageEl = $state<HTMLDivElement | null>(null);
-
-  // Track the graph frame's size to drive zoom-to-fit. A ResizeObserver covers
-  // window resizes; reading the panel/dock/resizer state makes the effect also
-  // re-run when those toggle or drag (they resize the canvas-wrap), and the
-  // measurement is deferred a frame so it reads the settled layout. Declared
-  // here — below the panel/dock state — so those reads are in scope.
-  $effect(() => {
-    void selected;
-    void preview;
-    void dockFrac;
-    void panelW;
-    void infoW;
-    void view;
-    const el = wrapEl;
-    if (!el) return;
-    measureFrame();
-    const ro = new ResizeObserver(measureFrame);
-    ro.observe(el);
-    return () => ro.disconnect();
-  });
-
+  let resizing = $state<"info" | null>(null);
   function resizeMove(e: PointerEvent) {
-    if (resizing === "dock" && stageEl) {
-      const r = stageEl.getBoundingClientRect();
-      dockFrac = Math.min(
-        0.85,
-        Math.max(0.2, (r.bottom - e.clientY) / r.height),
-      );
-    } else if (resizing === "panel") {
-      panelW = Math.min(680, Math.max(280, window.innerWidth - e.clientX));
-    } else if (resizing === "info") {
+    if (resizing === "info") {
       infoW = Math.min(520, Math.max(220, e.clientX));
     }
   }
@@ -468,6 +346,9 @@
         svgViewBox: true,
         // Render every movement — without this only the first <mdiv> paginates.
         mdivAll: true,
+        // Write each measure's number as data-n, so a fail's measure range can
+        // be highlighted in the rendered encoding.
+        svgAdditionalAttribute: ["measure@n"],
       });
     }
     return verovio;
@@ -475,11 +356,7 @@
 
   // Preview both sides of the score: the facsimile pages (when the score
   // references any) and the rendered encoding (when it holds measures).
-  async function togglePreview(task_id: string) {
-    if (preview?.taskId === task_id) {
-      preview = null;
-      return;
-    }
+  async function loadPreview(task_id: string, startPage = 0) {
     const f = readForge();
     preview = { taskId: task_id, loading: true, pageCount: 0, svgs: {} };
     pvFirstVisible = 0;
@@ -533,6 +410,8 @@
           pageCount,
           svgs: {},
         };
+        const total = Math.max(facs?.length ?? 0, pageCount);
+        pvFirstVisible = Math.min(startPage, Math.max(0, total - 1));
         renderSpread();
       }
     } catch (e) {
@@ -587,6 +466,7 @@
       validationColumns = tables.validationColumns;
       locks = tables.locks;
       history = tables.history;
+      comments = tables.comments;
       logins = tables.logins;
       title = tables.title;
       description = tables.description;
@@ -600,7 +480,9 @@
           rows.length,
           "state row(s),",
           locks.length,
-          "lock(s)",
+          "lock(s),",
+          comments.length,
+          "comment(s)",
         );
       }
       loaded = true;
@@ -648,26 +530,6 @@
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
   });
-
-  // On first load of an initialised campaign, open with the detail panel and
-  // preview showing — selecting the viewer's next step when there is one, else
-  // the first node. Runs once; the viewer can close either afterwards.
-  let defaultsApplied = $state(false);
-  $effect(() => {
-    if (loaded && !notInitialised && !defaultsApplied && graph.nodes.length) {
-      defaultsApplied = true;
-      applyDefaults();
-    }
-  });
-  async function applyDefaults() {
-    const first = graph.nodes.find((n) => n.nextUp) ?? graph.nodes[0];
-    selected = { task: first.task, sub: "", slot: null };
-    togglePreview(first.task);
-    // Centre once the panel and preview have taken their space, so the flow is
-    // laid out for the room that is actually left.
-    await tick();
-    reorder();
-  }
 
   // Pages the measure detector couldn't process during campaign creation, handed
   // over via sessionStorage by the create flow. Read once and clear, so the
@@ -739,10 +601,65 @@
   const submitpr = (task_id: string) =>
     run((c) => invoke(commands.submitEncoding, { task_id }, c));
 
-  const validate = (task_id: string, subtask_id: string, verdict: string) =>
+  const validate = (
+    task_id: string,
+    subtask_id: string,
+    verdict: string,
+    comment?: FailComment,
+  ) =>
     run((c) =>
-      invoke(commands.submitValidation, { task_id, subtask_id, verdict }, c),
+      invoke(
+        commands.submitValidation,
+        { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
+        c,
+      ),
     );
+
+  async function submitFail() {
+    if (!overlayTask || !failForm || !failForm.body.trim()) return;
+    const form = failForm;
+    await validate(overlayTask, form.sub, "fail", {
+      body: form.body,
+      page: form.page.trim(),
+      measure_start: form.m1.trim(),
+      measure_end: form.m2.trim(),
+    });
+    if (result?.ok) failForm = null;
+  }
+
+  const sendBackTask = (task_id: string) =>
+    run((c) => invoke(commands.sendBack, { task_id }, c));
+
+  async function postComment() {
+    if (!overlayTask || !composerText.trim()) return;
+    const kind = replyTo ? "reply" : composerKind;
+    const parent_id = replyTo?.comment_id ?? "";
+    await run((c) =>
+      invoke(
+        commands.submitComment,
+        {
+          task_id: overlayTask!,
+          subtask_id: "",
+          kind,
+          body: composerText,
+          page: "",
+          measure_start: "",
+          measure_end: "",
+          parent_id,
+        },
+        c,
+      ),
+    );
+    if (result?.ok) {
+      composerText = "";
+      replyTo = null;
+    }
+  }
+
+  const resolveCommentRow = (comment_id: string) =>
+    run((c) => invoke(commands.resolveComment, { comment_id }, c));
+  const canResolve = (c: CommentRow) =>
+    viewer !== "" && (canPush || c.author_id === viewer);
 
   // The tokenised raw URL of the score — copied to the clipboard.
   const rawlink = async (task_id: string) => {
@@ -752,141 +669,119 @@
 
   const reaper = () => run((c) => invoke(commands.runReaper, {}, c));
 
-  const select = (task: string, sub: string, slot: number | null) => {
-    selected = { task, sub, slot };
-  };
-
-  // The panel's buttons map to the same command wrappers the tables used.
-  function panelAction(a: PanelAction) {
-    if (!selected) return;
-    const { task, sub } = selected;
-    if (a.id === "open-editor") editor(task);
-    else if (a.id === "submit-encoding") submitpr(task);
-    else if (a.id === "claim-validation") claimValidate(task, sub);
-    else if (a.id === "validate-pass") validate(task, sub, "pass");
-    else if (a.id === "validate-fail") validate(task, sub, "fail");
-    else if (a.id === "toggle-preview") togglePreview(task);
-    else if (a.id === "raw-link") rawlink(task);
+  // "Claim the next task": act on the first card the viewer can work on — a
+  // claim when it is open, otherwise its overlay (their claimed or reviewable
+  // work lives there).
+  function claimCard(card: BoardCard) {
+    if (card.pre) goto(`/${campaign}/zones/${card.task}`);
+    else editor(card.task);
   }
-
-  const edgeMarker = (kind: string) =>
-    kind === "green" ? "url(#ag)" : "url(#ax)";
+  function actOnNext() {
+    if (!nextCard) return;
+    if (nextCard.column === "ready") claimCard(nextCard);
+    else openOverlay(nextCard.task);
+  }
 
   // History rows for the tables tab, newest first (the file is append-only).
   const historyNewestFirst = $derived(history.slice().reverse());
   const joinedValidations = (row: StateRow) =>
     validationColumns.map((c) => row[c] || "·").join("  ");
+
+  const commentLogin = (c: CommentRow) => logins[c.author_id] || c.author_id;
+  const initialOf = (name: string) => (name ? name[0].toUpperCase() : "?");
 </script>
 
 <svelte:window
   onpointermove={(e) => {
     if (resizing) resizeMove(e);
-    else if (drag) dragMove(e);
   }}
   onpointerup={() => {
     resizing = null;
-    drag = null;
   }}
-  onresize={measureFrame}
+  onkeydown={(e) => {
+    if (e.key === "Escape" && overlayTask) closeOverlay();
+  }}
 />
-
-{#snippet lockIcon()}
-  <svg
-    class="icon-lock"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2.2"
-    stroke-linecap="round"
-    aria-hidden="true"
-  >
-    <rect x="4.5" y="10.5" width="15" height="10" rx="2.5"></rect>
-    <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"></path>
-  </svg>
-{/snippet}
-
-{#snippet reviewIcon()}
-  <svg
-    class="icon-review"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2.6"
-    stroke-linecap="round"
-    aria-hidden="true"
-  >
-    <circle cx="10.5" cy="10.5" r="6"></circle>
-    <path d="m15.2 15.2 5.3 5.3"></path>
-  </svg>
-{/snippet}
 
 {#if busy}
   <LoadingOverlay log={busyLog} />
 {/if}
 
-<div class="console">
-  <div class="conhead">
-    <a class="back" href="/" title="All campaigns">←</a>
-    <div class="titles">
-      <div class="title">{title || repo}</div>
-      <a
-        class="handle mono"
-        href={`https://github.com/${owner}/${repo}`}
-        target="_blank"
-        rel="noreferrer">{owner}/{repo}</a
+{#snippet resultBanner()}
+  {#if result && result.error}
+    <div class="banner err">
+      <span>
+        {result.error}
+        {#if result.prUrl}
+          <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+        {/if}
+      </span>
+      <button type="button" class="dismiss" onclick={() => (result = null)}
+        >Dismiss</button
       >
     </div>
-    <button
-      type="button"
-      class="hbtn"
-      class:on={showInfo}
-      onclick={() => {
-        showInfo = !showInfo;
-        if (showInfo) loadScoreHead();
-      }}
-      title="Show or hide campaign information">Info</button
-    >
-    {#if loaded && !notInitialised}
-      <div class="progress" title="Completed tasks">
-        <div class="bar">
-          <div
-            style={`width:${taskRows.length ? Math.round((tasksDone / taskRows.length) * 100) : 0}%`}
-          ></div>
-        </div>
-        <span>{tasksDone} / {taskRows.length} tasks complete</span>
+  {:else if result && result.ok}
+    <div class="banner {result.warn ? 'warn' : 'ok'}">
+      <div class="banner-body">
+        {result.message}
+        {#if result.prUrl}
+          <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+        {/if}
+        {#if result.meiFriendUrl}
+          <div class="rawlink">
+            <input
+              readonly
+              value={result.meiFriendUrl}
+              onfocus={(e) => (e.target as HTMLInputElement).select()}
+            />
+            <button type="button" onclick={() => copy(result!.meiFriendUrl!)}
+              >Copy</button
+            >
+          </div>
+          <span class="muted">
+            <a href={result.meiFriendUrl} target="_blank" rel="noreferrer"
+              >Open in mei-friend ↗</a
+            >
+            (if the tab didn't open automatically)
+          </span>
+          {#if isPrivate}
+            <span class="muted">
+              Opening mei-friend shares a short-lived, read-capable GitHub URL
+              with that external service.
+            </span>
+          {/if}
+        {/if}
+        {#if result.rawUrl}
+          <div class="rawlink">
+            <input
+              readonly
+              value={result.rawUrl}
+              onfocus={(e) => (e.target as HTMLInputElement).select()}
+            />
+            <button type="button" onclick={() => copy(result!.rawUrl!)}
+              >Copy</button
+            >
+          </div>
+          {#if isPrivate}
+            <span class="muted"
+              >The token in this link expires within minutes — use it
+              promptly.</span
+            >
+          {/if}
+        {/if}
       </div>
-    {/if}
-    <div class="spacer"></div>
-    <button
-      type="button"
-      class="hbtn"
-      onclick={() => load()}
-      disabled={busy || loading}
-      title="Re-read the tracking tables">↻ Refresh</button
-    >
-    {#if auth.user && canPush}
-      <button
-        type="button"
-        class="hbtn"
-        onclick={() => reaper()}
-        disabled={busy}
-        title="Release claims that have gone stale">Run reaper</button
-      >
-    {/if}
-    <div class="tabs">
-      <button
-        type="button"
-        class:on={view === "graph"}
-        onclick={() => (view = "graph")}>Graph</button
-      >
-      <button
-        type="button"
-        class:on={view === "tables"}
-        onclick={() => (view = "tables")}>Tables</button
+      <button type="button" class="dismiss" onclick={() => (result = null)}
+        >Dismiss</button
       >
     </div>
-  </div>
+  {/if}
+{/snippet}
 
+{#snippet slotDot(key: string)}
+  <span class="dot {key}" aria-label={key} title={key}></span>
+{/snippet}
+
+<div class="console">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else}
@@ -912,74 +807,8 @@
         </span>
       </div>
     {/if}
-    {#if result && result.error}
-      <div class="banner err">
-        <span>
-          {result.error}
-          {#if result.prUrl}
-            <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a
-            >
-          {/if}
-        </span>
-        <button type="button" class="dismiss" onclick={() => (result = null)}
-          >Dismiss</button
-        >
-      </div>
-    {:else if result && result.ok}
-      <div class="banner {result.warn ? 'warn' : 'ok'}">
-        <div class="banner-body">
-          {result.message}
-          {#if result.prUrl}
-            <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a
-            >
-          {/if}
-          {#if result.meiFriendUrl}
-            <div class="rawlink">
-              <input
-                readonly
-                value={result.meiFriendUrl}
-                onfocus={(e) => (e.target as HTMLInputElement).select()}
-              />
-              <button type="button" onclick={() => copy(result!.meiFriendUrl!)}
-                >Copy</button
-              >
-            </div>
-            <span class="muted">
-              <a href={result.meiFriendUrl} target="_blank" rel="noreferrer"
-                >Open in mei-friend ↗</a
-              >
-              (if the tab didn't open automatically)
-            </span>
-            {#if isPrivate}
-              <span class="muted">
-                Opening mei-friend shares a short-lived, read-capable GitHub URL
-                with that external service.
-              </span>
-            {/if}
-          {/if}
-          {#if result.rawUrl}
-            <div class="rawlink">
-              <input
-                readonly
-                value={result.rawUrl}
-                onfocus={(e) => (e.target as HTMLInputElement).select()}
-              />
-              <button type="button" onclick={() => copy(result!.rawUrl!)}
-                >Copy</button
-              >
-            </div>
-            {#if isPrivate}
-              <span class="muted"
-                >The token in this link expires within minutes — use it
-                promptly.</span
-              >
-            {/if}
-          {/if}
-        </div>
-        <button type="button" class="dismiss" onclick={() => (result = null)}
-          >Dismiss</button
-        >
-      </div>
+    {#if !overlayTask}
+      {@render resultBanner()}
     {/if}
 
     <div class="main">
@@ -1029,9 +858,9 @@
                   {#if workedOn.length}
                     {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
                         class="mono"
-                        href={`https://github.com/${u}`}
+                        href={`https://github.com/${logins[u] || u}`}
                         target="_blank"
-                        rel="noreferrer">@{u}</a
+                        rel="noreferrer">@{logins[u] || u}</a
                       >{/each}
                   {:else}—{/if}
                 </span>
@@ -1070,7 +899,7 @@
               </div>
               <div class="irow">
                 <span>Tasks</span>
-                <span>{tasksDone} / {taskRows.length} complete</span>
+                <span>{board.done} / {board.total} complete</span>
               </div>
               <div
                 class="irow"
@@ -1141,647 +970,916 @@
               page to initialise it.
             </span>
           </div>
-        {:else if view === "graph"}
-          <div class="body">
-            <div class="stage" bind:this={stageEl}>
-              <div class="canvas-wrap" bind:this={wrapEl}>
-                <div class="scroller">
-                  <div
-                    class="zoomwrap"
-                    style={`width:${worldW * zoom}px;height:${worldH * zoom}px`}
-                  >
-                    <div
-                      class="canvas"
-                      style={`width:${worldW}px;height:${worldH}px;transform:scale(${zoom})`}
-                    >
-                      <svg
-                        width="100%"
-                        height="100%"
-                        class="edges"
-                        aria-hidden="true"
-                      >
-                        <defs>
-                          <marker
-                            id="ag"
-                            markerWidth="7"
-                            markerHeight="7"
-                            refX="5"
-                            refY="3"
-                            orient="auto"
-                            ><path d="M0,0 L6,3 L0,6 Z" fill="#7fbf8a"
-                            ></path></marker
-                          >
-                          <marker
-                            id="ax"
-                            markerWidth="7"
-                            markerHeight="7"
-                            refX="5"
-                            refY="3"
-                            orient="auto"
-                            ><path d="M0,0 L6,3 L0,6 Z" fill="#cfcfcf"
-                            ></path></marker
-                          >
-                        </defs>
-                        {#each laidEdges as e}
-                          <path
-                            d={e.d}
-                            class="edge {e.kind}"
-                            marker-end={edgeMarker(e.kind)}
-                          ></path>
-                        {/each}
-                      </svg>
-
-                      {#each laidNodes as n (n.key)}
-                        <div
-                          class="node s-{n.statusKey}"
-                          class:selected={selected?.task === n.task}
-                          class:mainsel={selected?.task === n.task &&
-                            selected?.sub === ""}
-                          class:nextup={n.nextUp}
-                          class:dragging={drag?.task === n.task}
-                          style={`left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px`}
-                          role="group"
-                          aria-label={`${n.title} node — drag to reposition`}
-                          onpointerdown={(e) => startDrag(e, n)}
-                        >
-                          {#if n.hasIn}
-                            <span class="port in"></span>
-                          {/if}
-                          {#if n.hasOut}
-                            <span class="port out" class:green={n.outGreen}
-                            ></span>
-                          {/if}
-                          {#if n.nextUp}
-                            <span class="nextup-badge">next step</span>
-                          {/if}
-                          <button
-                            type="button"
-                            class="nmain"
-                            onclick={() => {
-                              if (dragMoved) return;
-                              select(n.task, "", null);
-                            }}
-                          >
-                            <span class="nhead">
-                              <span class="nicon {n.kind}">{n.icon}</span>
-                              <span class="ntitles">
-                                <span class="ntitle">{n.title}</span>
-                                <span class="nsub mono">{n.subtitle}</span>
-                              </span>
-                            </span>
-                            <span class="nmeta">
-                              <span class="pill s-{n.statusKey}"
-                                >{statusPill(
-                                  n.statusKey,
-                                  n.kind === "pre",
-                                )}</span
-                              >
-                              {#if n.running}{@render lockIcon()}{/if}
-                              <span class="mono nmeta-text">{n.meta}</span>
-                            </span>
-                          </button>
-                          {#if n.slots.length}
-                            <span class="nslots-head">
-                              <span>Validation — required</span>
-                              <span>{n.passes} / {n.threshold} passes</span>
-                            </span>
-                            {#each n.slots as s (s.sub + s.slot)}
-                              <button
-                                type="button"
-                                class="nslot"
-                                class:claimable={s.claimable}
-                                class:selected={selected?.task === n.task &&
-                                  selected?.sub === s.sub &&
-                                  selected?.slot === s.slot}
-                                title="Open this validation slot in the panel"
-                                onclick={() => {
-                                  if (dragMoved) return;
-                                  select(n.task, s.sub, s.slot);
-                                }}
-                              >
-                                {#if s.key === "review"}
-                                  <span class="mark review"
-                                    >{@render reviewIcon()}</span
-                                  >
-                                {:else if s.key === "pass"}
-                                  <span class="mark pass">✓</span>
-                                {:else if s.key === "fail"}
-                                  <span class="mark fail">✗</span>
-                                {:else}
-                                  <span class="mark open"></span>
-                                {/if}
-                                <span class="mono nslot-id">{s.label}</span>
-                                <span class="nslot-who">{s.who}</span>
-                                <span class="nslot-arrow" aria-hidden="true"
-                                  >›</span
-                                >
-                              </button>
-                            {/each}
-                          {/if}
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-                </div>
-                <div class="graph-fabs">
-                  <div class="zoom-fab" role="group" aria-label="Zoom">
-                    <button
-                      type="button"
-                      title="Zoom out"
-                      aria-label="Zoom out"
-                      disabled={zoom <= MANUAL_MIN_ZOOM + 0.001}
-                      onclick={() => zoomBy(-ZOOM_STEP)}>−</button
-                    >
-                    <button
-                      type="button"
-                      class="zoom-level"
-                      title={userZoom != null
-                        ? "Manual zoom — click to fit to view"
-                        : "Zoom-to-fit — click to reset"}
-                      onclick={fitToView}>{Math.round(zoom * 100)}%</button
-                    >
-                    <button
-                      type="button"
-                      title="Zoom in"
-                      aria-label="Zoom in"
-                      disabled={zoom >= MAX_ZOOM - 0.001}
-                      onclick={() => zoomBy(ZOOM_STEP)}>+</button
-                    >
-                  </div>
-                  <button
-                    type="button"
-                    class="reorder-fab"
-                    title="Reset the nodes to their automatic layout, centred and fit to view"
-                    onclick={reorder}
-                  >
-                    ⤢ Reorder
-                  </button>
-                </div>
-              </div>
-
-              {#if preview}
-                <section
-                  class="dock"
-                  aria-label="Score preview"
-                  style={`flex-basis:${Math.round(dockFrac * 1000) / 10}%`}
+        {:else}
+          <div class="hero">
+            <div class="hero-titles">
+              <div class="eyebrow">Campaign</div>
+              <div class="hero-line">
+                <h1>{title || repo}</h1>
+                <a
+                  class="mono slug"
+                  href={`https://github.com/${owner}/${repo}`}
+                  target="_blank"
+                  rel="noreferrer">{owner}/{repo}</a
                 >
-                  <button
-                    type="button"
-                    class="dock-resizer"
-                    aria-label="Drag to resize the preview"
-                    title="Drag to resize the preview"
-                    onpointerdown={(e) => {
-                      e.preventDefault();
-                      resizing = "dock";
-                    }}
-                  ></button>
-                  <div class="dock-head">
-                    <span class="dock-title"
-                      >Score preview · <span class="mono">{preview.taskId}</span
-                      ></span
-                    >
-                    {#if pvPageTotal > 1}
-                      <span class="dock-nav">
-                        <button
-                          type="button"
-                          onclick={() => pvGo(-1)}
-                          disabled={pvSpreadIndex <= 0}
-                          aria-label="Previous page">‹</button
-                        >
-                        <span class="dock-nav-label">{pvSpreadLabel}</span>
-                        <button
-                          type="button"
-                          onclick={() => pvGo(1)}
-                          disabled={pvSpreadIndex >= pvSpreads.length - 1}
-                          aria-label="Next page">›</button
-                        >
-                      </span>
-                      <span class="dock-viewmode">
-                        <button
-                          type="button"
-                          class:on={pvView === "single"}
-                          onclick={() => pvSetView("single")}>1 page</button
-                        >
-                        <button
-                          type="button"
-                          class:on={pvView === "double"}
-                          onclick={() => pvSetView("double")}>2 pages</button
-                        >
-                      </span>
-                      {#if pvView === "double"}
-                        <label
-                          class="dock-check"
-                          title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={pvFirstOnRight}
-                            onchange={(e) =>
-                              pvSetFirstOnRight(
-                                (e.target as HTMLInputElement).checked,
-                              )}
-                          />
-                          Page 1 on the right
-                        </label>
-                      {/if}
-                    {/if}
-                    <span class="spacer"></span>
-                    <button
-                      type="button"
-                      class="pclose"
-                      onclick={() => (preview = null)}
-                      title="Close the preview"
-                      aria-label="Close the preview">✕</button
-                    >
-                  </div>
-                  <div class="dock-body">
-                    {#if preview.loading}
-                      <p class="muted dock-note">Loading the score…</p>
-                    {:else if preview.error}
-                      <p class="dock-err">{preview.error}</p>
-                    {:else}
-                      {#if preview.facs?.length}
-                        <div class="dock-pane">
-                          <div class="dock-label">
-                            <span>Facsimile</span>
-                            <span class="dock-tools">
-                              <button
-                                type="button"
-                                class="dock-toggle"
-                                class:on={showZones}
-                                onclick={() => (showZones = !showZones)}
-                                title="Show or hide the measure zones on the facsimile"
-                                >Zones {showZones ? "on" : "off"}</button
-                              >
-                              <label class="zoomctl">
-                                <input
-                                  type="range"
-                                  min="50"
-                                  max="400"
-                                  step="25"
-                                  value={facsZoom * 100}
-                                  oninput={(e) =>
-                                    (facsZoom =
-                                      Number(
-                                        (e.target as HTMLInputElement).value,
-                                      ) / 100)}
-                                  aria-label="Facsimile zoom"
-                                />
-                                <span class="mono"
-                                  >{Math.round(facsZoom * 100)}%</span
-                                >
-                              </label>
-                            </span>
-                          </div>
-                          <div class="pv-scroll">
-                            <div
-                              class="pv-spread"
-                              style={`width:${facsZoom * 100}%`}
-                            >
-                              {#if pvSpread.lonelySide === "right"}<div
-                                  class="pv-spacer"
-                                ></div>{/if}
-                              {#each pvSpread.pages as p (p)}
-                                {@const pg = preview.facs[p]}
-                                <figure class="pv-page">
-                                  {#if pg}
-                                    <svg
-                                      viewBox={`0 0 ${pg.w} ${pg.h}`}
-                                      role="img"
-                                      aria-label={`Facsimile page ${p + 1}`}
-                                    >
-                                      {#if pg.url}
-                                        <image
-                                          href={pg.url}
-                                          width={pg.w}
-                                          height={pg.h}
-                                        />
-                                      {:else}
-                                        <rect
-                                          width={pg.w}
-                                          height={pg.h}
-                                          fill="#f3f3f0"
-                                        />
-                                      {/if}
-                                      {#if showZones}
-                                        {#each pg.zones as z, zi (zi)}
-                                          <rect
-                                            class="pv-zone"
-                                            x={z.box.ulx}
-                                            y={z.box.uly}
-                                            width={z.box.lrx - z.box.ulx}
-                                            height={z.box.lry - z.box.uly}
-                                          />
-                                          <text
-                                            class="pv-zonelabel"
-                                            x={z.box.ulx + 6}
-                                            y={z.box.uly + 30}>{z.label}</text
-                                          >
-                                        {/each}
-                                      {/if}
-                                    </svg>
-                                    <figcaption class="mono">
-                                      page {p + 1}
-                                    </figcaption>
-                                  {/if}
-                                </figure>
-                              {/each}
-                              {#if pvSpread.lonelySide === "left"}<div
-                                  class="pv-spacer"
-                                ></div>{/if}
-                            </div>
-                          </div>
-                        </div>
-                      {/if}
-                      {#if preview.pageCount > 0}
-                        <div class="dock-pane">
-                          <div class="dock-label">
-                            <span>Encoding</span>
-                            <span class="dock-tools">
-                              <label class="zoomctl">
-                                <input
-                                  type="range"
-                                  min="50"
-                                  max="400"
-                                  step="25"
-                                  value={encZoom * 100}
-                                  oninput={(e) =>
-                                    (encZoom =
-                                      Number(
-                                        (e.target as HTMLInputElement).value,
-                                      ) / 100)}
-                                  aria-label="Encoding zoom"
-                                />
-                                <span class="mono"
-                                  >{Math.round(encZoom * 100)}%</span
-                                >
-                              </label>
-                            </span>
-                          </div>
-                          <div class="pv-scroll">
-                            <div
-                              class="pv-spread"
-                              style={`width:${encZoom * 100}%`}
-                            >
-                              {#if pvSpread.lonelySide === "right"}<div
-                                  class="pv-spacer"
-                                ></div>{/if}
-                              {#each pvSpread.pages as p (p)}
-                                <div class="pv-page enc">
-                                  {#if p < preview.pageCount}
-                                    {@html preview.svgs[p + 1] ?? ""}
-                                  {/if}
-                                </div>
-                              {/each}
-                              {#if pvSpread.lonelySide === "left"}<div
-                                  class="pv-spacer"
-                                ></div>{/if}
-                            </div>
-                          </div>
-                        </div>
-                      {:else if preview.facs?.length}
-                        <div class="dock-pane">
-                          <div class="dock-label"><span>Encoding</span></div>
-                          <p class="muted dock-note">
-                            No encoding to render yet — the measures are
-                            generated when the measure correction is submitted.
-                          </p>
-                        </div>
-                      {/if}
-                    {/if}
-                  </div>
-                </section>
-              {/if}
+              </div>
+              <div class="hero-stats">
+                <div class="hbar">
+                  <div
+                    style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+                  ></div>
+                </div>
+                <span class="stat strong"
+                  >{board.done} of {board.total} tasks done</span
+                >
+                <span class="sep">·</span>
+                <span class="stat inflight">{board.inFlight} in flight</span>
+                <span class="sep">·</span>
+                <span class="stat attention"
+                  >{board.attention} need{board.attention === 1 ? "s" : ""} attention</span
+                >
+                <span class="sep">·</span>
+                <span class="stat"
+                  >{board.contributorsWeek} contributor{board.contributorsWeek ===
+                  1
+                    ? ""
+                    : "s"} this week</span
+                >
+              </div>
             </div>
-
-            {#if panel && selected}
-              <aside class="panel" style={`--panel-w:${panelW}px`}>
+            <div class="hero-right">
+              <div class="hero-tools">
                 <button
                   type="button"
-                  class="panel-resizer"
-                  aria-label="Drag to resize the panel"
-                  title="Drag to resize the panel"
-                  onpointerdown={(e) => {
-                    e.preventDefault();
-                    resizing = "panel";
+                  class="hbtn"
+                  class:on={showInfo}
+                  onclick={() => {
+                    showInfo = !showInfo;
+                    if (showInfo) loadScoreHead();
                   }}
-                ></button>
-                <div class="phead">
-                  <span class="picon {panel.iconKind}">{panel.icon}</span>
-                  <div class="ptitles">
-                    <div class="ptitle">{panel.title}</div>
-                    <div class="psub mono">{panel.subtitle}</div>
-                  </div>
+                  title="Show or hide campaign information">Info</button
+                >
+                <button
+                  type="button"
+                  class="hbtn"
+                  onclick={() => load()}
+                  disabled={busy || loading}
+                  title="Re-read the tracking tables">↻ Refresh</button
+                >
+                {#if auth.user && canPush}
                   <button
                     type="button"
-                    class="pclose"
-                    onclick={() => (selected = null)}
-                    title="Close the panel"
-                    aria-label="Close the panel">✕</button
+                    class="hbtn"
+                    onclick={() => reaper()}
+                    disabled={busy}
+                    title="Release claims that have gone stale">Run reaper</button
                   >
-                </div>
-                <div class="pbody">
-                  <div class="pills">
-                    {#each panel.pills as pl}
-                      <span class="pill s-{pl.key}">{pl.text}</span>
-                    {/each}
-                  </div>
-                  {#if panel.lockText}
-                    <div class="lockstrip">
-                      {@render lockIcon()}
-                      <span class="mono">{panel.lockText}</span>
-                    </div>
-                  {/if}
-                  {#if panel.meta}
-                    <div class="pmeta mono">{panel.meta}</div>
-                  {/if}
-
-                  <div class="acts">
-                    {#each panel.actions as a (a.id)}
-                      {#if a.id === "zone-editor"}
-                        {#if a.disabled}
-                          <span class="act disabled" title={a.title}
-                            >{a.label}</span
-                          >
-                        {:else}
-                          <a
-                            class="act"
-                            class:primary={a.primary}
-                            href={`/${campaign}/zones/${selected.task}`}
-                            title={a.title}>{a.label}</a
-                          >
-                        {/if}
-                      {:else}
-                        <button
-                          type="button"
-                          class="act"
-                          class:primary={a.primary && !a.disabled}
-                          class:danger={a.id === "validate-fail"}
-                          class:good={a.id === "validate-pass"}
-                          disabled={busy || a.disabled}
-                          title={a.title}
-                          onclick={() => panelAction(a)}>{a.label}</button
-                        >
-                      {/if}
-                    {/each}
-                  </div>
-
-                  {#each panel.validations as v (v.sub)}
-                    <div class="valsum">
-                      <div class="valsum-head">
-                        <span class="seclabel">Validation · {v.sub}</span>
-                        <span class="valsum-passes"
-                          >{v.passes} of {v.threshold} passes</span
-                        >
-                      </div>
-                      <div class="valbar">
-                        <div style={`width:${v.pct}%`}></div>
-                      </div>
-                      {#each v.slots as s, i (i)}
-                        <div class="valslot">
-                          {#if s.state.key === "review"}
-                            <span class="mark review"
-                              >{@render reviewIcon()}</span
-                            >
-                          {:else if s.state.key === "pass"}
-                            <span class="mark pass">✓</span>
-                          {:else if s.state.key === "fail"}
-                            <span class="mark fail">✗</span>
-                          {:else}
-                            <span class="mark open"></span>
-                          {/if}
-                          <span class="mono slotid">{s.label}</span>
-                          <span class="slotsub">{s.state.sub}</span>
-                        </div>
-                      {/each}
-                    </div>
-                  {/each}
-
+                {/if}
+                <div class="tabs">
                   <button
                     type="button"
-                    class="expert-toggle"
-                    onclick={() => (expert = !expert)}
-                    title="Node metadata (type, dependencies, fragment, pass threshold) and this task's history."
-                    >{expert
-                      ? "Hide node metadata & history"
-                      : "Show node metadata & history"}</button
+                    class:on={view === "board"}
+                    onclick={() => (view = "board")}>Board</button
                   >
-                  {#if expert}
-                    <div class="xsec">
-                      <span class="seclabel">Node type · registry</span>
-                      {#each panel.metaRows as m (m.k)}
-                        <div class="xrow">
-                          <span>{m.k}</span>
-                          <span class="mono" class:done={m.done}>{m.v}</span>
-                        </div>
-                      {/each}
-                    </div>
-                    <div class="xsec">
-                      <span class="seclabel">History</span>
-                      {#if panel.history.length === 0}
-                        <span class="muted xnote"
-                          >No history for this task yet.</span
-                        >
-                      {/if}
-                      {#each panel.history as h, i (i)}
-                        <div class="xhist">
-                          <span class="mono xts">{h.t}</span>
-                          <span>{h.text}</span>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </aside>
-            {/if}
-          </div>
-        {:else}
-          <div class="tablesview">
-            <div class="tcol">
-              <div class="tsec">
-                <div class="tname">state.csv</div>
-                <div class="tcard">
-                  <div
-                    class="trow thead"
-                    style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
+                  <button
+                    type="button"
+                    class:on={view === "tables"}
+                    onclick={() => (view = "tables")}>Tables</button
                   >
-                    <span>task_id</span><span>subtask_id</span><span
-                      >status</span
-                    ><span>encoder</span><span>validate_status_*</span>
-                  </div>
-                  {#each rows as r (r.task_id + "/" + r.subtask_id)}
-                    <div
-                      class="trow"
-                      class:subrow={r.subtask_id !== ""}
-                      style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
-                    >
-                      <span class="mono">{r.task_id}</span>
-                      <span class="mono dim">{r.subtask_id || "—"}</span>
-                      <span
-                        ><span class="pill s-{r.status}">{r.status}</span></span
-                      >
-                      <span class="mono">{r.encoder || "—"}</span>
-                      <span class="mono small"
-                        >{r.subtask_id ? joinedValidations(r) : "—"}</span
-                      >
-                    </div>
-                  {/each}
                 </div>
               </div>
-
-              <div class="tsec">
-                <div class="tname">lock.csv</div>
-                <div class="tcard">
-                  <div class="trow thead" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
-                    <span>task_id</span><span>subtask_id</span><span
-                      >user_id</span
-                    ><span>timestamp</span><span>kind</span>
-                  </div>
-                  {#each locks as l}
-                    <div class="trow" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
-                      <span class="mono">{l.task_id}</span>
-                      <span class="mono">{l.subtask_id || "—"}</span>
-                      <span class="mono">{l.user_id}</span>
-                      <span class="mono dim">{l.timestamp}</span>
-                      <span class="mono">{l.kind}</span>
-                    </div>
-                  {/each}
-                  {#if locks.length === 0}
-                    <div class="tempty mono">— no active locks —</div>
-                  {/if}
-                </div>
-              </div>
-
-              <div class="tsec">
-                <div class="tname">
-                  history.csv <span class="mono dim small"
-                    >(append-only, newest first)</span
-                  >
-                </div>
-                <div class="tcard">
-                  {#each historyNewestFirst as h, i (i)}
-                    <div class="hrow">
-                      <span class="mono xts">{h.timestamp}</span>
-                      <span class="mono">@{h.user_id}</span>
-                      <span
-                        >{h.action}{h.task_id
-                          ? ` ${h.task_id}`
-                          : ""}{h.subtask_id ? `/${h.subtask_id}` : ""}</span
-                      >
-                      <span class="outcome" class:bad={h.outcome !== "accepted"}
-                        >{h.outcome}</span
-                      >
-                      <span class="dim">{h.detail}</span>
-                    </div>
-                  {/each}
-                  {#if history.length === 0}
-                    <div class="tempty mono">— no history yet —</div>
-                  {/if}
-                </div>
+              <div class="hero-acts">
+                <button
+                  type="button"
+                  class="pillbtn primary"
+                  disabled={busy || !auth.user || !nextCard}
+                  title={!auth.user
+                    ? "Log in to claim a task."
+                    : !nextCard
+                      ? "Nothing to claim right now."
+                      : "Claim the first task that is open for you."}
+                  onclick={actOnNext}>Claim the next task →</button
+                >
               </div>
             </div>
           </div>
+
+          {#if view === "board"}
+            <div class="board">
+              {#each board.columns as col (col.key)}
+                <div class="bcol">
+                  <div class="bcol-head c-{col.key}">
+                    <span class="bcol-name">{col.label}</span>
+                    <span class="bcol-count">{col.cards.length}</span>
+                    {#if col.key === "validation" && col.attention > 0}
+                      <span class="bcol-flag">{col.attention} ⚑</span>
+                    {/if}
+                  </div>
+                  <div class="well">
+                    {#each expanded[col.key] ? col.cards : col.cards.slice(0, CARD_CAP) as card (card.task)}
+                      <button
+                        type="button"
+                        class="card col-{card.column}"
+                        class:nextup={card.nextUp}
+                        onclick={() => openOverlay(card.task)}
+                        title="Open this task's preview"
+                      >
+                        {#if card.nextUp}
+                          <span class="nextup-badge">next step</span>
+                        {/if}
+                        <div class="card-title">{card.title}</div>
+                        <div class="card-type">
+                          {card.column === "validation"
+                            ? `${card.typeLine} · ${card.passes} of ${card.threshold} passes`
+                            : card.typeLine}
+                          <span class="mono card-id">{card.task}</span>
+                        </div>
+                        {#if card.column === "blocked"}
+                          <div class="card-foot">
+                            waits for <strong>{card.waitsFor}</strong>
+                          </div>
+                        {:else if card.column === "ready" && card.claimable}
+                          <div class="card-claim">
+                            <span
+                              class="claimlink"
+                              role="button"
+                              tabindex="-1"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                claimCard(card);
+                              }}
+                              onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.stopPropagation();
+                                  claimCard(card);
+                                }
+                              }}>Claim →</span
+                            >
+                          </div>
+                        {:else if card.column === "encoding" && card.worker}
+                          <div class="card-worker">
+                            <span class="avatar"
+                              >{initialOf(card.worker.login)}</span
+                            >
+                            <span class="worker-line"
+                              >{card.worker.login} · {card.worker
+                                .elapsed}</span
+                            >
+                            {#if card.worker.mine}
+                              <span
+                                class="claimlink"
+                                role="button"
+                                tabindex="-1"
+                                onclick={(e) => {
+                                  e.stopPropagation();
+                                  submitpr(card.task);
+                                }}
+                                onkeydown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.stopPropagation();
+                                    submitpr(card.task);
+                                  }
+                                }}
+                                title="After committing in mei-friend, submit the encoding for validation."
+                                >Submit →</span
+                              >
+                            {/if}
+                          </div>
+                        {:else if card.column === "validation"}
+                          <div class="card-dots">
+                            {#each card.dots as key, i (i)}
+                              {@render slotDot(key)}
+                            {/each}
+                          </div>
+                          {#if card.counts.fails + card.counts.comments + card.counts.questions > 0}
+                            <div class="card-chips">
+                              {#if card.counts.fails > 0}
+                                <span class="chip chip-fail"
+                                  >{card.counts.fails} fail{card.counts.fails ===
+                                  1
+                                    ? ""
+                                    : "s"}</span
+                                >
+                              {/if}
+                              {#if card.counts.comments > 0}
+                                <span class="chip chip-note"
+                                  >{card.counts.comments} comment{card.counts
+                                    .comments === 1
+                                    ? ""
+                                    : "s"}</span
+                                >
+                              {/if}
+                              {#if card.counts.questions > 0}
+                                <span class="chip chip-question"
+                                  >{card.counts.questions} question{card.counts
+                                    .questions === 1
+                                    ? ""
+                                    : "s"}</span
+                                >
+                              {/if}
+                            </div>
+                          {/if}
+                        {:else if card.column === "done"}
+                          <div class="card-done">{card.doneLine}</div>
+                        {/if}
+                      </button>
+                    {/each}
+                    {#if col.cards.length > CARD_CAP}
+                      <button
+                        type="button"
+                        class="more"
+                        onclick={() =>
+                          (expanded = {
+                            ...expanded,
+                            [col.key]: !expanded[col.key],
+                          })}
+                        >{expanded[col.key]
+                          ? "show fewer"
+                          : `+ ${col.cards.length - CARD_CAP} more`}</button
+                      >
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+
+            <div class="ticker">
+              <span class="ticker-label">Activity</span>
+              {#each board.ticker as t, i (i)}
+                {#if i > 0}<span class="ticker-sep">|</span>{/if}
+                <span class="ticker-entry"
+                  ><strong>{t.login}</strong>
+                  {t.text}
+                  <span class="ticker-when">· {t.elapsed}</span></span
+                >
+              {/each}
+              {#if board.ticker.length === 0}
+                <span class="ticker-entry muted">No activity yet.</span>
+              {/if}
+              <span class="tspacer"></span>
+              <button
+                type="button"
+                class="linkish"
+                onclick={() => (view = "tables")}
+                title="The full history, in the tables view">Full history</button
+              >
+            </div>
+          {:else}
+            <div class="tablesview">
+              <div class="tcol">
+                <div class="tsec">
+                  <div class="tname">state.csv</div>
+                  <div class="tcard">
+                    <div
+                      class="trow thead"
+                      style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
+                    >
+                      <span>task_id</span><span>subtask_id</span><span
+                        >status</span
+                      ><span>encoder</span><span>validate_status_*</span>
+                    </div>
+                    {#each rows as r (r.task_id + "/" + r.subtask_id)}
+                      <div
+                        class="trow"
+                        class:subrow={r.subtask_id !== ""}
+                        style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
+                      >
+                        <span class="mono">{r.task_id}</span>
+                        <span class="mono dim">{r.subtask_id || "—"}</span>
+                        <span
+                          ><span class="pill s-{r.status}">{r.status}</span
+                          ></span
+                        >
+                        <span class="mono">{r.encoder || "—"}</span>
+                        <span class="mono small"
+                          >{r.subtask_id ? joinedValidations(r) : "—"}</span
+                        >
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="tsec">
+                  <div class="tname">lock.csv</div>
+                  <div class="tcard">
+                    <div
+                      class="trow thead"
+                      style="--cols: 1fr 1fr 1fr 1.4fr 1fr"
+                    >
+                      <span>task_id</span><span>subtask_id</span><span
+                        >user_id</span
+                      ><span>timestamp</span><span>kind</span>
+                    </div>
+                    {#each locks as l}
+                      <div class="trow" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
+                        <span class="mono">{l.task_id}</span>
+                        <span class="mono">{l.subtask_id || "—"}</span>
+                        <span class="mono">{l.user_id}</span>
+                        <span class="mono dim">{l.timestamp}</span>
+                        <span class="mono">{l.kind}</span>
+                      </div>
+                    {/each}
+                    {#if locks.length === 0}
+                      <div class="tempty mono">— no active locks —</div>
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="tsec">
+                  <div class="tname">comment.csv</div>
+                  <div class="tcard">
+                    <div
+                      class="trow thead"
+                      style="--cols: 0.8fr 0.8fr 0.8fr 0.6fr 0.8fr 2fr"
+                    >
+                      <span>id</span><span>task_id</span><span>kind</span><span
+                        >anchor</span
+                      ><span>author</span><span>body</span>
+                    </div>
+                    {#each comments as c (c.comment_id)}
+                      <div
+                        class="trow"
+                        class:subrow={c.resolved === "true"}
+                        style="--cols: 0.8fr 0.8fr 0.8fr 0.6fr 0.8fr 2fr"
+                      >
+                        <span class="mono dim">{c.comment_id}</span>
+                        <span class="mono">{c.task_id}</span>
+                        <span class="mono">{c.kind}</span>
+                        <span class="mono dim"
+                          >{hasAnchor(c) ? anchorLabel(c) : "—"}</span
+                        >
+                        <span class="mono">{commentLogin(c)}</span>
+                        <span>{c.body}</span>
+                      </div>
+                    {/each}
+                    {#if comments.length === 0}
+                      <div class="tempty mono">— no comments —</div>
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="tsec">
+                  <div class="tname">
+                    history.csv <span class="mono dim small"
+                      >(append-only, newest first)</span
+                    >
+                  </div>
+                  <div class="tcard">
+                    {#each historyNewestFirst as h, i (i)}
+                      <div class="hrow">
+                        <span class="mono xts">{h.timestamp}</span>
+                        <span class="mono">@{logins[h.user_id] || h.user_id}</span>
+                        <span
+                          >{h.action}{h.task_id
+                            ? ` ${h.task_id}`
+                            : ""}{h.subtask_id ? `/${h.subtask_id}` : ""}</span
+                        >
+                        <span
+                          class="outcome"
+                          class:bad={h.outcome !== "accepted" &&
+                            h.outcome !== "released"}>{h.outcome}</span
+                        >
+                        <span class="dim">{h.detail}</span>
+                      </div>
+                    {/each}
+                    {#if history.length === 0}
+                      <div class="tempty mono">— no history yet —</div>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            </div>
+          {/if}
         {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if overlayTask && overlayCard}
+    <div
+      class="scrim"
+      role="presentation"
+      onclick={(e) => {
+        if (e.target === e.currentTarget) closeOverlay();
+      }}
+    >
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Task ${overlayCard.title}`}
+      >
+        {@render resultBanner()}
+        <div class="mhead">
+          <span class="ticon" class:pre={overlayCard.pre}
+            >{overlayCard.pre ? "M" : "E"}</span
+          >
+          <span class="mtitle">{overlayCard.title}</span>
+          <span class="mono mtask">{overlayCard.task}</span>
+          <span class="pill s-{overlayCard.statusKey}">
+            {overlayCard.statusKey === "validation_required"
+              ? `validation · ${overlayCard.passes} of ${overlayCard.threshold} passes`
+              : statusPill(overlayCard.statusKey, overlayCard.pre)}
+          </span>
+          {#if overlayCard.counts.fails > 0}
+            <span class="chip chip-fail"
+              >{overlayCard.counts.fails} fail{overlayCard.counts.fails === 1
+                ? ""
+                : "s"}</span
+            >
+          {/if}
+          <span class="mspacer"></span>
+          <button
+            type="button"
+            class="mbtn"
+            onclick={() => rawlink(overlayCard!.task)}
+            disabled={busy}
+            title="Copy a direct link to the score file to paste into mei-friend manually."
+            >Copy raw link</button
+          >
+          {#if mineEncoding}
+            <button
+              type="button"
+              class="mbtn primary"
+              onclick={() => submitpr(overlayCard!.task)}
+              disabled={busy}
+              title="After committing your encoding in mei-friend, submit it for validation."
+              >Submit encoding</button
+            >
+          {/if}
+          {#if overlayCard.pre}
+            <a
+              class="mbtn blue"
+              href={`/${campaign}/zones/${overlayCard.task}`}
+              title="Open the measure zones on the facsimile."
+              >Open zone editor</a
+            >
+          {:else}
+            <button
+              type="button"
+              class="mbtn blue"
+              onclick={() => editor(overlayCard!.task)}
+              disabled={busy || !auth.user || overlayCard.column === "blocked"}
+              title="Opens the score in mei-friend; claims the task for you first when it is open to claim."
+              >Open in mei-friend ↗</button
+            >
+          {/if}
+          <button
+            type="button"
+            class="mclose"
+            onclick={closeOverlay}
+            aria-label="Close the preview"
+            title="Close the preview">×</button
+          >
+        </div>
+        <div class="mbody">
+          <div class="mpreview">
+            <div class="ptoolbar">
+              <button
+                type="button"
+                class="tbtn-sq"
+                onclick={() => pvGo(-1)}
+                disabled={pvSpreadIndex <= 0}
+                aria-label="Previous page">‹</button
+              >
+              <span class="pglabel">{pvSpreadLabel}</span>
+              <button
+                type="button"
+                class="tbtn-sq"
+                onclick={() => pvGo(1)}
+                disabled={pvSpreadIndex >= pvSpreads.length - 1}
+                aria-label="Next page">›</button
+              >
+              <span class="mspacer"></span>
+              {#if preview?.facs?.length}
+                <button
+                  type="button"
+                  class="tchip"
+                  class:on={showZones}
+                  onclick={() => (showZones = !showZones)}
+                  title="Show or hide the measure zones on the facsimile"
+                  >Measure zones · {showZones ? "on" : "off"}</button
+                >
+              {/if}
+              <button
+                type="button"
+                class="tchip"
+                class:on={pvView === "double"}
+                onclick={() =>
+                  pvSetView(pvView === "double" ? "single" : "double")}
+                title="Show a two-page spread">Double page</button
+              >
+              {#if pvView === "double"}
+                <label
+                  class="pcheck"
+                  title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+                >
+                  <input
+                    type="checkbox"
+                    checked={pvFirstOnRight}
+                    onchange={(e) =>
+                      pvSetFirstOnRight(
+                        (e.target as HTMLInputElement).checked,
+                      )}
+                  />
+                  Page 1 right
+                </label>
+              {/if}
+              <span class="vline"></span>
+              <button
+                type="button"
+                class="tbtn-sq"
+                onclick={() => pvZoomBy(-0.25)}
+                disabled={pvZoom <= PV_ZOOM_MIN}
+                aria-label="Zoom out">−</button
+              >
+              <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
+              <button
+                type="button"
+                class="tbtn-sq"
+                onclick={() => pvZoomBy(0.25)}
+                disabled={pvZoom >= PV_ZOOM_MAX}
+                aria-label="Zoom in">+</button
+              >
+            </div>
+            <div class="pbody-panes">
+              {#if !preview || preview.loading}
+                <p class="muted pnote">Loading the score…</p>
+              {:else if preview.error}
+                <p class="perr">{preview.error}</p>
+              {:else}
+                {#if preview.facs?.length}
+                  <div class="pane">
+                    <div class="pv-scroll">
+                      <div class="pv-spread" style={`width:${pvZoom * 100}%`}>
+                        {#if pvSpread.lonelySide === "right"}<div
+                            class="pv-spacer"
+                          ></div>{/if}
+                        {#each pvSpread.pages as p (p)}
+                          {@const pg = preview.facs[p]}
+                          <figure class="pv-page">
+                            {#if pg}
+                              <svg
+                                viewBox={`0 0 ${pg.w} ${pg.h}`}
+                                role="img"
+                                aria-label={`Facsimile page ${p + 1}`}
+                              >
+                                {#if pg.url}
+                                  <image
+                                    href={pg.url}
+                                    width={pg.w}
+                                    height={pg.h}
+                                  />
+                                {:else}
+                                  <rect
+                                    width={pg.w}
+                                    height={pg.h}
+                                    fill="#f3f3f0"
+                                  />
+                                {/if}
+                                {#if showZones}
+                                  {#each pg.zones as z, zi (zi)}
+                                    <rect
+                                      class="pv-zone"
+                                      class:flagged={anchor &&
+                                        p + 1 === anchor.page &&
+                                        zoneFlagged(z.label)}
+                                      x={z.box.ulx}
+                                      y={z.box.uly}
+                                      width={z.box.lrx - z.box.ulx}
+                                      height={z.box.lry - z.box.uly}
+                                    />
+                                    <text
+                                      class="pv-zonelabel"
+                                      class:flagged={anchor &&
+                                        p + 1 === anchor.page &&
+                                        zoneFlagged(z.label)}
+                                      x={z.box.ulx + 6}
+                                      y={z.box.uly + 30}>{z.label}</text
+                                    >
+                                  {/each}
+                                {/if}
+                              </svg>
+                              <figcaption class="mono">
+                                page {p + 1}
+                              </figcaption>
+                            {/if}
+                          </figure>
+                        {/each}
+                        {#if pvSpread.lonelySide === "left"}<div
+                            class="pv-spacer"
+                          ></div>{/if}
+                      </div>
+                    </div>
+                    <div class="pane-cap">Facsimile</div>
+                  </div>
+                {/if}
+                {#if preview.pageCount > 0}
+                  <div class="pane">
+                    <div class="pv-scroll">
+                      <div class="pv-spread" style={`width:${pvZoom * 100}%`}>
+                        {#if pvSpread.lonelySide === "right"}<div
+                            class="pv-spacer"
+                          ></div>{/if}
+                        {#each pvSpread.pages as p (p)}
+                          <div class="pv-page enc">
+                            {#if p < preview.pageCount}
+                              {@html flagSvg(preview.svgs[p + 1] ?? "")}
+                            {/if}
+                          </div>
+                        {/each}
+                        {#if pvSpread.lonelySide === "left"}<div
+                            class="pv-spacer"
+                          ></div>{/if}
+                      </div>
+                    </div>
+                    <div class="pane-cap">
+                      Current encoding — rendered with Verovio
+                    </div>
+                  </div>
+                {:else if preview.facs?.length}
+                  <div class="pane">
+                    <p class="muted pnote">
+                      No encoding to render yet — the measures are generated
+                      when the measure correction is submitted.
+                    </p>
+                    <div class="pane-cap">Current encoding</div>
+                  </div>
+                {/if}
+              {/if}
+            </div>
+          </div>
+          <div class="mrail">
+            <div class="rail-scroll">
+              <div class="rsec">
+                <div class="rlabel">Validation record</div>
+                {#each record as r (r.sub + "/" + r.slot)}
+                  {#if r.key === "fail"}
+                    <div class="failbox">
+                      <div class="failhead">
+                        {@render slotDot("fail")}
+                        <span class="failtitle">Slot {r.slot + 1} · fail</span>
+                        <span class="rwho">{r.login} · {r.elapsed}</span>
+                      </div>
+                      {#if r.comment}
+                        <div class="failbody">“{r.comment.body}”</div>
+                        {#if hasAnchor(r.comment)}
+                          <div class="failchips">
+                            <button
+                              type="button"
+                              class="chip chip-question anchorchip"
+                              onclick={() => showAnchorFor(r.comment!)}
+                              title="Highlight this measure range in the preview"
+                              >{anchorLabel(r.comment)} — show in the preview</button
+                            >
+                          </div>
+                        {/if}
+                      {:else}
+                        <div class="failbody muted">
+                          No comment was recorded with this fail.
+                        </div>
+                      {/if}
+                      <div class="failacts">
+                        {#if r.comment && r.comment.resolved !== "true" && canResolve(r.comment)}
+                          <button
+                            type="button"
+                            class="linkish"
+                            onclick={() =>
+                              resolveCommentRow(r.comment!.comment_id)}
+                            disabled={busy}
+                            title="Mark this fail's comment as handled — it leaves the attention counts."
+                            >Resolve</button
+                          >
+                        {:else if r.comment?.resolved === "true"}
+                          <span class="muted small-note">resolved</span>
+                        {/if}
+                        <span class="mspacer"></span>
+                        {#if viewer !== "" && (canPush || r.userId === viewer)}
+                          <button
+                            type="button"
+                            class="dangerbtn"
+                            onclick={() => sendBackTask(overlayCard!.task)}
+                            disabled={busy}
+                            title="Return the task to encoding: attribution and validations reset."
+                            >Send back for encoding</button
+                          >
+                        {/if}
+                      </div>
+                    </div>
+                  {:else}
+                    <div class="rrow">
+                      {@render slotDot(r.key)}
+                      <span class="rslot"
+                        >Slot {r.slot + 1} · {r.key === "review"
+                          ? "in review"
+                          : r.key}</span
+                      >
+                      {#if r.login}
+                        <span class="rwho">{r.login} · {r.elapsed}</span>
+                      {/if}
+                      <span class="mspacer"></span>
+                      {#if r.key === "pass"}
+                        <span class="muted small-note">no remarks</span>
+                      {:else if r.key === "open" && r.claimable}
+                        <button
+                          type="button"
+                          class="claimbtn"
+                          onclick={() =>
+                            claimValidate(overlayCard!.task, r.sub)}
+                          disabled={busy}
+                          title="Reserve this validation slot for review."
+                          >Claim to review</button
+                        >
+                      {:else if r.key === "open"}
+                        <span class="muted small-note">{r.note}</span>
+                      {:else if r.mine}
+                        <button
+                          type="button"
+                          class="passbtn"
+                          onclick={() =>
+                            validate(overlayCard!.task, r.sub, "pass")}
+                          disabled={busy}
+                          title="Record a passing verdict.">Pass</button
+                        >
+                        <button
+                          type="button"
+                          class="failbtn"
+                          class:on={failForm?.sub === r.sub}
+                          onclick={() =>
+                            (failForm =
+                              failForm?.sub === r.sub
+                                ? null
+                                : {
+                                    sub: r.sub,
+                                    body: "",
+                                    page: String(
+                                      (pvSpread.pages[0] ?? 0) + 1,
+                                    ),
+                                    m1: "",
+                                    m2: "",
+                                  })}
+                          disabled={busy}
+                          title="Record a failing verdict — a fail carries a comment saying why."
+                          >Fail</button
+                        >
+                      {/if}
+                    </div>
+                    {#if failForm && failForm.sub === r.sub && r.mine}
+                      <div class="failform">
+                        <textarea
+                          rows="3"
+                          bind:value={failForm.body}
+                          placeholder="Why does this fail? (required)"
+                        ></textarea>
+                        <div class="failform-anchor">
+                          <label
+                            >p. <input
+                              size="3"
+                              bind:value={failForm.page}
+                            /></label
+                          >
+                          <label
+                            >m. <input
+                              size="4"
+                              bind:value={failForm.m1}
+                              placeholder="from"
+                            /></label
+                          >
+                          <label
+                            >– <input
+                              size="4"
+                              bind:value={failForm.m2}
+                              placeholder="to"
+                            /></label
+                          >
+                          <span class="mspacer"></span>
+                          <button
+                            type="button"
+                            class="dangerbtn"
+                            onclick={submitFail}
+                            disabled={busy || !failForm.body.trim()}
+                            >Submit fail</button
+                          >
+                        </div>
+                      </div>
+                    {/if}
+                  {/if}
+                {/each}
+                <div class="rfoot">
+                  A fail always carries a comment — the validator cannot submit
+                  one without saying why.
+                </div>
+              </div>
+              <div class="rsec discussion">
+                <div class="rlabel">
+                  Discussion · {threads.reduce(
+                    (n, t) => n + 1 + t.replies.length,
+                    0,
+                  )}
+                </div>
+                {#each threads as t (t.root.comment_id)}
+                  <div class="crow" class:resolved={t.root.resolved === "true"}>
+                    <div class="chead">
+                      <span class="avatar small"
+                        >{initialOf(commentLogin(t.root))}</span
+                      >
+                      <span class="cwho">{commentLogin(t.root)}</span>
+                      {#if t.root.kind === "question"}
+                        <span class="chip chip-question">? question</span>
+                      {:else}
+                        <span class="chip chip-note">note</span>
+                      {/if}
+                      {#if t.root.resolved === "true"}
+                        <span class="muted small-note">resolved</span>
+                      {/if}
+                      <span class="cwhen">{elapsed(t.root.timestamp)}</span>
+                    </div>
+                    <div class="cbody">“{t.root.body}”</div>
+                    <div class="cacts">
+                      {#if auth.user}
+                        <button
+                          type="button"
+                          class="linkish"
+                          onclick={() => (replyTo = t.root)}>Reply</button
+                        >
+                      {/if}
+                      {#if t.root.resolved !== "true" && canResolve(t.root)}
+                        <button
+                          type="button"
+                          class="linkish"
+                          onclick={() => resolveCommentRow(t.root.comment_id)}
+                          disabled={busy}>Resolve</button
+                        >
+                      {/if}
+                    </div>
+                    {#each t.replies as reply (reply.comment_id)}
+                      <div class="creply">
+                        <div class="chead">
+                          <span class="avatar small"
+                            >{initialOf(commentLogin(reply))}</span
+                          >
+                          <span class="cwho">{commentLogin(reply)}</span>
+                          <span class="cwhen">{elapsed(reply.timestamp)}</span>
+                        </div>
+                        <div class="cbody">“{reply.body}”</div>
+                      </div>
+                    {/each}
+                  </div>
+                {/each}
+                {#if threads.length === 0}
+                  <div class="muted small-note cnone">No discussion yet.</div>
+                {/if}
+              </div>
+            </div>
+            {#if auth.user}
+              <div class="composer">
+                {#if replyTo}
+                  <div class="replying">
+                    Replying to <strong>{commentLogin(replyTo)}</strong>
+                    <button
+                      type="button"
+                      class="linkish"
+                      onclick={() => (replyTo = null)}>Cancel</button
+                    >
+                  </div>
+                {:else}
+                  <div class="kindpick">
+                    <button
+                      type="button"
+                      class="tchip"
+                      class:on={composerKind === "question"}
+                      onclick={() => (composerKind = "question")}
+                      title="Ask the campaign a question">question</button
+                    >
+                    <button
+                      type="button"
+                      class="tchip"
+                      class:on={composerKind === "addition"}
+                      onclick={() => (composerKind = "addition")}
+                      title="Leave a note">note</button
+                    >
+                  </div>
+                {/if}
+                <div class="composer-row">
+                  <input
+                    bind:value={composerText}
+                    placeholder="Reply or leave a note…"
+                    onkeydown={(e) => {
+                      if (e.key === "Enter" && composerText.trim())
+                        postComment();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    class="sendbtn"
+                    onclick={postComment}
+                    disabled={busy || !composerText.trim()}>Send</button
+                  >
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
   {/if}
@@ -1794,6 +1892,31 @@
     display: flex;
     flex-direction: column;
     background: var(--bg-alt);
+    background-image:
+      radial-gradient(
+        60% 90% at 15% 0%,
+        rgba(109, 195, 255, 0.12),
+        transparent 60%
+      ),
+      radial-gradient(
+        60% 90% at 85% 10%,
+        rgba(118, 222, 118, 0.12),
+        transparent 60%
+      ),
+      radial-gradient(
+        50% 80% at 50% 100%,
+        rgba(255, 167, 109, 0.1),
+        transparent 60%
+      );
+    /* Board-only surfaces without a global token. */
+    --well: rgba(255, 255, 255, 0.65);
+    --track: #eef2f8;
+    --hairline: #f0f1f5;
+  }
+  :global([data-theme="dark"]) .console {
+    --well: rgba(28, 31, 43, 0.55);
+    --track: var(--bg-tint);
+    --hairline: #232736;
   }
   .mono {
     font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -1803,105 +1926,6 @@
   }
   .msg {
     padding: 1rem 1.4rem;
-  }
-
-  /* ------------------------------------------------------------- header */
-  .conhead {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    padding: 10px 20px;
-    border-bottom: 1px solid var(--line);
-    background: var(--card);
-    flex: none;
-  }
-  .back {
-    color: var(--ink-soft);
-    text-decoration: none;
-    font-size: 16px;
-    padding: 2px 6px;
-  }
-  .titles {
-    line-height: 1.2;
-  }
-  .title {
-    font-weight: 700;
-    font-size: 14px;
-  }
-  .handle {
-    font-size: 11px;
-    color: var(--link);
-    text-decoration: none;
-  }
-  .handle:hover {
-    text-decoration: underline;
-  }
-  .progress {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 6px 12px;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--ink-soft);
-  }
-  .progress .bar {
-    width: 120px;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--line);
-    overflow: hidden;
-  }
-  .progress .bar div {
-    height: 100%;
-    background: var(--ok-soft);
-  }
-  .spacer,
-  .cspacer {
-    flex: 1;
-  }
-  .hbtn {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 6px 11px;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-  .hbtn:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .hbtn.on {
-    background: var(--invert-bg);
-    border-color: var(--invert-bg);
-    color: var(--invert-ink);
-  }
-  .tabs {
-    display: flex;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
-    overflow: hidden;
-  }
-  .tabs button {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 6px 11px;
-    background: var(--card);
-    color: var(--ink-faint);
-    border: none;
-    cursor: pointer;
-  }
-  .tabs button.on {
-    font-weight: 600;
-    background: var(--invert-bg);
-    color: var(--invert-ink);
   }
 
   /* ------------------------------------------------------------ banners */
@@ -1928,11 +1952,6 @@
     background: var(--warn-bg);
     border-bottom: 1px solid var(--warn-line);
     color: var(--warn);
-  }
-  .banner.info {
-    background: var(--note-bg);
-    border-bottom: 1px solid var(--note-line);
-    color: var(--note);
   }
   .banner-body {
     display: flex;
@@ -1973,8 +1992,22 @@
     background: var(--card);
     cursor: pointer;
   }
+  .linkish {
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--link);
+    cursor: pointer;
+  }
+  .linkish:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
 
-  /* --------------------------------------------------------- graph body */
+  /* --------------------------------------------------------------- main */
   .main {
     flex: 1;
     display: flex;
@@ -2063,163 +2096,303 @@
   .irow a:hover {
     text-decoration: underline;
   }
-
-  .body {
-    flex: 1;
-    display: flex;
-    min-height: 0;
+  .seclabel {
+    font-weight: 600;
+    font-size: 10px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
-  .stage {
+  .pclose {
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    background: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+    padding: 4px;
+    flex: none;
+  }
+
+  /* ---------------------------------------------------------------- hero */
+  .hero {
+    flex: none;
+    padding: 26px 32px 18px;
+    display: flex;
+    align-items: flex-end;
+    gap: 24px;
+  }
+  .hero-titles {
     flex: 1;
     min-width: 0;
+  }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .hero-line {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-top: 4px;
+    min-width: 0;
+  }
+  .hero-line h1 {
+    margin: 0;
+    font-size: 30px;
+    line-height: 1.2;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .slug {
+    font-size: 13px;
+    color: var(--ink-faint);
+    text-decoration: none;
+    flex: none;
+  }
+  .slug:hover {
+    text-decoration: underline;
+  }
+  .hero-stats {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .hbar {
+    width: 280px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .hbar div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--green));
+  }
+  .stat {
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .stat.strong {
+    font-weight: 600;
+  }
+  .stat.inflight {
+    color: var(--info);
+    font-weight: 600;
+  }
+  .stat.attention {
+    color: var(--warn);
+    font-weight: 600;
+  }
+  .sep {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .hero-right {
     display: flex;
     flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+    flex: none;
   }
-  .canvas-wrap {
-    position: relative;
-    flex: 1;
-    min-height: 0;
-  }
-  .graph-fabs {
-    position: absolute;
-    right: 16px;
-    bottom: 16px;
-    z-index: 6;
+  .hero-tools {
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .reorder-fab {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
+  .hbtn {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 6px 11px;
     border: 1px solid var(--line-strong);
-    border-radius: 999px;
+    border-radius: 7px;
     background: var(--card);
-    box-shadow: var(--shadow-md);
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink);
+    color: var(--ink-soft);
     cursor: pointer;
-  }
-  .reorder-fab:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .zoom-fab {
-    display: flex;
-    align-items: center;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: var(--card);
-    box-shadow: var(--shadow-md);
-    overflow: hidden;
-  }
-  .zoom-fab button {
-    border: none;
-    background: none;
-    padding: 8px 10px;
     font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ink);
-    cursor: pointer;
-    line-height: 1;
   }
-  .zoom-fab button:hover:not(:disabled) {
-    background: var(--accent-tint);
-    color: var(--accent);
-  }
-  .zoom-fab button:disabled {
-    color: var(--ink-faint);
+  .hbtn:disabled {
+    opacity: 0.45;
     cursor: default;
   }
-  .zoom-fab .zoom-level {
-    min-width: 46px;
-    font-size: 12px;
-    border-left: 1px solid var(--line);
-    border-right: 1px solid var(--line);
+  .hbtn.on {
+    background: var(--invert-bg);
+    border-color: var(--invert-bg);
+    color: var(--invert-ink);
   }
-  .scroller {
-    position: absolute;
-    inset: 0;
-    overflow: auto;
+  .tabs {
     display: flex;
-    background: var(--bg-alt);
-    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
-    background-size: 22px 22px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    overflow: hidden;
   }
-  /* The zoom wrapper carries the scaled size (world × zoom), so the scroller
-     sees the fitted footprint; the canvas holds the nodes in unscaled world
-     units and is shrunk to fit via transform. */
-  .zoomwrap {
-    position: relative;
-    flex: none;
-    margin: auto;
+  .tabs button {
+    font-size: 11px;
+    font-weight: 500;
+    font-family: inherit;
+    padding: 6px 11px;
+    background: var(--card);
+    color: var(--ink-faint);
+    border: none;
+    cursor: pointer;
   }
-  .canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    transform-origin: top left;
+  .tabs button.on {
+    font-weight: 600;
+    background: var(--invert-bg);
+    color: var(--invert-ink);
   }
-  .edges {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
+  .hero-acts {
+    display: flex;
+    gap: 10px;
   }
-  .edge {
-    fill: none;
-    stroke-width: 2.5;
+  .pillbtn {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 8px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink-soft);
+    cursor: pointer;
   }
-  .edge.green {
-    stroke: var(--ok-soft);
+  .pillbtn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
   }
-  .edge.open {
-    stroke: var(--line-strong);
-    stroke-dasharray: 5 5;
+  .pillbtn.primary {
+    border: 0;
+    background: var(--accent-btn);
+    color: #fff;
+    box-shadow: 0 1px 3px rgba(37, 99, 201, 0.35);
+  }
+  .pillbtn.primary:hover:not(:disabled) {
+    background: var(--accent-btn-hover);
+    color: #fff;
+  }
+  .pillbtn:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
-  /* Section heights must match the layout constants in campaign-graph.ts,
-     which computes node heights from them: headH 86, slotsHead 34 (the 28px
-     header band plus its 6px bottom margin), slotH 30. */
-  .node {
-    position: absolute;
+  /* --------------------------------------------------------------- board */
+  .board {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 14px;
+    padding: 0 32px;
+  }
+  .bcol {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+  }
+  .bcol-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+  .bcol-name {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .bcol-count {
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--track);
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+  .bcol-head.c-blocked {
+    color: var(--ink-faint);
+  }
+  .bcol-head.c-ready {
+    color: var(--ink-soft);
+  }
+  .bcol-head.c-encoding {
+    color: var(--info);
+  }
+  .bcol-head.c-encoding .bcol-count {
+    background: var(--info-bg);
+  }
+  .bcol-head.c-validation {
+    color: var(--warn);
+  }
+  .bcol-head.c-validation .bcol-count {
+    background: var(--warn-bg);
+  }
+  .bcol-head.c-done {
+    color: var(--ok);
+  }
+  .bcol-head.c-done .bcol-count {
+    background: var(--ok-bg);
+  }
+  .bcol-flag {
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--warn-solid);
+    border-radius: 999px;
+    padding: 1px 7px;
+    margin-left: auto;
+  }
+  .well {
+    background: var(--well);
+    border: 1px dashed var(--line-strong);
+    border-radius: 14px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .card {
+    position: relative;
+    display: block;
+    text-align: left;
+    font-family: inherit;
     background: var(--card);
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 10px;
+    padding: 12px 14px;
     box-shadow: var(--shadow-sm);
-    cursor: grab;
-    user-select: none;
-    touch-action: none;
+    cursor: pointer;
+    flex: none;
   }
-  .node.dragging {
-    cursor: grabbing;
-    z-index: 2;
-    box-shadow: var(--shadow-lg);
-  }
-  .node.s-completed {
-    border-color: var(--ok-line);
-  }
-  .node.s-encoding,
-  .node.s-claimed {
-    border-color: var(--warn-line);
-  }
-  .node.s-blocked {
-    background: var(--bg-alt);
-  }
-  .node.nextup {
+  .card:hover {
     border-color: var(--accent);
   }
-  .node.selected {
+  .card.col-blocked {
+    opacity: 0.8;
+    box-shadow: none;
+  }
+  .card.col-encoding {
+    border: 1.5px solid var(--info-line);
+  }
+  .card.col-validation {
+    border: 1.5px solid var(--warn-line);
+  }
+  .card.col-done {
+    box-shadow: none;
+  }
+  .card.nextup {
     border-color: var(--accent);
-    box-shadow:
-      0 0 0 1px var(--accent),
-      0 5px 15px var(--accent-wash);
   }
   .nextup-badge {
     position: absolute;
@@ -2234,670 +2407,426 @@
     border-radius: 999px;
     white-space: nowrap;
   }
-  .port {
-    position: absolute;
-    /* On the header midline (headH / 2), matching the edge anchors. */
-    top: 43px;
-    transform: translateY(-50%);
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: var(--card);
-    border: 2px solid var(--line-strong);
-    z-index: 1;
+  :global([data-theme="dark"]) .nextup-badge {
+    color: #fff;
   }
-  .port.in {
-    left: -6px;
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
   }
-  /* Lighter than an input port, so the two read apart at a glance. */
-  .port.out {
-    right: -6px;
-    border-color: var(--line);
+  .card.col-blocked .card-title,
+  .card.col-done .card-title {
+    color: var(--ink-soft);
   }
-  .port.green {
-    border-color: var(--ok-soft);
+  .card-type {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-top: 3px;
   }
-  .nmain {
-    height: 86px;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    padding: 0;
-    border: none;
-    background: none;
+  .card-id {
+    font-size: 10px;
+    opacity: 0.8;
+    margin-left: 4px;
+  }
+  .card-foot {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-top: 8px;
+    border-top: 1px solid var(--hairline);
+    padding-top: 8px;
+  }
+  .card-claim {
+    margin-top: 8px;
+  }
+  .claimlink {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--accent);
     cursor: pointer;
-    text-align: left;
-    font-family: inherit;
-    border-radius: 12px 12px 0 0;
   }
-  .nmain:hover {
-    background: var(--bg-alt);
+  .claimlink:hover {
+    text-decoration: underline;
   }
-  .nhead {
+  .card-worker {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 11px 12px 7px;
-    min-width: 0;
+    gap: 7px;
+    margin-top: 9px;
   }
-  .nicon {
+  .avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent-btn);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex: none;
+  }
+  .avatar.small {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+  }
+  .worker-line {
+    font-size: 11.5px;
+    color: var(--info);
+    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-dots {
+    display: flex;
+    gap: 4px;
+    margin-top: 9px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    flex: none;
+    display: inline-block;
+  }
+  .dot.pass {
+    background: var(--green);
+    border-color: var(--ok);
+  }
+  :global([data-theme="dark"]) .dot.pass {
+    background: var(--ok);
+    border-color: var(--ok-line);
+  }
+  .dot.fail {
+    background: var(--danger-solid);
+    border-color: var(--danger-solid);
+  }
+  .dot.review {
+    background: var(--info-bg);
+    border-color: var(--info);
+  }
+  .card-chips {
+    display: flex;
+    gap: 6px;
+    margin-top: 9px;
+    border-top: 1px solid var(--hairline);
+    padding-top: 9px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  .chip-fail {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
+  }
+  .chip-note {
+    color: var(--warn);
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+  }
+  .chip-question {
+    color: var(--info);
+    background: var(--info-bg);
+    border: 1px solid var(--info-line);
+  }
+  .card-done {
+    font-size: 11.5px;
+    color: var(--ok);
+    font-weight: 600;
+    margin-top: 3px;
+  }
+  .more {
+    font: inherit;
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+    padding: 4px;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .more:hover {
+    color: var(--accent);
+  }
+
+  /* -------------------------------------------------------------- ticker */
+  .ticker {
+    flex: none;
+    margin: 16px 32px 24px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-sm);
+    height: 56px;
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    gap: 18px;
+    overflow: hidden;
+  }
+  .ticker-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+    flex: none;
+  }
+  .ticker-entry {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .ticker-when {
+    color: var(--ink-faint);
+  }
+  .ticker-sep {
+    color: var(--line-strong);
+    flex: none;
+  }
+  .tspacer,
+  .mspacer {
+    flex: 1;
+  }
+
+  /* ------------------------------------------------------------- overlay */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(31, 36, 51, 0.42);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 24px;
+  }
+  :global([data-theme="dark"]) .scrim {
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .modal {
+    width: min(1440px, 100%);
+    height: min(820px, 100%);
+    background: var(--card);
+    border-radius: 14px;
+    box-shadow: 0 24px 80px rgba(31, 36, 51, 0.4);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal .banner {
+    border-radius: 0;
+  }
+  .mhead {
+    min-height: 58px;
+    flex: none;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    padding: 6px 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .ticon {
     width: 26px;
     height: 26px;
-    border-radius: 7px;
-    display: grid;
-    place-items: center;
+    border-radius: 6px;
+    background: var(--info-bg);
+    border: 1px solid var(--info-line);
+    color: var(--info);
     font:
       700 12px ui-monospace,
       monospace;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
   }
-  .nicon.pre {
+  .ticon.pre {
     background: var(--pre-bg);
+    border-color: var(--pre);
     color: var(--pre);
   }
-  .nicon.encode {
-    background: var(--warn-bg);
-    color: var(--warn);
+  .mtitle {
+    font-size: 16px;
+    font-weight: 700;
   }
-  .ntitles {
-    min-width: 0;
-    line-height: 1.2;
-    display: flex;
-    flex-direction: column;
-  }
-  .ntitle {
-    font-weight: 600;
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .nsub {
-    font-size: 10px;
+  .mtask {
+    font-size: 11px;
     color: var(--ink-faint);
   }
-  .nmeta {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 0 12px;
-    min-width: 0;
-  }
-  .nmeta-text {
-    font-size: 10px;
-    color: var(--ink-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .nslots-head {
-    height: 28px;
-    margin-bottom: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 12px;
-    border-top: 1px solid var(--accent-line);
-    background: var(--accent-tint);
-    font-size: 9.5px;
+  .mbtn {
+    font-size: 12.5px;
     font-weight: 600;
-    color: var(--info);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .nslot {
-    height: 26px;
-    margin: 0 8px 4px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 0 8px;
-    border: 1px solid var(--accent-line);
-    border-radius: 7px;
-    background: var(--accent-tint);
-    cursor: pointer;
-    text-align: left;
     font-family: inherit;
-    font-size: 10.5px;
-    min-width: 0;
-  }
-  .nslot:hover {
-    border-color: var(--accent-line-strong);
-    background: var(--accent-tint-strong);
-  }
-  .nslot.selected {
-    border-color: var(--accent);
-    background: var(--accent-tint-strong);
-  }
-  .nslot.claimable {
-    border-color: var(--accent);
-    background: var(--accent-tint-strong);
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
-  .nslot.claimable .nslot-who {
-    color: var(--info);
-    font-weight: 600;
-  }
-  .nslot .mark {
-    width: 16px;
-    height: 16px;
-  }
-  .nslot-id {
+    padding: 7px 15px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
     color: var(--ink-soft);
+    cursor: pointer;
+    text-decoration: none;
     flex: none;
   }
-  .nslot-who {
-    color: var(--ink-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
-  }
-  .nslot-arrow {
-    flex: none;
-    color: var(--accent-line-strong);
-    font-size: 13px;
-    line-height: 1;
-  }
-  .nslot:hover .nslot-arrow,
-  .nslot.claimable .nslot-arrow {
+  .mbtn:hover:not(:disabled) {
+    border-color: var(--accent);
     color: var(--accent);
   }
-
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 600;
-    font-size: 9px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    white-space: nowrap;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    color: var(--ink-faint);
-  }
-  .pill.s-completed,
-  .pill.s-pass {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
-  }
-  .pill.s-encoding_required,
-  .pill.s-encoding,
-  .pill.s-claimed {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-    color: var(--warn);
-  }
-  .pill.s-validation_required,
-  .pill.s-review {
-    background: var(--info-bg);
+  .mbtn.blue {
     border-color: var(--info-line);
     color: var(--info);
   }
-  .pill.s-fail {
-    background: var(--danger-bg);
-    border-color: var(--danger-line);
-    color: var(--danger);
+  .mbtn.primary {
+    border: 0;
+    background: var(--accent-btn);
+    color: #fff;
   }
-
-  /* -------------------------------------------------------------- panel */
-  .panel {
-    width: var(--panel-w, 360px);
-    flex: none;
-    border-left: 1px solid var(--line);
-    background: var(--card);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    position: relative;
+  .mbtn.primary:hover:not(:disabled) {
+    background: var(--accent-btn-hover);
+    color: #fff;
   }
-  .panel-resizer {
-    position: absolute;
-    left: -5px;
-    top: 0;
-    bottom: 0;
-    width: 9px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: col-resize;
-    z-index: 5;
-  }
-  .panel-resizer:hover,
-  .panel-resizer:active {
-    background: var(--accent-wash);
-  }
-  .phead {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 14px 16px 12px;
-    border-bottom: 1px solid var(--line);
-    flex: none;
-  }
-  .picon {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    border-radius: 7px;
-    display: grid;
-    place-items: center;
-    font:
-      700 13px ui-monospace,
-      monospace;
-  }
-  .picon.pre {
-    background: var(--pre-bg);
-    color: var(--pre);
-  }
-  .picon.encode {
-    background: var(--warn-bg);
-    color: var(--warn);
-  }
-  .picon.validate {
-    background: var(--accent-tint);
-    color: var(--info);
-  }
-  .ptitles {
-    flex: 1;
-    line-height: 1.2;
-    min-width: 0;
-  }
-  .ptitle {
-    font-weight: 600;
-    font-size: 14.5px;
-  }
-  .psub {
-    font-size: 10px;
-    color: var(--ink-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .expert-toggle {
-    font-size: 10.5px;
-    font-weight: 600;
-    font-family: inherit;
-    color: var(--link);
-    border: 1px solid var(--accent-line);
-    border-radius: 7px;
-    padding: 6px 9px;
-    background: var(--card);
-    cursor: pointer;
-    flex: none;
-    width: 100%;
-  }
-  .pclose {
-    font-size: 11px;
-    font-weight: 600;
-    border: none;
-    background: none;
-    color: var(--ink-faint);
-    cursor: pointer;
-    padding: 4px;
-    flex: none;
-  }
-  .pbody {
-    padding: 15px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-    overflow: auto;
-  }
-  .pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-  }
-  .pbody .pill {
-    font-size: 10px;
-  }
-  .lockstrip {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 9px 11px;
-    background: var(--accent-tint);
-    border: 1px solid var(--accent-line);
-    border-radius: 8px;
-    font-size: 10.5px;
-    color: var(--accent);
-  }
-  .pmeta {
-    font-size: 10.5px;
-    color: var(--ink-faint);
-  }
-  .acts {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 6px;
-  }
-  .act {
-    font-size: 11.5px;
-    font-weight: 500;
-    padding: 8px 12px;
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    text-align: center;
-    color: var(--ink);
-    background: var(--card);
-    cursor: pointer;
-    text-decoration: none;
-    display: block;
-  }
-  .act.primary {
-    font-weight: 600;
-    font-size: 12.5px;
-    padding: 9px 12px;
-    background: var(--invert-bg);
-    color: var(--invert-ink);
-    border-color: var(--invert-bg);
-  }
-  .act.good {
-    color: var(--ok);
-  }
-  .act.danger {
-    color: var(--danger);
-  }
-  .act:disabled,
-  .act.disabled {
-    background: var(--bg-alt);
-    color: var(--ink-faint);
-    border-color: var(--line);
+  .mbtn:disabled {
+    opacity: 0.5;
     cursor: default;
   }
-  .seclabel {
-    font-weight: 600;
-    font-size: 10px;
+  .mclose {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--card);
     color: var(--ink-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 15px;
+    cursor: pointer;
+    flex: none;
   }
-  .valsum {
+  .mclose:hover {
+    color: var(--ink);
+  }
+  .mbody {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .mpreview {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    border-right: 1px solid var(--line);
   }
-  .valsum-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .valsum-passes {
-    font-weight: 600;
-    font-size: 10.5px;
-    color: var(--ink-soft);
-  }
-  .valbar {
-    height: 6px;
-    border-radius: 999px;
-    background: var(--line);
-    overflow: hidden;
-  }
-  .valbar div {
-    height: 100%;
-    background: var(--ok-soft);
-  }
-  .valslot {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-  }
-  .mark {
+  .ptoolbar {
+    height: 44px;
     flex: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 5px;
-    display: grid;
-    place-items: center;
-    font-size: 10px;
-    line-height: 1;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 10px;
+    overflow-x: auto;
   }
-  .mark.pass {
-    background: var(--ok-bg);
-    color: var(--ok);
+  .tbtn-sq {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink-soft);
+    cursor: pointer;
+    flex: none;
+    font-family: inherit;
   }
-  .mark.fail {
-    background: var(--danger-bg);
-    color: var(--danger);
+  .tbtn-sq:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
-  .mark.open {
-    border-radius: 50%;
-    border: 1.5px dashed var(--line-strong);
+  .pglabel {
+    font-size: 12.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .mark.review {
+  .tchip {
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 4px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink-soft);
+    cursor: pointer;
+    flex: none;
+    white-space: nowrap;
+  }
+  .tchip.on {
+    border-color: var(--info-line);
     background: var(--info-bg);
     color: var(--info);
   }
-  .icon-review {
-    width: 10px;
-    height: 10px;
-    display: block;
-  }
-  .icon-lock {
-    flex: none;
-    width: 12px;
-    height: 12px;
-    display: block;
-    color: var(--ink-faint);
-  }
-  .lockstrip .icon-lock {
-    width: 14px;
-    height: 14px;
-    color: var(--accent);
-  }
-  .slotid {
-    color: var(--ink-faint);
-  }
-  .slotsub {
-    color: var(--ink-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .xsec {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .xrow {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    font-size: 11px;
-  }
-  .xrow > span:first-child {
-    color: var(--ink-faint);
-  }
-  .xrow .mono {
-    color: var(--ink-soft);
-    text-align: right;
-    overflow-wrap: anywhere;
-  }
-  .xrow .mono.done {
-    color: var(--ok);
-  }
-  .xhist {
-    display: flex;
-    gap: 8px;
-    font-size: 10.5px;
-    color: var(--ink-faint);
-  }
-  .xts {
-    color: var(--ink-faint);
-    white-space: nowrap;
-  }
-  .xnote {
-    font-size: 10.5px;
-  }
-
-  .dock {
-    flex: 0 0 55%;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--card);
-    border-top: 1px solid var(--line);
-    position: relative;
-  }
-  .dock-resizer {
-    position: absolute;
-    top: -5px;
-    left: 0;
-    right: 0;
-    height: 9px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: row-resize;
-    z-index: 5;
-  }
-  .dock-resizer:hover,
-  .dock-resizer:active {
-    background: var(--accent-wash);
-  }
-  .dock-head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--line);
-  }
-  .dock-title {
-    font-weight: 600;
-    font-size: 12px;
-  }
-  .dock-title .mono {
-    color: var(--ink-faint);
-    font-weight: 400;
-  }
-  .dock-nav {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-  }
-  .dock-nav-label {
-    min-width: 110px;
-    text-align: center;
-  }
-  .dock-viewmode {
-    display: flex;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .dock-viewmode button {
-    font-size: 10.5px;
-    font-weight: 500;
-    font-family: inherit;
-    padding: 3px 9px;
-    background: var(--card);
-    color: var(--ink-faint);
-    border: none;
-    cursor: pointer;
-  }
-  .dock-viewmode button.on {
-    font-weight: 600;
-    background: var(--invert-bg);
-    color: var(--invert-ink);
-  }
-  .dock-check {
+  .pcheck {
     display: flex;
     align-items: center;
     gap: 5px;
     font-size: 11px;
     color: var(--ink-soft);
+    white-space: nowrap;
   }
-  .dock-nav button {
-    font: inherit;
-    padding: 1px 8px;
-    border: 1px solid var(--line-strong);
-    border-radius: 5px;
-    background: var(--card);
-    cursor: pointer;
+  .vline {
+    width: 1px;
+    height: 18px;
+    background: var(--line);
+    flex: none;
   }
-  .dock-nav button:disabled {
-    opacity: 0.45;
-    cursor: default;
+  .zval {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-soft);
+    min-width: 38px;
+    text-align: center;
   }
-  .dock-body {
+  .pbody-panes {
     flex: 1;
     min-height: 0;
+    background: var(--bg-inset);
     display: flex;
+    gap: 16px;
+    padding: 16px;
   }
-  .dock-pane {
+  .pane {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: 8px;
     min-height: 0;
   }
-  .dock-pane + .dock-pane {
-    border-left: 1px solid var(--line);
-  }
-  .dock-label {
+  .pane-cap {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    text-align: center;
     flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 30px;
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--ink-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 3px 14px;
-    border-bottom: 1px solid var(--line);
-    background: var(--bg-alt);
   }
-  .dock-tools {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    text-transform: none;
-    letter-spacing: normal;
-    font-weight: 400;
+  .pnote,
+  .perr {
+    margin: 0;
+    padding: 14px;
+    font-size: 12px;
   }
-  .dock-toggle {
-    font-size: 10.5px;
-    font-weight: 500;
-    font-family: inherit;
-    padding: 3px 9px;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: var(--card);
-    color: var(--ink-faint);
-    cursor: pointer;
-  }
-  .dock-toggle.on {
-    color: var(--info);
-    border-color: var(--info-line);
-    background: var(--info-bg);
-  }
-  .zoomctl {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .zoomctl input[type="range"] {
-    width: 90px;
-    accent-color: var(--accent);
-  }
-  .zoomctl span {
-    min-width: 36px;
-    font-size: 10px;
-    color: var(--ink-faint);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
+  .perr {
+    color: var(--danger);
   }
   .pv-scroll {
     flex: 1;
@@ -2908,7 +2837,6 @@
     display: flex;
     gap: 14px;
     align-items: flex-start;
-    padding: 12px 14px;
     min-width: 100%;
     box-sizing: border-box;
   }
@@ -2928,16 +2856,17 @@
     height: auto;
     display: block;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--facsimile-paper);
   }
+  /* The rendered pages are paper: they stay light in both themes. */
   .pv-page.enc :global(svg) {
     width: 100%;
     height: auto;
     display: block;
     border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--facsimile-paper);
+    border-radius: 8px;
+    background: #fdfdfe;
   }
   .pv-page figcaption {
     font-size: 10px;
@@ -2945,9 +2874,14 @@
     text-align: center;
   }
   .pv-zone {
-    fill: rgba(48, 86, 211, 0.1);
-    stroke: rgba(48, 86, 211, 0.65);
+    fill: rgba(109, 195, 255, 0.12);
+    stroke: rgba(37, 99, 201, 0.55);
     stroke-width: 2;
+  }
+  .pv-zone.flagged {
+    fill: rgba(180, 35, 24, 0.1);
+    stroke: #b42318;
+    stroke-width: 3;
   }
   .pv-zonelabel {
     font:
@@ -2958,13 +2892,341 @@
     stroke: #fff;
     stroke-width: 4;
   }
-  .dock-note,
-  .dock-err {
-    margin: 0;
-    padding: 14px;
-    font-size: 12px;
+  .pv-zonelabel.flagged {
+    fill: #b42318;
+    font-weight: 700;
   }
-  .dock-err {
+  .pv-page.enc :global(g.measure.m-flag *) {
+    fill: #b42318;
+    stroke: #b42318;
+  }
+
+  /* ---------------------------------------------------------- right rail */
+  .mrail {
+    width: 400px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .rail-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px 20px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .rlabel {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+    padding-bottom: 4px;
+  }
+  .rrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .rslot {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .rwho {
+    font-size: 12px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+  .small-note {
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+  .claimbtn {
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--info-line);
+    background: var(--card);
+    color: var(--info);
+    cursor: pointer;
+    flex: none;
+  }
+  .claimbtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .passbtn,
+  .failbtn {
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--ok-line);
+    background: var(--card);
+    color: var(--ok);
+    cursor: pointer;
+    flex: none;
+  }
+  .failbtn {
+    border-color: var(--danger-line);
+    color: var(--danger);
+  }
+  .failbtn.on {
+    background: var(--danger-solid);
+    border-color: var(--danger-solid);
+    color: #fff;
+  }
+  .passbtn:disabled,
+  .failbtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .failbox {
+    margin: 10px 0;
+    border: 1px solid var(--danger-line);
+    border-radius: 10px;
+    background: var(--danger-wash);
+    padding: 12px 14px;
+  }
+  .failhead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .failtitle {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--danger);
+  }
+  .failbody {
+    font-size: 12.5px;
+    color: var(--ink);
+    margin-top: 8px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .failchips {
+    display: flex;
+    gap: 6px;
+    margin-top: 9px;
+    flex-wrap: wrap;
+  }
+  .anchorchip {
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .failacts {
+    display: flex;
+    gap: 12px;
+    margin-top: 10px;
+    align-items: center;
+  }
+  .dangerbtn {
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 0;
+    background: var(--danger-solid);
+    color: #fff;
+    cursor: pointer;
+    flex: none;
+  }
+  .dangerbtn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .rfoot {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+  .failform {
+    border: 1px solid var(--danger-line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin: 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--danger-wash);
+  }
+  .failform textarea {
+    font: inherit;
+    font-size: 12.5px;
+    padding: 7px 10px;
+    border: 1px solid var(--line-input);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--ink);
+    resize: vertical;
+  }
+  .failform-anchor {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    flex-wrap: wrap;
+  }
+  .failform-anchor input {
+    font: inherit;
+    font-size: 11.5px;
+    padding: 3px 6px;
+    border: 1px solid var(--line-input);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--ink);
+    width: 3.2em;
+  }
+
+  /* ---------------------------------------------------------- discussion */
+  .discussion {
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .crow {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .crow.resolved {
+    opacity: 0.55;
+  }
+  .chead {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .cwho {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .cwhen {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-left: auto;
+  }
+  .cbody {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .cacts {
+    display: flex;
+    gap: 12px;
+    margin-top: 6px;
+  }
+  .creply {
+    padding: 10px 0 0 18px;
+  }
+  .cnone {
+    padding: 8px 0;
+  }
+  .composer {
+    flex: none;
+    padding: 10px 20px 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .replying {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .kindpick {
+    display: flex;
+    gap: 6px;
+  }
+  .composer-row {
+    display: flex;
+    gap: 8px;
+  }
+  .composer-row input {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    font-family: inherit;
+    padding: 8px 12px;
+    border: 1px solid var(--line-input);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--ink);
+  }
+  .sendbtn {
+    font-size: 12.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 8px 16px;
+    border-radius: 999px;
+    border: 0;
+    background: var(--accent-btn);
+    color: #fff;
+    cursor: pointer;
+    flex: none;
+  }
+  .sendbtn:hover:not(:disabled) {
+    background: var(--accent-btn-hover);
+  }
+  .sendbtn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  /* ---------------------------------------------------------------- pills */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: var(--bg-alt);
+    border: 1px solid var(--line);
+    color: var(--ink-faint);
+  }
+  .pill.s-completed,
+  .pill.s-pass {
+    background: var(--ok-bg);
+    border-color: var(--ok-line);
+    color: var(--ok);
+  }
+  .pill.s-encoding_required,
+  .pill.s-encoding,
+  .pill.s-claimed {
+    background: var(--info-bg);
+    border-color: var(--info-line);
+    color: var(--info);
+  }
+  .pill.s-validation_required,
+  .pill.s-review {
+    background: var(--warn-bg);
+    border-color: var(--warn-line);
+    color: var(--warn);
+  }
+  .pill.s-fail {
+    background: var(--danger-bg);
+    border-color: var(--danger-line);
     color: var(--danger);
   }
 
@@ -3020,6 +3282,10 @@
   .trow.subrow {
     background: var(--bg-alt);
   }
+  .trow .pill {
+    font-size: 9px;
+    padding: 2px 8px;
+  }
   .dim {
     color: var(--ink-faint);
   }
@@ -3042,6 +3308,10 @@
   .hrow:last-child {
     border-bottom: none;
   }
+  .xts {
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
   .outcome {
     font-weight: 600;
     font-size: 10px;
@@ -3057,26 +3327,35 @@
   }
 
   /* --------------------------------------------------------- responsive */
-  @media (max-width: 900px) {
-    .panel-resizer,
-    .dock-resizer {
-      display: none;
+  @media (max-width: 1100px) {
+    .board {
+      flex-direction: column;
+      overflow-y: auto;
     }
-    .panel {
-      width: auto;
+    .bcol {
+      min-height: auto;
     }
-    .panel {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
+    .well {
+      overflow-y: visible;
+    }
+    .hero {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .hero-right {
+      align-items: flex-start;
+    }
+    .mbody {
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .mpreview {
+      border-right: none;
+      border-bottom: 1px solid var(--line);
+      min-height: 380px;
+    }
+    .mrail {
       width: auto;
-      max-height: 70vh;
-      border-left: none;
-      border-top: 1px solid var(--line);
-      border-radius: 14px 14px 0 0;
-      box-shadow: 0 -12px 44px var(--shade);
-      z-index: 40;
     }
   }
 </style>

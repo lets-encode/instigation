@@ -111,8 +111,9 @@ entry needs are the identity of the event; it derives the rest itself.
 
 **What is *not* forwarded — central derives or reads it as data:**
 
-- **Which operation** (claim / encode / validate) — inferred from the PR's *changed paths*
-  (`lock.csv` → claim; `sources/**` → encoding; `state.csv` → validation). No `workpackage_id`.
+- **Which operation** (claim / encode / validate / comment) — inferred from the PR's *changed paths*
+  (`lock.csv` → claim; `sources/**` → encoding; `state.csv` → validation or send-back;
+  `comment.csv` alone → comment). No `workpackage_id`.
 - **The intent values** (task id, claim kind, pass/fail verdict) — read from the PR's proposed table
   diff, treated as data (never merged verbatim; §6). No `parameters` input.
 - **Config values** (`pass_threshold`, `required_validations`, `stale_after_minutes`) — read from
@@ -193,7 +194,7 @@ validation:    { required_validations, pass_threshold }
 locking:       { stale_after_minutes }
 ```
 
-### The four tracking tables
+### The five tracking tables
 
 All keyed by **`(task_id, subtask_id)`**: a **task** is the unit of *encoding* (one encoder), its
 **subtasks** are the units of *validation* (reviewed in parallel, possibly split differently). A row
@@ -236,14 +237,28 @@ encoding is exclusive (one lock per task) while validation is concurrent (severa
 same encoded work). Encoding locks sit on the task row key, validation locks on a subtask key. The
 reaper compares `timestamp` against `stale_after_minutes`.
 
+**comment.csv — the comment log (fail explanations and discussion), Action-authored**
+
+`comment_id, task_id, subtask_id, kind, page, measure_start, measure_end, author_id, timestamp, resolved, parent_id, body`
+
+- `kind` ∈ `fail|question|addition|reply`. A **`fail` validation requires a comment row** — it
+  rides the same PR as the verdict, and the coordinator rejects a fail without one
+  (`fail_without_comment`). `question`/`addition` are top-level discussion, `reply` points at its
+  parent via `parent_id`.
+- Comments are anchored to **measures, not pixels** (`page` + `measure_start…measure_end`), so they
+  survive re-encoding; the console renders the anchor as a chip and highlights the range in both
+  preview panes.
+- `resolved` flips '' → `true` (author or push access only); resolved comments leave the attention
+  counts. `comment_id`/`author_id`/`timestamp` are Action-authored, never the fork's values.
+
 **history.csv — append-only audit log**
 
 `timestamp, task_id, subtask_id, user_id, action, outcome, detail, command, version, input`
 
 Every processed event appends a row — **including rejects** (attribution + audit): `action` ∈
-`claim_encoding|claim_validation|submit_encoding|submit_validation|reap|dispatch`, `outcome` ∈
-`accepted|rejected|released`, `detail` = the reject reason, the validation verdict, or the reaped
-lock's kind.
+`claim_encoding|claim_validation|submit_encoding|submit_validation|send_back|submit_comment|resolve_comment|reap|dispatch`,
+`outcome` ∈ `accepted|rejected|released`, `detail` = the reject reason, the validation verdict, the
+comment kind, or the reaped lock's kind.
 
 The last three columns record the **console command** behind the event, when there was one —
 `command`/`version` identify it, `input` is its input as JSON — so user actions are replayable as
@@ -285,13 +300,15 @@ authoritative row/cell itself:
 Table changes are *applied by the Action*, not merged from fork bytes (a boundary check limits *which*
 cells change, not *what* goes in). MEI content is the volunteer's and is merged.
 
-**The three PR types** (distinguished by changed path):
+**The PR types** (distinguished by changed path):
 
 | PR | Allowed change | Carries |
 |---|---|---|
 | Claim | `tracking/lock.csv` only | task_id, subtask_id, kind |
 | Encoding | the task's fragment (`sources/score.mei`) only | the MEI content |
-| Validation | `tracking/state.csv` only | subtask + pass/fail verdict |
+| Validation | `tracking/state.csv` only (plus one appended `tracking/comment.csv` row on a fail) | subtask + pass/fail verdict (+ the fail's mandatory comment) |
+| Send-back | `tracking/state.csv` only (the reset of one failed task) | task_id, via the reset shape |
+| Comment | `tracking/comment.csv` only | one appended discussion row, or one `resolved` flip |
 
 The pre-task submissions (§7a) are ordinary *encoding-type* PRs — they rewrite the fragment.
 Because several tasks can share one fragment, an encoding-type PR's **task** is resolved from the
@@ -319,7 +336,15 @@ without clobbering each other; the spliced result is what the machine-check vali
 - *Validation:* author holds the subtask's active validation lock → write its first open
   `validate_status_N` = `verdict|author|now`, drop the lock; once `pass_threshold` passes
   accumulate the subtask → `completed`, and when every subtask is completed the task row →
-  `completed`.
+  `completed`. A **fail is recorded in place** — the task stays in validation, flagged for
+  attention, and the fail's mandatory comment row is appended (re-authored) to `comment.csv`.
+- *Send-back:* the explicit follow-up to a fail — the task is in `validation_required` with at
+  least one recorded fail, and the author is one of the failing validators or has push access →
+  the task returns to `encoding_required` with attribution cleared, its subtasks to `pending`,
+  every validation cell clears, and all locks on the task are released.
+- *Comment:* one appended row (kind `question|addition|reply`, non-empty body, an existing task,
+  a `reply` pointing at an existing parent), re-authored by the Action; or one `resolved` flip,
+  allowed for the comment's author or push access.
 
 **History.** Every processed event — accepted or rejected — is committed as an appended
 `history.csv` row (§5). A rejected PR therefore still produces one commit (the audit entry), just
@@ -368,7 +393,7 @@ At creation the GUI, acting as the organiser via the `ForgeClient` (token attach
 3. commits, in one commit: `config.yaml` (including the `automation` pointer), each piece's
    `sources/<piece>/score.mei` (header built from the source and piece metadata forms), and the four tracking
    tables (§5): `task.csv` (task `T0001` + subtask `S0001`), `state.csv` (`encoding_required` /
-   `pending`), and header-only `lock.csv` and `history.csv`.
+   `pending`), and header-only `lock.csv`, `history.csv` and `comment.csv`.
 
 Idempotent: output is fully determined by config + template, so re-running before any contribution
 reproduces identical files. Runs client-side because the organiser is in the loop; everything else

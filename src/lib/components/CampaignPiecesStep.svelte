@@ -21,6 +21,7 @@
     buildStateCsv,
     buildLockCsv,
     buildHistoryCsv,
+    buildCommentCsv,
     piecePath,
     type PieceSurfaces,
   } from "$lib/campaign-init.ts";
@@ -361,6 +362,7 @@
         { path: "tracking/state.csv", content: buildStateCsv(config, surfaces) },
         { path: "tracking/lock.csv", content: buildLockCsv() },
         { path: "tracking/history.csv", content: buildHistoryCsv() },
+        { path: "tracking/comment.csv", content: buildCommentCsv() },
       ];
       log.step(`Committing the campaign (${files.length} file(s))`);
       await f.commitFiles(repo.owner, repo.name, files, "Initialise campaign");

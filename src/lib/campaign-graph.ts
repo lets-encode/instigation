@@ -15,7 +15,7 @@ import type { TaskRow, StateRow, LockRow, HistoryRow } from './campaign-tables.t
 export type Logins = Record<string, string>;
 
 /** The display handle for a stored user id: its login, or the id if unresolved. */
-const handle = (logins: Logins, id: string): string => logins[id] || id;
+export const handle = (logins: Logins, id: string): string => logins[id] || id;
 
 /** The tables (and config) the graph is derived from. */
 export interface GraphData {
@@ -98,6 +98,10 @@ export interface NodeSlot {
 	running: boolean;
 	/** The slot is open and the encoding is in — it can be claimed for review. */
 	claimable: boolean;
+	/** The stored user id behind the slot (verdict author or lock holder); '' when open. */
+	user: string;
+	/** The verdict's or lock's timestamp; '' when open. */
+	ts: string;
 }
 
 /** A positioned task node in the left-to-right flow. */
@@ -219,6 +223,7 @@ interface SlotState {
 	sub: string;
 	running: boolean;
 	user: string;
+	ts: string;
 }
 
 // The slot's state from its validate_status cell: a final verdict renders
@@ -228,15 +233,21 @@ interface SlotState {
 function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', logins: Logins = {}): SlotState {
 	const cell = cellsOf(d, row)[slot] ?? '';
 	if (isFinalValidation(cell)) {
-		const [verdict, user] = cell.split('|');
-		return { key: verdict as StatusKey, sub: `@${handle(logins, user)} · ${verdict}`, running: false, user };
+		const [verdict, user, ts] = cell.split('|');
+		return { key: verdict as StatusKey, sub: `@${handle(logins, user)} · ${verdict}`, running: false, user, ts };
 	}
 	if (cell !== '') {
-		return { key: 'pending', sub: 'invalid validation data', running: false, user: '' };
+		return { key: 'pending', sub: 'invalid validation data', running: false, user: '', ts: '' };
 	}
 	const lock = validationLockForSlot(d, row, slot);
 	if (lock) {
-		return { key: 'review', sub: `@${handle(logins, lock.user_id)} · in review`, running: true, user: lock.user_id };
+		return {
+			key: 'review',
+			sub: `@${handle(logins, lock.user_id)} · in review`,
+			running: true,
+			user: lock.user_id,
+			ts: lock.timestamp
+		};
 	}
 	const taskStatus = taskState(d, row.task_id);
 	const waiting = !isEncoded(taskStatus?.status ?? '');
@@ -252,7 +263,8 @@ function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', login
 				? 'open — needs another volunteer'
 				: 'open — claim to review',
 		running: false,
-		user: ''
+		user: '',
+		ts: ''
 	};
 }
 
@@ -339,7 +351,9 @@ export function buildGraph(d: GraphData, viewer = '', logins: Logins = {}): Grap
 						encoded &&
 						row.status === 'validation_required' &&
 						state?.encoder !== viewer &&
-						slot === nextUnreservedSlot(d, row)
+						slot === nextUnreservedSlot(d, row),
+					user: s.user,
+					ts: s.ts
 				};
 			})
 		);

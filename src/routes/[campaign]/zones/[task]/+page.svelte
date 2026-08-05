@@ -290,16 +290,36 @@
         c,
       ),
     );
+  // A fail carries a mandatory comment row; pass submits bare.
+  let failOpen = $state(false);
+  let failText = $state("");
   const validate = (verdict: string) =>
     run(
       (c) =>
         invoke(
           commands.submitValidation,
-          { task_id: taskId, subtask_id: validation!.subtask_id, verdict },
+          {
+            task_id: taskId,
+            subtask_id: validation!.subtask_id,
+            verdict,
+            ...(verdict === "fail"
+              ? {
+                  comment: {
+                    body: failText,
+                    page: "",
+                    measure_start: "",
+                    measure_end: "",
+                  },
+                }
+              : {}),
+          },
           c,
         ),
       { overviewOnSuccess: true },
-    );
+    ).then(() => {
+      failOpen = false;
+      failText = "";
+    });
 
   function toPageModels(): PageModel[] {
     return pages.map((pg) => ({
@@ -734,8 +754,26 @@
             title="Reserve this subtask for validation. Encoders cannot validate their own work.">Claim</button>
           <button type="button" class="vpass" onclick={() => validate("pass")} disabled={busy || !holdsValidation}
             title="Record a passing verdict.">Pass</button>
-          <button type="button" class="vfail" onclick={() => validate("fail")} disabled={busy || !holdsValidation}
-            title="Record a failing verdict — the task goes back to encoding.">Fail</button>
+          <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={busy || !holdsValidation}
+            title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
+          {#if failOpen && holdsValidation}
+            <input
+              class="fail-note"
+              bind:value={failText}
+              placeholder="Why does this fail?"
+              onkeydown={(e) => {
+                if (e.key === "Enter" && failText.trim()) validate("fail");
+              }}
+            />
+            <button
+              type="button"
+              class="vfail"
+              onclick={() => validate("fail")}
+              disabled={busy || !failText.trim()}
+              title="Submit the failing verdict with this comment."
+              >Submit fail</button
+            >
+          {/if}
         </div>
       {/if}
 
@@ -1023,6 +1061,21 @@
   }
   .tb-validation .vfail {
     color: var(--danger);
+  }
+  .tb-validation .vfail.on {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+  }
+  .tb-validation .fail-note {
+    font: inherit;
+    font-size: 0.8rem;
+    width: 220px;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--danger-line);
+    border-radius: 7px;
+    background: var(--card);
+    color: var(--ink);
   }
   .checkline {
     display: flex;

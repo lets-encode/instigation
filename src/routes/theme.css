@@ -49,23 +49,31 @@
      scanned scores keep their true contrast (decision: theme port). */
   --facsimile-paper: #ffffff;
 
-  /* Status colours for validation and result messages. Each has a fill and a
-     border to go with the text colour, for badges, pills and banners. */
+  /* Status colours for validation and result messages: one semantic set
+     (success / warning / error / info), used everywhere a state is signalled —
+     pills, chips, fail boxes, attention badges, validation dots, banners.
+     Each has a fill and a border to go with the text colour. */
   --ok: #1a7f4b;
   --ok-bg: #e8f7ec;
   --ok-line: #b6e2c1;
   /* A filled green for progress bars and completed edges, where the shape
      rather than the text carries the meaning. */
   --ok-soft: #7fbf8a;
-  --warn: #9a6700;
-  --warn-bg: #fff4d6;
-  --warn-line: #f0dca0;
+  --warn: #e07b39;
+  --warn-bg: #fff7f0;
+  --warn-line: #e8d5c4;
+  /* Solid fill for the attention badge; white text on it. */
+  --warn-solid: #e07b39;
   --danger: #b42318;
-  --danger-bg: #fdecec;
-  --danger-line: #f3c0c0;
+  --danger-bg: #fdecea;
+  --danger-line: #f2c4be;
+  /* Solid fill for the fail pin and danger button; white text on it. */
+  --danger-solid: #b42318;
+  /* A fainter red wash than --danger-bg, for boxes that hold readable text. */
+  --danger-wash: #fdf6f5;
   /* Blue: work awaiting review, and anything else stated rather than warned. */
-  --info: #2c5aa0;
-  --info-bg: #e8f1fd;
+  --info: #2563c9;
+  --info-bg: #eaf4ff;
   --info-line: #bcd4f3;
   /* Neutral beige, for a banner that reports rather than alerts. */
   --note: #6f6650;
@@ -156,15 +164,19 @@
   --ok-bg: rgba(46, 160, 92, .15);
   --ok-line: #2e5c42;
   --ok-soft: #4e9d7b;
-  --warn: #e0b45c;
-  --warn-bg: rgba(224, 180, 92, .14);
-  --warn-line: rgba(224, 180, 92, .42);
+  --warn: #f0924f;
+  --warn-bg: rgba(240, 146, 79, .12);
+  --warn-line: #5e4530;
+  /* Solid badges keep their light-mode saturation. */
+  --warn-solid: #e07b39;
   --danger: #e5533f;
   --danger-bg: rgba(229, 83, 63, .14);
-  --danger-line: rgba(229, 83, 63, .42);
-  --info: #9dc2f5;
-  --info-bg: rgba(110, 163, 245, .14);
-  --info-line: rgba(110, 163, 245, .42);
+  --danger-line: rgba(229, 83, 63, .35);
+  --danger-solid: #e5533f;
+  --danger-wash: rgba(229, 83, 63, .08);
+  --info: #6ea3f5;
+  --info-bg: rgba(110, 163, 245, .15);
+  --info-line: #3d5578;
   --note: #cfc6ae;
   --note-bg: rgba(207, 198, 174, .1);
   --note-line: rgba(207, 198, 174, .3);

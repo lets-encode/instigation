@@ -10,6 +10,9 @@ import {
 	serializeLockCsv,
 	parseHistoryCsv,
 	appendHistory,
+	parseCommentCsv,
+	serializeCommentCsv,
+	appendComments,
 	findRow,
 	isFinalValidation
 } from '../campaign-tables.ts';
@@ -184,6 +187,21 @@ test('findRow: distinguishes the task row from subtask rows', () => {
 	assert.equal(findRow(rows, 'T0001', '')!.status, 'encoding_required');
 	assert.equal(findRow(rows, 'T0001', 'S0001')!.status, 'pending');
 	assert.equal(findRow(rows, 'T0001', 'S9999'), undefined);
+});
+
+test('comment.csv: rows round-trip, and appending creates the header when missing', () => {
+	const csv =
+		'comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n' +
+		'c1,T0001,S0001,fail,12,34,35,carol,t1,,,"Slur missing, see source"\n';
+	const rows = parseCommentCsv(csv);
+	assert.equal(rows.length, 1);
+	assert.equal(rows[0].kind, 'fail');
+	assert.equal(rows[0].measure_end, '35');
+	assert.equal(rows[0].body, 'Slur missing, see source');
+	assert.equal(serializeCommentCsv(rows), csv);
+	const appended = appendComments('', [rows[0]]);
+	assert.equal(appended, csv);
+	assert.equal(parseCommentCsv(appendComments(csv, rows)).length, 2);
 });
 
 test('isFinalValidation: only pass/fail are final', () => {

@@ -1,5 +1,5 @@
-// Tracking-table (de)serialisation for the four v2 tables (task / state / lock
-// / history), all keyed by (task_id, subtask_id): a row with an EMPTY
+// Tracking-table (de)serialisation for the five v2 tables (task / state / lock
+// / history / comment), all keyed by (task_id, subtask_id): a row with an EMPTY
 // subtask_id addresses the whole task (the unit of encoding), a row with a
 // subtask_id addresses one validation portion. Pure functions: CSV text in,
 // plain objects out (and back). No GitHub, no filesystem.
@@ -51,6 +51,33 @@ export interface HistoryRow {
 }
 
 /**
+ * A comment row from comment.csv: the campaign's comment log. A `fail`
+ * comment is the mandatory explanation of a fail validation; `question`,
+ * `addition` and `reply` carry the discussion. Comments are anchored to
+ * measures (page + measure range), not pixels, so they survive re-encoding.
+ */
+export interface CommentRow {
+	/** Random id, assigned by the campaign automation. */
+	comment_id: string;
+	task_id: string;
+	subtask_id: string;
+	/** 'fail' | 'question' | 'addition' | 'reply'. */
+	kind: string;
+	/** 1-based facsimile page the comment anchors to; '' = unanchored. */
+	page: string;
+	measure_start: string;
+	measure_end: string;
+	/** The GitHub numeric account id (as a string) of the comment's author. */
+	author_id: string;
+	timestamp: string;
+	/** 'true' once resolved; '' while open. */
+	resolved: string;
+	/** comment_id of the comment this replies to; '' for top-level comments. */
+	parent_id: string;
+	body: string;
+}
+
+/**
  * A state.csv row, keyed by column name. The base columns are always present;
  * the validation columns (validate_status_1…n) are reached via the index
  * signature and are only meaningful on subtask rows.
@@ -76,6 +103,7 @@ const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist
 const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
 const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
 const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
+const COMMENT_COLUMNS = ['comment_id', 'task_id', 'subtask_id', 'kind', 'page', 'measure_start', 'measure_end', 'author_id', 'timestamp', 'resolved', 'parent_id', 'body'];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
 function csvField(value: unknown): string {
@@ -177,6 +205,23 @@ export function parseHistoryCsv(text: string): HistoryRow[] {
 export function appendHistory(text: string, rows: HistoryRow[]): string {
 	const base = text === '' ? `${csvRow(HISTORY_COLUMNS)}\n` : text.endsWith('\n') ? text : `${text}\n`;
 	return base + rows.map((r) => `${csvRow(HISTORY_COLUMNS.map((c) => r[c as keyof HistoryRow]))}\n`).join('');
+}
+
+/** Parse comment.csv into comment rows. */
+export function parseCommentCsv(text: string): CommentRow[] {
+	return parseRows<CommentRow>(text, COMMENT_COLUMNS);
+}
+
+/** Serialise comment rows back to comment.csv text (header + one line per row). */
+export function serializeCommentCsv(rows: CommentRow[]): string {
+	const lines = [csvRow(COMMENT_COLUMNS), ...rows.map((r) => csvRow(COMMENT_COLUMNS.map((c) => r[c as keyof CommentRow])))];
+	return `${lines.join('\n')}\n`;
+}
+
+/** Append rows to comment.csv text (existing lines are kept verbatim). */
+export function appendComments(text: string, rows: CommentRow[]): string {
+	const base = text === '' ? `${csvRow(COMMENT_COLUMNS)}\n` : text.endsWith('\n') ? text : `${text}\n`;
+	return base + rows.map((r) => `${csvRow(COMMENT_COLUMNS.map((c) => r[c as keyof CommentRow]))}\n`).join('');
 }
 
 /** The row addressing (task_id, subtask_id), or undefined. */
