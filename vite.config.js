@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
 				ignored: ['**/build/**']
 			},
 			// Mount the session broker under the SPA's own origin, mirroring the
-			// production nginx /auth/ proxy block (deploy/apache.conf) — its session cookie must be
+			// production Apache /auth/ ProxyPass (deploy/apache.conf) — its session cookie must be
 			// first-party. Run it with:  flask --app app run --port 7777  (in broker/)
 			proxy: {
 				'/auth': {

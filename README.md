@@ -97,7 +97,7 @@ build the CSP.
 cd broker
 pip install -r requirements.txt
 cp .env.example .env     # then fill in the values (see broker/README.md)
-flask --app app run --port 8787
+flask --app app run --port 7777
 ```
 
 The Vite dev server proxies `/auth` and `/registry` to it, so SPA, broker and
@@ -133,20 +133,53 @@ npm run preview   # serve the built site locally
 npm test          # pure campaign-logic unit tests (no network)
 ```
 
-## 6. Deploy (production)
+## 6. Deploy (production / staging / testing)
 
-- **SPA + broker, one origin:** the broker's session cookie must be first-party,
-  so serve the static `./build` and the broker from the same origin —
-  `deploy/apache.conf` serves `build/` and proxies `/auth/` and `/registry/` to
-  the broker (gunicorn) behind **HTTPS**. `deploy/nginx.conf` is the equivalent
-  worked example for deployers running nginx.
-- **Deploying the SPA is a file copy:** `npm run build` writes a static tree with
-  no server side, so a deployment is `rsync`-ing `build/` into place. Copy into a
-  fresh directory and swap a symlink (`ln -sfn` then `mv -T`) rather than writing
-  over the live tree, so no request ever sees a half-copied build. Every
-  `PUBLIC_*` value — and the CSP in `svelte.config.js` — is baked in at build
-  time, so a config change needs a rebuild, not just a re-copy.
-- **Broker env:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `FLASK_SECRET`,
-  and `REDIRECT_URL=https://<your-origin>/auth/authorize` (see `broker/README.md`).
-- **OAuth App:** update its callback URL to `<your-origin>/auth/authorize` (or
-  register a second app for production).
+Three instances run side by side, each deployed from its own branch and fully
+isolated from the others (own origin, own broker, own OAuth App, own campaign
+repos via `PUBLIC_REPO_TOPIC`):
+
+| Instance   | Branch    | Origin                            | Broker port | Build mode |
+|------------|-----------|-----------------------------------|-------------|------------|
+| production | `main`    | `lets-encode.mdw.ac.at`           | 7777        | production |
+| staging    | `staging` | `staging.lets-encode.mdw.ac.at`   | 7778        | staging    |
+| testing    | `testing` | `testing.lets-encode.mdw.ac.at`   | 7779        | testing    |
+
+Local development is the fourth world: the Vite dev server + a local Flask
+broker (section 4), with its own OAuth App whose callback is
+`http://localhost:5173/auth/authorize`.
+
+- **SPA + broker, one origin:** the broker's session cookie must be
+  first-party, so each instance serves its static build and its broker from
+  the same origin. The vhosts in `deploy/` (`apache.conf` for production —
+  the fully annotated one — plus `apache-staging.conf` and
+  `apache-testing.conf`) each serve `/opt/lets-encode/<instance>/current` and
+  proxy `/auth/` and `/registry/` to that instance's broker port, behind
+  **HTTPS**. They are name-based vhosts on one listen port, so the F5 must
+  forward all three hostnames.
+- **Server layout:** one git checkout per instance, kept on that instance's
+  branch. Each checkout runs its own broker (`PORT=<port> gunicorn -c
+  gunicorn_config.py wsgi:app` in `broker/`), so sessions and the slug DB
+  (`broker/instance/`) are naturally separate.
+- **Deploying the SPA:** from the instance's checkout, on its branch:
+
+  ```bash
+  deploy/deploy.sh staging   # or production / testing
+  ```
+
+  The script refuses to build from the wrong branch, runs `npm ci` and the
+  mode's build, writes it to a fresh directory under
+  `/opt/lets-encode/<instance>/releases/`, and atomically repoints the
+  `current` symlink the vhost serves. It keeps the five newest releases;
+  rolling back is repointing `current` at an older one. Every `PUBLIC_*`
+  value — and the CSP in `svelte.config.js` — is baked in at build time, so a
+  config change needs a rebuild, not just a re-copy. The broker is not
+  touched: restart it separately when `broker/` changed.
+- **Broker env, per instance:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
+  `FLASK_SECRET`, `PORT`, and
+  `REDIRECT_URL=https://<instance-origin>/auth/authorize` (see
+  `broker/README.md`). Never share a `FLASK_SECRET` between instances.
+- **One OAuth App per instance:** a GitHub OAuth App has a single callback
+  URL, so each origin needs its own app registered with
+  `https://<instance-origin>/auth/authorize` as the callback (plus the
+  localhost one for development).

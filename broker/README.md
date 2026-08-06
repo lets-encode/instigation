@@ -59,8 +59,7 @@ The broker **must share the SPA's origin** — the session cookie
 of the SPA's origin:
 
 - production: Apache proxies `/auth/` and `/registry/` to the broker (see
-  `deploy/apache.conf`; `deploy/nginx.conf` is the equivalent worked example for
-  deployers running nginx),
+  `deploy/apache.conf`),
 - development: the Vite dev server proxies `/auth` and `/registry` (see
   `vite.config.js`).
 
@@ -99,17 +98,18 @@ container env, …) and skip the file.
 pip install -r requirements.txt
 
 # development (reads broker/.env; the Vite proxy makes it same-origin)
-flask --app app run --port 8787
+flask --app app run --port 7777
 
-# production (behind the reverse proxy — see deploy/apache.conf)
-gunicorn -c gunicorn_config.py wsgi:app
+# deployed (behind the reverse proxy — see deploy/)
+PORT=7777 gunicorn -c gunicorn_config.py wsgi:app
 ```
 
 `wsgi.py` is a thin shim re-exporting `app`, so service managers can point at the
-conventional `wsgi:app` target; `gunicorn_config.py` is an empty file the
-deployer fills in with the bind address and worker settings. Only the proxy
-needs to reach the bind address — keep it on loopback, or firewalled to the
-proxy host.
+conventional `wsgi:app` target. `gunicorn_config.py` binds to loopback on
+`PORT` (default 7777); each deployed instance runs its own broker on its own
+port — production 7777, staging 7778, testing 7779, matching the Apache
+ProxyPass targets in `deploy/`. Only the proxy needs to reach the bind
+address, so it stays on loopback.
 
 ## Test
 

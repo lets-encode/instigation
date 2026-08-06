@@ -19,8 +19,7 @@ Config (environment variables, loaded from broker/.env if present):
   SESSION_DIR            where session files live (default: instance/sessions)
   FLASK_ENV              set to "development" to allow the cookie over plain HTTP
 
-See README.md for setup, and deploy/apache.conf for the production mount
-(deploy/nginx.conf is the equivalent for deployers running nginx).
+See README.md for setup, and deploy/apache.conf for the production mount.
 
 Behind a reverse proxy the client address Flask sees is the proxy's own, so the
 rate limits below would collapse into a single shared bucket. Wrap the app in
@@ -518,4 +517,4 @@ def proxy(url):
 
 
 if __name__ == "__main__":
-    app.run(port=8787)
+    app.run(port=7777)
