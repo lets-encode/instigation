@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseCommentCsv, parseStateCsv, type CommentRow, type LockRow, type TaskRow } from '../campaign-tables.ts';
+import { parseCommentCsv, parseStateCsv, type LockRow, type TaskRow } from '../campaign-tables.ts';
 import {
 	addedRowFromPatch,
 	appendedComments,

@@ -1,8 +1,9 @@
 <!--
-  The console's task overlay: a modal over the board with the task's score
-  preview (facsimile and rendered encoding, book-style paging), the validation
-  record and the discussion thread. Commands run through callbacks the console
-  page passes in; the shared CommandRunner carries the busy state and result.
+  The campaign view's task detail: a drill-in that swaps the view body, with
+  the task's score preview (facsimile or rendered encoding, book-style
+  paging), the validation record and the discussion thread — the only place a
+  discussion thread renders. Commands run through callbacks the campaign page
+  passes in; the shared CommandRunner carries the busy state and result.
 -->
 <script module lang="ts">
   // Verovio is a ~2 MB WASM module — loaded on first preview, then reused.
@@ -56,6 +57,7 @@
   let {
     card,
     campaign,
+    campaignTitle,
     owner,
     repo,
     taskDefs,
@@ -79,6 +81,7 @@
   }: {
     card: BoardCard;
     campaign: string;
+    campaignTitle: string;
     owner: string;
     repo: string;
     taskDefs: TaskRow[];
@@ -215,13 +218,16 @@
     svgs: Record<number, string>;
   } | null>(null);
 
-  // Preview display state: book-style paging shared by both panes, one zoom
-  // for both, and the zone overlay toggle.
+  // Preview display state: which pane shows (facsimile or rendered encoding),
+  // book-style paging and zoom shared by both, and the zone overlay toggle.
+  let pvPane = $state<"facs" | "enc">("facs");
   let pvView = $state<"single" | "double">("single");
   let pvFirstOnRight = $state(true);
   let pvFirstVisible = $state(0);
   let pvZoom = $state(1);
   let showZones = $state(true);
+  // Scores without a facsimile only have the render to show.
+  const pane = $derived(preview?.facs?.length ? pvPane : "enc");
   const PV_ZOOM_MIN = 0.5;
   const PV_ZOOM_MAX = 4;
   const pvZoomBy = (step: number) =>
@@ -400,26 +406,15 @@
   }}
 />
 
-<div
-  class="scrim"
-  role="presentation"
-  onclick={(e) => {
-    if (e.target === e.currentTarget) onclose();
-  }}
->
-  <div
-    class="modal"
-    role="dialog"
-    aria-modal="true"
-    aria-label={`Task ${card.title}`}
-  >
+<section class="detail" aria-label={`Task ${card.title}`}>
     {@render resultBanner()}
     <div class="mhead">
-      <span class="ticon" class:pre={card.pre}
-        >{card.pre ? "M" : "E"}</span
+      <button type="button" class="backlink" onclick={onclose}
+        >← Back to the board</button
       >
-      <span class="mtitle">{card.title}</span>
-      <span class="mono mtask">{card.task}</span>
+      <span class="bcsep">/</span>
+      <span class="mtitle">{campaignTitle}</span>
+      <span class="msub">· {card.task} · {card.title}</span>
       <span class="pill s-{card.statusKey}">
         {card.statusKey === "validation_required"
           ? `validation · ${card.passes} of ${card.threshold} passes`
@@ -441,16 +436,6 @@
         title="Copy a direct link to the score file to paste into mei-friend manually."
         >Copy raw link</button
       >
-      {#if mineEncoding}
-        <button
-          type="button"
-          class="mbtn primary"
-          onclick={() => onsubmitencoding(card.task)}
-          disabled={runner.busy}
-          title="After committing your encoding in mei-friend, submit it for validation."
-          >Submit encoding</button
-        >
-      {/if}
       {#if card.pre}
         <a
           class="mbtn blue"
@@ -465,20 +450,37 @@
           onclick={() => oneditor(card.task)}
           disabled={runner.busy || !auth.user || card.column === "blocked"}
           title="Opens the score in mei-friend; claims the task for you first when it is open to claim."
-          >Open in mei-friend ↗</button
+          >Open editor ↗</button
         >
       {/if}
-      <button
-        type="button"
-        class="mclose"
-        onclick={onclose}
-        aria-label="Close the preview"
-        title="Close the preview">×</button
-      >
+      {#if mineEncoding}
+        <button
+          type="button"
+          class="mbtn primary"
+          onclick={() => onsubmitencoding(card.task)}
+          disabled={runner.busy}
+          title="After committing your encoding in mei-friend, submit it for validation."
+          >Submit for validation</button
+        >
+      {/if}
     </div>
     <div class="mbody">
       <div class="mpreview">
         <div class="ptoolbar">
+          {#if preview?.facs?.length}
+            <div class="paneseg">
+              <button
+                type="button"
+                class:on={pane === "facs"}
+                onclick={() => (pvPane = "facs")}>Facsimile</button
+              >
+              <button
+                type="button"
+                class:on={pane === "enc"}
+                onclick={() => (pvPane = "enc")}>Rendered encoding</button
+              >
+            </div>
+          {/if}
           <button
             type="button"
             class="tbtn-sq"
@@ -495,7 +497,7 @@
             aria-label="Next page">›</button
           >
           <span class="mspacer"></span>
-          {#if preview?.facs?.length}
+          {#if pane === "facs"}
             <button
               type="button"
               class="tchip"
@@ -552,7 +554,7 @@
           {:else if preview.error}
             <p class="perr">{preview.error}</p>
           {:else}
-            {#if preview.facs?.length}
+            {#if pane === "facs" && preview.facs?.length}
               <div class="pane">
                 <div class="pv-scroll">
                   <div class="pv-spread" style={`width:${pvZoom * 100}%`}>
@@ -618,7 +620,7 @@
                 <div class="pane-cap">Facsimile</div>
               </div>
             {/if}
-            {#if preview.pageCount > 0}
+            {#if pane === "enc" && preview.pageCount > 0}
               <div class="pane">
                 <div class="pv-scroll">
                   <div class="pv-spread" style={`width:${pvZoom * 100}%`}>
@@ -641,7 +643,7 @@
                   Current encoding — rendered with Verovio
                 </div>
               </div>
-            {:else if preview.facs?.length}
+            {:else if pane === "enc" && preview.facs?.length}
               <div class="pane">
                 <p class="muted pnote">
                   No encoding to render yet — the measures are generated
@@ -924,8 +926,7 @@
         {/if}
       </div>
     </div>
-  </div>
-</div>
+</section>
 
 <style>
   .mono {
@@ -992,31 +993,20 @@
     border: 1px solid var(--info-line);
   }
 
-  /* ------------------------------------------------------------- overlay */
-  .scrim {
-    position: fixed;
-    inset: 0;
-    background: rgba(31, 36, 51, 0.42);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 30;
-    padding: 24px;
-  }
-  :global([data-theme="dark"]) .scrim {
-    background: rgba(0, 0, 0, 0.55);
-  }
-  .modal {
-    width: min(1440px, 100%);
-    height: min(820px, 100%);
-    background: var(--card);
-    border-radius: 14px;
-    box-shadow: 0 24px 80px rgba(31, 36, 51, 0.4);
+  /* ------------------------------------------------------------ drill-in */
+  .detail {
+    flex: 1;
+    min-height: 0;
+    margin: 14px 32px 16px;
     display: flex;
     flex-direction: column;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.05);
     overflow: hidden;
   }
-  .modal :global(.banner) {
+  .detail :global(.banner) {
     border-radius: 0;
   }
   .mhead {
@@ -1029,33 +1019,52 @@
     gap: 12px;
     flex-wrap: wrap;
   }
-  .ticon {
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
-    color: var(--info);
-    font:
-      700 12px ui-monospace,
-      monospace;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .backlink {
+    font: 600 13px var(--font);
+    color: var(--link);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
     flex: none;
   }
-  .ticon.pre {
-    background: var(--pre-bg);
-    border-color: var(--pre);
-    color: var(--pre);
+  .backlink:hover {
+    text-decoration: underline;
+  }
+  .bcsep {
+    color: var(--line-input);
   }
   .mtitle {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
   }
-  .mtask {
-    font-size: 11px;
+  .msub {
+    font-size: 15px;
     color: var(--ink-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .paneseg {
+    display: flex;
+    background: var(--bg-tint);
+    border-radius: 999px;
+    padding: 3px;
+    flex: none;
+  }
+  .paneseg button {
+    font: 600 12px var(--font);
+    padding: 4px 14px;
+    border-radius: 999px;
+    border: 0;
+    background: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+  }
+  .paneseg button.on {
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
   }
   .mbtn {
     font-size: 12.5px;
@@ -1090,20 +1099,6 @@
   .mbtn:disabled {
     opacity: 0.5;
     cursor: default;
-  }
-  .mclose {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-faint);
-    font-size: 15px;
-    cursor: pointer;
-    flex: none;
-  }
-  .mclose:hover {
-    color: var(--ink);
   }
   .mbody {
     flex: 1;

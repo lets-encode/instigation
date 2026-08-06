@@ -676,48 +676,94 @@
   <LoadingOverlay log={runner.log} />
 {/if}
 
-{#if notFound}
-  <div class="wrap">
-    <div class="banner err">
-      No campaign called <code>{campaign}</code> was found.
-      <a href="/">Back to all campaigns</a>.
-    </div>
-  </div>
-{:else if auth.status === "loading" || (!resolved && !notFound)}
-  <div class="wrap"><p class="muted">Loading…</p></div>
-{:else if !auth.user}
-  <div class="wrap">
-    <div class="banner warn">
-      Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
-      to work on this task.
-    </div>
-  </div>
-{:else}
-  {#if loading}
-    <div class="wrap"><p class="muted">Loading the facsimile…</p></div>
-  {:else if loadError}
-    <div class="wrap"><div class="banner err">{loadError}</div></div>
-  {:else if data}
-    <div class="toolbar">
-     <div class="toolbar-inner">
-      <span class="tb-group tb-title">
-        <a href={`/${campaign}`} title="Back to the campaign console">← Console</a>
-        <span class="tb-task"><code>{taskId}</code></span>
-        <span class="count">
-          {measureCount} measure{measureCount === 1 ? "" : "s"}
-          · {movementCount} movement{movementCount === 1 ? "" : "s"}
-        </span>
+<div class="corrector">
+  {#if data}
+    <div class="taskrow">
+      <span class="abtitle">Measure review</span>
+      <code class="taskchip">{taskId}</code>
+      <span class="abcount">
+        {measureCount} measure{measureCount === 1 ? "" : "s"}
+        · {movementCount} movement{movementCount === 1 ? "" : "s"}
       </span>
+      {#if !canEdit}
+        {#if data.status === "completed"}
+          <span class="lockpill grey">completed — read-only</span>
+        {:else if data.status !== "encoding_required"}
+          <span class="lockpill amber">submitted — awaiting validation, read-only</span>
+        {:else}
+          <span class="lockpill amber">unclaimed — read-only</span>
+          <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+        {/if}
+      {/if}
+      <span class="abspacer"></span>
+      <button
+        type="button"
+        class="submitbtn"
+        onclick={() => submit()}
+        disabled={runner.busy || !canEdit}
+        title="Submit the corrected measures, breaks and movements for validation"
+      >
+        Submit corrections
+      </button>
+    </div>
+  {/if}
 
+  {#if notFound}
+    <div class="deskwrap">
+      <div class="banner err">
+        No campaign called <code>{campaign}</code> was found.
+        <a href="/">Back to all campaigns</a>.
+      </div>
+    </div>
+  {:else if auth.status === "loading" || (!resolved && !notFound)}
+    <div class="deskwrap"><p class="muted">Loading…</p></div>
+  {:else if !auth.user}
+    <div class="deskwrap">
+      <div class="banner warn">
+        Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
+        to work on this task.
+      </div>
+    </div>
+  {:else if loading}
+    <div class="deskwrap"><p class="muted">Loading the facsimile…</p></div>
+  {:else if loadError}
+    <div class="deskwrap"><div class="banner err">{loadError}</div></div>
+  {:else if data}
+    <div class="toolpanel">
       {#if canEdit}
-        <div class="tb-group tb-div">
+        <div class="tb-group">
           <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
           <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
         </div>
+        <span class="vline"></span>
       {/if}
-
+      <div class="tb-group">
+        <button type="button" class="round" onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out" title="Zoom out">−</button>
+        <span class="zoom-val">{Math.round(zoom * 100)}%</span>
+        <button type="button" class="round" onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" onclick={() => (zoom = 1)} disabled={zoom === 1} title="Fit page to width">Fit</button>
+      </div>
+      <span class="vline"></span>
+      <div class="tb-group">
+        <button type="button" class="round" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page" title="Previous page">‹</button>
+        <span class="nav-label">{spreadLabel}</span>
+        <button type="button" class="round" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page" title="Next page">›</button>
+      </div>
+      <span class="vline"></span>
+      <div class="tb-group">
+        <div class="viewseg">
+          <button type="button" class:on={view === "single"} onclick={() => (view = "single")} title="Show one page">1 page</button>
+          <button type="button" class:on={view === "double"} onclick={() => (view = "double")} title="Show a two-page spread">2 pages</button>
+        </div>
+        {#if view === "double"}
+          <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
+            <input type="checkbox" bind:checked={firstOnRight} /> P1 right
+          </label>
+        {/if}
+      </div>
       {#if validation && submitted}
-        <div class="tb-group tb-div tb-validation">
+        <span class="vline"></span>
+        <div class="tb-group tb-validation">
           <span class="vstatus">
             {#if validation.status === "completed"}
               Validation complete
@@ -755,283 +801,337 @@
           {/if}
         </div>
       {/if}
-
-      <button
-        type="button"
-        class="primary tb-submit tb-div"
-        onclick={() => submit()}
-        disabled={runner.busy || !canEdit}
-        title="Submit the corrected measures, breaks and movements for validation"
-      >
-        Submit corrections
-      </button>
-
-      <div class="tb-group tb-zoom tb-right">
-        <button type="button" onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out" title="Zoom out">−</button>
-        <span class="zoom-val">{Math.round(zoom * 100)}%</span>
-        <button type="button" onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in" title="Zoom in">+</button>
-        <button type="button" onclick={() => (zoom = 1)} disabled={zoom === 1} title="Fit page to width">Fit</button>
-      </div>
-      <div class="tb-group tb-div tb-nav">
-        <button type="button" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page" title="Previous page">‹</button>
-        <span class="nav-label">{spreadLabel}</span>
-        <button type="button" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page" title="Next page">›</button>
-      </div>
-      <div class="tb-group tb-div tb-view">
-        <button type="button" class:on={view === "single"} onclick={() => (view = "single")} title="Show one page">1 page</button>
-        <button type="button" class:on={view === "double"} onclick={() => (view = "double")} title="Show a two-page spread">2 pages</button>
-        {#if view === "double"}
-          <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
-            <input type="checkbox" bind:checked={firstOnRight} /> P1 right
-          </label>
-        {/if}
-      </div>
-     </div>
     </div>
 
-    <div class="wrap">
     {#if runner.result && runner.result.error}
-      <div class="banner err">
+      <div class="banner err bar">
         {runner.result.error}
         {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
       </div>
     {:else if runner.result && runner.result.ok}
-      <div class="banner {runner.result.warn ? 'warn' : 'ok'}">
+      <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
         {runner.result.message}
         {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
       </div>
     {/if}
 
-    {#if !canEdit}
-      <div class="banner warn">
-        {#if data.status === "completed"}
-          This task is completed — the view is read-only.
-        {:else if data.status !== "encoding_required"}
-          This task has been submitted and is awaiting validation — the view is read-only.
-        {:else if !data.holdsLock}
-          Claim this task to edit.
-          <button type="button" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
-        {/if}
-      </div>
-    {/if}
-
-    <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
-      {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
-      {#each spread.pages as p (p)}
-        {@const pg = pages[p]}
-        {@const systems = systemIndices(pg)}
-        <div class="page">
-          <p class="pagehead">Page {p + 1}</p>
-          {#if pg.failed}
-            <div class="banner err">
-              The page facsimile for page {p + 1} could not be loaded. The zones
-              are shown without their reference image.
-            </div>
-          {/if}
-          <div class="canvas" bind:clientWidth={canvasW[p]}>
-            <svg
-              bind:this={svgEls[p]}
-              viewBox={`0 0 ${pg.width} ${pg.height}`}
-              role="application"
-              aria-label={`Page ${p + 1} measures`}
-              onpointerdown={(e) => backgroundPointerDown(e, p)}
-            >
-              {#if pg.url}
-                <image
-                  href={pg.url}
-                  width={pg.width}
-                  height={pg.height}
-                  onerror={() => (pages[p].failed = true)}
-                />
-              {/if}
-              {#each paintOrder(pg, p) as { zone, z } (z)}
-                <rect
-                  class="zone sys{systems[z] % 2}"
-                  class:selected={selected?.p === p && selected?.z === z}
-                  class:sysstart={sbActive(p, z)}
-                  class:mdivstart={startsMovement(p, z)}
-                  role="button"
-                  tabindex={0}
-                  aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
-                  x={zone.box.ulx}
-                  y={zone.box.uly}
-                  width={zone.box.lrx - zone.box.ulx}
-                  height={zone.box.lry - zone.box.uly}
-                  onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
-                  onpointerenter={() => hoverEnter(p, z)}
-                  onpointerleave={hoverLeave}
-                  onkeydown={(e) => zoneKeydown(e, p, z)}
-                />
-                {@const lbl = labelText(p, z)}
-                {@const fs = labelFont(p, pg.width)}
-                {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
-                <rect class="labelbg" x={zone.box.ulx + 2} y={zone.box.uly + 3} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
-                <text
-                  class="zonelabel"
-                  x={zone.box.ulx + 2 + lblW / 2}
-                  y={zone.box.uly + 3 + fs * 1.12}
-                  text-anchor="middle"
-                  font-size={fs}
-                >{lbl}</text>
-                {#if canEdit && selected?.p === p && selected?.z === z}
-                  <circle
-                    class="handle"
-                    role="button"
-                    tabindex={0}
-                    aria-label={`Measure ${zone.label}: resize`}
-                    cx={zone.box.lrx}
-                    cy={zone.box.lry}
-                    r={Math.max(8, pg.width / 120)}
-                    onpointerdown={(e) => startZoneDrag(e, p, z, "resize")}
-                    onkeydown={(e) => handleKeydown(e, p, z)}
-                  />
-                {/if}
-              {/each}
-            </svg>
-
-            {#if canEdit && active && active.p === p && pg.zones[active.z]}
-              {@const z = active.z}
-              {@const zone = pg.zones[z]}
-              {@const box = zone.box}
-              <div
-                class="zc"
-                style={`left:${(box.ulx / pg.width) * 100}%; top:${(box.uly / pg.height) * 100}%; width:${((box.lrx - box.ulx) / pg.width) * 100}%; height:${((box.lry - box.uly) / pg.height) * 100}%; --accent:${accentFor(systems, p, z)}`}
-              >
-                <div
-                  class="zc-inner"
-                  role="group"
-                  aria-label={`Measure ${zone.label} controls`}
-                  onpointerenter={() => hoverEnter(p, z)}
-                  onpointerleave={hoverLeave}
-                  onpointerdown={(e) => {
-                    selected = { p, z };
-                    e.stopPropagation();
-                  }}
-                >
-                  <input
-                    class="znum"
-                    value={zone.override ?? zone.label}
-                    size={Math.max(2, String(zone.override ?? zone.label).length)}
-                    onfocus={() => (selected = { p, z })}
-                    oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
-                    onchange={() => commit()}
-                    title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
-                  />
-                  <button
-                    type="button"
-                    class:on={sbActive(p, z)}
-                    onclick={() => toggleSb(p, z)}
-                    disabled={pbAt(z)}
-                    aria-pressed={sbActive(p, z)}
-                    title={pbAt(z)
-                      ? "System beginning — implied by the page break on a page's first measure"
-                      : "System beginning (sb)"}>↵</button>
-                  <button
-                    type="button"
-                    class:on={startsMovement(p, z)}
-                    onclick={() => toggleSection(p, z)}
-                    disabled={sectionLocked(p, z)}
-                    aria-pressed={startsMovement(p, z)}
-                    title={sectionLocked(p, z)
-                      ? "The first measure always opens the first section"
-                      : "Section beginning — starts a new movement/section (mdiv)"}>§</button>
-                  <button type="button" class="zdel" onclick={() => deleteZone(p, z)}
-                    title="Delete this measure">✕</button>
-                </div>
+    <div class="desk">
+      <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
+        {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
+        {#each spread.pages as p (p)}
+          {@const pg = pages[p]}
+          {@const systems = systemIndices(pg)}
+          <div class="page">
+            <p class="pagehead">Page {p + 1}</p>
+            {#if pg.failed}
+              <div class="banner err">
+                The page facsimile for page {p + 1} could not be loaded. The zones
+                are shown without their reference image.
               </div>
             {/if}
+            <div class="canvas" bind:clientWidth={canvasW[p]}>
+              <svg
+                bind:this={svgEls[p]}
+                viewBox={`0 0 ${pg.width} ${pg.height}`}
+                role="application"
+                aria-label={`Page ${p + 1} measures`}
+                onpointerdown={(e) => backgroundPointerDown(e, p)}
+              >
+                {#if pg.url}
+                  <image
+                    href={pg.url}
+                    width={pg.width}
+                    height={pg.height}
+                    onerror={() => (pages[p].failed = true)}
+                  />
+                {/if}
+                {#each paintOrder(pg, p) as { zone, z } (z)}
+                  <rect
+                    class="zone sys{systems[z] % 2}"
+                    class:selected={selected?.p === p && selected?.z === z}
+                    class:sysstart={sbActive(p, z)}
+                    class:mdivstart={startsMovement(p, z)}
+                    role="button"
+                    tabindex={0}
+                    aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
+                    x={zone.box.ulx}
+                    y={zone.box.uly}
+                    width={zone.box.lrx - zone.box.ulx}
+                    height={zone.box.lry - zone.box.uly}
+                    onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
+                    onpointerenter={() => hoverEnter(p, z)}
+                    onpointerleave={hoverLeave}
+                    onkeydown={(e) => zoneKeydown(e, p, z)}
+                  />
+                  {@const lbl = labelText(p, z)}
+                  {@const fs = labelFont(p, pg.width)}
+                  {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
+                  <rect class="labelbg" x={zone.box.ulx + 2} y={zone.box.uly + 3} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
+                  <text
+                    class="zonelabel"
+                    x={zone.box.ulx + 2 + lblW / 2}
+                    y={zone.box.uly + 3 + fs * 1.12}
+                    text-anchor="middle"
+                    font-size={fs}
+                  >{lbl}</text>
+                  {#if canEdit && selected?.p === p && selected?.z === z}
+                    <circle
+                      class="handle"
+                      role="button"
+                      tabindex={0}
+                      aria-label={`Measure ${zone.label}: resize`}
+                      cx={zone.box.lrx}
+                      cy={zone.box.lry}
+                      r={Math.max(8, pg.width / 120)}
+                      onpointerdown={(e) => startZoneDrag(e, p, z, "resize")}
+                      onkeydown={(e) => handleKeydown(e, p, z)}
+                    />
+                  {/if}
+                {/each}
+              </svg>
+
+              {#if canEdit && active && active.p === p && pg.zones[active.z]}
+                {@const z = active.z}
+                {@const zone = pg.zones[z]}
+                {@const box = zone.box}
+                <div
+                  class="zc"
+                  style={`left:${(((box.ulx + box.lrx) / 2) / pg.width) * 100}%; top:${(box.uly / pg.height) * 100}%; --accent:${accentFor(systems, p, z)}`}
+                >
+                  <div
+                    class="zc-inner"
+                    role="group"
+                    aria-label={`Measure ${zone.label} controls`}
+                    onpointerenter={() => hoverEnter(p, z)}
+                    onpointerleave={hoverLeave}
+                    onpointerdown={(e) => {
+                      selected = { p, z };
+                      e.stopPropagation();
+                    }}
+                  >
+                    <input
+                      class="znum"
+                      value={zone.override ?? zone.label}
+                      size={Math.max(2, String(zone.override ?? zone.label).length)}
+                      onfocus={() => (selected = { p, z })}
+                      oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
+                      onchange={() => commit()}
+                      title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
+                    />
+                    <button
+                      type="button"
+                      class:on={sbActive(p, z)}
+                      onclick={() => toggleSb(p, z)}
+                      disabled={pbAt(z)}
+                      aria-pressed={sbActive(p, z)}
+                      title={pbAt(z)
+                        ? "System beginning — implied by the page break on a page's first measure"
+                        : "System beginning (sb)"}>↵</button>
+                    <button
+                      type="button"
+                      class:on={startsMovement(p, z)}
+                      onclick={() => toggleSection(p, z)}
+                      disabled={sectionLocked(p, z)}
+                      aria-pressed={startsMovement(p, z)}
+                      title={sectionLocked(p, z)
+                        ? "The first measure always opens the first section"
+                        : "Section beginning — starts a new movement/section (mdiv)"}>§</button>
+                    <button type="button" class="zdel" onclick={() => deleteZone(p, z)}
+                      title="Delete this measure">✕</button>
+                  </div>
+                </div>
+              {/if}
+            </div>
           </div>
-        </div>
-      {/each}
-      {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
+        {/each}
+        {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
+      </div>
     </div>
+
+    <div class="statusbar">
+      {#if canEdit}
+        <span class="lockpill ok">you hold this task</span>
+        <span class="hints">drag on the page to draw a measure · drag a box to move · corner handle resizes · arrows nudge (⇧ ×5)</span>
+      {/if}
+      <span class="sspacer"></span>
+      <span class="hints">⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages</span>
+      <span class="ssep">·</span>
+      <span class="hints">blue/green = alternating systems · <span class="legend-mdiv">purple = movement start</span></span>
     </div>
   {/if}
-{/if}
+</div>
 
 <style>
   .muted {
     color: var(--ink-faint);
     font-size: 0.9rem;
   }
-
-  /* A full-width sticky bar with an edge-to-edge hairline under it (matching the
-     app header); its content is centred to line up with the page column. It
-     holds every whole-task control; per-measure editing lives on the zones. */
-  .toolbar {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    background: var(--card);
-    border-bottom: 1px solid var(--line);
+  .linkish {
+    font: inherit;
+    font-weight: 600;
+    color: var(--link);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
   }
-  .toolbar-inner {
-    max-width: 1600px;
-    margin: 0 auto;
+  .linkish:hover {
+    text-decoration: underline;
+  }
+
+  /* The whole tool: a task header, a tool panel, the desk the page sheets
+     float on (the only scrolling region), and a status strip. The app's
+     navigation bar comes from the layout, as on every other page. */
+  .corrector {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--desk);
+  }
+
+  /* ---------------------------------------------------------- task header */
+  .taskrow {
+    flex: none;
+    box-sizing: border-box;
+    background: var(--topbar-bg);
+    border-bottom: 1px solid var(--line);
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 0.45rem 0.6rem;
-    padding: 0.6rem 2rem;
-    box-sizing: border-box;
+    padding: 10px 24px;
+    gap: 14px;
   }
-  /* The centred content column below the bar (and for the pre-editor states). */
-  .wrap {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 1.25rem 2rem 1.5rem;
-    box-sizing: border-box;
+  .abtitle {
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .taskchip {
+    font-size: 12px;
+    font-family: ui-monospace, Menlo, monospace;
+    background: var(--bg-tint);
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+  .abcount {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .abspacer {
+    flex: 1;
+  }
+  .submitbtn {
+    font: 600 13.5px var(--font);
+    padding: 8px 18px;
+    border-radius: 999px;
+    border: 0;
+    background: var(--accent-btn);
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 3px 10px rgba(37, 99, 201, 0.3);
+    white-space: nowrap;
+  }
+  .submitbtn:hover:not(:disabled) {
+    background: var(--accent-btn-hover);
+  }
+  .submitbtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+    box-shadow: none;
+  }
+
+  /* ---------------------------------------------------------- tool panel */
+  .toolpanel {
+    flex: none;
+    background: color-mix(in srgb, var(--card) 75%, transparent);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 8px 24px;
+    gap: 12px 20px;
   }
   .tb-group {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 6px;
   }
-  /* A vertical rule and breathing room separating adjacent tool groups. */
-  .tb-div {
-    margin-left: 0.5rem;
-    padding-left: 0.8rem;
-    border-left: 1px solid var(--line);
+  .vline {
+    width: 1px;
+    height: 22px;
+    background: var(--line);
+    flex: none;
   }
-  .tb-title {
-    align-items: baseline;
-    gap: 0.5rem;
-    font-size: 0.85rem;
+  .toolpanel button {
+    font: 600 12.5px var(--font);
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line-input);
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
   }
-  .tb-title a {
+  .toolpanel button:hover:not(:disabled) {
+    border-color: var(--info-line);
+  }
+  .toolpanel button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .toolpanel button.round {
+    width: 28px;
+    height: 28px;
+    padding: 0;
     color: var(--ink-soft);
-    text-decoration: none;
-    white-space: nowrap;
   }
-  .tb-task {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .toolbar .count {
-    font-size: 0.82rem;
-    color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  /* Zoom + page navigation sit together at the far right of the bar. */
-  .tb-right {
-    margin-left: auto;
-  }
-  .tb-nav .nav-label {
-    font-size: 0.78rem;
-    color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    padding: 0 0.2rem;
-  }
-  .tb-zoom .zoom-val {
-    min-width: 2.8rem;
+  .zoom-val {
+    min-width: 42px;
     text-align: center;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
-    font-size: 0.82rem;
+  }
+  .nav-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    padding: 0 2px;
+  }
+  .viewseg {
+    display: flex;
+    background: var(--bg-tint);
+    border-radius: 999px;
+    padding: 3px;
+  }
+  .viewseg button {
+    border: 0;
+    background: none;
+    color: var(--ink-faint);
+    padding: 4px 12px;
+  }
+  .viewseg button.on {
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+  }
+  .checkline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    cursor: pointer;
   }
   .tb-validation .vstatus {
-    font-size: 0.8rem;
+    font-size: 12.5px;
     color: var(--ink-soft);
     white-space: nowrap;
   }
@@ -1042,36 +1142,66 @@
     color: var(--danger);
   }
   .tb-validation .vfail.on {
-    background: var(--danger);
-    border-color: var(--danger);
+    background: var(--danger-solid);
+    border-color: var(--danger-solid);
     color: #fff;
   }
   .tb-validation .fail-note {
     font: inherit;
-    font-size: 0.8rem;
+    font-size: 12.5px;
     width: 220px;
-    padding: 0.3rem 0.55rem;
+    padding: 5px 10px;
     border: 1px solid var(--danger-line);
-    border-radius: 7px;
+    border-radius: 999px;
     background: var(--card);
     color: var(--ink);
   }
-  .checkline {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.78rem;
-    color: var(--ink-soft);
-    white-space: nowrap;
-  }
-  button.on {
-    background: var(--invert-bg);
-    color: var(--invert-ink);
-    border-color: var(--invert-bg);
-  }
 
+  /* ------------------------------------------------------ banners & desk */
+  .banner {
+    padding: 0.7rem 1rem;
+    border-radius: 8px;
+  }
+  .banner.bar {
+    flex: none;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+  .banner.ok {
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-line);
+  }
+  .banner.err {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
+  }
+  .banner.warn {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+  }
+  .banner a {
+    color: var(--link);
+  }
+  /* Pre-editor states (loading, errors, login) on the desk. */
+  .deskwrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 1.25rem 2rem;
+    box-sizing: border-box;
+  }
+  .desk {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px 40px;
+    box-sizing: border-box;
+  }
   .pages {
     min-width: 0;
+    max-width: 1600px;
+    margin: 0 auto;
   }
   /* Two-up view: the spread's pages (and any empty-half spacer) share the row. */
   .pages.double {
@@ -1091,43 +1221,6 @@
   .pages.double .page:not(:last-child) .canvas {
     margin-left: auto;
   }
-  button {
-    font: inherit;
-    font-size: 0.8rem;
-    padding: 0.3rem 0.6rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-    cursor: pointer;
-  }
-  button:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  button.primary {
-    background: var(--invert-bg);
-    color: var(--invert-ink);
-    border-color: var(--invert-bg);
-    padding: 0.45rem 0.7rem;
-    font-size: 0.85rem;
-  }
-  .banner {
-    padding: 0.7rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-  }
-  .banner.ok {
-    background: var(--ok-bg);
-    border: 1px solid var(--ok-line);
-  }
-  .banner.err {
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
-  }
-  .banner.warn {
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
-  }
 
   .page {
     margin-bottom: 1.5rem;
@@ -1136,8 +1229,9 @@
   }
   .pagehead {
     margin: 0 0 0.3rem;
-    font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    text-align: center;
     position: sticky;
     left: 0;
   }
@@ -1147,6 +1241,11 @@
     position: relative;
     width: calc(100% * var(--zoom, 1));
   }
+  /* One-page view: the page stays centred when zoomed out. */
+  .pages:not(.double) .canvas {
+    margin-inline: auto;
+  }
+  /* Each page renders as a sheet floating on the desk. */
   svg {
     display: block;
     /* border-box so the 1px border stays within 100% and the page doesn't
@@ -1155,8 +1254,9 @@
     width: 100%;
     max-width: none;
     height: auto;
-    border: 1px solid var(--line);
-    border-radius: 8px;
+    background: var(--facsimile-paper);
+    border: 1px solid var(--line-input);
+    box-shadow: 0 10px 30px rgba(31, 36, 51, 0.16);
     touch-action: none;
     user-select: none;
   }
@@ -1203,83 +1303,136 @@
     cursor: nwse-resize;
   }
 
-  /* The per-zone controls: floating buttons bound to the zone box, centred
-     left-to-right and dropped below the number label. The outer layer maps to
-     the box and ignores the pointer (so the box stays draggable); the inner
-     cluster re-enables the pointer and wraps to new rows when the box is narrow.
-     Button size tracks zoom, but dampened, so it stays usable when zoomed out.
-     The clearance below the label scales with zoom, since the label (SVG text)
-     scales linearly with it. */
+  /* The per-zone controls: a floating pill above the active box (number input ·
+     ↵ · § · ✕). The outer layer is a zero-size anchor at the box's top centre;
+     the pill hangs above it and re-enables the pointer. */
   .zc {
     position: absolute;
     pointer-events: none;
-    overflow: hidden;
-    display: flex;
-    justify-content: center;
-    /* flex-start on the cross axis so the cluster is only as tall as its
-       buttons — otherwise it would stretch over the box and block dragging. */
-    align-items: flex-start;
-    /* Clear the number label, which is ~15px·damp tall on screen; the top pad
-       follows the same damp curve (0.7 + 0.3·zoom) so it always clears it. */
-    padding: calc(24px * (0.7 + 0.3 * var(--zoom, 1)) + 8px) 0.3rem 0.3rem;
-    box-sizing: border-box;
+    transform: translate(-50%, calc(-100% - 8px));
+    z-index: 5;
   }
   .zc-inner {
     display: flex;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    justify-content: center;
-    gap: 0.3em;
-    max-width: 100%;
+    align-items: center;
+    gap: 4px;
     pointer-events: auto;
-    /* Same damp curve as the number label, a touch larger, so buttons and
-       numbers grow together with zoom. */
-    font-size: clamp(13px, calc(17px * (0.7 + 0.3 * var(--zoom, 1))), 27px);
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 999px;
+    padding: 4px 6px;
+    box-shadow: 0 6px 18px rgba(31, 36, 51, 0.18);
+    white-space: nowrap;
   }
   .zc-inner .znum,
   .zc-inner button {
-    font: inherit;
-    font-size: 1em;
+    font: 600 11.5px var(--font);
     line-height: 1;
-    border: 1px solid var(--accent);
-    border-radius: 0.4em;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
     cursor: pointer;
   }
   .zc-inner .znum {
-    min-width: 2.4em;
-    padding: 0.28em 0.4em;
-    background: #fff;
-    color: #1a1a1a;
+    width: 36px;
+    padding: 4px 5px;
+    border: 1px solid var(--line-input);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--ink);
+    text-align: center;
     font-variant-numeric: tabular-nums;
     cursor: text;
   }
   .zc-inner button {
-    min-width: 2em;
-    padding: 0.28em 0.45em;
-    font-weight: 700;
-    /* Same hue as the zone, but opaque so it reads as a button over the score. */
-    background: color-mix(in srgb, var(--accent) 30%, white);
-    color: var(--accent);
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--line-input);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--ink-soft);
   }
   .zc-inner button.on {
     background: var(--accent);
+    border-color: var(--accent);
     color: #fff;
   }
-  /* Disabled (e.g. the system break implied by a page break): clearly inert —
-     a dashed, muted, greyscale chip that reads as locked rather than active. */
+  /* Disabled (e.g. the system break implied by a page break): clearly inert. */
   .zc-inner button:disabled {
     cursor: default;
-    opacity: 1;
     border-style: dashed;
-    border-color: #bbb;
-    background: #f0f0f0;
-    color: #9a9a9a;
-    box-shadow: none;
+    color: var(--ink-faint);
+    background: var(--bg-alt);
   }
   .zc-inner .zdel {
-    border-color: #b42318;
-    color: #b42318;
-    background: color-mix(in srgb, #b42318 18%, white);
+    border-color: var(--danger-line);
+    color: var(--danger);
+  }
+
+  /* ---------------------------------------------------------- status strip */
+  .statusbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 24px;
+    background: color-mix(in srgb, var(--card) 85%, transparent);
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-faint);
+    min-width: 0;
+  }
+  .lockpill {
+    flex: none;
+    font-size: 11.5px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 2px 10px;
+  }
+  .lockpill.ok {
+    color: var(--ok);
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-line);
+  }
+  .lockpill.amber {
+    color: var(--owner);
+    background: var(--owner-bg);
+    border: 1px solid var(--owner-line);
+  }
+  .lockpill.grey {
+    color: var(--ink-faint);
+    background: var(--bg-tint);
+    border: 1px solid var(--line);
+  }
+  .claimbtn {
+    flex: none;
+    font: 600 12px var(--font);
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line-input);
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .claimbtn:hover:not(:disabled) {
+    border-color: var(--info-line);
+  }
+  .claimbtn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .hints {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ssep {
+    color: var(--line-input);
+    flex: none;
+  }
+  .sspacer {
+    flex: 1;
+  }
+  .legend-mdiv {
+    color: var(--pre);
+    font-weight: 600;
   }
 </style>

@@ -25,16 +25,16 @@
     }
   }
 
-  // The zone editor and the personal dashboard are full-width tools; the
-  // landing, the campaign console and the onboarding wizard are full-bleed,
-  // full-height surfaces (the wizard splits into a form pane and a
-  // page-preview pane); every other route keeps the narrow reading column.
-  const wide = $derived(
-    page.route.id === '/[campaign]/zones/[task]' || page.route.id === '/dashboard'
-  );
+  // The main screen, the campaign view, the wizard and the measure corrector
+  // are full-bleed, full-height surfaces (the wizard splits into a form pane
+  // and a page-preview pane); every other route keeps the narrow reading
+  // column.
+  const corrector = $derived(page.route.id === '/[campaign]/zones/[task]');
   const full = $derived(
     page.route.id === '/' || page.route.id === '/[campaign]' || page.route.id === '/new'
   );
+  const onHome = $derived(page.route.id === '/');
+  const inCampaign = $derived(page.route.id === '/[campaign]');
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
@@ -47,13 +47,20 @@
     <img class="brand-light" src="/logo.svg" alt="Let's Encode" width="1391" height="400" />
     <img class="brand-dark" src="/logo-dark.svg" alt="" aria-hidden="true" width="1391" height="400" />
   </a>
+  <!-- Closing a screen lands one level up: the campaign view returns to the
+       listing, the corrector to the campaign it belongs to. -->
+  {#if inCampaign}
+    <a class="nav-link back" href="/">← All campaigns</a>
+  {:else if corrector}
+    <a class="nav-link back" href={`/${page.params.campaign}`}
+      >← {page.params.campaign}</a
+    >
+  {/if}
   <div class="topbar-right">
+    {#if onHome}
+      <a class="newbtn" href="/new">+ New campaign</a>
+    {/if}
     {#if auth.user}
-      <a
-        class="nav-link"
-        href="/dashboard"
-        aria-current={page.route.id === '/dashboard' ? 'page' : undefined}>Your dashboard</a
-      >
       <div class="user">
         {#if auth.user.avatar_url}
           <img class="avatar" src={auth.user.avatar_url} alt="" />
@@ -101,8 +108,8 @@
   {@render children()}
 {/snippet}
 
-<main class:wide={wide} class:full={full}>
-  {#if wide || full}
+<main class:full={full || corrector}>
+  {#if corrector || full}
     {@render body()}
   {:else}
     <div class="column">
@@ -110,6 +117,12 @@
     </div>
   {/if}
 </main>
+
+<footer>
+  <span>© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span>
+  <span class="fsep">·</span>
+  <span>app last updated {__BUILD_DATE__}</span>
+</footer>
 
 <style>
   :global(body) {
@@ -128,7 +141,7 @@
     height: 56px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 14px;
     padding: 0 20px;
     border-bottom: 1px solid var(--line);
     background: var(--topbar-bg);
@@ -137,6 +150,7 @@
     display: flex;
     align-items: center;
     gap: 1.25rem;
+    margin-left: auto;
   }
   .brand img {
     height: 30px;
@@ -160,9 +174,26 @@
     color: var(--ink-soft);
     text-decoration: none;
   }
-  .nav-link:hover,
-  .nav-link[aria-current='page'] {
+  .nav-link:hover {
     color: var(--accent);
+  }
+  .nav-link.back {
+    font-size: 13px;
+    color: var(--link);
+    margin-left: 4px;
+  }
+  .newbtn {
+    font: 600 13px var(--font);
+    padding: 7px 14px;
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 999px;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .newbtn:hover {
+    border-color: var(--info-line);
+    background: var(--accent-tint);
   }
   .user {
     display: flex;
@@ -206,13 +237,6 @@
     padding: 2.5rem 1.5rem;
     box-sizing: border-box;
   }
-  /* Full-width scroller so its scrollbar sits at the window edge; the editor
-     centres its own content and runs its toolbar full-bleed. */
-  main.wide {
-    max-width: none;
-    margin: 0;
-    padding: 0;
-  }
   main.full {
     max-width: none;
     padding: 0;
@@ -220,7 +244,22 @@
     flex-direction: column;
     overflow: hidden;
   }
-  /* ---- Theme (light/dark) bulb toggle — ported from the redirector ------- */
+  footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 7px 24px;
+    background: var(--topbar-bg);
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .fsep {
+    color: var(--line);
+  }
+  /* ---- Theme (light/dark) bulb toggle --------------------------------- */
   .theme-toggle {
     display: inline-flex;
     align-items: center;

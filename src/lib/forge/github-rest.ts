@@ -709,25 +709,6 @@ export async function getRepoAccess(
 	return { isPrivate: Boolean(data?.private), canPush: Boolean(data?.permissions?.push) };
 }
 
-/**
- * Whether `username` can push to the repo, via the collaborator-permission
- * lookup. Returns false when the user is not a collaborator or the lookup
- * fails — callers treat push access as a privilege to be proven.
- */
-export async function getCollaboratorCanPush(
-	token: string,
-	owner: string,
-	repo: string,
-	username: string
-): Promise<boolean> {
-	const { ok, data } = await ghGet<{ permission?: string }>(
-		`${apiRoot(token)}/repos/${owner}/${repo}/collaborators/${encodeURIComponent(username)}/permission`,
-		token
-	);
-	if (!ok) return false;
-	return data?.permission === 'admin' || data?.permission === 'write';
-}
-
 /** Read the PR fields needed before its complete changed-file list is fetched. */
 export async function getPullRequestDetails(
 	token: string,
@@ -901,32 +882,6 @@ export async function getWorkflowRunJobs(
 			conclusion: s.conclusion ?? null
 		}))
 	}));
-}
-
-/** Post a comment on a pull request and then close it (used to resolve claims). */
-export async function commentAndClosePr(
-	token: string,
-	owner: string,
-	repo: string,
-	number: number,
-	body: string
-): Promise<void> {
-	const headers = { ...baseHeaders, ...authHeaders(token) };
-	const commentRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments`, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ body })
-	});
-	if (!commentRes.ok) {
-		const data: ErrorResponse = await commentRes.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to comment on pull request');
-	}
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
-		method: 'PATCH',
-		headers,
-		body: JSON.stringify({ state: 'closed' })
-	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to close pull request');
 }
 
 /**

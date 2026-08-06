@@ -17,14 +17,14 @@
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { handle, isPreTask } from "$lib/campaign-graph.ts";
-  import { buildBoard, initialOf } from "$lib/campaign-board.ts";
+  import { isPreTask } from "$lib/campaign-graph.ts";
+  import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
-  import TaskOverlay from "$lib/components/TaskOverlay.svelte";
+  import TaskDetail from "$lib/components/TaskDetail.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
   // from it (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -63,14 +63,16 @@
 
   const runner = new CommandRunner();
 
-  // UI-only state: everything else derives from the tracking tables.
-  let view = $state<"board" | "tables">("board");
-  // Plan mode: task.csv as an editable table over the board's place (owners).
-  let planEditing = $state(false);
+  // UI-only state — one surface at a time: the board (default), a task's
+  // detail (?task= present), or the owner's manage takeover. Everything else
+  // derives from the tracking tables.
+  let manage = $state(false);
   let showInfo = $state(false);
   // Columns the viewer expanded past the card cap.
   let expanded = $state<Partial<Record<ColumnKey, boolean>>>({});
   const CARD_CAP = 5;
+  // The Done column collapses to a summary card until expanded.
+  let showAllDone = $state(false);
 
   // The score's <meiHead> fields, fetched on first open of the info panel.
   let scoreHead = $state<MeiHeader | null>(null);
@@ -80,12 +82,10 @@
     scoreHeadState = "loading";
     try {
       const f = readForge();
-      // The first task's fragment is the piece the campaign opens on; the
-      // fixed path is where a single-source campaign kept its only score.
-      const mei =
-        (taskDefs[0]?.fragment
-          ? await f.getRepoFile(owner, repo, taskDefs[0].fragment)
-          : null) ?? (await f.getRepoFile(owner, repo, "sources/score.mei"));
+      // The first task's fragment is the piece the campaign opens on.
+      const mei = taskDefs[0]?.fragment
+        ? await f.getRepoFile(owner, repo, taskDefs[0].fragment)
+        : null;
       scoreHead = mei ? parseMeiHeader(mei) : null;
       scoreHeadState = mei ? "done" : "error";
     } catch {
@@ -115,36 +115,24 @@
       : null,
   );
 
-  // ------------------------------------------------------------ the overlay
-  // Task preview overlay: opens from a board card; the board stays behind it.
-  let overlayTask = $state<string | null>(null);
-  const overlayCard = $derived(
-    overlayTask ? (allCards.find((c) => c.task === overlayTask) ?? null) : null,
+  // --------------------------------------------------------- the task detail
+  // A task's detail drills into the view body; the URL carries it as ?task=
+  // so the row stays addressable (deep links, post-login resume).
+  let detailTask = $state<string | null>(null);
+  const detailCard = $derived(
+    detailTask ? (allCards.find((c) => c.task === detailTask) ?? null) : null,
   );
-  function openOverlay(task: string) {
-    overlayTask = task;
+  function openTask(task: string) {
+    detailTask = task;
+    goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+      replaceState: true,
+      noScroll: true,
+      keepFocus: true,
+    });
   }
-  function closeOverlay() {
-    overlayTask = null;
-  }
-
-  const anchorLabel = (c: CommentRow): string => {
-    const range =
-      c.measure_end && c.measure_end !== c.measure_start
-        ? `m. ${c.measure_start}–${c.measure_end}`
-        : `m. ${c.measure_start}`;
-    return `${c.page ? `p. ${c.page} · ` : ""}${range}`;
-  };
-  const hasAnchor = (c: CommentRow): boolean =>
-    c.measure_start !== "" || c.page !== "";
-
-  // Drag-resize state for the info panel's width.
-  let infoW = $state(300);
-  let resizing = $state<"info" | null>(null);
-  function resizeMove(e: PointerEvent) {
-    if (resizing === "info") {
-      infoW = Math.min(520, Math.max(220, e.clientX));
-    }
+  function closeTask() {
+    detailTask = null;
+    goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 
   const copy = (text: string) =>
@@ -308,7 +296,7 @@
       invoke(
         commands.submitComment,
         {
-          task_id: overlayTask!,
+          task_id: detailTask!,
           subtask_id: "",
           kind,
           body,
@@ -332,29 +320,25 @@
 
   const reaper = () => run((c) => invoke(commands.runReaper, {}, c));
 
-  // Save the edited plan; a clean save leaves plan mode (run() has already
-  // refreshed the tables, so the board reflects the new plan).
+  // Save the edited plan; a clean save leaves the manage takeover (run() has
+  // already refreshed the tables, so the board reflects the new plan).
   async function savePlan(tasks: TaskRow[]) {
     await run((c) => invoke(commands.savePlan, { tasks }, c));
-    if (runner.result?.ok) planEditing = false;
+    if (runner.result?.ok) manage = false;
   }
 
-  // Deep links from the dashboards, read once after the first load: ?task=
-  // opens that task's overlay, ?claim=next claims the first open task.
+  // Deep links, read once after the first load: ?task= opens that task's
+  // detail.
   let deepLinked = false;
   $effect(() => {
     if (!loaded || deepLinked) return;
     deepLinked = true;
     const task = page.url.searchParams.get("task");
-    if (task && findRow(taskDefs, task, "")) {
-      openOverlay(task);
-      return;
-    }
-    if (page.url.searchParams.get("claim") === "next" && nextCard) actOnNext();
+    if (task && findRow(taskDefs, task, "")) detailTask = task;
   });
 
   // "Claim the next task": act on the first card the viewer can work on — a
-  // claim when it is open, otherwise its overlay (their claimed or reviewable
+  // claim when it is open, otherwise its detail (their claimed or reviewable
   // work lives there).
   function claimCard(card: BoardCard) {
     if (card.pre) goto(`/${campaign}/zones/${card.task}`);
@@ -363,25 +347,55 @@
   function actOnNext() {
     if (!nextCard) return;
     if (nextCard.column === "ready") claimCard(nextCard);
-    else openOverlay(nextCard.task);
+    else openTask(nextCard.task);
   }
 
-  // History rows for the tables tab, newest first (the file is append-only).
-  const historyNewestFirst = $derived(history.slice().reverse());
-  const joinedValidations = (row: StateRow) =>
-    validationColumns.map((c) => row[c] || "·").join("  ");
+  // The board rendered as four columns: queued-but-blocked tasks share the
+  // Ready column (dimmed, with what they wait for) instead of a fifth column.
+  const displayColumns = $derived.by(() => {
+    const by = new Map(board.columns.map((c) => [c.key, c]));
+    const ready = by.get("ready");
+    const blocked = by.get("blocked");
+    const encoding = by.get("encoding");
+    const validation = by.get("validation");
+    const done = by.get("done");
+    return [
+      {
+        key: "ready" as ColumnKey,
+        label: "Ready",
+        cards: [...(ready?.cards ?? []), ...(blocked?.cards ?? [])],
+        attention: 0,
+      },
+      {
+        key: "encoding" as ColumnKey,
+        label: "Encoding",
+        cards: encoding?.cards ?? [],
+        attention: encoding?.attention ?? 0,
+      },
+      {
+        key: "validation" as ColumnKey,
+        label: "Awaiting validation",
+        cards: validation?.cards ?? [],
+        attention: validation?.attention ?? 0,
+      },
+      {
+        key: "done" as ColumnKey,
+        label: "Done",
+        cards: done?.cards ?? [],
+        attention: 0,
+      },
+    ];
+  });
 
-  const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
+  // The reaper's last trace in the history, for the manage header.
+  const lastReap = $derived(
+    history.findLast((h) => h.action === "reap") ?? null,
+  );
+  const elapsedLabel = (iso: string) => {
+    const e = elapsed(iso);
+    return e === "now" ? "just now" : `${e} ago`;
+  };
 </script>
-
-<svelte:window
-  onpointermove={(e) => {
-    if (resizing) resizeMove(e);
-  }}
-  onpointerup={() => {
-    resizing = null;
-  }}
-/>
 
 {#if runner.busy}
   <LoadingOverlay log={runner.log} />
@@ -477,24 +491,190 @@
         </span>
       </div>
     {/if}
-    {#if !overlayTask}
+    {#if !detailTask}
       {@render resultBanner()}
     {/if}
 
-    <div class="main">
-      {#if showInfo}
-        <aside class="ipanel" style={`--ipanel-w:${infoW}px`}>
-          <div class="iphead">
-            <div class="iptitle">Campaign info</div>
+    <div class="viewcol">
+      {#if notFound}
+        <div class="banner err">
+          <span>
+            No campaign called <code>{campaign}</code> was found. It may have
+            been removed, or the name may be misspelled.
+            <a href="/">Back to all campaigns</a>.
+          </span>
+        </div>
+      {:else if slugState === "pending"}
+        <div class="banner warn">
+          <span>
+            Someone is setting up a campaign called <code>{campaign}</code>.
+            If they don't finish it, the name becomes free again.
+            <a href="/">Back to all campaigns</a>.
+          </span>
+        </div>
+      {:else if slugState === "reserved"}
+        <div class="banner err">
+          <span>
+            <code>{campaign}</code> is reserved and can't be used for a
+            campaign. <a href="/">Back to all campaigns</a>.
+          </span>
+        </div>
+      {:else if slugState === "tombstoned"}
+        <div class="banner err">
+          <span>
+            The name <code>{campaign}</code> has been blocked and can't be
+            used. <a href="/">Back to all campaigns</a>.
+          </span>
+        </div>
+      {:else if !resolved}
+        <p class="msg muted">Finding the campaign…</p>
+      {:else if loading}
+        <p class="msg muted">Loading campaign…</p>
+      {:else if loadError}
+        <div class="banner err"><span>{loadError}</span></div>
+      {:else if notInitialised}
+        <div class="banner warn">
+          <span>
+            This repository has no tracking tables (<code
+              >tracking/task.csv</code
+            >,
+            <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>)
+            yet — it may not have been initialised. Create it through the home
+            page to initialise it.
+          </span>
+        </div>
+      {:else if detailTask && detailCard}
+        <TaskDetail
+          card={detailCard}
+          {campaign}
+          campaignTitle={title || repo}
+          {owner}
+          {repo}
+          {taskDefs}
+          {comments}
+          {locks}
+          {logins}
+          {viewer}
+          {canPush}
+          {runner}
+          {resultBanner}
+          {slotDot}
+          onclaim={claimValidate}
+          oneditor={editor}
+          onsubmitencoding={submitpr}
+          onvalidate={validate}
+          oncomment={postComment}
+          onresolve={resolveCommentRow}
+          onsendback={sendBackTask}
+          onrawlink={rawlink}
+          onclose={closeTask}
+        />
+      {:else if manage && canPush}
+        <div class="crumbrow">
+          <button type="button" class="backlink" onclick={() => (manage = false)}
+            >← Back to the board</button
+          >
+          <span class="bcsep">/</span>
+          <span class="crumbtitle">{title || repo}</span>
+          <span class="crumbsub">· Manage</span>
+          <span class="ownerpill">owner</span>
+          <span class="cspacer"></span>
+          <span class="reapline">
+            {#if lastReap}
+              Reaper last released a stale claim {elapsedLabel(lastReap.timestamp)}
+            {:else}
+              The reaper has not released any stale claims yet
+            {/if}
+          </span>
+          <button
+            type="button"
+            class="reapbtn"
+            onclick={() => reaper()}
+            disabled={runner.busy}
+            title="Release claims that have gone stale">Run reaper now</button
+          >
+        </div>
+        <PlanEditor
+          {taskDefs}
+          {rows}
+          {validationColumns}
+          {locks}
+          {logins}
+          busy={runner.busy}
+          onsave={savePlan}
+          oncancel={() => (manage = false)}
+        />
+      {:else}
+        <div class="hero">
+          <div class="hero-line">
+            <h1>{title || repo}</h1>
+            <a
+              class="mono slug"
+              href={`https://github.com/${owner}/${repo}`}
+              target="_blank"
+              rel="noreferrer">{owner}/{repo} ↗</a
+            >
             <button
               type="button"
-              class="pclose"
-              onclick={() => (showInfo = false)}
-              title="Close the info panel"
-              aria-label="Close the info panel">✕</button
+              class="infochip"
+              class:on={showInfo}
+              onclick={() => {
+                showInfo = !showInfo;
+                if (showInfo) loadScoreHead();
+              }}
+              title="Show or hide campaign information"
+              >ⓘ Info {showInfo ? "▾" : "▸"}</button
+            >
+            <span class="cspacer"></span>
+            {#if auth.user && canPush}
+              <button
+                type="button"
+                class="managechip"
+                onclick={() => (manage = true)}
+                disabled={runner.busy}
+                title="Owner only — plan editor and reaper">⚙ Manage</button
+              >
+            {/if}
+            <button
+              type="button"
+              class="pillbtn primary"
+              disabled={runner.busy || !auth.user || !nextCard}
+              title={!auth.user
+                ? "Log in to claim a task."
+                : !nextCard
+                  ? "Nothing to claim right now."
+                  : "Claim the first task that is open for you."}
+              onclick={actOnNext}>Claim the next task</button
             >
           </div>
-          <div class="ipbody">
+          <div class="hero-stats">
+            <span class="stat"><b class="c-ok">{board.done}</b> done</span>
+            <span class="sep">·</span>
+            <span class="stat"><b class="c-info">{board.inFlight}</b> in flight</span>
+            <span class="sep">·</span>
+            <span class="stat"
+              ><b class="c-danger">{board.attention}</b> need{board.attention === 1
+                ? "s"
+                : ""} attention</span
+            >
+            <span class="sep">·</span>
+            <span class="stat"
+              ><b>{board.contributorsWeek}</b> contributor{board.contributorsWeek ===
+              1
+                ? ""
+                : "s"} this week</span
+            >
+            <div class="hbar">
+              <div
+                style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+              ></div>
+            </div>
+            <span class="hbarlabel">{board.done}/{board.total} tasks done</span>
+          </div>
+        </div>
+
+        {#if showInfo}
+          <div class="infoblock">
             <div class="isec">
               <span class="seclabel">Score</span>
               {#if scoreHeadState === "loading"}
@@ -536,25 +716,11 @@
                 </span>
               </div>
             </div>
-
             <div class="isec">
               <span class="seclabel">Campaign</span>
               <div class="irow">
-                <span>Title</span>
-                <span>{title || repo}</span>
-              </div>
-              <div class="irow">
                 <span>About</span>
                 <span>{description || "—"}</span>
-              </div>
-              <div class="irow">
-                <span>Repository</span>
-                <a
-                  class="mono"
-                  href={`https://github.com/${owner}/${repo}`}
-                  target="_blank"
-                  rel="noreferrer">{owner}/{repo}</a
-                >
               </div>
               <div class="irow">
                 <span>Visibility</span>
@@ -567,10 +733,6 @@
                 <span>License</span>
                 <span>{license || "—"}</span>
               </div>
-              <div class="irow">
-                <span>Tasks</span>
-                <span>{board.done} / {board.total} complete</span>
-              </div>
               <div
                 class="irow"
                 title="Validation passes each task needs before it counts as validated."
@@ -580,497 +742,191 @@
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            class="ipanel-resizer"
-            aria-label="Drag to resize the info panel"
-            title="Drag to resize the info panel"
-            onpointerdown={(e) => {
-              e.preventDefault();
-              resizing = "info";
-            }}
-          ></button>
-        </aside>
-      {/if}
-      <div class="viewcol">
-        {#if notFound}
-          <div class="banner err">
-            <span>
-              No campaign called <code>{campaign}</code> was found. It may have
-              been removed, or the name may be misspelled.
-              <a href="/">Back to all campaigns</a>.
-            </span>
-          </div>
-        {:else if slugState === "pending"}
-          <div class="banner warn">
-            <span>
-              Someone is setting up a campaign called <code>{campaign}</code>.
-              If they don't finish it, the name becomes free again.
-              <a href="/">Back to all campaigns</a>.
-            </span>
-          </div>
-        {:else if slugState === "reserved"}
-          <div class="banner err">
-            <span>
-              <code>{campaign}</code> is reserved and can't be used for a
-              campaign. <a href="/">Back to all campaigns</a>.
-            </span>
-          </div>
-        {:else if slugState === "tombstoned"}
-          <div class="banner err">
-            <span>
-              The name <code>{campaign}</code> has been blocked and can't be
-              used. <a href="/">Back to all campaigns</a>.
-            </span>
-          </div>
-        {:else if !resolved}
-          <p class="msg muted">Finding the campaign…</p>
-        {:else if loading}
-          <p class="msg muted">Loading campaign…</p>
-        {:else if loadError}
-          <div class="banner err"><span>{loadError}</span></div>
-        {:else if notInitialised}
-          <div class="banner warn">
-            <span>
-              This repository has no tracking tables (<code
-                >tracking/task.csv</code
-              >,
-              <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>)
-              yet — it may not have been initialised. Create it through the home
-              page to initialise it.
-            </span>
-          </div>
-        {:else}
-          <div class="hero">
-            <div class="hero-titles">
-              <div class="eyebrow">Campaign</div>
-              <div class="hero-line">
-                <h1>{title || repo}</h1>
-                <a
-                  class="mono slug"
-                  href={`https://github.com/${owner}/${repo}`}
-                  target="_blank"
-                  rel="noreferrer">{owner}/{repo}</a
-                >
-              </div>
-              <div class="hero-stats">
-                <div class="hbar">
-                  <div
-                    style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
-                  ></div>
-                </div>
-                <span class="stat strong"
-                  >{board.done} of {board.total} tasks done</span
-                >
-                <span class="sep">·</span>
-                <span class="stat inflight">{board.inFlight} in flight</span>
-                <span class="sep">·</span>
-                <span class="stat attention"
-                  >{board.attention} need{board.attention === 1 ? "s" : ""} attention</span
-                >
-                <span class="sep">·</span>
-                <span class="stat"
-                  >{board.contributorsWeek} contributor{board.contributorsWeek ===
-                  1
-                    ? ""
-                    : "s"} this week</span
-                >
-              </div>
-            </div>
-            <div class="hero-right">
-              <div class="hero-tools">
-                <button
-                  type="button"
-                  class="hbtn"
-                  class:on={showInfo}
-                  onclick={() => {
-                    showInfo = !showInfo;
-                    if (showInfo) loadScoreHead();
-                  }}
-                  title="Show or hide campaign information">Info</button
-                >
-                <button
-                  type="button"
-                  class="hbtn"
-                  onclick={() => load()}
-                  disabled={runner.busy || loading}
-                  title="Re-read the tracking tables">↻ Refresh</button
-                >
-                {#if auth.user && canPush}
-                  <button
-                    type="button"
-                    class="hbtn"
-                    onclick={() => reaper()}
-                    disabled={runner.busy}
-                    title="Release claims that have gone stale">Run reaper</button
-                  >
-                {/if}
-                <div class="tabs">
-                  <button
-                    type="button"
-                    class:on={view === "board"}
-                    onclick={() => (view = "board")}>Board</button
-                  >
-                  <button
-                    type="button"
-                    class:on={view === "tables"}
-                    onclick={() => (view = "tables")}>Tables</button
-                  >
-                </div>
-              </div>
-              <div class="hero-acts">
-                {#if auth.user && canPush && view === "board"}
-                  <button
-                    type="button"
-                    class="pillbtn"
-                    disabled={runner.busy}
-                    title="Add, remove, rewire or reorder the tasks nobody has worked on yet"
-                    onclick={() => (planEditing = !planEditing)}
-                    >{planEditing ? "Back to the board" : "Edit the plan"}</button
-                  >
-                {/if}
-                <button
-                  type="button"
-                  class="pillbtn primary"
-                  disabled={runner.busy || !auth.user || !nextCard}
-                  title={!auth.user
-                    ? "Log in to claim a task."
-                    : !nextCard
-                      ? "Nothing to claim right now."
-                      : "Claim the first task that is open for you."}
-                  onclick={actOnNext}>Claim the next task →</button
-                >
-              </div>
-            </div>
-          </div>
+        {/if}
 
-          {#if view === "board" && planEditing}
-            <PlanEditor
-              {taskDefs}
-              {rows}
-              {validationColumns}
-              {locks}
-              {logins}
-              busy={runner.busy}
-              onsave={savePlan}
-              oncancel={() => (planEditing = false)}
-            />
-          {:else if view === "board"}
-            <div class="board">
-              {#each board.columns as col (col.key)}
-                <div class="bcol">
-                  <div class="bcol-head c-{col.key}">
-                    <span class="bcol-name">{col.label}</span>
-                    <span class="bcol-count">{col.cards.length}</span>
-                    {#if col.key === "validation" && col.attention > 0}
-                      <span class="bcol-flag">{col.attention} ⚑</span>
-                    {/if}
+        <div class="board">
+          {#each displayColumns as col (col.key)}
+            <div class="bcol">
+              <div class="bcol-head c-{col.key}">
+                <span class="bcol-name">{col.label}</span>
+                <span class="bcol-count">{col.cards.length}</span>
+                {#if col.key === "validation" && col.attention > 0}
+                  <span class="bcol-flag">{col.attention} ⚑</span>
+                {/if}
+              </div>
+              <div class="well">
+                {#if col.key === "done" && !showAllDone && col.cards.length > 1}
+                  <div class="donesum">
+                    <span
+                      >{col.cards.length} completed tasks · merged into the
+                      piece scores</span
+                    >
+                    <button
+                      type="button"
+                      class="linkish"
+                      onclick={() => (showAllDone = true)}>Show all ▸</button
+                    >
                   </div>
-                  <div class="well">
-                    {#each expanded[col.key] ? col.cards : col.cards.slice(0, CARD_CAP) as card (card.task)}
-                      <button
-                        type="button"
-                        class="card col-{card.column}"
-                        class:nextup={card.nextUp}
-                        onclick={() => openOverlay(card.task)}
-                        title="Open this task's preview"
-                      >
-                        {#if card.nextUp}
-                          <span class="nextup-badge">next step</span>
-                        {/if}
-                        <div class="card-title">{card.title}</div>
-                        <div class="card-type">
-                          {card.column === "validation"
-                            ? `${card.typeLine} · ${card.passes} of ${card.threshold} passes`
-                            : card.typeLine}
-                          <span class="mono card-id">{card.task}</span>
+                {:else}
+                  {#each expanded[col.key] || col.key === "done" ? col.cards : col.cards.slice(0, CARD_CAP) as card (card.task)}
+                    <button
+                      type="button"
+                      class="card col-{card.column}"
+                      class:nextup={card.nextUp}
+                      class:pre={card.pre}
+                      class:failtint={card.counts.fails > 0 &&
+                        card.column !== "done"}
+                      onclick={() =>
+                        card.pre ? claimCard(card) : openTask(card.task)}
+                      title={card.pre
+                        ? "Open the measure corrector"
+                        : "Open this task"}
+                    >
+                      {#if card.nextUp}
+                        <span class="nextup-badge">next step</span>
+                      {/if}
+                      <div class="card-title">{card.title}</div>
+                      <div class="card-type">
+                        {card.column === "validation"
+                          ? `${card.typeLine} · ${card.passes} of ${card.threshold} passes`
+                          : card.typeLine}
+                        <span class="mono card-id">{card.task}</span>
+                      </div>
+                      {#if card.pre}
+                        <div class="card-pre">Opens the corrector →</div>
+                      {:else if card.column === "blocked"}
+                        <div class="card-foot">
+                          waits for <strong>{card.waitsFor}</strong>
                         </div>
-                        {#if card.column === "blocked"}
-                          <div class="card-foot">
-                            waits for <strong>{card.waitsFor}</strong>
-                          </div>
-                        {:else if card.column === "ready" && card.claimable}
-                          <div class="card-claim">
+                      {:else if card.column === "ready" && card.claimable}
+                        <div class="card-claim">
+                          <span
+                            class="claimlink"
+                            role="button"
+                            tabindex="-1"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              claimCard(card);
+                            }}
+                            onkeydown={(e) => {
+                              if (e.key === "Enter") {
+                                e.stopPropagation();
+                                claimCard(card);
+                              }
+                            }}>Claim →</span
+                          >
+                        </div>
+                      {:else if card.column === "encoding" && card.worker}
+                        <div class="card-worker">
+                          <span class="avatar"
+                            >{initialOf(card.worker.login)}</span
+                          >
+                          <span class="worker-line"
+                            >{card.worker.login} · {card.worker
+                              .elapsed}</span
+                          >
+                          {#if card.worker.mine}
                             <span
                               class="claimlink"
                               role="button"
                               tabindex="-1"
                               onclick={(e) => {
                                 e.stopPropagation();
-                                claimCard(card);
+                                submitpr(card.task);
                               }}
                               onkeydown={(e) => {
                                 if (e.key === "Enter") {
                                   e.stopPropagation();
-                                  claimCard(card);
-                                }
-                              }}>Claim →</span
-                            >
-                          </div>
-                        {:else if card.column === "encoding" && card.worker}
-                          <div class="card-worker">
-                            <span class="avatar"
-                              >{initialOf(card.worker.login)}</span
-                            >
-                            <span class="worker-line"
-                              >{card.worker.login} · {card.worker
-                                .elapsed}</span
-                            >
-                            {#if card.worker.mine}
-                              <span
-                                class="claimlink"
-                                role="button"
-                                tabindex="-1"
-                                onclick={(e) => {
-                                  e.stopPropagation();
                                   submitpr(card.task);
-                                }}
-                                onkeydown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.stopPropagation();
-                                    submitpr(card.task);
-                                  }
-                                }}
-                                title="After committing in mei-friend, submit the encoding for validation."
-                                >Submit →</span
+                                }
+                              }}
+                              title="After committing in mei-friend, submit the encoding for validation."
+                              >Submit →</span
+                            >
+                          {/if}
+                        </div>
+                      {:else if card.column === "validation"}
+                        <div class="card-dots">
+                          {#each card.dots as key, i (i)}
+                            {@render slotDot(key)}
+                          {/each}
+                        </div>
+                        {#if card.counts.fails + card.counts.comments + card.counts.questions > 0}
+                          <div class="card-chips">
+                            {#if card.counts.fails > 0}
+                              <span class="chip chip-fail"
+                                >{card.counts.fails} fail{card.counts.fails ===
+                                1
+                                  ? ""
+                                  : "s"}</span
+                              >
+                            {/if}
+                            {#if card.counts.comments > 0}
+                              <span class="chip chip-note"
+                                >{card.counts.comments} comment{card.counts
+                                  .comments === 1
+                                  ? ""
+                                  : "s"}</span
+                              >
+                            {/if}
+                            {#if card.counts.questions > 0}
+                              <span class="chip chip-question"
+                                >{card.counts.questions} question{card.counts
+                                  .questions === 1
+                                  ? ""
+                                  : "s"}</span
                               >
                             {/if}
                           </div>
-                        {:else if card.column === "validation"}
-                          <div class="card-dots">
-                            {#each card.dots as key, i (i)}
-                              {@render slotDot(key)}
-                            {/each}
-                          </div>
-                          {#if card.counts.fails + card.counts.comments + card.counts.questions > 0}
-                            <div class="card-chips">
-                              {#if card.counts.fails > 0}
-                                <span class="chip chip-fail"
-                                  >{card.counts.fails} fail{card.counts.fails ===
-                                  1
-                                    ? ""
-                                    : "s"}</span
-                                >
-                              {/if}
-                              {#if card.counts.comments > 0}
-                                <span class="chip chip-note"
-                                  >{card.counts.comments} comment{card.counts
-                                    .comments === 1
-                                    ? ""
-                                    : "s"}</span
-                                >
-                              {/if}
-                              {#if card.counts.questions > 0}
-                                <span class="chip chip-question"
-                                  >{card.counts.questions} question{card.counts
-                                    .questions === 1
-                                    ? ""
-                                    : "s"}</span
-                                >
-                              {/if}
-                            </div>
-                          {/if}
-                        {:else if card.column === "done"}
-                          <div class="card-done">{card.doneLine}</div>
                         {/if}
-                      </button>
-                    {/each}
-                    {#if col.cards.length > CARD_CAP}
-                      <button
-                        type="button"
-                        class="more"
-                        onclick={() =>
-                          (expanded = {
-                            ...expanded,
-                            [col.key]: !expanded[col.key],
-                          })}
-                        >{expanded[col.key]
-                          ? "show fewer"
-                          : `+ ${col.cards.length - CARD_CAP} more`}</button
-                      >
-                    {/if}
-                  </div>
-                </div>
-              {/each}
-            </div>
-
-            <div class="ticker">
-              <span class="ticker-label">Activity</span>
-              {#each board.ticker as t, i (i)}
-                {#if i > 0}<span class="ticker-sep">|</span>{/if}
-                <span class="ticker-entry"
-                  ><strong>{t.login}</strong>
-                  {t.text}
-                  <span class="ticker-when">· {t.elapsed}</span></span
-                >
-              {/each}
-              {#if board.ticker.length === 0}
-                <span class="ticker-entry muted">No activity yet.</span>
-              {/if}
-              <span class="tspacer"></span>
-              <button
-                type="button"
-                class="linkish"
-                onclick={() => (view = "tables")}
-                title="The full history, in the tables view">Full history</button
-              >
-            </div>
-          {:else}
-            <div class="tablesview">
-              <div class="tcol">
-                <div class="tsec">
-                  <div class="tname">state.csv</div>
-                  <div class="tcard">
-                    <div
-                      class="trow thead"
-                      style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
+                      {:else if card.column === "done"}
+                        <div class="card-done">{card.doneLine}</div>
+                      {/if}
+                    </button>
+                  {/each}
+                  {#if col.key === "done" && showAllDone && col.cards.length > 1}
+                    <button
+                      type="button"
+                      class="more"
+                      onclick={() => (showAllDone = false)}
+                      >show the summary</button
                     >
-                      <span>task_id</span><span>subtask_id</span><span
-                        >status</span
-                      ><span>encoder</span><span>validate_status_*</span>
-                    </div>
-                    {#each rows as r (r.task_id + "/" + r.subtask_id)}
-                      <div
-                        class="trow"
-                        class:subrow={r.subtask_id !== ""}
-                        style="--cols: 1fr 1fr 1.4fr 1fr 1.6fr"
-                      >
-                        <span class="mono">{r.task_id}</span>
-                        <span class="mono dim">{r.subtask_id || "—"}</span>
-                        <span
-                          ><span class="pill s-{r.status}">{r.status}</span
-                          ></span
-                        >
-                        <span class="mono">{r.encoder || "—"}</span>
-                        <span class="mono small"
-                          >{r.subtask_id ? joinedValidations(r) : "—"}</span
-                        >
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-
-                <div class="tsec">
-                  <div class="tname">lock.csv</div>
-                  <div class="tcard">
-                    <div
-                      class="trow thead"
-                      style="--cols: 1fr 1fr 1fr 1.4fr 1fr"
+                  {:else if col.key !== "done" && col.cards.length > CARD_CAP}
+                    <button
+                      type="button"
+                      class="more"
+                      onclick={() =>
+                        (expanded = {
+                          ...expanded,
+                          [col.key]: !expanded[col.key],
+                        })}
+                      >{expanded[col.key]
+                        ? "show fewer"
+                        : `+ ${col.cards.length - CARD_CAP} more`}</button
                     >
-                      <span>task_id</span><span>subtask_id</span><span
-                        >user_id</span
-                      ><span>timestamp</span><span>kind</span>
-                    </div>
-                    {#each locks as l}
-                      <div class="trow" style="--cols: 1fr 1fr 1fr 1.4fr 1fr">
-                        <span class="mono">{l.task_id}</span>
-                        <span class="mono">{l.subtask_id || "—"}</span>
-                        <span class="mono">{l.user_id}</span>
-                        <span class="mono dim">{l.timestamp}</span>
-                        <span class="mono">{l.kind}</span>
-                      </div>
-                    {/each}
-                    {#if locks.length === 0}
-                      <div class="tempty mono">— no active locks —</div>
-                    {/if}
-                  </div>
-                </div>
-
-                <div class="tsec">
-                  <div class="tname">comment.csv</div>
-                  <div class="tcard">
-                    <div
-                      class="trow thead"
-                      style="--cols: 0.8fr 0.8fr 0.8fr 0.6fr 0.8fr 2fr"
-                    >
-                      <span>id</span><span>task_id</span><span>kind</span><span
-                        >anchor</span
-                      ><span>author</span><span>body</span>
-                    </div>
-                    {#each comments as c (c.comment_id)}
-                      <div
-                        class="trow"
-                        class:subrow={c.resolved === "true"}
-                        style="--cols: 0.8fr 0.8fr 0.8fr 0.6fr 0.8fr 2fr"
-                      >
-                        <span class="mono dim">{c.comment_id}</span>
-                        <span class="mono">{c.task_id}</span>
-                        <span class="mono">{c.kind}</span>
-                        <span class="mono dim"
-                          >{hasAnchor(c) ? anchorLabel(c) : "—"}</span
-                        >
-                        <span class="mono">{commentLogin(c)}</span>
-                        <span>{c.body}</span>
-                      </div>
-                    {/each}
-                    {#if comments.length === 0}
-                      <div class="tempty mono">— no comments —</div>
-                    {/if}
-                  </div>
-                </div>
-
-                <div class="tsec">
-                  <div class="tname">
-                    history.csv <span class="mono dim small"
-                      >(append-only, newest first)</span
-                    >
-                  </div>
-                  <div class="tcard">
-                    {#each historyNewestFirst as h, i (i)}
-                      <div class="hrow">
-                        <span class="mono xts">{h.timestamp}</span>
-                        <span class="mono">@{logins[h.user_id] || h.user_id}</span>
-                        <span
-                          >{h.action}{h.task_id
-                            ? ` ${h.task_id}`
-                            : ""}{h.subtask_id ? `/${h.subtask_id}` : ""}</span
-                        >
-                        <span
-                          class="outcome"
-                          class:bad={h.outcome !== "accepted" &&
-                            h.outcome !== "released"}>{h.outcome}</span
-                        >
-                        <span class="dim">{h.detail}</span>
-                      </div>
-                    {/each}
-                    {#if history.length === 0}
-                      <div class="tempty mono">— no history yet —</div>
-                    {/if}
-                  </div>
-                </div>
+                  {/if}
+                {/if}
               </div>
             </div>
-          {/if}
-        {/if}
-      </div>
-    </div>
-  {/if}
+          {/each}
+        </div>
 
-  {#if overlayTask && overlayCard}
-    <TaskOverlay
-      card={overlayCard}
-      {campaign}
-      {owner}
-      {repo}
-      {taskDefs}
-      {comments}
-      {locks}
-      {logins}
-      {viewer}
-      {canPush}
-      {runner}
-      {resultBanner}
-      {slotDot}
-      onclaim={claimValidate}
-      oneditor={editor}
-      onsubmitencoding={submitpr}
-      onvalidate={validate}
-      oncomment={postComment}
-      onresolve={resolveCommentRow}
-      onsendback={sendBackTask}
-      onrawlink={rawlink}
-      onclose={closeOverlay}
-    />
+        <div class="ticker">
+          <span class="ticker-label">Activity</span>
+          {#each board.ticker as t, i (i)}
+            {#if i > 0}<span class="ticker-sep">|</span>{/if}
+            <span class="ticker-entry"
+              ><strong>{t.login}</strong>
+              {t.text}
+              <span class="ticker-when">· {t.elapsed}</span></span
+            >
+          {/each}
+          {#if board.ticker.length === 0}
+            <span class="ticker-entry muted">No activity yet.</span>
+          {/if}
+        </div>
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -1197,64 +1053,31 @@
   }
 
   /* --------------------------------------------------------------- main */
-  .main {
-    flex: 1;
-    display: flex;
-    min-height: 0;
-  }
+  /* The view's content stops widening at --page-max and centres past it; the
+     console's gradient behind it stays full-bleed. */
   .viewcol {
     flex: 1;
     min-width: 0;
+    width: 100%;
+    max-width: var(--page-max);
+    margin-inline: auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
   }
 
-  /* --------------------------------------------------------- info panel */
-  .ipanel {
-    width: var(--ipanel-w, 300px);
+  /* ---------------------------------------------------------- info block */
+  /* Campaign info, collapsed into the header area behind the Info toggle. */
+  .infoblock {
     flex: none;
-    border-right: 1px solid var(--line);
+    margin: 0 32px;
+    padding: 14px 18px;
     background: var(--card);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    position: relative;
-  }
-  .ipanel-resizer {
-    position: absolute;
-    right: -5px;
-    top: 0;
-    bottom: 0;
-    width: 9px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: col-resize;
-    z-index: 5;
-  }
-  .ipanel-resizer:hover,
-  .ipanel-resizer:active {
-    background: var(--accent-wash);
-  }
-  .iphead {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px 12px;
-    border-bottom: 1px solid var(--line);
-    flex: none;
-  }
-  .iptitle {
-    font-weight: 600;
-    font-size: 13px;
-  }
-  .ipbody {
-    padding: 15px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px 32px;
   }
   .isec {
     display: flex;
@@ -1292,46 +1115,24 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .pclose {
-    font-size: 11px;
-    font-weight: 600;
-    border: none;
-    background: none;
-    color: var(--ink-faint);
-    cursor: pointer;
-    padding: 4px;
-    flex: none;
-  }
 
   /* ---------------------------------------------------------------- hero */
   .hero {
     flex: none;
-    padding: 26px 32px 18px;
+    padding: 18px 32px 0;
     display: flex;
-    align-items: flex-end;
-    gap: 24px;
-  }
-  .hero-titles {
-    flex: 1;
-    min-width: 0;
-  }
-  .eyebrow {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
+    flex-direction: column;
+    gap: 10px;
   }
   .hero-line {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 14px;
-    margin-top: 4px;
     min-width: 0;
   }
   .hero-line h1 {
     margin: 0;
-    font-size: 30px;
+    font-size: 26px;
     line-height: 1.2;
     font-weight: 700;
     white-space: nowrap;
@@ -1347,15 +1148,49 @@
   .slug:hover {
     text-decoration: underline;
   }
+  .infochip {
+    font: 600 12.5px var(--font);
+    color: var(--ink-soft);
+    background: var(--bg-tint);
+    border: 0;
+    border-radius: 999px;
+    padding: 5px 13px;
+    cursor: pointer;
+    flex: none;
+  }
+  .infochip:hover,
+  .infochip.on {
+    color: var(--accent);
+  }
+  .cspacer {
+    flex: 1;
+  }
+  .managechip {
+    font: 600 12.5px var(--font);
+    color: var(--owner);
+    background: var(--owner-bg);
+    border: 1px solid var(--owner-line);
+    border-radius: 999px;
+    padding: 6px 14px;
+    cursor: pointer;
+    flex: none;
+  }
+  .managechip:hover:not(:disabled) {
+    border-color: var(--owner);
+  }
+  .managechip:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
   .hero-stats {
     display: flex;
-    gap: 16px;
-    margin-top: 12px;
+    gap: 14px;
     align-items: center;
     flex-wrap: wrap;
   }
   .hbar {
-    width: 280px;
+    flex: 1;
+    max-width: 420px;
     height: 6px;
     border-radius: 3px;
     background: var(--track);
@@ -1365,92 +1200,38 @@
     height: 100%;
     background: linear-gradient(90deg, var(--blue), var(--green));
   }
+  .hbarlabel {
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
   .stat {
     font-size: 13px;
     color: var(--ink-soft);
   }
-  .stat.strong {
-    font-weight: 600;
+  .stat b.c-ok {
+    color: var(--ok);
   }
-  .stat.inflight {
+  .stat b.c-info {
     color: var(--info);
-    font-weight: 600;
   }
-  .stat.attention {
-    color: var(--warn);
-    font-weight: 600;
+  .stat b.c-danger {
+    color: var(--danger);
   }
   .sep {
     font-size: 12.5px;
     color: var(--ink-faint);
   }
-  .hero-right {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 12px;
-    flex: none;
-  }
-  .hero-tools {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .hbtn {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 6px 11px;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .hbtn:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .hbtn.on {
-    background: var(--invert-bg);
-    border-color: var(--invert-bg);
-    color: var(--invert-ink);
-  }
-  .tabs {
-    display: flex;
-    border: 1px solid var(--line-strong);
-    border-radius: 7px;
-    overflow: hidden;
-  }
-  .tabs button {
-    font-size: 11px;
-    font-weight: 500;
-    font-family: inherit;
-    padding: 6px 11px;
-    background: var(--card);
-    color: var(--ink-faint);
-    border: none;
-    cursor: pointer;
-  }
-  .tabs button.on {
-    font-weight: 600;
-    background: var(--invert-bg);
-    color: var(--invert-ink);
-  }
-  .hero-acts {
-    display: flex;
-    gap: 10px;
-  }
   .pillbtn {
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 600;
     font-family: inherit;
-    padding: 8px 18px;
+    padding: 9px 20px;
     border-radius: 999px;
     border: 1px solid var(--line);
     background: var(--card);
     color: var(--ink-soft);
     cursor: pointer;
+    flex: none;
   }
   .pillbtn:hover:not(:disabled) {
     border-color: var(--accent);
@@ -1579,6 +1360,30 @@
   }
   .card.col-done {
     box-shadow: none;
+  }
+  .card.pre {
+    border-left: 3px solid var(--pre);
+  }
+  .card.failtint {
+    background: var(--danger-bg);
+    border-color: var(--danger-line);
+  }
+  .card-pre {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--pre);
+  }
+  .donesum {
+    background: color-mix(in srgb, var(--card) 60%, transparent);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    align-items: flex-start;
   }
   .card.nextup {
     border-color: var(--accent);
@@ -1781,143 +1586,75 @@
     color: var(--line-strong);
     flex: none;
   }
-  .tspacer {
-    flex: 1;
-  }
-
-  /* ---------------------------------------------------------------- pills */
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 600;
-    font-size: 11px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    color: var(--ink-faint);
-  }
-  .pill.s-completed,
-  .pill.s-pass {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
-  }
-  .pill.s-encoding_required,
-  .pill.s-encoding,
-  .pill.s-claimed {
-    background: var(--info-bg);
-    border-color: var(--info-line);
-    color: var(--info);
-  }
-  .pill.s-validation_required,
-  .pill.s-review {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-    color: var(--warn);
-  }
-  .pill.s-fail {
-    background: var(--danger-bg);
-    border-color: var(--danger-line);
-    color: var(--danger);
-  }
-
-  /* ------------------------------------------------------------- tables */
-  .tablesview {
-    flex: 1;
-    overflow: auto;
-    padding: 22px 26px;
-  }
-  .tcol {
-    max-width: 900px;
+  /* ----------------------------------------------- manage takeover chrome */
+  .crumbrow {
+    flex: none;
+    padding: 14px 32px 0;
     display: flex;
-    flex-direction: column;
-    gap: 26px;
-  }
-  .tname {
-    font-weight: 600;
-    font-size: 13px;
-    margin-bottom: 8px;
-  }
-  .tcard {
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--card);
-  }
-  .trow {
-    display: grid;
-    grid-template-columns: var(--cols);
-    border-bottom: 1px solid var(--line);
     align-items: center;
-  }
-  .trow:last-child {
-    border-bottom: none;
-  }
-  .trow > span {
-    padding: 7px 10px;
-    font-size: 11px;
+    gap: 14px;
     min-width: 0;
+  }
+  .backlink {
+    font: 600 13px var(--font);
+    color: var(--link);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    flex: none;
+  }
+  .backlink:hover {
+    text-decoration: underline;
+  }
+  .bcsep {
+    color: var(--line-input);
+  }
+  .crumbtitle {
+    font-size: 15px;
+    font-weight: 700;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .trow.thead {
-    background: var(--bg-alt);
-    border-bottom: 1px solid var(--line);
-  }
-  .trow.thead > span {
-    font-weight: 600;
-    font-size: 10px;
+  .crumbsub {
+    font-size: 15px;
     color: var(--ink-faint);
-    padding: 8px 10px;
+    flex: none;
   }
-  .trow.subrow {
-    background: var(--bg-alt);
-  }
-  .trow .pill {
-    font-size: 9px;
-    padding: 2px 8px;
-  }
-  .dim {
-    color: var(--ink-faint);
-  }
-  .small {
-    font-size: 10px;
-  }
-  .tempty {
-    padding: 9px 10px;
-    font-size: 11px;
-    color: var(--ink-faint);
-  }
-  .hrow {
-    display: flex;
-    gap: 10px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--line);
-    font-size: 11px;
-    align-items: baseline;
-  }
-  .hrow:last-child {
-    border-bottom: none;
-  }
-  .xts {
-    color: var(--ink-faint);
-    white-space: nowrap;
-  }
-  .outcome {
-    font-weight: 600;
-    font-size: 10px;
-    padding: 1px 7px;
+  .ownerpill {
+    flex: none;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--owner);
+    background: var(--owner-bg);
+    border: 1px solid var(--owner-line);
     border-radius: 999px;
-    background: var(--ok-bg);
-    color: var(--ok);
-    white-space: nowrap;
+    padding: 2px 10px;
   }
-  .outcome.bad {
-    background: var(--danger-bg);
-    color: var(--danger);
+  .reapline {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .reapbtn {
+    flex: none;
+    font: 600 12.5px var(--font);
+    padding: 7px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line-input);
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .reapbtn:hover:not(:disabled) {
+    border-color: var(--info-line);
+  }
+  .reapbtn:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
   /* --------------------------------------------------------- responsive */
@@ -1931,13 +1668,6 @@
     }
     .well {
       overflow-y: visible;
-    }
-    .hero {
-      flex-direction: column;
-      align-items: stretch;
-    }
-    .hero-right {
-      align-items: flex-start;
     }
   }
 </style>

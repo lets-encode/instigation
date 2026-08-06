@@ -72,7 +72,7 @@ async function contentKey(blob: Blob, detectorUrl: string): Promise<string> {
  * are never sent twice; a failed attempt is forgotten, so awaiting the page
  * again retries it.
  */
-export async function detectPageMeasures(
+async function detectPageMeasures(
 	blob: Blob,
 	name: string,
 	detectorUrl: string,

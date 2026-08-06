@@ -3,12 +3,17 @@ import assert from 'node:assert/strict';
 
 import { parseTaskCsv, parseStateCsv, parseLockCsv, parseCommentCsv } from '../campaign-tables.ts';
 import {
+	attentionCount,
 	commentsOnMyWork,
 	isNearlyDone,
+	loadAllCampaignStats,
 	myTasksIn,
 	readyCount
 } from '../campaign-stats.ts';
 import type { CampaignStats } from '../campaign-stats.ts';
+import { RateLimitError } from '../forge/github-rest.ts';
+import type { RepoSummary } from '../forge/github-rest.ts';
+import type { ForgeClient } from '../forge/types.ts';
 
 const STATE_HEADER = 'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n';
 const TASK_HEADER = 'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n';
@@ -90,6 +95,16 @@ test('isNearlyDone: from 80% up, but never when finished', () => {
 	assert.equal(isNearlyDone(0, 0), false);
 });
 
+test('attentionCount: tasks whose validation records a fail', () => {
+	// Only T0003 carries a fail; T0004 has a pass and an open slot.
+	assert.equal(attentionCount(stats), 1);
+	const clean = {
+		...stats,
+		rows: stats.rows.map((r) => ({ ...r, validate_status_1: '' }))
+	};
+	assert.equal(attentionCount(clean), 0);
+});
+
 test("myTasksIn groups the viewer's tasks by what needs doing", () => {
 	const mine = myTasksIn(stats, '7');
 	const byGroup = Object.fromEntries(mine.map((t) => [t.group, t]));
@@ -105,6 +120,70 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
 	assert.equal(byGroup.awaiting.passes, 1);
 	assert.deepEqual(byGroup.awaiting.dots, ['pass', 'open']);
 	assert.equal(myTasksIn(stats, '').length, 0);
+});
+
+// A minimal forge for the listing loader: a topic search result plus a
+// per-repo file reader. Repo ids must be unique per test — loadCampaignStats
+// caches by id for the session.
+const summary = (id: number, name: string): RepoSummary => ({
+	id,
+	full_name: `o/${name}`,
+	name,
+	owner: 'o',
+	html_url: `https://github.com/o/${name}`,
+	private: false,
+	description: null,
+	updated_at: ''
+});
+const fakeForge = (
+	repos: RepoSummary[],
+	getRepoFile: (owner: string, repo: string, path: string) => Promise<string | null>
+): ForgeClient =>
+	({
+		searchReposByTopic: async () => repos,
+		getRepoFile,
+		getUserLogin: async () => null
+	}) as unknown as ForgeClient;
+
+const rateLimit = () =>
+	new RateLimitError({
+		source: 'github',
+		resource: 'core',
+		limit: 60,
+		remaining: 0,
+		used: 60,
+		resetAt: null,
+		retryAfterSeconds: null
+	});
+
+test('loadAllCampaignStats: one unreadable repository is skipped but reported', async () => {
+	const f = fakeForge([summary(9101, 'ok'), summary(9102, 'broken')], async (_o, repo) => {
+		if (repo === 'broken') throw new Error('boom');
+		return null;
+	});
+	const listing = await loadAllCampaignStats(f, 'topic');
+	assert.deepEqual(
+		listing.stats.map((s) => s.name),
+		['ok']
+	);
+	assert.equal(listing.failed, 1);
+	assert.equal(listing.failureMessage, 'boom');
+});
+
+test('loadAllCampaignStats: every repository failing throws instead of listing nothing', async () => {
+	const f = fakeForge([summary(9201, 'a'), summary(9202, 'b')], async () => {
+		throw rateLimit();
+	});
+	await assert.rejects(loadAllCampaignStats(f, 'topic'), RateLimitError);
+});
+
+test('loadAllCampaignStats: an empty search result is not an error', async () => {
+	const f = fakeForge([], async () => null);
+	assert.deepEqual(await loadAllCampaignStats(f, 'topic'), {
+		stats: [],
+		failed: 0,
+		failureMessage: ''
+	});
 });
 
 test("commentsOnMyWork: others' comments on the viewer's encodings, not their own", () => {

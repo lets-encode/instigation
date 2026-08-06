@@ -7,6 +7,12 @@ export default defineConfig(({ mode }) => {
 	process.env.VITE_CONFIG_MODE = mode;
 	return {
 		plugins: [sveltekit()],
+		define: {
+			// The footer's "app last updated" date, fixed at build time.
+			__BUILD_DATE__: JSON.stringify(
+				new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+			)
+		},
 		optimizeDeps: {
 			exclude: ['verovio/wasm', 'verovio/esm']
 		},

@@ -33,10 +33,11 @@
     drafts = owner ? resumableDrafts(owner) : [];
   });
 
-  /** The label of the step a draft was left on, for describing where it stopped. */
-  function stepLabel(draft: WizardDraft): string {
+  /** "step x of y" for the step a draft was left on. */
+  function stepLine(draft: WizardDraft): string {
     const step = draft.entries?.step;
-    return (step && WIZARD_STEPS[stepIndex(step)]?.label) || "";
+    if (!step) return "";
+    return `wizard step ${stepIndex(step) + 1} of ${WIZARD_STEPS.length}`;
   }
 
   async function continueSetup(draft: WizardDraft) {
@@ -94,59 +95,51 @@
 
 {#if drafts.length}
   <section class="drafts">
-    <h2>Unfinished setups</h2>
-    <ul>
-      {#each drafts as draft (draft.handle)}
-        <li>
-          <div class="row">
-            <span class="name">{draft.entries?.title?.trim() || draft.handle}</span>
-            <span class="where" title="The step this setup was left on">
-              {draft.handle} — stopped at {stepLabel(draft)}
-            </span>
-            <div class="controls">
-              <button
-                type="button"
-                class="btn btn-soft"
-                onclick={() => continueSetup(draft)}
-                disabled={busy !== null}
-              >
-                {busy === draft.handle ? "Working…" : "Continue setup"}
-              </button>
-              {#if confirming === draft.handle}
-                <button
-                  type="button"
-                  class="btn btn-quiet btn-danger"
-                  onclick={() => discard(draft)}
-                  disabled={busy !== null}
-                >
-                  Discard for good
-                </button>
-              {:else}
-                <button
-                  type="button"
-                  class="btn btn-quiet"
-                  onclick={() => (confirming = draft.handle)}
-                  disabled={busy !== null}
-                >
-                  Discard
-                </button>
-              {/if}
-            </div>
-          </div>
-          {#if draft.repo}
-            <p class="repo">
-              Its repository <a href={draft.repo.html_url} target="_blank" rel="noreferrer">
-                {draft.repo.full_name}
-              </a> exists already, and is completed by finishing the setup.
-              {#if confirming === draft.handle}
-                Discarding frees the name but leaves the repository — delete it
-                yourself if you don't want it.
-              {/if}
-            </p>
-          {/if}
-        </li>
-      {/each}
-    </ul>
+    {#each drafts as draft (draft.handle)}
+      <div class="drow">
+        <span class="dlabel">Drafts</span>
+        <span class="dline">
+          {draft.entries?.title?.trim() || draft.handle} — {stepLine(draft)} ·
+          {draft.handle}
+        </span>
+        <button
+          type="button"
+          class="linkish"
+          onclick={() => continueSetup(draft)}
+          disabled={busy !== null}
+        >
+          {busy === draft.handle ? "Working…" : "Resume →"}
+        </button>
+        <span class="spacer"></span>
+        {#if confirming === draft.handle}
+          <span class="dnote">
+            {#if draft.repo}
+              Discarding frees the name but leaves the repository
+              <a href={draft.repo.html_url} target="_blank" rel="noreferrer"
+                >{draft.repo.full_name}</a
+              > — delete it yourself if you don't want it.
+            {/if}
+          </span>
+          <button
+            type="button"
+            class="linkish danger"
+            onclick={() => discard(draft)}
+            disabled={busy !== null}
+          >
+            Discard for good
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="linkish quiet"
+            onclick={() => (confirming = draft.handle)}
+            disabled={busy !== null}
+          >
+            Discard
+          </button>
+        {/if}
+      </div>
+    {/each}
 
     {#if error}
       <p class="msg-error" role="alert">{error}</p>
@@ -159,43 +152,69 @@
 
 <style>
   .drafts {
-    max-width: 640px;
-    margin: 0 auto 1.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--line);
-  }
-  h2 {
-    font-size: 1.15rem;
-  }
-  ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.9rem;
+    gap: 6px;
   }
-  .row {
+  .drow {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 16px;
+    background: color-mix(in srgb, var(--card) 70%, transparent);
+    border: 1px dashed var(--line-input);
+    border-radius: 10px;
+    min-width: 0;
   }
-  .name {
-    font-weight: 600;
-  }
-  .where {
-    font-size: 0.8rem;
+  .dlabel {
+    font-size: 12px;
+    font-weight: 700;
     color: var(--ink-faint);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
-  .controls {
-    display: flex;
-    gap: 0.5rem;
-    margin-left: auto;
-  }
-  .repo {
-    margin: 0.35rem 0 0;
-    font-size: 0.85rem;
+  .dline {
+    font-size: 13px;
     color: var(--ink-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dnote {
+    font-size: 12px;
+    color: var(--ink-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .dnote a {
+    color: var(--link);
+  }
+  .spacer {
+    flex: 1;
+  }
+  .linkish {
+    flex: none;
+    font: 600 12.5px var(--font);
+    color: var(--link);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .linkish.quiet {
+    color: var(--ink-faint);
+    font-weight: 400;
+  }
+  .linkish.danger {
+    color: var(--danger);
+  }
+  .linkish:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .linkish:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 </style>

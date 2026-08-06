@@ -70,7 +70,7 @@ export interface TaskCounts {
  * again (after a send-back the cells clear, so the unresolved fail comment
  * takes over the count as a plain comment).
  */
-export function taskCounts(d: GraphData, comments: CommentRow[], task: string): TaskCounts {
+function taskCounts(d: GraphData, comments: CommentRow[], task: string): TaskCounts {
 	const cellTs = failCellTimestamps(d, task);
 	const fails = cellTs.size;
 	let questions = 0;
@@ -199,7 +199,7 @@ function tickerText(h: HistoryRow, title: string): string | null {
 }
 
 /** The last few history entries as ticker lines, newest first. */
-export function buildTicker(
+function buildTicker(
 	d: GraphData,
 	history: HistoryRow[],
 	logins: Logins = {},

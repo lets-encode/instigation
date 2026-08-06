@@ -24,6 +24,7 @@ import { parseMeiHeader } from './mei-header.ts';
 import { parseFacsimileMei } from './mei-facsimile.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 import type { ForgeClient } from './forge/types.ts';
+import { RateLimitError } from './forge/github-rest.ts';
 import type { RepoSummary } from './forge/github-rest.ts';
 
 /** One campaign's tracking tables condensed for the dashboard views. */
@@ -119,30 +120,52 @@ export function loadCampaignStats(
 	return loading;
 }
 
+/** The campaign listing: what loaded, and how many repositories did not. */
+export interface CampaignListing {
+	stats: CampaignStats[];
+	/** Repositories the search found whose tables could not be read. */
+	failed: number;
+	/** Why (the first failure — a rate-limit one preferred); '' when none. */
+	failureMessage: string;
+}
+
 /**
  * Load the stats of every campaign the topic search finds. A failed search
- * throws; a single unreadable repository is skipped rather than taking the
- * listing down. `onEach` streams results as they land, for grids that fill
- * in progressively.
+ * throws; an unreadable repository is skipped rather than taking the listing
+ * down, but reported in the result so the caller can say so — and when the
+ * search found repositories and not one of them could be read, that is a
+ * failure of the listing itself (typically the anonymous rate limit), and it
+ * throws rather than posing as an empty database. `onEach` streams results as
+ * they land, for grids that fill in progressively.
  */
 export async function loadAllCampaignStats(
 	f: ForgeClient,
 	topic: string,
 	opts: { withPreview?: boolean; onEach?: (stats: CampaignStats) => void } = {}
-): Promise<CampaignStats[]> {
+): Promise<CampaignListing> {
 	const repos = await f.searchReposByTopic(topic);
+	const errors: unknown[] = [];
 	const all = await Promise.all(
 		repos.map(async (repo) => {
 			try {
 				const stats = await loadCampaignStats(f, repo, opts.withPreview ?? false);
 				opts.onEach?.(stats);
 				return stats;
-			} catch {
+			} catch (err) {
+				errors.push(err);
 				return null;
 			}
 		})
 	);
-	return all.filter((stats): stats is CampaignStats => stats !== null);
+	const loaded = all.filter((stats): stats is CampaignStats => stats !== null);
+	// A rate-limit error carries the retry time — surface that one first.
+	const cause = errors.find((e) => e instanceof RateLimitError) ?? errors[0];
+	if (repos.length > 0 && loaded.length === 0) throw cause;
+	return {
+		stats: loaded,
+		failed: errors.length,
+		failureMessage: errors.length ? ((cause as Error)?.message ?? String(cause)) : ''
+	};
 }
 
 async function fetchStats(
@@ -238,7 +261,8 @@ async function loadScoreExtras(
 	f: ForgeClient,
 	stats: Pick<CampaignStats, 'owner' | 'repo' | 'taskDefs'>
 ): Promise<{ preview: CampaignStats['preview']; composer: string }> {
-	const fragment = stats.taskDefs.find((t) => t.fragment)?.fragment ?? 'sources/score.mei';
+	const fragment = stats.taskDefs.find((t) => t.fragment)?.fragment;
+	if (!fragment) return { preview: null, composer: '' };
 	try {
 		const mei = await f.getRepoFile(stats.owner, stats.repo, fragment);
 		if (!mei) return { preview: null, composer: '' };
@@ -296,6 +320,16 @@ export interface FeedComment {
 	task: string;
 	taskTitle: string;
 	logins: Record<string, string>;
+}
+
+/** Tasks whose latest validation round records a fail (fix requested). */
+export function attentionCount(stats: CampaignStats): number {
+	return stats.rows.filter(
+		(r) =>
+			r.subtask_id === '' &&
+			r.status === 'validation_required' &&
+			taskFailCells(stats, r.task_id).length > 0
+	).length;
 }
 
 const taskFailCells = (stats: CampaignStats, task: string): string[] =>

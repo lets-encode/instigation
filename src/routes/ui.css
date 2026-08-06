@@ -137,42 +137,11 @@
   background: currentColor;
 }
 
-/* A recessed status box at the bottom of a work card. */
-.status-box {
-  border: 1px solid var(--line);
-  background: var(--bg-alt);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-
 .btn-soft {
   background: var(--bg-alt);
 }
 .btn-soft:hover:not(:disabled) {
   background: var(--line);
-}
-
-.btn-quiet {
-  font-size: 0.85rem;
-  padding: 0.35rem 0.7rem;
-  color: var(--ink-soft);
-}
-.btn-quiet:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-/* A quiet button whose action removes something. */
-.btn-quiet.btn-danger:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-/* A quiet button in a set where one option is the active one. */
-.btn-quiet.on {
-  color: var(--card);
-  background: var(--accent);
-  border-color: var(--accent);
 }
 
 /* A button that reads as a link, for actions inside a sentence. */

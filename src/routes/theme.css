@@ -1,13 +1,11 @@
 /* =========================================================================
    Let's Encode! — shared theme tokens for the instigation app.
-   The :root / [data-theme="dark"] blocks are ported from the redirector
-   (redirector/app/static/styles.css) so both surfaces read as one project.
+   :root holds the light theme; [data-theme="dark"] overrides it.
    Palette derived from the logo's three hands:
      orange #ffa76d   blue #6dc3ff   green #76de76
    ========================================================================= */
 
 :root {
-  --orange: #ffa76d;
   --blue: #6dc3ff;
   --green: #76de76;
 
@@ -22,7 +20,6 @@
   --topbar-bg: rgba(255, 255, 255, .9);
 
   --accent: #2563c9;
-  --accent-dark: #1b49a0;
   --link: #2f68c4;
 
   /* Filled action buttons carry their own pair: the fill can differ from the
@@ -39,8 +36,10 @@
   /* Recessed surfaces inside a card: page grids, the XML editor. */
   --bg-inset: #f7f8fb;
 
-  --maxw: 1080px;
-  --radius: 14px;
+  /* Widest a full-bleed screen lets its content grow (the design canvas
+     width). Beyond it the content centres and the viewport gains side
+     margins; narrower viewports use their full width. */
+  --page-max: 1600px;
   --shadow: 0 1px 2px rgba(31, 36, 51, .06), 0 8px 28px rgba(31, 36, 51, .07);
 
   --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
@@ -56,9 +55,6 @@
   --ok: #1a7f4b;
   --ok-bg: #e8f7ec;
   --ok-line: #b6e2c1;
-  /* A filled green for progress bars and completed edges, where the shape
-     rather than the text carries the meaning. */
-  --ok-soft: #7fbf8a;
   --warn: #e07b39;
   --warn-bg: #fff7f0;
   --warn-line: #e8d5c4;
@@ -75,13 +71,16 @@
   --info: #2563c9;
   --info-bg: #eaf4ff;
   --info-line: #bcd4f3;
-  /* Neutral beige, for a banner that reports rather than alerts. */
-  --note: #6f6650;
-  --note-bg: #fbf9f4;
-  --note-line: #ece5d5;
   /* Purple, marking preparation steps apart from encoding ones. */
   --pre: #8b5fbf;
-  --pre-bg: #f3edfa;
+  /* Amber, marking the viewer's own campaigns and owner-only controls. */
+  --owner: #e07b39;
+  --owner-bg: #fff7f0;
+  --owner-line: #e8d5c4;
+  /* Progress-bar track on the owner-amber card surface. */
+  --owner-track: #f2e4d5;
+  /* The measure corrector's desk: the surface the page sheets float on. */
+  --desk: #e4e7ee;
 
   /* Accent surfaces: a faint wash for rows and icons, a stronger one for the
      selected row, and the borders that go with them. */
@@ -89,22 +88,16 @@
   --accent-tint-strong: #e8f1fd;
   --accent-line: #cfe0f6;
   --accent-line-strong: #9db9e8;
-  /* Translucent, for a drag handle lighting up over whatever is behind it. */
-  --accent-wash: rgba(48, 86, 211, .18);
 
   /* A heavier border than --line, for control outlines rather than hairlines. */
   --line-strong: #d0d0d0;
-  /* The inverted pair a pressed toggle uses. */
-  --invert-bg: #1a1a1a;
+  /* Text on a filled accent surface. */
   --invert-ink: #ffffff;
-  /* The dot of the graph canvas's grid. */
-  --grid-dot: #e4e2dc;
   /* Covers the page while a modal action runs. */
   --scrim: rgba(255, 255, 255, .72);
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, .06);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, .12);
-  --shadow-lg: 0 8px 22px rgba(0, 0, 0, .14);
   /* For a shadow whose geometry is the rule's own. */
   --shade: rgba(0, 0, 0, .14);
 
@@ -139,7 +132,6 @@
   --topbar-bg: rgba(20, 23, 32, .85);
 
   --accent: #6ea3f5;
-  --accent-dark: #93b9f8;
   --link: #6ea3f5;
 
   --accent-btn: #3b76e0;
@@ -154,7 +146,6 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 28px rgba(0, 0, 0, .45);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, .45);
-  --shadow-lg: 0 8px 22px rgba(0, 0, 0, .5);
   --shade: rgba(0, 0, 0, .5);
 
   /* Lifted so they stay legible against the dark surfaces. Their fills are
@@ -163,7 +154,6 @@
   --ok: #5fd08a;
   --ok-bg: rgba(46, 160, 92, .15);
   --ok-line: #2e5c42;
-  --ok-soft: #4e9d7b;
   --warn: #f0924f;
   --warn-bg: rgba(240, 146, 79, .12);
   --warn-line: #5e4530;
@@ -177,26 +167,23 @@
   --info: #6ea3f5;
   --info-bg: rgba(110, 163, 245, .15);
   --info-line: #3d5578;
-  --note: #cfc6ae;
-  --note-bg: rgba(207, 198, 174, .1);
-  --note-line: rgba(207, 198, 174, .3);
   --pre: #c39ce8;
-  --pre-bg: rgba(195, 156, 232, .14);
+  --owner: #f0924f;
+  --owner-bg: rgba(240, 146, 79, .1);
+  --owner-line: #5e4530;
+  --owner-track: rgba(240, 146, 79, .18);
+  --desk: #0c0e15;
 
   --accent-tint: rgba(110, 163, 245, .07);
   --accent-tint-strong: rgba(110, 163, 245, .16);
   --accent-line: rgba(110, 163, 245, .3);
   --accent-line-strong: rgba(110, 163, 245, .55);
-  --accent-wash: rgba(110, 163, 245, .28);
 
   --line-strong: #3a4054;
   /* Page scans stay light — they are paper — but warmed a step so they do not
      glare against the dark surfaces. */
   --facsimile-paper: #f2f0ea;
-  /* Inverted the other way round in this theme: a pressed toggle goes light. */
-  --invert-bg: #ecebe6;
   --invert-ink: #1b2030;
-  --grid-dot: #2c3348;
   --scrim: rgba(15, 18, 28, .66);
 
   /* Muted piece hues so the coloured regions don't glare on the dark canvas. */
