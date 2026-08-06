@@ -29,10 +29,11 @@ import {
 	findRow,
 	configString,
 	configNumber,
+	configPieces,
 	resolveLogins
 } from './campaign-tables.ts';
 import { checkPlan } from './campaign-plan.ts';
-import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow } from './campaign-tables.ts';
+import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow, PieceRef } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
 import { parseFacsimileMei, buildFacsimileMei } from './mei-facsimile.ts';
@@ -345,6 +346,8 @@ export interface CampaignTables {
 	history: HistoryRow[];
 	/** The comment log (fail explanations and discussion); [] when comment.csv is absent. */
 	comments: CommentRow[];
+	/** The campaign's pieces from config.yaml, in config order; [] when unreadable. */
+	pieces: PieceRef[];
 	/** campaign.title from config.yaml; '' when unreadable. */
 	title: string;
 	/** campaign.description from config.yaml; '' when unreadable or unset. */
@@ -387,6 +390,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 				locks: [],
 				history: [],
 				comments: [],
+				pieces: [],
 				title: '',
 				description: '',
 				license: '',
@@ -408,6 +412,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			locks,
 			history,
 			comments,
+			pieces: configPieces(configYaml),
 			title: configString(configYaml, 'title'),
 			description: configString(configYaml, 'description'),
 			license: configString(configYaml, 'license'),

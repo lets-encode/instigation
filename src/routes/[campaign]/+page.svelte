@@ -14,6 +14,7 @@
     LockRow,
     HistoryRow,
     CommentRow,
+    PieceRef,
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
@@ -23,6 +24,7 @@
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PiecePreview from "$lib/components/PiecePreview.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import TaskDetail from "$lib/components/TaskDetail.svelte";
 
@@ -54,6 +56,7 @@
   let locks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
   let comments = $state<CommentRow[]>([]);
+  let pieces = $state<PieceRef[]>([]);
   // Numeric user id → login, for displaying the people the tables reference.
   let logins = $state<Record<string, string>>({});
   let title = $state("");
@@ -68,6 +71,23 @@
   // derives from the tracking tables.
   let manage = $state(false);
   let showInfo = $state(false);
+  // The whole-score preview, opened over whichever surface is showing.
+  let showScore = $state(false);
+  // The scores a viewer can read end to end: the pieces the tasks address,
+  // named from the campaign's config where it names them.
+  const previewPieces = $derived.by(() => {
+    const paths = [
+      ...new Set(
+        taskDefs
+          .filter((t) => t.subtask_id === "" && t.fragment)
+          .map((t) => t.fragment),
+      ),
+    ];
+    return paths.map((path) => {
+      const piece = pieces.find((p) => p.path === path);
+      return { id: piece?.id ?? path, path, title: piece?.title ?? "" };
+    });
+  });
   // Columns the viewer expanded past the card cap.
   let expanded = $state<Partial<Record<ColumnKey, boolean>>>({});
   const CARD_CAP = 5;
@@ -160,6 +180,7 @@
       locks = tables.locks;
       history = tables.history;
       comments = tables.comments;
+      pieces = tables.pieces;
       logins = tables.logins;
       title = tables.title;
       description = tables.description;
@@ -476,6 +497,15 @@
 {/snippet}
 
 <div class="console">
+  {#if showScore && previewPieces.length > 0}
+    <PiecePreview
+      {owner}
+      {repo}
+      campaignTitle={title || repo}
+      pieces={previewPieces}
+      onclose={() => (showScore = false)}
+    />
+  {/if}
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else}
@@ -626,6 +656,14 @@
               >ⓘ Info {showInfo ? "▾" : "▸"}</button
             >
             <span class="cspacer"></span>
+            <button
+              type="button"
+              class="pillbtn"
+              onclick={() => (showScore = true)}
+              disabled={previewPieces.length === 0}
+              title="Show every page of the score, without opening a task."
+              >Preview the score</button
+            >
             {#if auth.user && canPush}
               <button
                 type="button"
@@ -936,6 +974,8 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    /* The containing block for the score preview, which covers the view. */
+    position: relative;
     background: var(--bg-alt);
     background-image:
       radial-gradient(

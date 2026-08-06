@@ -265,6 +265,31 @@ export function configString(yaml: string | null, key: string): string {
 	return value.replace(/\s+#.*$/, '').trim();
 }
 
+/** A piece of the campaign as the console addresses it: its score and its name. */
+export interface PieceRef {
+	id: string;
+	/** Repo path of the piece's MEI — the `fragment` its tasks address. */
+	path: string;
+	/** The piece's header title; '' when unset. */
+	title: string;
+}
+
+/**
+ * The pieces from config.yaml, in config order, read the same way as
+ * configString: the indented lines under `pieces:`, split on their entries.
+ * Entries without a path are skipped, having no score to address.
+ */
+export function configPieces(yaml: string | null): PieceRef[] {
+	const block = /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(yaml ?? '')?.[1] ?? '';
+	const pieces: PieceRef[] = [];
+	for (const entry of block.split(/^ {2}- /m).slice(1)) {
+		const path = configString(entry, 'path');
+		// The only `title:` in an entry is its header's.
+		if (path) pieces.push({ id: configString(entry, 'id'), path, title: configString(entry, 'title') });
+	}
+	return pieces;
+}
+
 /** A positive-integer scalar from config.yaml by key, or `fallback`. */
 export function configNumber(yaml: string | null, key: string, fallback: number): number {
 	const n = Number(new RegExp(`^\\s*${key}:\\s*(\\d+)`, 'm').exec(yaml ?? '')?.[1]);

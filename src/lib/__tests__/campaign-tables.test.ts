@@ -14,8 +14,10 @@ import {
 	serializeCommentCsv,
 	appendComments,
 	findRow,
-	isFinalValidation
+	isFinalValidation,
+	configPieces
 } from '../campaign-tables.ts';
+import { buildCampaignConfig, configToYaml } from '../campaign-init.ts';
 
 const STATE =
 	'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
@@ -213,4 +215,43 @@ test('isFinalValidation: only pass/fail are final', () => {
 	assert.equal(isFinalValidation('fail|alice|'), false);
 	assert.equal(isFinalValidation('pass|alice|t|extra'), false);
 	assert.equal(isFinalValidation('pending|alice|t'), false);
+});
+
+test('configPieces: reads the pieces configToYaml writes, in order', () => {
+	const yaml = configToYaml(
+		buildCampaignConfig(
+			{
+				name: 'campaign',
+				pieces: [
+					{
+						id: 'piece-01',
+						kind: 'facsimile',
+						path: 'pieces/piece-01/score.mei',
+						zones: [{ surface: 1, ulx: 0, uly: 0, lrx: 10, lry: 10 }],
+						header: { title: 'Prelude', composer: 'Anon.' }
+					},
+					{
+						id: 'piece-02',
+						kind: 'encoded',
+						path: 'pieces/piece-02/score.mei',
+						zones: [],
+						header: { title: '', composer: '' }
+					}
+				]
+			},
+			'instigator',
+			{ central_repository: 'org/automation', ref: 'main', path: '.github/workflows/x.yml' },
+			1
+		)
+	);
+
+	assert.deepEqual(configPieces(yaml), [
+		{ id: 'piece-01', path: 'pieces/piece-01/score.mei', title: 'Prelude' },
+		{ id: 'piece-02', path: 'pieces/piece-02/score.mei', title: '' }
+	]);
+});
+
+test('configPieces: a config without pieces yields none', () => {
+	assert.deepEqual(configPieces('pieces: []\nfragmentation:\n  strategy: "by-piece"\n'), []);
+	assert.deepEqual(configPieces(null), []);
 });
