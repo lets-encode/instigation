@@ -25,18 +25,16 @@
     }
   }
 
-  // The zone editor is a full-width tool; the campaign console and the
-  // onboarding wizard are full-bleed, full-height surfaces (the wizard splits
-  // into a form pane and a page-preview pane); every other route keeps the
-  // narrow reading column. Matching on the route rather than the path is what
-  // makes the wizard full-height at /c?slug=, whose URL keeps its own path
-  // while hooks.ts reroutes it to / (see src/hooks.ts).
+  // The zone editor and the personal dashboard are full-width tools; the
+  // landing, the campaign console and the onboarding wizard are full-bleed,
+  // full-height surfaces (the wizard splits into a form pane and a
+  // page-preview pane); every other route keeps the narrow reading column.
   const wide = $derived(
-    page.route.id === '/[campaign]/zones/[task]' ||
-      page.route.id === '/campaigns' ||
-      page.route.id === '/dashboard'
+    page.route.id === '/[campaign]/zones/[task]' || page.route.id === '/dashboard'
   );
-  const full = $derived(page.route.id === '/' || page.route.id === '/[campaign]');
+  const full = $derived(
+    page.route.id === '/' || page.route.id === '/[campaign]' || page.route.id === '/new'
+  );
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
@@ -51,6 +49,11 @@
   </a>
   <div class="topbar-right">
     {#if auth.user}
+      <a
+        class="nav-link"
+        href="/dashboard"
+        aria-current={page.route.id === '/dashboard' ? 'page' : undefined}>Your dashboard</a
+      >
       <div class="user">
         {#if auth.user.avatar_url}
           <img class="avatar" src={auth.user.avatar_url} alt="" />
@@ -150,6 +153,16 @@
   }
   :global([data-theme='dark']) .brand img.brand-dark {
     display: block;
+  }
+  .nav-link {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .nav-link:hover,
+  .nav-link[aria-current='page'] {
+    color: var(--accent);
   }
   .user {
     display: flex;

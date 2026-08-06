@@ -8,13 +8,16 @@ import { blockedBy } from './campaign-graph.ts';
 import type { GraphData } from './campaign-graph.ts';
 import { cardTitle } from './campaign-board.ts';
 import {
+	configNumber,
+	configString,
 	findRow,
 	isFinalValidation,
 	parseCommentCsv,
 	parseHistoryCsv,
 	parseLockCsv,
 	parseStateCsv,
-	parseTaskCsv
+	parseTaskCsv,
+	resolveLogins
 } from './campaign-tables.ts';
 import type { CommentRow, HistoryRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
 import { parseMeiHeader } from './mei-header.ts';
@@ -62,19 +65,6 @@ export interface CampaignStats {
 	comments: CommentRow[];
 	passThreshold: number;
 }
-
-const configString = (yaml: string, key: string): string => {
-	const value = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(yaml)?.[1] ?? '';
-	if (value.startsWith('"')) {
-		try {
-			const parsed = JSON.parse(value);
-			return typeof parsed === 'string' ? parsed : '';
-		} catch {
-			return '';
-		}
-	}
-	return value.replace(/\s+#.*$/, '').trim();
-};
 
 /** Tasks claimable right now (unclaimed, unblocked encoding_required). */
 export function readyCount(d: Pick<GraphData, 'taskDefs' | 'rows' | 'locks'>): number {
@@ -129,6 +119,32 @@ export function loadCampaignStats(
 	return loading;
 }
 
+/**
+ * Load the stats of every campaign the topic search finds. A failed search
+ * throws; a single unreadable repository is skipped rather than taking the
+ * listing down. `onEach` streams results as they land, for grids that fill
+ * in progressively.
+ */
+export async function loadAllCampaignStats(
+	f: ForgeClient,
+	topic: string,
+	opts: { withPreview?: boolean; onEach?: (stats: CampaignStats) => void } = {}
+): Promise<CampaignStats[]> {
+	const repos = await f.searchReposByTopic(topic);
+	const all = await Promise.all(
+		repos.map(async (repo) => {
+			try {
+				const stats = await loadCampaignStats(f, repo, opts.withPreview ?? false);
+				opts.onEach?.(stats);
+				return stats;
+			} catch {
+				return null;
+			}
+		})
+	);
+	return all.filter((stats): stats is CampaignStats => stats !== null);
+}
+
 async function fetchStats(
 	f: ForgeClient,
 	summary: RepoSummary,
@@ -160,25 +176,14 @@ async function fetchStats(
 		const id = history[i].user_id;
 		if (id && !contributorIds.includes(id)) contributorIds.push(id);
 	}
-	// Everyone the dashboard may need to name: contributors, encoders, lock
-	// holders, comment authors. Lookups are memoised in the forge client.
-	const nameIds = new Set(contributorIds);
-	for (const r of state.rows) if (r.encoder) nameIds.add(r.encoder);
-	for (const l of locks) if (l.user_id) nameIds.add(l.user_id);
-	for (const c of comments) if (c.author_id) nameIds.add(c.author_id);
-	const logins: Record<string, string> = {};
-	await Promise.all(
-		[...nameIds].map(async (id) => {
-			const n = Number(id);
-			if (!Number.isInteger(n)) return;
-			try {
-				const login = await f.getUserLogin(n);
-				if (login) logins[id] = login;
-			} catch {
-				// Unresolved ids just show as the id.
-			}
-		})
-	);
+	// Everyone the dashboard may need to name; lookups are memoised in the
+	// forge client.
+	const logins = await resolveLogins((n) => f.getUserLogin(n), {
+		rows: state.rows,
+		locks,
+		history,
+		comments
+	});
 
 	// Page count: the highest per-page locator, when the plan has any.
 	const pages = taskDefs.reduce((max, t) => {
@@ -186,8 +191,8 @@ async function fetchStats(
 		return m ? Math.max(max, Number(m[1])) : max;
 	}, 0);
 
-	const passThreshold = Number(/^\s*pass_threshold:\s*(\d+)/m.exec(yaml)?.[1] ?? '1');
-	const staleAfterMinutes = Number(/^\s*stale_after_minutes:\s*(\d+)/m.exec(yaml)?.[1] ?? '0');
+	const passThreshold = configNumber(yaml, 'pass_threshold', 1);
+	const staleAfterMinutes = configNumber(yaml, 'stale_after_minutes', 0);
 
 	// The composer from config's source header; the score header is the
 	// fallback, read together with the preview to avoid an extra fetch.
@@ -210,7 +215,7 @@ async function fetchStats(
 		logins,
 		lastActivity: history.at(-1)?.timestamp ?? '',
 		createdAt: history[0]?.timestamp ?? '',
-		staleAfterMinutes: Number.isFinite(staleAfterMinutes) ? staleAfterMinutes : 0,
+		staleAfterMinutes,
 		preview: null,
 		taskDefs,
 		rows: state.rows,
@@ -218,7 +223,7 @@ async function fetchStats(
 		locks,
 		history,
 		comments,
-		passThreshold: Number.isFinite(passThreshold) && passThreshold > 0 ? passThreshold : 1
+		passThreshold
 	};
 	if (withPreview) {
 		const loaded = await loadScoreExtras(f, stats);

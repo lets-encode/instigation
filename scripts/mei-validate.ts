@@ -70,7 +70,9 @@ function firstError(stderr: string): string {
  */
 export async function validateMei(content: string): Promise<MeiCheck> {
 	const path = await meiSchemaPath();
-	const r = spawnSync('xmllint', ['--noout', '--relaxng', path, '-'], { input: content });
+	// --nonet: the document must not trigger network fetches (external DTDs or
+	// entities); the schema itself is already on disk and integrity-checked.
+	const r = spawnSync('xmllint', ['--nonet', '--noout', '--relaxng', path, '-'], { input: content });
 	if (r.error) throw new Error(`Could not run xmllint for the MEI machine-check: ${r.error.message}`);
 	if (r.status === 0) return { ok: true, error: '' };
 	const stderr = r.stderr?.toString() ?? '';

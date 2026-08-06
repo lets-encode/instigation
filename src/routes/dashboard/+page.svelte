@@ -8,16 +8,17 @@
   route.
 -->
 <script lang="ts">
-  import { auth, forge, login } from "$lib/auth.svelte.ts";
-  import { createForge } from "$lib/forge/index.ts";
+  import { auth, login } from "$lib/auth.svelte.ts";
+  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { provider, meiFriendUrl } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { elapsed, initialOf } from "$lib/campaign-board.ts";
+  import { handle } from "$lib/campaign-graph.ts";
   import {
     commentsOnMyWork,
     invalidateStats,
-    loadCampaignStats,
+    loadAllCampaignStats,
     myTasksIn,
   } from "$lib/campaign-stats.ts";
   import type {
@@ -25,13 +26,10 @@
     FeedComment,
     MyTask,
   } from "$lib/campaign-stats.ts";
-  import type { RepoSummary } from "$lib/forge/github-rest.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
-  import { ProgressLog } from "$lib/progress-log.svelte.ts";
 
-  const viewer = $derived(auth.user?.id != null ? String(auth.user.id) : "");
-  const readForge = () => forge() ?? createForge("");
+  const viewer = $derived(viewerId());
 
   let stats = $state<CampaignStats[]>([]);
   let loading = $state(false);
@@ -48,19 +46,12 @@
   });
 
   async function loadAll() {
-    const f = readForge();
-    let repos: RepoSummary[];
     try {
-      repos = await f.searchReposByTopic(provider.repoTopic);
+      stats = await loadAllCampaignStats(readForge(), provider.repoTopic);
+      error = null;
     } catch (err) {
       error = (err as Error).message;
-      return;
     }
-    error = null;
-    const all = await Promise.all(
-      repos.map((repo) => loadCampaignStats(f, repo).catch(() => null)),
-    );
-    stats = all.filter((s): s is CampaignStats => s !== null);
   }
 
   const tasks = $derived(stats.flatMap((s) => myTasksIn(s, viewer)));
@@ -106,49 +97,36 @@
   });
 
   // ------------------------------------------------------------ commands
-  let busy = $state(false);
-  const busyLog = new ProgressLog();
-  let result = $state<Result | null>(null);
+  const runner = new CommandRunner();
 
   const ctxFor = (t: MyTask): CommandContext | null => {
     const s = stats.find((x) => x.name === t.campaignSlug);
     if (!s) return null;
-    return {
-      forge: readForge(),
-      repoId: s.repoId,
-      owner: s.owner,
-      repo: s.repo,
-      viewer,
-      viewerLogin: auth.user?.login ?? "",
-      meiFriendUrl,
-      progress: (u) => {
-        if (u.step) busyLog.step(u.step);
-        if (u.detail) busyLog.detail(u.detail);
-      },
-    };
+    return runner.context(
+      readForge(),
+      { repoId: s.repoId, owner: s.owner, repo: s.repo },
+      { meiFriendUrl },
+    );
   };
 
   async function run(t: MyTask, command: (c: CommandContext) => Promise<Result>) {
     const c = ctxFor(t);
-    if (!c || busy) return;
-    busy = true;
-    busyLog.clear();
-    try {
-      result = await command(c);
-      busyLog.step("Refreshing…");
-      invalidateStats();
-      loaded = false;
-      stats = [];
-    } finally {
-      busyLog.done();
-      busy = false;
-    }
+    if (!c) return;
+    await runner.run(
+      () => command(c),
+      () => {
+        runner.log.step("Refreshing…");
+        invalidateStats(c.repoId);
+        loaded = false;
+        stats = [];
+      },
+    );
   }
 
   const openEditor = async (t: MyTask) => {
     await run(t, (c) => invoke(commands.openEditor, { task_id: t.task }, c));
-    if (result?.ok && !result.warn && result.meiFriendUrl) {
-      window.open(result.meiFriendUrl, "_blank", "noopener");
+    if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+      window.open(runner.result.meiFriendUrl, "_blank", "noopener");
     }
   };
   const submit = (t: MyTask) =>
@@ -157,9 +135,6 @@
   const taskHref = (slug: string, task: string) =>
     `/${slug}?task=${encodeURIComponent(task)}`;
 
-  const handleOf = (logins: Record<string, string>, id: string) =>
-    logins[id] || id;
-  const initialOf = (name: string) => name[0]?.toUpperCase() ?? "?";
   const ago = (iso: string) => {
     const e = elapsed(iso);
     return e === "now" ? "just now" : `${e} ago`;
@@ -193,8 +168,8 @@
   };
 </script>
 
-{#if busy}
-  <LoadingOverlay log={busyLog} />
+{#if runner.busy}
+  <LoadingOverlay log={runner.log} />
 {/if}
 
 <div class="wrap">
@@ -224,18 +199,18 @@
       <a class="findbtn" href="/">Find a new task →</a>
     </div>
 
-    {#if result}
+    {#if runner.result}
       <div
         class="banner"
-        class:ok={result.ok && !result.warn && !result.error}
-        class:warn={result.warn}
-        class:err={!!result.error}
+        class:ok={runner.result.ok && !runner.result.warn && !runner.result.error}
+        class:warn={runner.result.warn}
+        class:err={!!runner.result.error}
       >
-        <span>{result.error ?? result.message}</span>
-        {#if result.prUrl}
-          <a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+        <span>{runner.result.error ?? runner.result.message}</span>
+        {#if runner.result.prUrl}
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
         {/if}
-        <button type="button" class="dismiss" onclick={() => (result = null)}
+        <button type="button" class="dismiss" onclick={() => (runner.result = null)}
           >×</button
         >
       </div>
@@ -272,11 +247,11 @@
                     <div class="qline">
                       <span class="avatar"
                         >{initialOf(
-                          handleOf(t.logins, t.failComment.author_id),
+                          handle(t.logins, t.failComment.author_id),
                         )}</span
                       >
                       <span class="qauthor"
-                        >{handleOf(t.logins, t.failComment.author_id)}</span
+                        >{handle(t.logins, t.failComment.author_id)}</span
                       >
                       {#if anchorChip(t.failComment)}
                         <span class="mono anchor">{anchorChip(t.failComment)}</span>
@@ -292,7 +267,7 @@
                   <button
                     type="button"
                     class="abtn primary"
-                    disabled={busy}
+                    disabled={runner.busy}
                     onclick={() => openEditor(t)}>Open in mei-friend ↗</button
                   >
                   <a class="abtn" href={taskHref(t.campaignSlug, t.task)}
@@ -324,13 +299,13 @@
                   <button
                     type="button"
                     class="abtn primary"
-                    disabled={busy}
+                    disabled={runner.busy}
                     onclick={() => openEditor(t)}>Open in mei-friend ↗</button
                   >
                   <button
                     type="button"
                     class="abtn"
-                    disabled={busy}
+                    disabled={runner.busy}
                     onclick={() => submit(t)}>Submit for validation</button
                   >
                 </div>
@@ -408,10 +383,10 @@
                   class:blue={kind.cls === "blue"}
                 ></span>
                 <span class="avatar"
-                  >{initialOf(handleOf(f.logins, f.comment.author_id))}</span
+                  >{initialOf(handle(f.logins, f.comment.author_id))}</span
                 >
                 <span class="qauthor"
-                  >{handleOf(f.logins, f.comment.author_id)}</span
+                  >{handle(f.logins, f.comment.author_id)}</span
                 >
                 <span class="gpill {kind.cls}">{kind.label}</span>
                 {#if f.comment.timestamp}

@@ -5,15 +5,17 @@ campaign state: each campaign is an ordinary Git repository, and all coordinatio
 assignment, locking, validation, merging, attribution) runs in **one generic GitHub Actions
 workflow** in that repo — a task-agnostic *caller* that forwards the triggering event to a **central
 automation repository** and commits the result back. Two thin clients drive the system: a **static
-instigation GUI** (organiser creates/configures a campaign) and the **mei-friend volunteer client**
-(contributors encode/validate).
+instigation GUI** (organiser creates/configures a campaign; volunteers browse, claim and follow
+work) and the **mei-friend volunteer client** (contributors encode/validate).
 
 > Single authoritative design + status document; §9 records the current state. Data model is
-> **schema v2** (four tables keyed by `(task_id, subtask_id)` plus the command log, §5). An
-> `mei-template` campaign uses the `whole` strategy (one task = the whole `sources/score.mei`, one
-> validation subtask); a `facsimile` campaign splits encoding into one task per page carrying
-> measures, joined back into the shared score by page on accept (§6, §7a). Coding guidelines to
-> honour are in `CLAUDE.md` (simplicity, surgical changes, goal-driven).
+> **schema v3** (five tables keyed by `(task_id, subtask_id)` plus the command log, §5): a campaign
+> describes one physical source holding N **pieces** (`by-piece` strategy), each piece one MEI at
+> `sources/<piece-id>/score.mei` and one group of tasks. A `facsimile` piece opens with a
+> measure-correction pre-task and splits encoding into one task per page, joined back into the
+> piece's score by page on accept (§6, §7a); an `encoded` piece gets one whole-file task; a
+> `physical-only` piece gets per-page or whole-file tasks (§5). Coding guidelines to honour are in
+> `CLAUDE.md` (simplicity, surgical changes, goal-driven).
 
 ## 1. Architecture at a glance
 
@@ -22,7 +24,7 @@ Instigation GUI (static SPA)                         ← forge token held server
   │  create campaign (generate + commit) · read tables · open contribution PRs
   ▼
 Campaign repository                                  ← data + ONE task-agnostic caller
-  config.yaml · sources/score.mei · tracking/*.csv
+  config.yaml · sources/<piece>/score.mei · tracking/*.csv
   .github/workflows/caller.yml
   │  on pull_request_target / schedule / workflow_dispatch:
   │  read central pointer from config (base ref) → checkout central → run it
@@ -41,20 +43,24 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 ## 2. The components
 
 - **Instigation GUI** (`instigation/`, a SvelteKit **static** app, `adapter-static`) — no app backend.
-  The organiser logs in with the forge (OAuth run server-side by the session broker, §8), then the
+  The user logs in with the forge (OAuth run server-side by the session broker, §8), then the
   browser uses a **`ForgeClient`** (authenticated calls relayed through the broker, which attaches
-  the user's token from its session) to: create the campaign repo
-  from the template and initialise it (Action A, §7), read the tracking tables, and open the
-  contribution PRs that drive the automation (the campaign console).
+  the user's token from its session) to: create the campaign repo from the template and initialise
+  it via the onboarding wizard (§7), read the tracking tables, and open the contribution PRs that
+  drive the automation. Its surfaces — the landing page, the wizard, the personal dashboard, the
+  campaign console and the zone editor — are laid out in §7b/§7c.
 - **Campaign repository** — an independent repo stamped from the template
-  (`lets-encode/user-repo-template`). Holds `config.yaml`, `sources/score.mei`, the two tracking
-  tables, and a single generic `caller.yml`. The heart of the system, and deliberately logic-free.
+  (`lets-encode/user-repo-template`). Holds `config.yaml`, one `sources/<piece-id>/score.mei` per
+  piece, the five tracking tables, and a single generic `caller.yml`. The heart of the system, and
+  deliberately logic-free.
 - **Central automation repository** — one coordinator entry plus the pure, tested decision modules
   the caller runs. Provider-neutral. Pinned by ref from the campaign's own config, so upgrading a
   live campaign is a config commit, not a workflow edit. **The instigation repo doubles as this
   repo** (entry: `scripts/coordinator.ts`): the coordinator and the SPA share the decision modules
   (`src/lib/campaign-*.ts`) and the forge adapter, so nothing is duplicated. Because the pointer is
   config data, campaigns can be repointed at a dedicated repo later without touching the template.
+- **Session broker** (`broker/`, Flask) — the SPA's one server-side dependency: the OAuth flow and
+  token custody (§3), plus two service mounts, the slug registry and the IIIF relay (§8a).
 - **mei-friend volunteer client** — where contributors encode/validate. External; in scope here only
   for the PR contract it relies on (§6).
 
@@ -69,11 +75,12 @@ campaign repo carries *no* task logic — only its data and a forwarder; every d
 | Central logic | Lives in the **central automation repo**; the campaign repo carries none. The **instigation repo doubles as the central repo** (entry: `scripts/coordinator.ts`), so the SPA and the coordinator share the pure modules. |
 | Provider independence | A **`ForgeClient` seam** + a provider-config object (API base, OAuth endpoints, raw-URL pattern, fork/PR verbs). No hardcoded hosts or paths. GitHub implemented now; GitLab/others later are a drop-in (§8). |
 | Campaign ownership | The **instigator's personal account**. Consequence: keep the `canPush` dual-path — the owner contributes via a same-repo branch (mei-friend `connect=true`); everyone else forks + PRs. |
+| Campaign addressing | A campaign lives at **`/<name>`** on the app's origin. The name → repo-id mapping lives in the **slug registry** (§8a); the SPA resolves the name to the stable numeric repo id, then to the current `owner/repo`, so renames and transfers don't break addresses. |
 | Table integrity | **The Action is the sole author of all table mutations.** Fork+PR contributors have zero write access, so this holds without branch protection (§6). |
 | Generate vs fork | generate for instigation; fork for contributions. |
 | Table / config format | **CSV** tables (one cell/row per PR → minimal diffs); **YAML** config. Users never read/write them directly; the GUI presents them. |
 | Concurrency | **Optimistic** — read the branch-head SHA, decide, commit non-fast-forward, retry on conflict (§6). |
-| Ids / timestamps | zero-padded `T0001…` / `S0001…`; ISO-8601 UTC (`…Z`). |
+| Ids / timestamps | zero-padded `T0001…` / `P0001…` / `S0001…`; ISO-8601 UTC (`…Z`). |
 
 ## 4. The generic caller — triggers & forwarded parameters
 
@@ -86,8 +93,10 @@ split, **adapted for a multi-user, event-driven flow**: mei-friend's caller is t
 parameters come from two other places instead.
 
 **(a) The central pointer — from the campaign config, on the base ref.** The caller has nothing
-hardcoded. It checks out the campaign repo (its base tree — safe; see below) and reads three fields
-from `config.yaml`:
+hardcoded, and the campaign repo itself is never checked out: the caller reads `config.yaml` with
+**one API call** pinned to `$GITHUB_SHA` — which for `pull_request_target` is the **base** branch
+head, so a fork PR cannot redirect where central lives (the fork's version of `config.yaml` is
+never used). Three fields form the pointer:
 
 | Config field | Meaning |
 |---|---|
@@ -95,8 +104,9 @@ from `config.yaml`:
 | `automation.ref` | Immutable tag/SHA to pin (upgrading = a config commit). |
 | `automation.path` | Entry-point script within that repo. |
 
-Reading these from the **base** ref is a security boundary: a fork PR cannot redirect where central
-lives, because the fork's version of `config.yaml` is never used.
+A 404 (config.yaml not yet committed, e.g. a scheduled run on a freshly generated repo) empties the
+outputs and no-ops the remaining steps; any other API failure fails the run rather than silently
+doing nothing.
 
 **(b) The event context — forwarded to central as environment.** The only "parameters" the central
 entry needs are the identity of the event; it derives the rest itself.
@@ -104,10 +114,10 @@ entry needs are the identity of the event; it derives the rest itself.
 | Env var | `pull_request_target` | `schedule` / `workflow_dispatch` |
 |---|---|---|
 | `GH_TOKEN` | base repo's `GITHUB_TOKEN` (write) | same |
-| `BASE_REPO` / `BASE_REPO_ID` | `owner/repo` + numeric repo id | same |
+| `BASE_REPO` | `owner/repo` | same |
 | `EVENT_NAME` | `pull_request_target` | `schedule` / `workflow_dispatch` |
 | `PR_NUMBER`, `PR_AUTHOR` (numeric account id), `PR_AUTHOR_LOGIN` | from the PR | — |
-| `HEAD_REPO` / `HEAD_REPO_ID`, `HEAD_SHA`, `HEAD_REF` | the PR head (fork or same-repo) | — |
+| `HEAD_REPO`, `HEAD_SHA`, `HEAD_REF` | the PR head (fork or same-repo) | — |
 
 **What is *not* forwarded — central derives or reads it as data:**
 
@@ -131,32 +141,28 @@ on:
     types: [opened, reopened, synchronize]
     paths: [ 'tracking/**', 'sources/**' ]   # skip unrelated PRs (boundary checks still gate)
   schedule:
-    - cron: '*/15 * * * *'   # reaper; coarse timing is fine (logic compares elapsed time)
-  workflow_dispatch: {}      # manual reaper run (campaign console)
-concurrency: { group: campaign-${{ github.repository }}, cancel-in-progress: false }
+    - cron: '0 * * * *'   # hourly reaper — fallback cleanup; claims also reap expired locks lazily
+  workflow_dispatch: {}    # manual reaper run (campaign console)
+concurrency: { group: campaign-${{ github.repository }}, cancel-in-progress: false, queue: max }
 permissions: { contents: write, pull-requests: write }
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4                       # base tree ONLY (never the fork head)
-      - id: cfg                                         # read central pointer from base config
-        run: |                                          # awk scoped to the `automation:` block
-          # (`ref:`/`path:` also appear elsewhere in config.yaml); no yq/YAML dep.
-          # Empty outputs (config.yaml not yet committed) no-op the later steps.
-          read_automation() { awk -v key="$1" '/^automation:/{f=1;next} /^[^[:space:]]/{f=0}
-            f && $1 == key":" {gsub(/"/,"",$2); print $2; exit}' config.yaml 2>/dev/null || true; }
-          echo "repo=$(read_automation central_repository)" >> "$GITHUB_OUTPUT"
-          echo "ref=$(read_automation ref)"               >> "$GITHUB_OUTPUT"
-          echo "path=$(read_automation path)"             >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - if: github.event_name == 'pull_request_target'  # xmllint (MEI machine-check) installs in
+        run: sudo apt-get install … libxml2-utils &     # the background — only encoding submissions
+                                                        # use it, and only PRs can carry one
+      - id: cfg                                         # (a) read the central pointer: ONE API call,
+        run: |                                          # no base checkout; awk scoped to the
+          gh api "repos/$GITHUB_REPOSITORY/contents/config.yaml?ref=$GITHUB_SHA" …
+          # `automation:` block (`ref:`/`path:` also appear elsewhere in config.yaml)
+      - uses: actions/checkout@<pinned-sha>             # v4 — the CENTRAL repo only, never the fork
         if: steps.cfg.outputs.repo != ''
         with: { repository: '${{ steps.cfg.outputs.repo }}', ref: '${{ steps.cfg.outputs.ref }}', path: central }
-      - uses: actions/setup-node@v4
-        if: steps.cfg.outputs.repo != ''
-        with: { node-version: 24 }                      # bare-node type-stripping; no build step
-      - if: steps.cfg.outputs.repo != ''
-        run: sudo apt-get install -y libxml2-utils       # xmllint (MEI machine-check)
+      - uses: actions/setup-node@<pinned-sha>           # v4; node 24 — bare-node type-stripping,
+        if: steps.cfg.outputs.repo != ''                # no build step
+        with: { node-version: 24 }
+      # …wait for the background xmllint install (pull_request_target only)…
       - if: steps.cfg.outputs.repo != ''
         env:                                            # (b) event context → central
           GH_TOKEN:   ${{ github.token }}
@@ -165,31 +171,47 @@ jobs:
           PR_NUMBER:  ${{ github.event.pull_request.number }}
           PR_AUTHOR:  ${{ github.event.pull_request.user.id }}        # numeric id = identity
           PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }} # login = commit prose only
-          BASE_REPO_ID: ${{ github.repository_id }}
           HEAD_REPO:  ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
           HEAD_SHA:   ${{ github.event.pull_request.head.sha }}
           HEAD_REF:   ${{ github.event.pull_request.head.ref }}
         run: node central/${{ steps.cfg.outputs.path }}
 ```
 
-**Trust boundary.** `pull_request_target` runs in the **base** repo's context with a write token;
-`actions/checkout` defaults to the base tree, so the fork's code is **never executed** — it is read
-only as data (its changed paths + the blob at `HEAD_SHA`, via the API). The caller must never check
-out the fork head.
+The third-party actions are pinned to full commit SHAs. `concurrency` with `queue: max` serialises
+runs so two events can't be applied concurrently (belt-and-braces alongside the coordinator's
+optimistic-concurrency retry, §6).
 
-## 5. Config & table formats (schema v2)
+**Trust boundary.** `pull_request_target` runs in the **base** repo's context with a write token.
+The fork's code is **never executed** — the only checkout is the pinned central repo; the campaign
+repo is read via the API (its base-ref config, the PR's changed paths, the blob at `HEAD_SHA`), so
+the fork's tree is only ever data.
+
+## 5. Config & table formats (schema v3)
 
 ### config.yaml
 
-Authored once at instigation. Minimal but extensible; growth points marked `(reserved)`.
+Authored once at instigation (`buildCampaignConfig` / `configToYaml`, `src/lib/campaign-init.ts`).
+`configToYaml` rejects anything but schema 3, the `by-piece` strategy, the three piece kinds and
+distinct piece paths (`assertSupported`), so nothing unsupported is ever committed as a campaign's
+config.
 
 ```yaml
-schema_version: 2
+schema_version: 3
 campaign:      { name, title, description, instigator, repo_id, language, license }  # name is the handle; instigator + repo_id are numeric GitHub ids
 automation:    { central_repository, ref, path }   # the central pointer (§4a); ref is pinned
-sources:       [ { id, kind: mei-template, path, template, header: { composer } } ]
-fragmentation: { strategy: whole }
+source:                                    # the physical source the pieces were read from
+  kind: facsimile                          # what the source itself is
+  images: [ img/001.jpg, … ]               # committed page images, repo-relative
+  header: { title, composer, publisher, date }
+  rights_acknowledged: <version>           # which acknowledgement the instigator agreed to
+pieces:                                    # one work each: its own MEI, its own tasks
+  - id: <piece-id>
+    kind: facsimile                        # facsimile | encoded | physical-only
+    path: sources/<piece-id>/score.mei     # the fragment its tasks address
+    pages: <n>                             # physical-only: pages of the source it spans (optional)
+    zones: [ { surface, ulx, uly, lrx, lry } ]  # page regions the piece covers (facsimile)
+    header: { title, composer }
+fragmentation: { strategy: by-piece }
 validation:    { required_validations, pass_threshold }
 locking:       { stale_after_minutes }
 ```
@@ -199,23 +221,39 @@ locking:       { stale_after_minutes }
 All keyed by **`(task_id, subtask_id)`**: a **task** is the unit of *encoding* (one encoder), its
 **subtasks** are the units of *validation* (reviewed in parallel, possibly split differently). A row
 with an **empty `subtask_id` addresses the whole task**; a row with one addresses a single
-validation portion. The `whole` strategy is the degenerate case: one task `T0001` (the entire
-score) with one subtask `S0001` spanning the same range.
+validation portion. An `encoded` piece is the degenerate case: one task spanning the whole file with
+one subtask spanning the same range.
 
 **task.csv — task/subtask definitions, written at init**
 
 `task_id, subtask_id, fragment, locator, allowlist, blocklist, depends_on`
 
-- `fragment`: the source file the row addresses (e.g. `sources/score.mei`).
+- `fragment`: the source file the row addresses — its piece's MEI (e.g.
+  `sources/<piece-id>/score.mei`).
 - `locator`: address *within* the fragment — a page's surface id (`surface-N`) for a per-page
   encoding task, a controlled-vocab term for pre-tasks (`measure-zones`; §7a), or empty = the whole
-  file. Realises per-page fragmentation now (facsimile, §7a) and the reserved `by_measure`/`by_section`
-  strategies later.
+  file. This is what realises per-page fragmentation; a finer split (by measure, by section) would
+  reuse the same column.
 - `allowlist`/`blocklist`: per-row claim gates — present in the schema but **not yet enforced**
   (default open, §10).
 - `depends_on`: a task_id that must be `completed` before this task can be claimed; empty = none.
-  Enforced in the claim accept rules (`dependency_incomplete`). Chains the pre-tasks before the
-  encoding work (§7a).
+  Enforced in the claim accept rules (`dependency_incomplete`). Chains a facsimile piece's page
+  tasks behind its pre-task (§7a).
+
+The table is rendered from one plan (`planTasks`, `src/lib/campaign-init.ts`), which emits per
+piece, in table order:
+
+- **facsimile** → a measure-correction pre-task (`P000n`, locator `measure-zones`) plus one
+  encoding task per page carrying measures (locator `surface-N`, matching that page's `<pb>`), each
+  depending on the pre-task; a facsimile piece with no measured pages falls back to a single
+  whole-file task.
+- **physical-only** → no pre-task (there is no facsimile to correct measures on): one task per page
+  when the piece's page count is known, else a single whole-file task.
+- **encoded** → one whole-file task.
+
+Task numbers run continuously across pieces, pre-task numbers across facsimile pieces, so every id
+is unique campaign-wide. Every planned task gets a task row plus one validation subtask `S0001`;
+`task.csv` and `state.csv` are both rendered from the same plan so they cannot fall out of step.
 
 **state.csv — live status, Action-authored**
 
@@ -305,16 +343,16 @@ cells change, not *what* goes in). MEI content is the volunteer's and is merged.
 | PR | Allowed change | Carries |
 |---|---|---|
 | Claim | `tracking/lock.csv` only | task_id, subtask_id, kind |
-| Encoding | the task's fragment (`sources/score.mei`) only | the MEI content |
+| Encoding | the task's fragment (its piece's `score.mei`) only | the MEI content |
 | Validation | `tracking/state.csv` only (plus one appended `tracking/comment.csv` row on a fail) | subtask + pass/fail verdict (+ the fail's mandatory comment) |
 | Send-back | `tracking/state.csv` only (the reset of one failed task) | task_id, via the reset shape |
 | Comment | `tracking/comment.csv` only | one appended discussion row, or one `resolved` flip |
 
 The pre-task submissions (§7a) are ordinary *encoding-type* PRs — they rewrite the fragment.
-Because several tasks can share one fragment, an encoding-type PR's **task** is resolved from the
-PR's own data: the command envelope's task_id, the `encode-<task_id>` branch name, or the author's
-single active encoding lock among the candidate tasks (in that order; a lone candidate needs no
-tie-break).
+Because several tasks can share one fragment (a piece's page tasks all address its `score.mei`), an
+encoding-type PR's **task** is resolved from the PR's own data: the command envelope's task_id, the
+`encode-<task_id>` branch name, or the author's single active encoding lock among the candidate
+tasks (in that order; a lone candidate needs no tie-break).
 
 **Joining encoding into the fragment.** A whole-file task (empty locator) and a pre-task take the
 fork's fragment verbatim. A per-page encoding task (locator `surface-N`, §7a) contributes only its
@@ -326,10 +364,11 @@ without clobbering each other; the spliced result is what the machine-check vali
 **Accept rules.**
 
 - *Claim:* the addressed row exists and the key matches the kind (encoding → task row, validation →
-  subtask row). For `encoding`: status is `encoding_required` and no active encoding lock. For
-  `validation`: the subtask's status is `validation_required`, an open slot exists (`final cells +
-  active validation locks on that subtask < required_validations`), the claimant isn't already
-  holding one, and **isn't the task's encoder** (no self-validation).
+  subtask row). For `encoding`: status is `encoding_required`, no active encoding lock, and every
+  `depends_on` task is completed (`dependency_incomplete`). For `validation`: the subtask's status
+  is `validation_required`, an open slot exists (`final cells + active validation locks on that
+  subtask < required_validations`), the claimant isn't already holding one, and **isn't the task's
+  encoder** (no self-validation).
 - *Encoding:* PR touches only the fragment, author holds the active encoding lock, MEI passes the
   machine-check → task row gets `encoder`/`encoded_at` and → `validation_required`, its `pending`
   subtasks → `validation_required`, drop the lock.
@@ -369,7 +408,7 @@ branch and binds mei-friend with `connect=true` (open + bind, no fork). Everyone
 (`fork=true`) and the console opens a cross-repo PR upstream. Both produce a `pull_request_target`
 event the one caller handles identically.
 
-**End to end (`whole` strategy, one note):**
+**End to end (an encoded piece — one whole-file task, one note):**
 
 ```
 init:                    T0001    encoding_required             locks: —
@@ -384,32 +423,52 @@ carol submits pass       S0001    validate_status_1=pass|carol|… → completed
 
 (Each step also appends a history.csv row.)
 
-## 7. Instigation (Action A) — client-side
+## 7. Instigation (Action A) — the onboarding wizard
 
-At creation the GUI, acting as the organiser via the `ForgeClient` (token attached by the broker):
+Campaign creation is a six-step wizard at `/new`. One shared state object spans the steps
+(`src/lib/wizard.svelte.ts`); each step is a component (`src/lib/components/Campaign*Step.svelte`):
 
-1. **generates** the campaign repo from the template into the instigator's account,
-2. sets the repo's Actions token to read/write (so the caller can commit tables + close PRs),
-3. commits, in one commit: `config.yaml` (including the `automation` pointer), each piece's
-   `sources/<piece>/score.mei` (header built from the source and piece metadata forms), and the four tracking
-   tables (§5): `task.csv` (task `T0001` + subtask `S0001`), `state.csv` (`encoding_required` /
-   `pending`), and header-only `lock.csv`, `history.csv` and `comment.csv`.
+1. **Name** — name, title, description. The name is the repo name, the registry slug and the
+   campaign's address at once; it is availability-checked as typed and **claimed** in the slug
+   registry on Continue (a leased hold with a claim token, §8a), so a slow setup cannot lose it.
+2. **Licence** — the campaign licence.
+3. **Upload** — what the campaign is built from: page images, PDFs (rasterised one page per
+   document page), existing MEI encodings, a IIIF manifest (fetched through the broker's `/iiif`
+   relay, §8a), or nothing at all.
+4. **Pages** — which pages of the upload the campaign keeps, in reading order. On Continue the
+   campaign repository is created from the template under the claimed name
+   (`src/lib/campaign-repo.ts`: create or adopt the repo, set its Actions token to read/write,
+   wait for the template contents) and the chosen pages are fetched at committing size and
+   committed. An upload with no page images skips this step; the upload step creates the
+   repository instead.
+5. **Source** — metadata for the physical source as a whole (title, composer, publisher, date),
+   collected once; each piece's MEI header copies it at the end. Nothing is committed here.
+6. **Pieces** — the works within the source: per-piece metadata, the page regions a facsimile
+   piece covers (`PieceZoneEditor`), an optional page count for a physical-only piece. Pieces are
+   seeded from the upload — one per uploaded encoding plus one facsimile piece for the page
+   images. On finish the measure detector (`src/lib/measure-detection.ts` → the edirom detector)
+   proposes measure boxes for the facsimile pages; the step builds the config
+   (`buildCampaignConfig`/`configToYaml`), each piece's `sources/<piece-id>/score.mei` (facsimile
+   pieces via `buildFacsimileMei`, headers from the source and piece metadata forms) and the five
+   tracking tables, commits them **in one commit**, registers the name (claim → active, §8a), and
+   stamps the listing topic that puts the campaign in the campaign list.
 
-Idempotent: output is fully determined by config + template, so re-running before any contribution
-reproduces identical files. Runs client-side because the organiser is in the loop; everything else
-runs in the campaign repo's caller.
+Every step mirrors its entries into a per-campaign localStorage draft (`src/lib/wizard-draft.ts`),
+so a setup interrupted by a reload, a closed tab or a failed step can be continued from the landing
+page; the record is removed once the last step has committed. Runs client-side because the
+organiser is in the loop; everything after creation runs in the campaign repo's caller.
 
 ## 7a. Facsimile pre-tasks
 
-A campaign created from page images / a PDF (source kind `facsimile`) does not start at encoding:
-the detector's measure boxes are provisional, so the score is built in stages
-(`src/lib/mei-facsimile.ts`, one model — `buildFacsimileMei` / `parseFacsimileMei`):
+A facsimile piece does not start at encoding: the detector's measure boxes are provisional, so its
+score is built in stages (`src/lib/mei-facsimile.ts`, one model — `buildFacsimileMei` /
+`parseFacsimileMei`):
 
-| Stage | Content of `sources/score.mei` | Written by |
+| Stage | Content of the piece's `score.mei` | Written by |
 |---|---|---|
 | A | `<facsimile>` only: surfaces, graphics, one labelled `<zone type="measure" n="…">` per box; one empty `<mdiv>` | init |
 | B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | (intermediate form; still parsed) |
-| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure, and one `<mdiv>` per movement/section/piece | P0001's submission (`submitZones`) |
+| C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure, and one `<mdiv>` per movement/section/piece | the pre-task's submission (`submitZones`) |
 
 All stages validate against the pinned MEI-CMN 5.0 schema, so the ordinary machine-check
 applies to every submission.
@@ -420,13 +479,14 @@ adds elements (measures, breaks, movements) stage A lacked. That guaranteed diff
 caller's `pull_request_target` is `paths`-filtered (§4), so an identical file would open an empty
 PR that never triggers the automation and leaves the console polling forever.
 
-The task table chains the work via `depends_on` (§5): **P0001** (`locator: measure-zones`, one
-validation subtask) → **one encoding task per page** that carries measures (`locator: surface-N`,
-one validation subtask each), all depending on P0001. The pre-task establishes the `<pb>`
-boundaries and continuous measure numbering the per-page split and join rely on. Each is an
-ordinary crowd task: claimed (encoding-kind lock), submitted as an encoding-type PR (joined into
-the shared score by page, §6), validated through the normal machinery. Pages with no detected
-measures get no encoding task. An `mei-template` campaign keeps the single whole-file **T0001**.
+The task table chains the work via `depends_on` (§5): per facsimile piece, one pre-task
+(`locator: measure-zones`, one validation subtask) → **one encoding task per page** that carries
+measures (`locator: surface-N`, one validation subtask each), all depending on that piece's
+pre-task. The pre-task establishes the `<pb>` boundaries and continuous measure numbering the
+per-page split and join rely on. Each is an ordinary crowd task: claimed (encoding-kind lock),
+submitted as an encoding-type PR (joined into the piece's score by page, §6), validated through
+the normal machinery. Pages with no detected measures get no encoding task. An `encoded` piece
+keeps its single whole-file task and no pre-task.
 
 The **zone editor** (`/[campaign]/zones/[task]`) is the volunteer interface for the
 pre-task, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`). It has two
@@ -439,6 +499,56 @@ steps within the one task, submitted together:
 - *Step 2 — Breaks & movements*: page breaks are automatic (one per surface); the volunteer clicks
   measures to toggle system starts (pre-suggested from the detected row grouping) and shift-clicks
   to mark a measure as the start of a movement, section or piece — each becomes its own `<mdiv>`.
+
+## 7b. The campaign console
+
+`/[campaign]` (`src/routes/[campaign]/+page.svelte`) is where a campaign is followed and worked:
+volunteers claim, submit and discuss; the instigator additionally edits the plan and dispatches the
+reaper. Everything runs through the command registry (§5); the display is pure projection of the
+tracking tables and the comment log:
+
+- **The pipeline board** — five status columns (*Blocked · Ready to claim · Encoding · Validation ·
+  Done*) of task cards, with per-task attention counts (recorded fails, open comments, open
+  questions) and an activity ticker from `history.csv`. Built by `buildBoard`
+  (`src/lib/campaign-board.ts`) on top of the task projection in `src/lib/campaign-graph.ts`
+  (`buildGraph`: per-task status keys, validation slots, the viewer's next step —
+  `campaign-graph.ts` contains only this projection, no layout or panel code). A **tables view**
+  toggles from the board and shows the same tables row by row.
+- **Plan editing** — `PlanEditor.svelte` rewrites `task.csv` through the `campaign.savePlan`
+  command (push access required; `src/lib/campaign-plan.ts` `checkPlan` re-validates against
+  freshly read tables so a claim landing mid-edit rejects the save). Only *untouched* tasks — no
+  claim, no encoding, no verdict — may be added, removed, rewired or edited; a started task must be
+  carried over verbatim and can only change position. New tasks get matching
+  `encoding_required`/`pending` state rows.
+- **The task overlay** — opens from a board card, with the board behind it: a score preview of the
+  task's piece rendered by Verovio (a ~2 MB WASM module, loaded on first preview and reused) with
+  comment anchors highlighted on their measures, the task's validation record (`buildRecord`), and
+  its discussion threads (`buildThreads`) — commenting, replying and resolving run the comment
+  commands (§6).
+
+## 7c. Routes, navigation & cross-campaign stats
+
+| Route | Content |
+|---|---|
+| `/` | The landing page: a rail with the start card, unfinished wizard setups (continuable drafts, §7) and the viewer's claimed work; every campaign in a paginated grid (12 per page) with search, sort and an open-tasks filter. |
+| `/new` | The onboarding wizard (§7). |
+| `/dashboard` | The personal dashboard (`src/routes/dashboard/+page.svelte`): the viewer's work across every campaign, grouped by what needs doing — *fix requested → encoding → awaiting validation → recently completed* — with every comment on their work as a feed. Actions run the same commands as the console; anything richer deep-links into the campaign's console. |
+| `/[campaign]` | The campaign console (§7b). The URL carries only the campaign name; the repo is resolved name → stable repo id (registry, §8a) → current owner/name (`src/lib/campaign-resolve.ts`). |
+| `/[campaign]/zones/[task]` | The measure-zone editor (§7a). |
+
+Because a campaign lives at `/<name>` on the app's own origin, every top-level path the origin
+serves is unregistrable as a campaign name (`broker/slug_validation.py` `RESERVED_NAMES` — `auth`,
+`registry`, `new`, `campaigns`, `dashboard`, …; `test_registry.py` checks the route list against
+it). The app is themed light/dark from tokens in `src/routes/theme.css`: a pre-paint script sets
+`data-theme` before mount and the layout header carries the toggle.
+
+**Cross-campaign stats** (`src/lib/campaign-stats.ts`) feed the landing grid, the your-work panel
+and the dashboard: per campaign, the tracking tables condensed into the numbers a tile or card
+shows (progress, tasks claimable right now, contributors, last activity, a facsimile page as tile
+preview) plus the raw tables, so the personal projections (`myTasksIn`, `commentsOnMyWork`) can
+pull one user's work out of them. `loadCampaignStats` fetches and caches per repo id. The listing
+is per-repo client fetches, so logged-out browsing shares GitHub's anonymous 60 requests/hour
+per-IP quota (§10).
 
 ## 8. Provider-agnostic design
 
@@ -463,46 +573,68 @@ Two provider-touching surfaces, cleanly separated so a second forge is additive:
   filesystem. Not adopted now: the GitHub REST implementation needs no proxy and maps directly onto the
   optimistic-concurrency commit (§6).
 
+## 8a. The broker's service mounts
+
+Beyond OAuth and the API relay (§3), the session broker carries two same-origin services:
+
+- **The slug registry** (`broker/registry.py`, a Flask blueprint mounted at `/registry`) owns
+  exactly one thing: the mapping from a campaign's user-chosen name to the forge repo id of its
+  repository — one SQLite table (`broker/slug_db.py`), no campaign content, no analytics. A name
+  is taken in two steps, because a setup takes a while and the repo id only exists once the
+  campaign does: `POST /claim` holds the name against a claim token (a lease — running out only
+  lets someone else take the name), `POST /register` presents the token when the campaign is
+  finished. Statuses are `pending` (a setup in progress), `active` (a campaign that exists) and
+  `tombstoned` (staff removed the name via the admin route; the row is kept so the name stays
+  occupied). The resolver `GET /api/slug/<name>` is public so logged-out visitors can browse;
+  claiming and registering require the GitHub session. Admin routes are bearer-gated and expect
+  institutional auth at the reverse proxy in production.
+- **The IIIF relay** (`GET /iiif`, `broker/app.py`) fetches a IIIF manifest or canvas image
+  same-origin for the onboarding wizard. Campaign sources come from arbitrary institutions, which
+  rules out a CSP host allowlist, and many IIIF servers send no CORS headers — the relay solves
+  both. It is session-gated, attaches no credentials, allows only https, re-checks every redirect
+  hop against public-address rules, and is rate-limited (20 requests/second per user; the client
+  paces its canvas fetches under that ceiling).
+
 ## 9. Status
 
-**The migration described by this document is code-complete.** The target architecture above is
-what the repos now contain:
+The architecture above is what the repos contain:
 
 - **Static SPA + session broker** — `adapter-static`, no server routes. OAuth runs server-side in
   the session broker (`broker/`, Flask), which holds the token and relays authenticated forge
   calls; all forge access goes through the `ForgeClient` seam (`src/lib/forge/`). A strict CSP is
-  baked into the build (`svelte.config.js`).
+  baked into the build (`svelte.config.js`). The broker also mounts the slug registry and the
+  IIIF relay (§8a).
 - **One generic caller** — the template ships a single `caller.yml` (§4) that reads the
   `automation:` pointer from the campaign's `config.yaml` on the base ref and runs the central
-  coordinator. The three per-task workflows and their `scripts/*.mjs` shells are gone.
+  coordinator.
 - **Central automation** — this repo doubles as the central repo: `scripts/coordinator.ts` is the
   single entry (routes on `EVENT_NAME` + changed paths), reusing the pure decision modules
-  (`campaign-tables`, `campaign-claim`, `campaign-submit`, `campaign-reaper`) that the SPA also
-  imports. Action A (`campaign-init`) writes the `automation:` pointer into every new campaign.
+  (`campaign-tables`, `campaign-claim`, `campaign-submit`, `campaign-reaper`,
+  `coordinator-policy`) that the SPA also imports.
+- **Data model** — schema v3 (§5) end to end: init writes the five tables, `configToYaml` rejects
+  unsupported configs, the decision modules and coordinator address `(task_id, subtask_id)`, and
+  every outcome — including rejects — appends to `history.csv`.
+- **Surfaces** — the onboarding wizard (§7), the landing page and personal dashboard (§7c), the
+  campaign console with board, tables view, plan editor and task overlay (§7b), and the zone
+  editor (§7a) are all built, all driving the forge through the command registry.
+- **Command layer** — every console operation is a named, versioned command (`src/lib/commands.ts`)
+  run through one dispatcher, and every mutating command fills the command columns of a
+  `history.csv` row (§5): PR-flow commands via the envelope in the PR body (Action-authored row,
+  `scripts/coordinator.ts` + `src/lib/command-envelope.ts`), the reaper dispatch via a direct
+  client commit.
 
 Convention preserved: decision logic stays pure and tested (GitHub is never touched in unit tests);
 only thin shells — the coordinator and the `ForgeClient` — touch the forge.
 
-**Data model.** The four-table schema v2 (§5) is implemented end to end: init writes all four
-tables, the decision modules and coordinator address `(task_id, subtask_id)`, every outcome —
-including rejects — appends to `history.csv`, and the console renders tasks and validation
-subtasks separately.
-
-**Command layer.** Every console operation is a named, versioned command (`src/lib/commands.ts`)
-run through one dispatcher, and every mutating command fills the command columns of a
-`history.csv` row (§5): PR-flow commands via the envelope in the PR body (Action-authored row,
-`scripts/coordinator.ts` + `src/lib/command-envelope.ts`), the reaper dispatch via a direct
-client commit. The console page is one caller of the registry; the command-log pipeline has not
-yet been exercised live.
-
-**Verification.** Unit tests cover the decision modules and Action A. A live end-to-end run
-(2026-07-02, throwaway campaign `ohwjd/e2e-caller-test`, still on schema v1) confirmed the caller
-pipeline: claim accepted (Action-authored lock) → stale lock reaped via `workflow_dispatch` →
-re-claim → encoding accepted (schema machine-check, volunteer MEI merged with `Co-authored-by`
-attribution) → same-account validation claim rejected (`self_validation`) → PR head branches
-cleaned up. Not yet exercised live: the **schema v2 pipeline** (rerun the e2e after pushing), a
-validation *accept* (needs a second account — the no-self-validation rule blocks one-account
-testing), and the in-browser smoke test of the full console flow (§10 phase 1).
+**Verification.** Unit tests cover the decision modules, initialisation and the projections. A live
+end-to-end run (2026-07-02, throwaway campaign `ohwjd/e2e-caller-test`, on schema v1 at the time)
+confirmed the caller pipeline mechanics: claim accepted (Action-authored lock) → stale lock reaped
+via `workflow_dispatch` → re-claim → encoding accepted (schema machine-check, volunteer MEI merged
+with `Co-authored-by` attribution) → same-account validation claim rejected (`self_validation`) →
+PR head branches cleaned up. Not yet exercised live on the current model: the **schema v3
+pipeline**, a validation *accept* (needs a second account — the no-self-validation rule blocks
+one-account testing), and the full pre-task pipeline (zones submit → validate → encoding
+unblocked).
 
 **Runtime.** Central code is TypeScript run by bare `node` (≥23.6 type-stripping), so the caller pins
 `node-version: 24` and the coordinator imports use real `.ts` specifiers. The SPA imports the same
@@ -510,94 +642,17 @@ modules via Vite. No build step for the automation.
 
 ## 10. Roadmap & deferred
 
-Migration order (each phase independently shippable):
-
-1. **Static SPA + session broker** — ✅ built (static adapter, `ForgeClient`(GitHub) seam, session broker).
-   Remaining verification: a browser smoke test of `generate` + a commit sequence against the forge
-   API (the load-bearing CORS assumption).
-2. **One generic caller + central automation** — ✅ built and verified live on a throwaway campaign
-   (claim → reap → re-claim → encode → self-validation rejected; §9). Outstanding: a validation
-   *accept* end-to-end, which needs a second account.
-
-Done since: **the four-table data model** (schema v2, §5) — tables keyed by `(task_id,
-subtask_id)` with an append-only history; **the facsimile pre-tasks** (§7a) — staged score,
-`depends_on` chaining, the zone editor, and coordinator-side measure generation (`locator` is now
-used by the pre-tasks; the reserved `by_measure`/`by_section` strategies still aren't). Not yet
-exercised live: the full pre-task pipeline (zones submit → validate → generate → encoding
-unblocked). `allowlist`/`blocklist` remain unenforced (below).
-
 Deferred (designed, not built):
 
-- **Onboarding wizard** — collect *what/have/validation-policy*; header pre-fill (scoreDef,
-  staffDef pre-tasks); algorithmically generate the task table for the reserved fragmentation
-  strategies. If heavy compute moves off the client, a `workflow_dispatch` path to the caller
-  carrying mei-friend-style inputs (`workpackage_id`, `filepath`, `parameters`) is the dispatch
-  counterpart to §4's event path.
-- **Allow/blocklist enforcement** — an optional per-task gate in the accept logic; **default open**
-  (anyone can claim).
+- **Allow/blocklist enforcement** — an optional per-task gate in the accept logic; the columns
+  exist in `task.csv` (§5) but are **default open** (anyone can claim).
 - **GitLab (and other) `ForgeClient`** implementations behind the §8 seam.
-- **Dark-mode review of the console** — see below.
 
-### TODO: dark-mode review of the console
+Known limitations:
 
-The campaign console and the zone editor were written with a hardcoded light palette. Their
-~275 colour literals now read from the theme tokens in `src/routes/theme.css`, so both surfaces
-follow the light/dark toggle instead of staying light inside a dark shell. What has *not* happened
-is a look at the result: the substitution was verified mechanically (light mode compared
-declaration by declaration, tokens resolved — 1438 values identical, the rest listed below), not
-visually in dark mode. It needs a logged-in session on a real campaign.
-
-Two reasons it is more than a glance:
-
-- **Depth reads backwards.** The console's greys encode stacking — canvas → panel → node → hover,
-  each step lighter. In a dark theme that order normally inverts. Rules that share a token today
-  may need genuinely different dark values: `.node` (`--card`) against `.nmain:hover`
-  (`--bg-alt`), `.node.s-blocked`, `.trow.subrow`, `.act:disabled`.
-- **There is no dark design.** Both prototypes in `design_handoff_node_graph_console/` are
-  light-only. The dark appearance of each graph node state (claimed / blocked / completed /
-  next-up), the four banner kinds, the four pill kinds, the edges, ports and panel chrome is
-  a design decision, not an implementation of a spec.
-
-Specific things to look at:
-
-- Node and slot states on the dark canvas: `.node.s-*`, `.nslot`, `.nslot.claimable`,
-  `.nslot.selected`, `.nextup-badge` (white-ish text on `--accent`, which is a *light* blue in
-  dark mode).
-- The inverted toggle pair `--invert-bg` / `--invert-ink`: a pressed tab goes light-on-dark in
-  the light theme and dark-on-light in the dark one. Check `.hbtn.on`, `.tabs button.on`,
-  `.act.primary`, `.dock-viewmode button.on`.
-- Translucent status fills (`--ok-bg`, `--warn-bg`, `--danger-bg`, `--info-bg`, `--note-bg`) sit
-  over whichever surface is behind them. Verify on banners (over the canvas) and on pills (over
-  a node).
-- SVG edges, ports and the `--grid-dot` canvas grid.
-- `.zoom-fab button:disabled` reads less disabled than it did (`--ink-faint`, no opacity).
-
-Deliberately left with a fixed palette, for the same reason `--facsimile-paper` exists — they are
-drawn over a scanned page, which is white in either theme: the measure zones and their labels
-(`.zone*`, `.labelbg`, `.zonelabel`, `.handle`), the floating zone controls (`.zc*`), and the
-console's score preview overlay (`.pv-zone`, `.pv-zonelabel`).
-
-Light-mode values that shifted when literals were folded onto shared tokens (visible only
-side by side; everything else resolves to its previous value):
-
-| was | now | token |
-|---|---|---|
-| `#eee` `#e5e5e5` `#f2f2f2` `#e0e0e0` `#ddd` `#eaeaea` | `#e6e8f0` | `--line` |
-| `#d8d8d8` `#ccc` `#d5d5d5` `#a9a9a9` `#d9d9d9` | `#d0d0d0` | `--line-strong` |
-| `#777` `#888` `#999` `#aaa` `#bbb` | `#79809a` | `--ink-faint` |
-| `#555` `#666` | `#4a5167` | `--ink-soft` |
-| `#333` `#444` | `#1f2433` | `--ink` |
-| `#fafafa` `#fcfcfb` `#fbfbfa` `#f3f3f3` `#f4f4f4` | `#f7f8fb` | `--bg-alt` |
-| `#3056d3` | `#2563c9` | `--accent` (the app's blue) |
-| `#2a78d6` | `#2f68c4` | `--link` |
-| `#1a7f37` `#1a6b33` | `#1a7f4b` | `--ok` |
-| `#8a6d00` `#7a6011` | `#9a6700` | `--warn` |
-| `#9f3a38` | `#b42318` | `--danger` |
-| `#fdeaea` | `#fdecec` | `--danger-bg` |
-| `#fff8e1` | `#fff4d6` | `--warn-bg` |
-| `#fbfcfe` `#f7faff` `#f0f5fd` `#f0f4ff` `#eef2fb` | `#f4f7fe` | `--accent-tint` |
-| `#eaf1fe` | `#e8f1fd` | `--accent-tint-strong` |
-| `#e2e8f4` `#e8edf6` `#dfe7fb` | `#cfe0f6` | `--accent-line` |
+- **Anonymous browsing quota** — the landing grid and dashboard fetch each campaign's tables from
+  the client per repo, so logged-out visitors share GitHub's anonymous 60 requests/hour per-IP
+  quota (§7c). Logged-in traffic uses the user's own quota via the broker relay.
 
 ## 11. Before production — hardening checklist
 
@@ -606,7 +661,8 @@ side by side; everything else resolves to its previous value):
   `PUBLIC_AUTOMATION_REF` for the production deployment.)
 - [x] **Central reachability** — the central repo (this one) is public, so the caller's checkout
   needs no token.
-- [x] **Never execute fork code** — the caller checks out the base tree only; the fork is data (§4, §6).
+- [x] **Never execute fork code** — the caller checks out only the pinned central repo; the fork is
+  data (§4, §6).
 - [x] **Read the central pointer from the base ref** — never from the PR head (§4a).
 - [x] **Token handling** — the forge token never reaches the browser: it lives in the broker's
   server-side session, the page holds only an httpOnly session cookie, and authenticated API calls

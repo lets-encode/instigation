@@ -1,65 +1,24 @@
 <!--
-  The entry point to the app: the contributor dashboard — start card and the
-  viewer's claimed work on the left, campaign discovery (search, filter chips,
-  preview tiles) on the right — and the campaign onboarding wizard once a
-  setup is underway.
-
-  The wizard is one flow across several screens, driven by the step index in
-  the wizard store rather than by the URL, so state survives moving between
-  steps. Create on the landing hands the chosen name off to /c?slug=, which
-  hooks.ts reroutes here; the name step reads that query and prefills.
+  The entry point to the app: the start card, unfinished setups and the
+  viewer's claimed work on the left; every campaign on the right, in a
+  paginated grid with search, sort and an open-tasks filter. Campaign creation
+  lives at /new.
 -->
 <script lang="ts">
-  import { page } from "$app/state";
-  import { auth, forge, login } from "$lib/auth.svelte.ts";
-  import { createForge } from "$lib/forge/index.ts";
+  import { auth, login } from "$lib/auth.svelte.ts";
+  import { readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import { draftSnapshot, saveDraft, wizard } from "$lib/wizard.svelte.ts";
-  import { loadCampaignStats, myTasksIn } from "$lib/campaign-stats.ts";
+  import { loadAllCampaignStats, myTasksIn } from "$lib/campaign-stats.ts";
   import type { CampaignStats, MyTask } from "$lib/campaign-stats.ts";
-  import type { RepoSummary } from "$lib/forge/github-rest.ts";
   import LandingStart from "$lib/components/LandingStart.svelte";
   import YourWorkPanel from "$lib/components/YourWorkPanel.svelte";
   import CampaignCard from "$lib/components/CampaignCard.svelte";
-  import CampaignNameStep from "$lib/components/CampaignNameStep.svelte";
-  import CampaignLicenseStep from "$lib/components/CampaignLicenseStep.svelte";
-  import CampaignUploadStep from "$lib/components/CampaignUploadStep.svelte";
-  import CampaignPagesStep from "$lib/components/CampaignPagesStep.svelte";
-  import CampaignSourceStep from "$lib/components/CampaignSourceStep.svelte";
-  import CampaignPiecesStep from "$lib/components/CampaignPiecesStep.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
-  import WizardCard from "$lib/components/WizardCard.svelte";
 
-  // The landing shows until a setup is underway: a name arriving via /c?slug=
-  // (the wizard opens to take it), a held name, or a step past the first. A
-  // continued draft re-opens past the first step, so it lands in the wizard.
-  const landing = $derived(
-    !page.url.searchParams.get("slug") &&
-      wizard.step === "name" &&
-      !wizard.claim,
-  );
-
-  // Mirror the wizard's entries into the browser as they change, so a setup
-  // interrupted here can be continued from the listing above. The draft is
-  // collected on every change but written on a debounce, since one write
-  // serialises all of it; a page about to go away — a Back press, a closed tab —
-  // writes what is pending first, so the last edits before it are kept.
-  $effect(() => {
-    const owner = auth.user?.login;
-    const snapshot = draftSnapshot();
-    if (!owner) return;
-    const timer = setTimeout(() => saveDraft(owner, snapshot), 500);
-    const flush = () => saveDraft(owner, snapshot);
-    addEventListener("pagehide", flush);
-    return () => {
-      clearTimeout(timer);
-      removeEventListener("pagehide", flush);
-    };
-  });
+  const PER_PAGE = 12;
 
   // ------------------------------------------------------- campaign discovery
-  const viewer = $derived(auth.user?.id != null ? String(auth.user.id) : "");
-  const readForge = () => forge() ?? createForge("");
+  const viewer = $derived(viewerId());
 
   let stats = $state<CampaignStats[]>([]);
   let listLoading = $state(false);
@@ -67,8 +26,7 @@
   let listLoaded = $state(false);
 
   $effect(() => {
-    if (!landing || auth.status === "loading" || listLoaded || listLoading)
-      return;
+    if (auth.status === "loading" || listLoaded || listLoading) return;
     listLoading = true;
     loadAll().finally(() => {
       listLoading = false;
@@ -79,34 +37,30 @@
   // Stats arrive one campaign at a time; each resolves into the grid as it
   // lands rather than waiting for the slowest repository.
   async function loadAll() {
-    const f = readForge();
-    let repos: RepoSummary[];
     try {
-      repos = await f.searchReposByTopic(provider.repoTopic);
+      await loadAllCampaignStats(readForge(), provider.repoTopic, {
+        withPreview: true,
+        onEach: (s) =>
+          (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
+      });
+      listError = null;
     } catch (err) {
       listError = (err as Error).message;
-      return;
     }
-    listError = null;
-    await Promise.all(
-      repos.map(async (repo) => {
-        try {
-          const s = await loadCampaignStats(f, repo, true);
-          stats = [...stats.filter((x) => x.repoId !== s.repoId), s];
-        } catch {
-          // One unreadable repository doesn't take the listing down.
-        }
-      }),
-    );
   }
 
   let search = $state("");
-  let chip = $state<"open" | "nearly" | "new" | null>("open");
-  const toggleChip = (c: typeof chip) => (chip = chip === c ? null : c);
+  let sort = $state<"active" | "newest" | "nearly">("active");
+  let openOnly = $state(false);
+  let pageNo = $state(1);
+  // A changed filter starts over from page 1.
+  $effect(() => {
+    void search;
+    void sort;
+    void openOnly;
+    pageNo = 1;
+  });
 
-  const isNew = (s: CampaignStats) =>
-    s.createdAt !== "" &&
-    Date.now() - Date.parse(s.createdAt) < 7 * 24 * 3600_000;
   const matchesSearch = (s: CampaignStats) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
@@ -114,25 +68,36 @@
       v.toLowerCase().includes(q),
     );
   };
-  const openCount = $derived(stats.filter((s) => s.ready > 0).length);
-  const filtered = $derived(
-    stats
+  const filtered = $derived.by(() => {
+    const list = stats
       .filter(matchesSearch)
-      .filter((s) =>
-        chip === "open"
-          ? s.ready > 0
-          : chip === "nearly"
-            ? s.nearlyDone
-            : chip === "new"
-              ? isNew(s)
-              : true,
-      )
-      .sort(
+      .filter((s) => !openOnly || s.ready > 0);
+    const ts = (v: string) => Date.parse(v || "0") || 0;
+    if (sort === "newest")
+      return list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    if (sort === "nearly")
+      return list.sort(
         (a, b) =>
-          Date.parse(b.lastActivity || "0") - Date.parse(a.lastActivity || "0"),
-      ),
+          (b.total ? b.done / b.total : 0) - (a.total ? a.done / a.total : 0),
+      );
+    return list.sort((a, b) => ts(b.lastActivity) - ts(a.lastActivity));
+  });
+  const pages = $derived(Math.max(1, Math.ceil(filtered.length / PER_PAGE)));
+  const current = $derived(Math.min(pageNo, pages));
+  const shown = $derived(
+    filtered.slice((current - 1) * PER_PAGE, current * PER_PAGE),
   );
-  const tiles = $derived(filtered.slice(0, 4));
+  const openCount = $derived(stats.filter((s) => s.ready > 0).length);
+
+  // The pagination row: 1 … around the current page … last.
+  const pageButtons = $derived.by(() => {
+    const out: Array<number | "…"> = [];
+    for (let p = 1; p <= pages; p++) {
+      if (p === 1 || p === pages || Math.abs(p - current) <= 1) out.push(p);
+      else if (out.at(-1) !== "…") out.push("…");
+    }
+    return out;
+  });
 
   // ------------------------------------------------------- the viewer's work
   const myTasks = $derived(
@@ -140,130 +105,124 @@
   );
 </script>
 
-<!--
-  Every step renders the full workbench shell itself; this route only decides
-  which step is on screen.
--->
-{#if landing}
-  <div class="dash">
-    <div class="rail">
-      <LandingStart compact />
-      {#if auth.user}
-        <CampaignDrafts />
-      {/if}
-      {#if auth.user}
-        <YourWorkPanel tasks={myTasks} loading={listLoading} />
-      {/if}
-    </div>
-    <div class="main">
-      <div class="finder">
-        <div class="searchbox">
-          <span class="glass">⌕</span>
-          <input
-            type="text"
-            bind:value={search}
-            placeholder="Search by work, composer, or campaign…"
-            aria-label="Search campaigns"
-          />
-        </div>
-        <div class="chips">
-          <button
-            type="button"
-            class="fchip"
-            class:on={chip === "open"}
-            onclick={() => toggleChip("open")}
-            >{chip === "open" ? "✓ " : ""}Has open tasks · {openCount}</button
-          >
-          <button
-            type="button"
-            class="fchip"
-            class:on={chip === "nearly"}
-            onclick={() => toggleChip("nearly")}
-            >{chip === "nearly" ? "✓ " : ""}Nearly done</button
-          >
-          <button
-            type="button"
-            class="fchip"
-            class:on={chip === "new"}
-            onclick={() => toggleChip("new")}
-            >{chip === "new" ? "✓ " : ""}New this week</button
-          >
-        </div>
-      </div>
-      {#if listError}
-        <p class="note">Couldn't load the campaigns: {listError}</p>
-      {:else if listLoaded && stats.length === 0}
-        <p class="note">No campaigns yet. Be the first to create one!</p>
-      {:else if listLoaded && filtered.length === 0}
-        <p class="note">No campaign matches.</p>
-      {:else}
-        <div class="tiles">
-          {#each tiles as s (s.repoId)}
-            <CampaignCard stats={s} />
-          {/each}
-        </div>
-        {#if listLoading && tiles.length === 0}
-          <p class="note">Loading campaigns…</p>
-        {/if}
-      {/if}
-      <div class="showmore">
-        <span class="showing"
-          >{Math.min(4, filtered.length)} of {stats.length} campaign{stats.length ===
-          1
-            ? ""
-            : "s"}</span
-        >
-        <a class="morebtn" href="/campaigns">Show more</a>
-      </div>
-      {#if !auth.user && auth.status === "anonymous"}
-        <p class="note login-hint">
-          Browsing works logged out —
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          > to claim a task or see your work here.
-        </p>
-      {/if}
-    </div>
+<div class="dash">
+  <div class="rail">
+    <LandingStart compact />
+    {#if auth.user}
+      <CampaignDrafts />
+    {/if}
+    {#if auth.user}
+      <YourWorkPanel tasks={myTasks} loading={listLoading} />
+    {/if}
   </div>
-{:else if auth.status === "loading"}
-  <p class="note checking">Checking your session…</p>
-{:else if !auth.user}
-  <WizardCard step="name" heading="Start a new encoding campaign">
-    <p class="note login-note">
-      Log in with GitHub to create a campaign. Its score, configuration and
-      progress live in a repository on your account.
-    </p>
-    {#snippet footer()}
-      <button type="button" class="btn btn-primary" onclick={() => login()}>
-        Log in with GitHub
-      </button>
-    {/snippet}
-  </WizardCard>
-{:else if wizard.step === "name"}
-  <CampaignNameStep />
-{:else if wizard.step === "license"}
-  <CampaignLicenseStep />
-{:else if wizard.step === "upload"}
-  <CampaignUploadStep />
-{:else if wizard.step === "pages"}
-  <CampaignPagesStep />
-{:else if wizard.step === "source"}
-  <CampaignSourceStep />
-{:else}
-  <CampaignPiecesStep />
-{/if}
+  <div class="main">
+    <div class="finder">
+      <div class="searchbox">
+        <span class="glass">⌕</span>
+        <input
+          type="text"
+          bind:value={search}
+          placeholder="Search by work, composer, or campaign…"
+          aria-label="Search campaigns"
+        />
+      </div>
+      <div class="toolbar">
+        <div class="seg">
+          <button
+            type="button"
+            class:on={sort === "active"}
+            onclick={() => (sort = "active")}>Most active</button
+          >
+          <button
+            type="button"
+            class:on={sort === "newest"}
+            onclick={() => (sort = "newest")}>Newest</button
+          >
+          <button
+            type="button"
+            class:on={sort === "nearly"}
+            onclick={() => (sort = "nearly")}>Nearly done</button
+          >
+        </div>
+        <button
+          type="button"
+          class="fchip"
+          class:on={openOnly}
+          onclick={() => (openOnly = !openOnly)}
+          >{openOnly ? "✓ " : ""}Has open tasks · {openCount}</button
+        >
+        <span class="showing">
+          {#if filtered.length === 0}
+            0 of {stats.length} campaign{stats.length === 1 ? "" : "s"}
+          {:else}
+            {(current - 1) * PER_PAGE + 1}–{Math.min(
+              current * PER_PAGE,
+              filtered.length,
+            )} of {filtered.length} campaign{filtered.length === 1 ? "" : "s"}
+          {/if}
+        </span>
+      </div>
+    </div>
+    {#if listError}
+      <p class="note">Couldn't load the campaigns: {listError}</p>
+    {:else if listLoaded && stats.length === 0}
+      <p class="note">No campaigns yet. Be the first to create one!</p>
+    {:else if listLoading && stats.length === 0}
+      <p class="note">Loading campaigns…</p>
+    {:else if shown.length === 0}
+      <p class="note">No campaign matches.</p>
+    {:else}
+      <div class="tiles">
+        {#each shown as s (s.repoId)}
+          <CampaignCard stats={s} />
+        {/each}
+      </div>
+    {/if}
+    {#if pages > 1}
+      <div class="pager">
+        <button
+          type="button"
+          class="pbtn"
+          disabled={current === 1}
+          onclick={() => (pageNo = current - 1)}
+          aria-label="Previous page">‹</button
+        >
+        {#each pageButtons as p, i (i)}
+          {#if p === "…"}
+            <span class="ellipsis">…</span>
+          {:else}
+            <button
+              type="button"
+              class="pbtn"
+              class:on={p === current}
+              onclick={() => (pageNo = p)}>{p}</button
+            >
+          {/if}
+        {/each}
+        <button
+          type="button"
+          class="pbtn"
+          disabled={current === pages}
+          onclick={() => (pageNo = current + 1)}
+          aria-label="Next page">›</button
+        >
+      </div>
+    {/if}
+    {#if !auth.user && auth.status === "anonymous"}
+      <p class="note login-hint">
+        Browsing works logged out —
+        <button type="button" class="linkish" onclick={() => login()}
+          >log in with GitHub</button
+        > to claim a task or see your work here.
+      </p>
+    {/if}
+  </div>
+</div>
 
 <style>
   .note {
     margin: 0;
     color: var(--ink-soft);
-  }
-  .checking {
-    padding: 2rem 1.5rem;
-  }
-  .login-note {
-    margin-top: 16px;
-    font-size: 13.5px;
   }
   /* The dashboard scrolls as one surface, on the brand-tinted page gradient
      carried over from the old landing. */
@@ -340,12 +299,32 @@
   .searchbox input::placeholder {
     color: var(--ink-faint);
   }
-  .chips {
+  .toolbar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     flex-wrap: wrap;
     justify-content: center;
+  }
+  .seg {
+    display: flex;
+    background: var(--bg-tint);
+    border-radius: 999px;
+    padding: 3px;
+  }
+  .seg button {
+    font: 600 12.5px var(--font);
+    padding: 5px 14px;
+    border-radius: 999px;
+    border: 0;
+    background: none;
+    color: var(--ink-faint);
+    cursor: pointer;
+  }
+  .seg button.on {
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
   }
   .fchip {
     font: 600 12.5px var(--font);
@@ -365,33 +344,49 @@
     background: var(--info-bg);
     border-color: var(--info-line);
   }
+  .showing {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
   .tiles {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
   }
-  .showmore {
+  .pager {
     display: flex;
-    align-items: center;
     justify-content: center;
-    gap: 12px;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
   }
-  .showing {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-  }
-  .morebtn {
+  .pbtn {
     font: 600 12.5px var(--font);
-    padding: 6px 16px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
     background: var(--card);
     color: var(--ink-soft);
-    text-decoration: none;
+    cursor: pointer;
   }
-  .morebtn:hover {
+  .pbtn:hover:not(:disabled):not(.on) {
     border-color: var(--info-line);
     color: var(--accent);
+  }
+  .pbtn.on {
+    border: 0;
+    background: var(--accent-btn);
+    color: #fff;
+  }
+  .pbtn:disabled {
+    color: var(--ink-faint);
+    cursor: default;
+  }
+  .ellipsis {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    padding: 0 4px;
   }
   .login-hint {
     text-align: center;

@@ -83,26 +83,36 @@
   onDestroy(() => detection.cancel());
 
   // The pages the editor draws on: object URLs over the prepared page images,
-  // with the pixel size the regions are expressed in. Released on destroy.
-  const objectUrls: string[] = [];
+  // with the pixel size the regions are expressed in. A superseded set is
+  // released once its replacement is on screen; the live set on destroy.
+  let liveUrls: string[] = [];
   let pages = $state<{ url: string; width: number; height: number }[]>([]);
   $effect(() => {
     let cancelled = false;
     (async () => {
-      const built = [];
-      for (const image of wizard.images) {
-        const { width, height } = await imageSize(image.blob);
-        const url = URL.createObjectURL(image.blob);
-        objectUrls.push(url);
-        built.push({ url, width, height });
+      const urls: string[] = [];
+      const built = await Promise.all(
+        wizard.images.map(async (image) => {
+          const { width, height } = await imageSize(image.blob);
+          const url = URL.createObjectURL(image.blob);
+          urls.push(url);
+          return { url, width, height };
+        }),
+      );
+      if (cancelled) {
+        // Superseded before it was ever shown.
+        urls.forEach((url) => URL.revokeObjectURL(url));
+        return;
       }
-      if (!cancelled) pages = built;
+      pages = built;
+      liveUrls.forEach((url) => URL.revokeObjectURL(url));
+      liveUrls = urls;
     })();
     return () => {
       cancelled = true;
     };
   });
-  onDestroy(() => objectUrls.forEach((url) => URL.revokeObjectURL(url)));
+  onDestroy(() => liveUrls.forEach((url) => URL.revokeObjectURL(url)));
 
   function addPiece() {
     // With no page images there are no regions to mark, so an added piece is

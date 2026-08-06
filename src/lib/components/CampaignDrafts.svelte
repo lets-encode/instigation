@@ -2,11 +2,13 @@
   Setups started in this browser and not finished. The wizard mirrors its entries
   into the browser's storage as they are entered, so one can be picked up here.
 
-  Continuing loads the entries back into the wizard and opens the step the setup
-  was left on. When the campaign's repository already exists, the page images it
-  holds are read back from it first: their bytes are not kept between visits.
+  Continuing loads the entries back into the wizard and opens it at /new, on
+  the step the setup was left on. When the campaign's repository already
+  exists, the page images it holds are read back from it first: their bytes
+  are not kept between visits.
 -->
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import {
     MissingDraftImageError,
@@ -71,6 +73,7 @@
         }
       }
       applyDraft(stored, images);
+      await goto("/new");
     } catch (err) {
       console.error("Continuing a setup failed:", (err as Error).message);
       error = `Could not continue “${draft.handle}”: ${(err as Error).message}`;

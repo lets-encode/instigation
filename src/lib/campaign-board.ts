@@ -24,6 +24,9 @@ export function elapsed(iso: string, now = Date.now()): string {
 	return `${Math.floor(hours / 24)} d`;
 }
 
+/** The avatar initial for a display handle. */
+export const initialOf = (name: string): string => name[0]?.toUpperCase() ?? '?';
+
 /** The piece behind a fragment path, for card titles: basename without extension. */
 const pieceLabel = (fragment: string): string => {
 	const base = fragment.split('/').pop() ?? fragment;
@@ -83,16 +86,6 @@ export function taskCounts(d: GraphData, comments: CommentRow[], task: string): 
 }
 
 const countsTotal = (c: TaskCounts): number => c.fails + c.comments + c.questions;
-
-/**
- * The campaign's attention count (hero counter and the validation column's
- * badge): unresolved comments plus recorded fails, on non-completed tasks.
- */
-export function attentionCount(d: GraphData, comments: CommentRow[]): number {
-	return d.rows
-		.filter((r) => r.subtask_id === '' && r.status !== 'completed')
-		.reduce((n, r) => n + countsTotal(taskCounts(d, comments, r.task_id)), 0);
-}
 
 // ---------------------------------------------------------------------------
 // The board
@@ -232,7 +225,7 @@ export function buildBoard(
 	logins: Logins = {},
 	now = Date.now()
 ): Board {
-	const { nodes } = buildGraph(d, viewer, logins);
+	const nodes = buildGraph(d, viewer, logins);
 	const columns: BoardColumn[] = (Object.keys(COLUMN_LABELS) as ColumnKey[]).map((key) => ({
 		key,
 		label: COLUMN_LABELS[key],
@@ -279,7 +272,12 @@ export function buildBoard(
 		});
 	}
 
-	const attention = attentionCount(d, comments);
+	// The campaign's attention count (hero counter and the validation column's
+	// badge): unresolved comments plus recorded fails, on non-completed tasks —
+	// summed from the card counts computed above.
+	const attention = columns
+		.filter((column) => column.key !== 'done')
+		.reduce((n, column) => n + column.cards.reduce((m, card) => m + countsTotal(card.counts), 0), 0);
 	columnByKey.get('validation')!.attention = attention;
 
 	const reviewTasks = new Set(

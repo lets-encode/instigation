@@ -28,8 +28,8 @@
       .catch(() => (campaignRepos = []));
   });
 
-  // Arriving from the landing page (/c?slug=) with a chosen name: prefill the
-  // name field once, so later edits to it are not overwritten.
+  // Arriving with a chosen name (/new?slug=, from the landing's start card):
+  // prefill the name field once, so later edits to it are not overwritten.
   let slugApplied = false;
   $effect(() => {
     const chosen = page.url.searchParams.get("slug");

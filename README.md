@@ -64,14 +64,30 @@ Fill in `.env` (all `PUBLIC_`, none secret — read at build/dev time by Vite):
 ```
 PUBLIC_TEMPLATE_OWNER=your-username
 PUBLIC_TEMPLATE_REPO=your-template-repo
-PUBLIC_REPO_TOPIC=created-with-instigation
+PUBLIC_REPO_TOPIC=created-with-lets-encode-instigation-platform
 PUBLIC_FORGE=github
 PUBLIC_MEI_FRIEND_URL=https://mei-friend.mdw.ac.at
+PUBLIC_MEASURE_DETECTOR_URL=https://measure-detector.edirom.de
+#PUBLIC_BROKER_URL=/auth
+#PUBLIC_REGISTRY_URL=/registry
+#PUBLIC_AUTOMATION_REPO=lets-encode/instigation
+#PUBLIC_AUTOMATION_REF=main
+#PUBLIC_AUTOMATION_PATH=scripts/coordinator.ts
 ```
 
 The OAuth credentials live only in the broker's env (next step). The SPA reaches
-the broker at `PUBLIC_BROKER_URL` (default `/auth`, proxied to the broker
-by the Vite dev server, and by Apache in production).
+the broker at `PUBLIC_BROKER_URL` (default `/auth`) and the name registry at
+`PUBLIC_REGISTRY_URL` (default `/registry`) — both proxied to the broker by the
+Vite dev server, and by Apache in production. `PUBLIC_AUTOMATION_*` is the
+central automation pointer written into each new campaign's `config.yaml`; pin
+`PUBLIC_AUTOMATION_REF` to a commit SHA for production releases. See
+`.env.example` for the full commentary.
+
+Vite loads `.env` in every mode and overlays `.env.<mode>` (`development`,
+`production`, `staging`, `testing`) on top, so a mode file holds only the
+variables whose values differ for that deployment. `svelte.config.js` reads the
+same files (via `VITE_CONFIG_MODE`, passed through in `vite.config.js`) to
+build the CSP.
 
 ## 4. Run locally (two processes)
 
@@ -96,9 +112,18 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173> → pick a name on the landing page → **Log in with
-GitHub** → create a campaign. On a clean creation you land on its console at
-`/<campaign>` (the campaign name; the repo it addresses is resolved from it).
+Open <http://localhost:5173>. The routes:
+
+- `/` — the landing: the full campaign list (search, sort, pagination and an
+  open-tasks filter) alongside the start card, unfinished setups and the
+  viewer's claimed work.
+- `/new` — the six-step campaign creation wizard (name, licence, upload,
+  pages, source, pieces). On a clean creation you land on the new campaign's
+  console.
+- `/dashboard` — the logged-in user's personal dashboard.
+- `/<campaign>` — the campaign console (the campaign name; the repo it
+  addresses is resolved via the registry).
+- `/<campaign>/zones/<task>` — the measure-zone editor for one pre-task.
 
 ## 5. Build / preview / test
 

@@ -284,6 +284,14 @@ async function ghGet<T>(
 	return { status: res.status, ok: res.ok, data: data as T };
 }
 
+// Throw the error a failed GitHub response carries: its JSON `message`, or
+// `failure`, optionally labelled with the status and the request that failed.
+// Reads the response body — only for responses whose body is not otherwise used.
+async function throwGitHubError(res: Response, failure: string, action?: string): Promise<never> {
+	const data: ErrorResponse = await res.json().catch(() => ({}));
+	throw new Error(action ? `${data.message || failure} (${res.status} ${action})` : data.message || failure);
+}
+
 // Decode GitHub's base64 file content to a UTF-8 string without Node's Buffer, so
 // this runs in the browser too. GitHub wraps the base64 in newlines — strip
 // whitespace before decoding.
@@ -590,16 +598,24 @@ export async function getRepoHead(
 	owner: string,
 	repo: string
 ): Promise<{ branch: string; sha: string; canPush: boolean }> {
-	const headers = { ...baseHeaders, ...authHeaders(token) };
-	const repoRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
-	const repoData: RepoData = await repoRes.json().catch(() => ({}));
-	if (!repoRes.ok) throw new Error(`${repoData.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
-	const branch = repoData.default_branch;
-	const refRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers, cache: 'no-store' });
-	const refData: { object: { sha: string }; message?: string } = await refRes.json().catch(() => ({}));
-	if (!refRes.ok) throw new Error(`${refData.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
-	return { branch, sha: refData.object.sha, canPush: Boolean(repoData.permissions?.push) };
+	const repoRes = await ghGet<RepoData>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
+	if (!repoRes.ok)
+		throw new Error(`${repoRes.data?.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
+	const branch = repoRes.data.default_branch;
+	const refRes = await ghGet<{ object: { sha: string }; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${branch}`,
+		token
+	);
+	if (!refRes.ok)
+		throw new Error(`${refRes.data?.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
+	return { branch, sha: refRes.data.object.sha, canPush: Boolean(repoRes.data.permissions?.push) };
 }
+
+// Fork identities already ensured this session, keyed by upstream owner/repo.
+// Only the create + readiness poll is skipped for a known fork — the upstream
+// sync still runs on every call, since callers create branches at upstream
+// commits the fork must contain.
+const knownForks = new Map<string, { owner: string; repo: string; branch: string }>();
 
 /**
  * Ensure the authenticated user has a fork of `owner/repo`, waiting until it's
@@ -613,6 +629,19 @@ export async function ensureFork(
 	{ attempts = 20, delayMs = 1500 }: { attempts?: number; delayMs?: number } = {}
 ): Promise<{ owner: string; repo: string }> {
 	const headers = { ...baseHeaders, ...authHeaders(token) };
+	const known = knownForks.get(`${owner}/${repo}`);
+	if (known) {
+		const sync = await githubFetch(`${apiRoot(token)}/repos/${known.owner}/${known.repo}/merge-upstream`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ branch: known.branch })
+		});
+		if (!sync.ok) {
+			const error: ErrorResponse = await sync.json().catch(() => ({}));
+			throw new Error(`${error.message || 'Failed to sync fork'} (${sync.status} POST merge-upstream)`);
+		}
+		return { owner: known.owner, repo: known.repo };
+	}
 	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/forks`, {
 		method: 'POST',
 		headers,
@@ -640,6 +669,7 @@ export async function ensureFork(
 				const error: ErrorResponse = await sync.json().catch(() => ({}));
 				throw new Error(`${error.message || 'Failed to sync fork'} (${sync.status} POST merge-upstream)`);
 			}
+			knownForks.set(`${owner}/${repo}`, { owner: forkOwner, repo: forkRepo, branch: data.default_branch });
 			return { owner: forkOwner, repo: forkRepo };
 		}
 		if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -652,10 +682,7 @@ export async function repoExists(owner: string, repo: string, token?: string): P
 	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
 	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
 	if (res.status === 404) return false;
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to check repository name');
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to check repository name');
 	return true;
 }
 
@@ -899,10 +926,7 @@ export async function commentAndClosePr(
 		headers,
 		body: JSON.stringify({ state: 'closed' })
 	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to close pull request');
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to close pull request');
 }
 
 /**
@@ -1048,10 +1072,7 @@ export async function createBranch(
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha })
 	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(`${data.message || 'Failed to create branch'} (${res.status} POST git/refs)`);
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to create branch', 'POST git/refs');
 }
 
 /**
@@ -1184,10 +1205,7 @@ export async function dispatchWorkflow(
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ ref })
 	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to dispatch workflow');
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to dispatch workflow');
 }
 
 /** Replace a repo's topics — used to tag repos created through this app. */
@@ -1202,10 +1220,7 @@ export async function setRepoTopics(
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ names })
 	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to set topics');
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to set topics');
 	return res.json();
 }
 
@@ -1220,10 +1235,7 @@ export async function setActionsWorkflowPermissions(token: string, owner: string
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ default_workflow_permissions: 'write' })
 	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to set workflow permissions');
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to set workflow permissions');
 }
 
 /**
@@ -1258,10 +1270,7 @@ export async function ignoreRepoNotifications(token: string, owner: string, repo
 		headers: { ...baseHeaders, ...authHeaders(token) },
 		body: JSON.stringify({ subscribed: false, ignored: true })
 	});
-	if (!res.ok) {
-		const data: ErrorResponse = await res.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to set repository subscription');
-	}
+	if (!res.ok) await throwGitHubError(res, 'Failed to set repository subscription');
 }
 
 /**

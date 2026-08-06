@@ -19,7 +19,7 @@ export function resolveRepoRelativeTarget(fragment: string, target: string): str
 	return resolved.join('/') || null;
 }
 
-/** Resolve MEI graphic targets and fetch their download URLs one directory at a time. */
+/** Resolve MEI graphic targets and fetch their download URLs per directory, in parallel. */
 export async function resolveFacsimileImageUrls(
 	forge: Pick<ForgeClient, 'getDirDownloadUrls'>,
 	owner: string,
@@ -30,10 +30,14 @@ export async function resolveFacsimileImageUrls(
 ): Promise<string[]> {
 	const paths = targets.map((target) => resolveRepoRelativeTarget(fragment, target));
 	const directories = [...new Set(paths.filter((path): path is string => path !== null).map(dirname))];
-	const listings = new Map<string, Record<string, string>>();
-	for (const directory of directories) {
-		listings.set(directory, await forge.getDirDownloadUrls(owner, repo, directory, ref));
-	}
+	const listings = new Map(
+		await Promise.all(
+			directories.map(
+				async (directory) =>
+					[directory, await forge.getDirDownloadUrls(owner, repo, directory, ref)] as const
+			)
+		)
+	);
 	return paths.map((path) => {
 		if (!path) return '';
 		return listings.get(dirname(path))?.[basename(path)] ?? '';

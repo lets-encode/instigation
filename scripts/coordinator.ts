@@ -9,11 +9,11 @@
 // request is treated purely as DATA: we read its changed-file patches and
 // blobs via the API and never check out or execute anything the fork supplies.
 //
-// Env: GH_TOKEN, BASE_REPO ("owner/repo"), BASE_REPO_ID, EVENT_NAME;
+// Env: GH_TOKEN, BASE_REPO ("owner/repo"), EVENT_NAME;
 //      for pull_request_target additionally PR_NUMBER, PR_AUTHOR (numeric
 //      account id — the canonical identity written to the tables), PR_AUTHOR_LOGIN
 //      (login, for commit messages only), HEAD_REPO ("owner/repo" of the PR head),
-//      HEAD_REPO_ID, HEAD_SHA, HEAD_REF.
+//      HEAD_SHA, HEAD_REF.
 
 import {
   parseTaskCsv,

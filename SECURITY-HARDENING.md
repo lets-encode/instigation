@@ -1,7 +1,7 @@
 # Let's Encode! — security hardening notes
 
 Threat-model review of the campaign automation (GitHub Actions), the SPA, and the
-OAuth session broker, as the code stands on 2026-07-21. Companion to `DESIGN.md`
+OAuth session broker, as the code stands on 2026-08-05. Companion to `DESIGN.md`
 (§4 caller, §6 PR contract, §11 hardening checklist).
 
 Findings are grounded in the current implementation:
@@ -103,11 +103,13 @@ require per-repo fine-grained tokens the user creates by hand. M-1 (XSS) remains
 the thing that would abuse this scope, so it matters more.
 
 ### M-1 — Stored XSS via Verovio SVG injected with `{@html}`
-**Severity: Medium (High impact, lower likelihood) · Status: new finding, fixable now**
+**Severity: Medium (High impact, lower likelihood) · Status: FIXED (2026-08-05) — DOMPurify sanitises every rendered page (SVG profile) before it reaches the `{@html}` sink**
 
-`instigation/src/routes/[campaign]/+page.svelte:1473` injects Verovio's
-rendered notation with `{@html preview.svgs[p + 1] ?? ""}`. The SVG is produced by
-`verovio.renderToSVG(...)` from `score.mei`, whose content is attacker-supplied
+`instigation/src/routes/[campaign]/+page.svelte:1604` injects Verovio's
+rendered notation with `{@html flagSvg(preview.svgs[p + 1] ?? "")}`. `flagSvg`
+is not a sanitiser — it round-trips the SVG through `DOMParser` to add a CSS
+class to flagged measures and passes everything else through. The SVG is produced
+by `verovio.renderToSVG(...)` from `score.mei`, whose content is attacker-supplied
 (merged from an accepted encoding PR). The rest of the UI is safe: the campaign
 listing renders `{repo.description}` / `{repo.full_name}` through Svelte's
 auto-escaped `{...}` interpolation, and `{@html}` appears **only** at this one sink.
@@ -116,8 +118,8 @@ auto-escaped `{...}` interpolation, and `{@html}` appears **only** at this one s
 payload (e.g. via text/annotation fields or SVG constructs Verovio does not fully
 neutralise). When the instigator or a validator opens the console preview, the
 payload runs in the SPA origin. It cannot read the token (HttpOnly), but it can call
-the broker `/proxy/**` as the victim — which, with the `repo` scope (H-3), is full
-control of the victim's repositories.
+the broker `/proxy/**` as the victim — which, with the `public_repo notifications`
+scope (H-3), is write access to every public repository the victim owns.
 
 *Why not higher:* the MEI must pass `xmllint --relaxng` against MEI-CMN 5.0, which
 does not admit arbitrary HTML/script, and Verovio escapes text output — so a working
@@ -138,9 +140,6 @@ Claiming is open (H-2) and encoding locks are exclusive (one per task,
 reaper after `stale_after_minutes`. `caller.yml` runs the reaper on an **hourly**
 cron (`0 * * * *`) plus lazily on each claim, so a script that re-claims on release
 can keep every task locked indefinitely, locking out legitimate encoders.
-
-*Note:* `DESIGN.md` §4 describes a `*/15` reaper; the shipped cron is hourly, which
-widens the squat/re-claim window. (See L-2.)
 
 *Fix:* per-account concurrent-claim caps; allowlist for claims on sensitive
 campaigns; shorten `stale_after_minutes` and/or reaper cadence; optionally an
@@ -165,16 +164,37 @@ consider that rejected PRs need not always commit an audit row. Monitor the tele
 the coordinator already emits (`[github-api-summary]`).
 
 ### M-4 — Broker CSRF rests solely on SameSite=Lax + `__Host-` prefix
-**Severity: Low–Medium · Status: new finding**
+**Severity: Low–Medium · Status: FIXED (2026-08-05) — same-origin `Origin`/`Referer` check on all state-changing routes**
 
-The broker has no CSRF token and no Origin/Referer check. State-changing proxy calls
-use POST/PUT/PATCH/DELETE, which SameSite=Lax does not send cross-site, so CSRF is
-effectively blocked today — but the entire defense is the cookie attribute plus the
-`__Host-` prefix, with no independent second layer.
+State-changing proxy calls use POST/PUT/PATCH/DELETE, which SameSite=Lax does
+not send cross-site, so CSRF was effectively blocked — but the entire defense
+was the cookie attribute plus the `__Host-` prefix, with no independent second
+layer. `app.py` now rejects any POST/PUT/PATCH/DELETE whose `Origin` (or, when
+absent, `Referer`) names a different host than the request arrived at,
+covering `/proxy/**`, `/logout` and the registry's claim/register/release
+routes. A double-submit CSRF token remains optional on top.
 
-*Fix:* add an `Origin`/`Referer` allowlist check on `/proxy/**` for unsafe methods
-(reject if `Origin` is present and not same-origin). Cheap, and it removes the
-single-control dependency. A double-submit CSRF token is optional on top.
+### M-5 — The broker `/iiif` relay is SSRF-shaped by design
+**Severity: Medium · Status: mitigated in code, residual risk accepted**
+
+`GET /iiif?url=…` (`broker/app.py`) fetches a browser-supplied URL server-side
+and returns the body — a server-side request forgery surface by construction.
+It exists because campaign sources come from arbitrary institutions' IIIF
+servers, so the host cannot be an allowlist. The mitigations in place: the
+route is login-gated and rate-limited per user; only `https` URLs are accepted;
+`resolves_to_public_address` rejects any hostname resolving to a private,
+loopback, link-local, reserved, multicast or unspecified address (every
+resolved record is checked); redirects are not followed by `requests` but
+re-entered manually, so each hop is re-validated against the same rules (max 5);
+the response is capped at 25 MB and restricted to JSON / image content types;
+no credentials are attached upstream.
+
+*Residual risk:* DNS rebinding between the `getaddrinfo` check and the actual
+connect (TOCTOU) is not closed — the check and the fetch resolve independently.
+A logged-in user can also use the relay to probe arbitrary public HTTPS hosts
+from the broker's IP. Both are bounded by the login gate and the public-address
+rule. *Hardening options:* pin the connection to the checked address, and/or
+egress-filter the broker host.
 
 ### L-1 — `node central/${{ path }}` and the awk YAML parser are base-controlled footguns
 **Severity: Low · Status: hardening**
@@ -187,21 +207,18 @@ fragile. *Fix:* validate `repo`/`ref`/`path` against strict patterns before use;
 quote expansions; treat `path` as an allowlisted filename.
 
 ### L-2 — Dead/incorrect workflow config
-**Severity: Low (informational) · Status: new finding**
+**Severity: Low (informational) · Status: FIXED (2026-08-05) — the invalid `queue:` key was removed from `caller.yml`**
 
-`caller.yml` sets `concurrency.queue: max`, which is **not a valid GitHub Actions
-concurrency key** (only `group` and `cancel-in-progress` exist) and is silently
-ignored. Separately, the reaper cron is hourly while `DESIGN.md` §4 says `*/15`.
-*Fix:* remove the `queue:` line (or implement the intended queueing another way) and
-reconcile the cron with the design (affects M-2's window).
+`caller.yml` set `concurrency.queue: max`, which is **not a valid GitHub Actions
+concurrency key** (only `group` and `cancel-in-progress` exist) and was silently
+ignored.
 
 ### L-3 — `xmllint` runs without `--nonet`
-**Severity: Low · Status: hardening**
+**Severity: Low · Status: FIXED (2026-08-05) — `--nonet` added in `scripts/mei-validate.ts`**
 
 The machine-check pipes untrusted MEI to `xmllint --relaxng`. Content is passed on
 stdin (not shell-interpolated) and default `xmllint` does not substitute external
-entities, but running without `--nonet` leaves a network/entity side-channel open.
-*Fix:* add `--nonet` (and keep entity substitution off).
+entities; `--nonet` closes the remaining network/entity side-channel.
 
 ### L-4 — The "never check out the fork" invariant is convention-only
 **Severity: Low (process) · Status: hardening**
@@ -213,17 +230,37 @@ a fork script) turns this into RCE-with-write-token. *Fix:* a CI lint / test ass
 the caller never references `head.sha`/`head.ref` in a checkout or run step, plus a
 prominent guard comment.
 
+### L-5 — Campaign owners can rewrite the task plan via the console
+**Severity: Low (owner-level) · Status: by design, validated**
+
+The console's plan editor lets a campaign owner rewrite `tracking/task.csv`
+(the `savePlan` command). The validation in `src/lib/campaign-plan.ts`
+(`checkPlan`) restricts edits to untouched tasks: any task with a claim, an
+encoding or a validation verdict must be carried over verbatim (it cannot be
+removed or rewired), dependencies must stay within the plan and acyclic, and
+the state rows accompanying a plan are generated by the same code.
+
+*Residual risk:* this is owner-level power, not a volunteer-level exposure —
+the owner already has push access to their own campaign repo and could edit the
+CSV directly. The validation protects volunteers' in-flight work from being
+orphaned by a plan edit; it does not (and cannot) protect the tables from the
+owner.
+
 ---
 
 ## Suggested order of work
 
 1. **M-1** (sanitise the Verovio `{@html}` sink) — cheap, closes the one live XSS
-   sink, and blunts the H-3 blast radius before the auth migration lands.
+   sink, and blunts what remains of the H-3 blast radius.
 2. **M-4** (Origin/Referer check on the proxy) — a few lines of defense-in-depth.
 3. **L-2 / L-3 / L-1 / L-4** — small workflow-hygiene fixes; L-2 also feeds M-2.
 4. **M-2 / M-3** (claim caps, cheap early rejects) — needed before any adversarial
    public exposure.
 5. **H-2** (allowlist enforcement / instigator approval) — for campaigns that need
    integrity; the mechanism is designed, not built.
-6. **H-1** (pin central ref) and **H-3** (fine-grained auth) — already planned; H-3
-   depends on the mei-friend migration and is a later step.
+6. **H-1** (pin central ref) — already planned. **H-3** is mitigated: the scope is
+   narrowed to `public_repo notifications`, no auth migration is pending, and
+   `public_repo` is the narrowest classic scope that permits the fork/create flow
+   (see H-3); what remains of it is addressed through M-1.
+7. **M-5** (IIIF relay) and **L-5** (plan editor) — accepted with their in-code
+   mitigations; revisit only if the residual risks listed there change.

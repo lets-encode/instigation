@@ -104,6 +104,24 @@ Session(app)
 
 limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
 
+
+# CSRF guard: state-changing requests must originate from this same origin.
+# The SPA and broker share an origin, so a browser's Origin (or, failing that,
+# Referer) header on a POST/PUT/PATCH/DELETE must name the host this request
+# arrived at. Requests carrying neither header (non-browser clients) pass —
+# browsers always send Origin on cross-site state-changing requests. This
+# backs up the SameSite=Lax session cookie rather than replacing it.
+@app.before_request
+def reject_cross_origin_writes():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    source = request.headers.get("Origin") or request.headers.get("Referer")
+    if not source:
+        return None
+    if urlsplit(source).netloc != request.host:
+        return jsonify(error="cross-origin request rejected"), 403
+    return None
+
 # The campaign name registry (see registry.py): the name → (forge, repo id)
 # mapping and the claim/register lifecycle around it. It lives in the broker
 # because claiming and registering require the GitHub session; the /registry

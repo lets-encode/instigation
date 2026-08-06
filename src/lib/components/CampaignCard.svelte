@@ -1,16 +1,15 @@
 <!--
-  One campaign on the dashboard: the preview tile (dashboard grid) or, with
-  `dense`, the compact card of the all-campaigns page. The whole card links to
+  One campaign in the landing grid: a preview tile. The whole card links to
   the campaign console; the claim button carries a ?claim=next intent so the
   console claims the first open task on arrival.
 -->
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { elapsed, initialOf } from "$lib/campaign-board.ts";
+  import { handle } from "$lib/campaign-graph.ts";
   import type { CampaignStats } from "$lib/campaign-stats.ts";
 
-  let { stats, dense = false }: { stats: CampaignStats; dense?: boolean } =
-    $props();
+  let { stats }: { stats: CampaignStats } = $props();
 
   const pct = $derived(
     stats.total ? Math.round((stats.done / stats.total) * 100) : 0,
@@ -27,8 +26,7 @@
     if (stats.createdAt) return `created ${elapsed(stats.createdAt)} ago`;
     return "no activity yet";
   });
-  const handleOf = (id: string) => stats.logins[id] || id;
-  const initialOf = (id: string) => handleOf(id)[0]?.toUpperCase() ?? "?";
+  const handleOf = (id: string) => handle(stats.logins, id);
   // Avatar hues cycle through the brand-adjacent set the mocks use.
   const AVATAR_HUES = ["#3b76e0", "#e07b39", "#8f5fd0", "#1a9e6b"];
 
@@ -42,7 +40,6 @@
 
 <div
   class="tile"
-  class:dense
   role="link"
   tabindex="0"
   onclick={open}
@@ -50,63 +47,45 @@
     if (e.key === "Enter") open();
   }}
 >
-  {#if !dense}
-    <div class="strip">
-      {#if stats.preview}
-        <img src={stats.preview.url} alt="" loading="lazy" />
-        <span class="strip-cap mono">facsimile · p. {stats.preview.page}</span>
-      {:else}
-        <span class="strip-cap mono">no preview yet</span>
-      {/if}
-    </div>
-  {/if}
+  <div class="strip">
+    {#if stats.preview}
+      <img src={stats.preview.url} alt="" loading="lazy" />
+      <span class="strip-cap mono">facsimile · p. {stats.preview.page}</span>
+    {:else}
+      <span class="strip-cap mono">no preview yet</span>
+    {/if}
+  </div>
   <div class="body">
     <div class="titleline">
       <span class="title">{stats.title}</span>
       {#if isNew}
         <span class="newbadge">NEW</span>
       {/if}
-      {#if !dense && stats.composer}
+      {#if stats.composer}
         <span class="composer">{stats.composer}</span>
       {/if}
     </div>
     <div class="byline">
-      {#if dense}
-        {#if stats.composer}{stats.composer} · {/if}{#if stats.pages}{stats.pages} pages · {/if}by
-        <strong>{stats.owner}</strong>
-      {:else}
-        started by <strong>{stats.owner}</strong>{#if stats.pages}
-          · {stats.pages} pages{/if}
-      {/if}
+      started by <strong>{stats.owner}</strong>{#if stats.pages}
+        · {stats.pages} pages{/if}
     </div>
     <div class="progress">
       <div class="bar"><div style={`width:${pct}%`}></div></div>
-      <span class="count"
-        >{dense
-          ? `${stats.done}/${stats.total}`
-          : `${stats.done} of ${stats.total} tasks done`}</span
-      >
+      <span class="count">{stats.done} of {stats.total} tasks done</span>
     </div>
     <div class="foot">
       {#if stats.ready > 0 && stats.nearlyDone}
-        <span class="pill pill-green"
-          >{dense
-            ? `${stats.ready} ready · nearly done`
-            : `Nearly done · ${stats.ready} to claim`}</span
-        >
+        <span class="pill pill-green">Nearly done · {stats.ready} to claim</span>
       {:else if stats.ready > 0}
-        <span class="pill pill-blue"
-          >{stats.ready}
-          {dense ? "ready" : "ready to claim"}</span
-        >
+        <span class="pill pill-blue">{stats.ready} ready to claim</span>
       {:else}
         <span class="pill pill-grey">no open tasks</span>
       {/if}
-      {#if !dense && stats.contributorIds.length > 0}
+      {#if stats.contributorIds.length > 0}
         <span class="avatars">
           {#each stats.contributorIds.slice(0, 3) as id, i (id)}
             <span class="avatar" style={`background:${AVATAR_HUES[i % AVATAR_HUES.length]}`}
-              title={handleOf(id)}>{initialOf(id)}</span
+              title={handleOf(id)}>{initialOf(handleOf(id))}</span
             >
           {/each}
         </span>
@@ -118,7 +97,7 @@
           class="claim"
           href={`/${stats.name}?claim=next`}
           onclick={(e) => e.stopPropagation()}
-          >{dense ? "Claim →" : "Claim a task →"}</a
+          >Claim a task →</a
         >
       {:else}
         <span class="claim off">—</span>
@@ -146,9 +125,6 @@
   .tile:hover {
     border-color: var(--info-line);
     box-shadow: 0 6px 18px rgba(31, 36, 51, 0.1);
-  }
-  .tile.dense {
-    border-radius: 12px;
   }
   .strip {
     position: relative;
@@ -196,9 +172,6 @@
     gap: 8px;
     flex: 1;
   }
-  .dense .body {
-    padding: 14px 16px;
-  }
   .titleline {
     display: flex;
     align-items: baseline;
@@ -211,9 +184,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .dense .title {
-    font-size: 15px;
   }
   .newbadge {
     flex: none;
@@ -258,9 +228,6 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--ink-soft);
-  }
-  .dense .count {
-    font-size: 11.5px;
   }
   .foot {
     display: flex;
@@ -329,10 +296,6 @@
     background: var(--accent-btn);
     color: #fff;
     text-decoration: none;
-  }
-  .dense .claim {
-    font-size: 12px;
-    padding: 5px 12px;
   }
   .claim:hover {
     background: var(--accent-btn-hover);

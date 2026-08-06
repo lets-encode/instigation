@@ -270,8 +270,15 @@ test('buildStateCsv: required_validations controls the validate_status columns',
 });
 
 test('configToYaml: YAML-sensitive characters are escaped', () => {
-	const config = build({ title: 'A "quoted" \\ title\nsecond line' });
+	const config = build({
+		title: 'A "quoted" \\ title\nsecond line',
+		pieces: [encoded('piece-01')]
+	});
 	assert.ok(configToYaml(config).includes('  title: "A \\"quoted\\" \\\\ title\\nsecond line"\n'));
+});
+
+test('configToYaml: an unsupported config is rejected rather than serialised', () => {
+	assert.throws(() => configToYaml(build({ pieces: [] })), /at least one piece/);
 });
 
 test('assertSupported: rejects unsupported schema, strategy and piece shapes', () => {

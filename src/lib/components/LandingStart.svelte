@@ -2,9 +2,9 @@
   The landing card, visually carried over from the redirector's landing page:
   wordmark, heading, a pill-shaped name field with the host as its prefix, and
   a live availability notice. The check asks the registry, which is public, so
-  it works logged out. Create forwards to /c?slug=<name> — the onboarding
-  wizard, name prefilled and still editable (hooks.ts reroutes /c to the home
-  route) — and a name that is already a campaign links to it instead.
+  it works logged out. Create forwards to /new?slug=<name> — the onboarding
+  wizard, name prefilled and still editable — and a name that is already a
+  campaign links to it instead.
 -->
 <script lang="ts">
   import { goto } from "$app/navigation";
@@ -97,7 +97,7 @@
   function submit(e: SubmitEvent) {
     e.preventDefault();
     if (!canCreate) return;
-    goto(`/c?slug=${encodeURIComponent(name.trim())}`);
+    goto(`/new?slug=${encodeURIComponent(name.trim())}`);
   }
 </script>
 

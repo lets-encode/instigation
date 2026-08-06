@@ -93,7 +93,7 @@ export interface CampaignFields {
 	description?: string;
 	language?: string;
 	license?: string;
-	/** 'facsimile' | 'mei-template' | 'mixed' — what the source itself is. */
+	/** 'facsimile' | 'mei-template' | 'physical-only' — what the source itself is. */
 	sourceKind?: string;
 	sourceHeader?: { title?: string; composer?: string; publisher?: string; date?: string };
 	images?: string[];
@@ -212,8 +212,13 @@ export function buildCampaignConfig(
 	};
 }
 
-/** Serialise a schema-v3 config object to the canonical config.yaml text. */
+/**
+ * Serialise a schema-v3 config object to the canonical config.yaml text.
+ * Rejects unsupported configs (assertSupported), so nothing unsupported is
+ * ever committed as a campaign's config.
+ */
 export function configToYaml(config: CampaignConfig): string {
+	assertSupported(config);
 	const { campaign: c, source: s, validation: v, locking: l } = config;
 	const images = s.images.length
 		? s.images.map((image) => `    - ${yamlStr(image)}\n`).join('')

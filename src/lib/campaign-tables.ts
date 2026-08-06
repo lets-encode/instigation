@@ -1,8 +1,10 @@
-// Tracking-table (de)serialisation for the five v2 tables (task / state / lock
+// Tracking-table (de)serialisation for the five tables (task / state / lock
 // / history / comment), all keyed by (task_id, subtask_id): a row with an EMPTY
 // subtask_id addresses the whole task (the unit of encoding), a row with a
 // subtask_id addresses one validation portion. Pure functions: CSV text in,
-// plain objects out (and back). No GitHub, no filesystem.
+// plain objects out (and back) — plus the scalar readers for config.yaml and
+// the id → login resolution both the console and the stats layer use. No
+// GitHub client of its own, no filesystem.
 //
 // Table layouts are defined in DESIGN.md §5. The five base state columns are
 // fixed; everything after them is a validation cell (validate_status_1…n), so
@@ -242,4 +244,65 @@ export function findRow<T extends { task_id: string; subtask_id: string }>(
 /** True if a validate_status cell holds a final outcome (pass/fail) rather than being open. */
 export function isFinalValidation(cell: string): boolean {
 	return /^(pass|fail)\|[^|]+\|[^|]+$/.test(cell);
+}
+
+/**
+ * A top-level-or-nested scalar from config.yaml by key, without a YAML parser:
+ * the first `key: value` line wins. Double-quoted values decode via JSON
+ * string syntax (how configToYaml writes them); bare values lose trailing
+ * comments. '' when absent or malformed.
+ */
+export function configString(yaml: string | null, key: string): string {
+	const value = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(yaml ?? '')?.[1] ?? '';
+	if (value.startsWith('"')) {
+		try {
+			const parsed = JSON.parse(value);
+			return typeof parsed === 'string' ? parsed : '';
+		} catch {
+			return '';
+		}
+	}
+	return value.replace(/\s+#.*$/, '').trim();
+}
+
+/** A positive-integer scalar from config.yaml by key, or `fallback`. */
+export function configNumber(yaml: string | null, key: string, fallback: number): number {
+	const n = Number(new RegExp(`^\\s*${key}:\\s*(\\d+)`, 'm').exec(yaml ?? '')?.[1]);
+	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Resolve every numeric account id the tables mention (encoders, lock
+ * holders, history actors, comment authors, verdict authors) to its current
+ * login via `getUserLogin` (memoised in the forge client). An id that can't
+ * be resolved is omitted, so the UI falls back to showing the raw id.
+ */
+export async function resolveLogins(
+	getUserLogin: (id: number) => Promise<string | null>,
+	d: { rows: StateRow[]; locks: LockRow[]; history: HistoryRow[]; comments: CommentRow[] }
+): Promise<Record<string, string>> {
+	const ids = new Set<string>();
+	for (const r of d.rows) if (r.encoder) ids.add(r.encoder);
+	for (const l of d.locks) if (l.user_id) ids.add(l.user_id);
+	for (const h of d.history) if (h.user_id) ids.add(h.user_id);
+	for (const c of d.comments) if (c.author_id) ids.add(c.author_id);
+	for (const r of d.rows) {
+		for (const cell of Object.values(r)) {
+			if (/^(pass|fail)\|/.test(cell)) ids.add(cell.split('|')[1]);
+		}
+	}
+	const logins: Record<string, string> = {};
+	await Promise.all(
+		[...ids].map(async (id) => {
+			const n = Number(id);
+			if (!Number.isInteger(n) || n <= 0) return; // not a numeric id: leave as-is
+			try {
+				const login = await getUserLogin(n);
+				if (login) logins[id] = login;
+			} catch {
+				// A failed lookup just falls back to the id in the UI.
+			}
+		})
+	);
+	return logins;
 }

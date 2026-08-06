@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { elapsed } from "$lib/campaign-board.ts";
+  import { handle } from "$lib/campaign-graph.ts";
   import type { MyTask } from "$lib/campaign-stats.ts";
 
   let { tasks, loading }: { tasks: MyTask[]; loading: boolean } = $props();
@@ -23,7 +24,7 @@
   );
   const taskHref = (t: MyTask) =>
     `/${t.campaignSlug}?task=${encodeURIComponent(t.task)}`;
-  const handleOf = (t: MyTask, id: string) => t.logins[id] || id;
+  const handleOf = (t: MyTask, id: string) => handle(t.logins, id);
   const sub = (t: MyTask): string => {
     if (t.group === "encoding")
       return `${t.campaignSlug} · encoding · claimed ${elapsed(t.claimedAt)} ago`;

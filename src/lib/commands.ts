@@ -26,7 +26,10 @@ import {
 	serializeTaskCsv,
 	appendComments,
 	appendHistory,
-	findRow
+	findRow,
+	configString,
+	configNumber,
+	resolveLogins
 } from './campaign-tables.ts';
 import { checkPlan } from './campaign-plan.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow } from './campaign-tables.ts';
@@ -220,7 +223,18 @@ async function waitForPrProcessed(
 	let delayMs = 2_000;
 	while (Date.now() < deadline) {
 		await sleep(delayMs);
-		if ((await f.getPullRequestState(owner, repo, pr.number)) === 'closed') {
+		// The PR-state read and the run-watch tick are independent reads — one
+		// round trip per iteration instead of two.
+		const [state] = await Promise.all([
+			f.getPullRequestState(owner, repo, pr.number),
+			watch
+				?.tick()
+				.catch((e) => {
+					console.warn('[pr] stopped watching the Actions run:', (e as Error).message);
+					watch = null;
+				})
+		]);
+		if (state === 'closed') {
 			const verdict = await f.getLastIssueComment(owner, repo, pr.number);
 			console.log('[pr] PR', pr.number, 'processed; verdict:', verdict);
 			if (pr.cleanup !== 'accepted' || verdict?.startsWith('✅')) {
@@ -228,21 +242,13 @@ async function waitForPrProcessed(
 			}
 			return { state: 'closed', verdict };
 		}
-		if (watch) {
-			try {
-				await watch.tick();
-			} catch (e) {
-				console.warn('[pr] stopped watching the Actions run:', (e as Error).message);
-				watch = null;
-			}
-			// A failed run never closes the PR — report the failure rather than
-			// letting the wait time out as if the run were merely slow.
-			if (watch?.state.phase === 'completed' && watch.state.run.conclusion !== 'success') {
-				console.log('[pr] Actions run for PR', pr.number, 'failed:', watch.state.run.conclusion);
-				return { state: 'run_failed', runUrl: watch.state.run.html_url };
-			}
+		// A failed run never closes the PR — report the failure rather than
+		// letting the wait time out as if the run were merely slow.
+		if (watch?.state.phase === 'completed' && watch.state.run.conclusion !== 'success') {
+			console.log('[pr] Actions run for PR', pr.number, 'failed:', watch.state.run.conclusion);
+			return { state: 'run_failed', runUrl: watch.state.run.html_url };
 		}
-		delayMs = Math.min(5_000, Math.ceil(delayMs * 1.5));
+		delayMs = Math.min(8_000, Math.ceil(delayMs * 1.5));
 	}
 	console.log('[pr] PR', pr.number, 'not processed within 90s (still in flight)');
 	return { state: 'timeout' };
@@ -290,20 +296,6 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
 		return { error: `PR #${prNumber} closed with an unrecognised coordinator verdict.`, prUrl };
 	}
 	return { ok: true, prUrl, message: result.verdict };
-}
-
-function stringFromConfig(configText: string | null, key: string): string {
-	const value = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(configText ?? '')?.[1];
-	if (!value) return '';
-	if (value.startsWith('"')) {
-		try {
-			const parsed = JSON.parse(value);
-			return typeof parsed === 'string' ? parsed : '';
-		} catch {
-			return '';
-		}
-	}
-	return value.replace(/\s+#.*$/, '').trim();
 }
 
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
@@ -369,43 +361,6 @@ export interface CampaignTables {
 	logins: Record<string, string>;
 }
 
-// Resolve every distinct user id referenced by the tables to its current login,
-// for display. The tables key people by their stable numeric id; a lookup is
-// cheap and memoised (see getUserLogin). An id that can't be resolved is omitted
-// so the UI falls back to showing the raw id.
-async function resolveLogins(
-	f: ForgeClient,
-	rows: StateRow[],
-	locks: LockRow[],
-	history: HistoryRow[],
-	comments: CommentRow[]
-): Promise<Record<string, string>> {
-	const ids = new Set<string>();
-	for (const r of rows) if (r.encoder) ids.add(r.encoder);
-	for (const l of locks) if (l.user_id) ids.add(l.user_id);
-	for (const h of history) if (h.user_id) ids.add(h.user_id);
-	for (const c of comments) if (c.author_id) ids.add(c.author_id);
-	for (const r of rows) {
-		for (const cell of Object.values(r)) {
-			if (/^(pass|fail)\|/.test(cell)) ids.add(cell.split('|')[1]);
-		}
-	}
-	const logins: Record<string, string> = {};
-	await Promise.all(
-		[...ids].map(async (id) => {
-			const n = Number(id);
-			if (!Number.isInteger(n)) return; // not a numeric id (legacy/manual row): leave as-is
-			try {
-				const login = await f.getUserLogin(n);
-				if (login) logins[id] = login;
-			} catch {
-				// A failed lookup just falls back to the id in the UI.
-			}
-		})
-	);
-	return logins;
-}
-
 const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 	id: 'campaign.readTables',
 	version: 1,
@@ -421,7 +376,6 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			f.getRepoFile(owner, repo, 'config.yaml'),
 			f.getRepoAccess(owner, repo)
 		]);
-		const passThreshold = configYaml?.match(/^\s*pass_threshold:\s*(\d+)/m);
 		if (taskCsv == null || stateCsv == null || lockCsv == null) {
 			return {
 				notInitialised: true,
@@ -454,11 +408,16 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			locks,
 			history,
 			comments,
-			title: stringFromConfig(configYaml, 'title'),
-			description: stringFromConfig(configYaml, 'description'),
-			license: stringFromConfig(configYaml, 'license'),
-			passThreshold: passThreshold ? Math.max(1, Number(passThreshold[1])) : 1,
-			logins: await resolveLogins(f, state.rows, locks, history, comments)
+			title: configString(configYaml, 'title'),
+			description: configString(configYaml, 'description'),
+			license: configString(configYaml, 'license'),
+			passThreshold: configNumber(configYaml, 'pass_threshold', 1),
+			logins: await resolveLogins((n) => f.getUserLogin(n), {
+				rows: state.rows,
+				locks,
+				history,
+				comments
+			})
 		};
 	}
 };

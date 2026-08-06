@@ -9,8 +9,7 @@
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
-  import { ProgressLog } from "$lib/progress-log.svelte.ts";
-  import { createForge } from "$lib/forge/index.ts";
+  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
 
@@ -25,7 +24,7 @@
   const repo = $derived(resolved?.repo ?? "");
   const repoId = $derived(resolved?.repoId ?? 0);
   // The acting user's stable numeric id; login is display-only.
-  const viewer = $derived(auth.user?.id != null ? String(auth.user.id) : "");
+  const viewer = $derived(viewerId());
 
   // Editor-side zone: the box, the label override (null = automatic), the
   // computed label, and the break flags. The page break is derived from
@@ -61,9 +60,7 @@
   // The zone whose controls show: the hovered one, else the pinned selection.
   const active = $derived(hovered ?? selected);
 
-  let busy = $state(false);
-  const busyLog = new ProgressLog();
-  let result = $state<Result | null>(null);
+  const runner = new CommandRunner();
 
   // Alternating system tint / accent: even systems blue, odd green.
   const SYS_ACCENT = ["#3056d3", "#149650"];
@@ -111,26 +108,14 @@
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
 
-  const ctx = (f: ForgeClient): CommandContext => ({
-    forge: f,
-    repoId,
-    owner,
-    repo,
-    viewer,
-    viewerLogin: auth.user?.login ?? "",
-    progress: (u) => {
-      if (u.step) busyLog.step(u.step);
-      if (u.detail) busyLog.detail(u.detail);
-    },
-  });
-
-  const readForge = () => forge() ?? createForge("");
+  const ctx = (f: ForgeClient): CommandContext =>
+    runner.context(f, { repoId, owner, repo });
 
   // Login for the reviewer holding the validation lock (id → login, for display).
   let lockUserLogin = $state("");
   $effect(() => {
     const id = Number(data?.validation?.lockUser);
-    if (!Number.isInteger(id)) {
+    if (!Number.isInteger(id) || id <= 0) {
       lockUserLogin = data?.validation?.lockUser ?? "";
       return;
     }
@@ -224,21 +209,18 @@
   ) {
     const f = forge();
     if (!f) return;
-    busy = true;
-    busyLog.clear();
-    try {
-      result = await command(ctx(f));
-      if (opts.overviewOnSuccess && result.ok && !result.warn) {
-        await goto(`/${campaign}`);
-        return;
-      }
-      busyLog.step("Reloading…");
-      data = null;
-      await load();
-    } finally {
-      busyLog.done();
-      busy = false;
-    }
+    await runner.run(
+      () => command(ctx(f)),
+      async (result) => {
+        if (opts.overviewOnSuccess && result.ok && !result.warn) {
+          await goto(`/${campaign}`);
+          return;
+        }
+        runner.log.step("Reloading…");
+        data = null;
+        await load();
+      },
+    );
   }
 
   const claim = () =>
@@ -254,7 +236,7 @@
   $effect(() => {
     if (
       data &&
-      !busy &&
+      !runner.busy &&
       autoClaimedFor !== taskId &&
       data.status === "encoding_required" &&
       !data.holdsLock
@@ -371,11 +353,23 @@
     historyIndex = 0;
   }
 
-  // Record the current pages as a new entry, dropping any redo tail.
+  // Record the current pages as a new entry, dropping any redo tail. The
+  // history holds full snapshots, so it is capped: the oldest entries fall
+  // off once the limit is reached.
+  const HISTORY_LIMIT = 100;
   function commit() {
-    history = history.slice(0, historyIndex + 1);
+    history = history.slice(Math.max(0, historyIndex + 2 - HISTORY_LIMIT), historyIndex + 1);
     history.push(clonePages(pages));
     historyIndex = history.length - 1;
+  }
+
+  // After a geometry change: re-sort the page into reading order, keep the
+  // same zone selected across the re-sort (its index may change) so further
+  // edits need no extra click, then record the step.
+  function commitGeometry(p: number, zone: EditZone) {
+    resort(p);
+    selected = { p, z: pages[p].zones.indexOf(zone) };
+    commit();
   }
 
   const canUndo = $derived(canEdit && historyIndex > 0);
@@ -402,12 +396,12 @@
   // break implies a system break, so on a page's first measure the system flag
   // is fixed on and the button is disabled. The score's first measure always
   // opens the first movement, so its section flag is fixed on too.
-  const pbAt = (p: number, z: number) => z === 0;
-  const sbActive = (p: number, z: number) => pbAt(p, z) || pages[p].zones[z].sb;
+  const pbAt = (z: number) => z === 0;
+  const sbActive = (p: number, z: number) => pbAt(z) || pages[p].zones[z].sb;
   const sectionLocked = (p: number, z: number) => p === 0 && z === 0;
 
   function toggleSb(p: number, z: number) {
-    if (!canEdit || pbAt(p, z)) return;
+    if (!canEdit || pbAt(z)) return;
     pages[p].zones[z].sb = !pages[p].zones[z].sb;
     commit();
   }
@@ -476,20 +470,16 @@
     };
   }
 
-  function zonePointerDown(e: PointerEvent, p: number, z: number) {
-    selected = { p, z };
-    if (!canEdit) return;
-    e.stopPropagation();
-    const { x, y } = svgXY(e, p);
-    drag = { kind: "move", p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false };
-  }
-
-  function handlePointerDown(e: PointerEvent, p: number, z: number) {
+  // Start a move (from the zone body) or resize (from its handle) drag. A
+  // click on the zone body selects it even read-only; the handle only exists
+  // in edit mode.
+  function startZoneDrag(e: PointerEvent, p: number, z: number, kind: "move" | "resize") {
+    if (kind === "move") selected = { p, z };
     if (!canEdit) return;
     e.stopPropagation();
     selected = { p, z };
     const { x, y } = svgXY(e, p);
-    drag = { kind: "resize", p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false };
+    drag = { kind, p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false };
   }
 
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -514,10 +504,7 @@
     box.uly = Math.max(0, Math.min(pg.height - h, box.uly + dy));
     box.lrx = box.ulx + w;
     box.lry = box.uly + h;
-    const zone = pages[p].zones[z];
-    resort(p);
-    selected = { p, z: pages[p].zones.indexOf(zone) };
-    commit();
+    commitGeometry(p, pages[p].zones[z]);
   }
 
   function handleKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -531,10 +518,7 @@
     if (e.key === "ArrowRight") box.lrx = Math.min(pg.width, box.lrx + step);
     if (e.key === "ArrowUp") box.lry = Math.max(box.uly + 5, box.lry - step);
     if (e.key === "ArrowDown") box.lry = Math.min(pg.height, box.lry + step);
-    const zone = pages[p].zones[z];
-    resort(p);
-    selected = { p, z: pages[p].zones.indexOf(zone) };
-    commit();
+    commitGeometry(p, pages[p].zones[z]);
   }
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
@@ -590,12 +574,7 @@
       }
     }
     if (kind !== "draw" && !moved) return; // plain select / handle click, no move
-    // Keep the same zone selected across the re-sort (its index may change), so
-    // its resize handle stays and further edits need no extra click.
-    const zone = pages[p].zones[z];
-    resort(p);
-    selected = { p, z: pages[p].zones.indexOf(zone) };
-    commit();
+    commitGeometry(p, pages[p].zones[z]);
   }
 
   function deleteSelected() {
@@ -678,8 +657,8 @@
   // beginning, ↵ system beginning (the page break already implies a system).
   const markers = (p: number, z: number) =>
     (startsMovement(p, z) ? "§" : "") +
-    (pbAt(p, z) ? "⇱" : "") +
-    (!pbAt(p, z) && pages[p].zones[z].sb ? "↵" : "");
+    (pbAt(z) ? "⇱" : "") +
+    (!pbAt(z) && pages[p].zones[z].sb ? "↵" : "");
   const labelText = (p: number, z: number) => {
     const m = markers(p, z);
     return (m ? m + " " : "") + pages[p].zones[z].label;
@@ -693,8 +672,8 @@
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
 
-{#if busy}
-  <LoadingOverlay log={busyLog} />
+{#if runner.busy}
+  <LoadingOverlay log={runner.log} />
 {/if}
 
 {#if notFound}
@@ -750,11 +729,11 @@
               Awaiting validation
             {/if}
           </span>
-          <button type="button" onclick={() => claimValidation()} disabled={busy || !canClaimValidation}
+          <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
             title="Reserve this subtask for validation. Encoders cannot validate their own work.">Claim</button>
-          <button type="button" class="vpass" onclick={() => validate("pass")} disabled={busy || !holdsValidation}
+          <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation}
             title="Record a passing verdict.">Pass</button>
-          <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={busy || !holdsValidation}
+          <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation}
             title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
           {#if failOpen && holdsValidation}
             <input
@@ -769,7 +748,7 @@
               type="button"
               class="vfail"
               onclick={() => validate("fail")}
-              disabled={busy || !failText.trim()}
+              disabled={runner.busy || !failText.trim()}
               title="Submit the failing verdict with this comment."
               >Submit fail</button
             >
@@ -781,7 +760,7 @@
         type="button"
         class="primary tb-submit tb-div"
         onclick={() => submit()}
-        disabled={busy || !canEdit}
+        disabled={runner.busy || !canEdit}
         title="Submit the corrected measures, breaks and movements for validation"
       >
         Submit corrections
@@ -811,15 +790,15 @@
     </div>
 
     <div class="wrap">
-    {#if result && result.error}
+    {#if runner.result && runner.result.error}
       <div class="banner err">
-        {result.error}
-        {#if result.prUrl}<a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+        {runner.result.error}
+        {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
       </div>
-    {:else if result && result.ok}
-      <div class="banner {result.warn ? 'warn' : 'ok'}">
-        {result.message}
-        {#if result.prUrl}<a href={result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+    {:else if runner.result && runner.result.ok}
+      <div class="banner {runner.result.warn ? 'warn' : 'ok'}">
+        {runner.result.message}
+        {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
       </div>
     {/if}
 
@@ -831,7 +810,7 @@
           This task has been submitted and is awaiting validation — the view is read-only.
         {:else if !data.holdsLock}
           Claim this task to edit.
-          <button type="button" onclick={() => claim()} disabled={busy}>Claim task</button>
+          <button type="button" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
         {/if}
       </div>
     {/if}
@@ -878,7 +857,7 @@
                   y={zone.box.uly}
                   width={zone.box.lrx - zone.box.ulx}
                   height={zone.box.lry - zone.box.uly}
-                  onpointerdown={(e) => zonePointerDown(e, p, z)}
+                  onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
                   onpointerenter={() => hoverEnter(p, z)}
                   onpointerleave={hoverLeave}
                   onkeydown={(e) => zoneKeydown(e, p, z)}
@@ -903,7 +882,7 @@
                     cx={zone.box.lrx}
                     cy={zone.box.lry}
                     r={Math.max(8, pg.width / 120)}
-                    onpointerdown={(e) => handlePointerDown(e, p, z)}
+                    onpointerdown={(e) => startZoneDrag(e, p, z, "resize")}
                     onkeydown={(e) => handleKeydown(e, p, z)}
                   />
                 {/if}
@@ -942,9 +921,9 @@
                     type="button"
                     class:on={sbActive(p, z)}
                     onclick={() => toggleSb(p, z)}
-                    disabled={pbAt(p, z)}
+                    disabled={pbAt(z)}
                     aria-pressed={sbActive(p, z)}
-                    title={pbAt(p, z)
+                    title={pbAt(z)
                       ? "System beginning — implied by the page break on a page's first measure"
                       : "System beginning (sb)"}>↵</button>
                   <button

@@ -25,6 +25,7 @@
 
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
   import { releaseClaim } from "$lib/campaign-resolve.ts";
@@ -156,6 +157,7 @@
     // Give the name back so it is free again straight away. Best-effort: an
     // unreleased hold runs out on its own.
     if (claim) void releaseClaim(claim.name, claim.token);
+    void goto("/");
   }
 </script>
 

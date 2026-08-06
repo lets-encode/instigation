@@ -13,10 +13,39 @@ notification muting.
 - `POST /logout` — revokes the token at GitHub and clears the session.
 - `/proxy/<url>` — relays the SPA's GitHub API calls (`api.github.com` only),
   attaching the session's token server-side. Login-gated and rate-limited.
+- `GET /iiif?url=…` — relays IIIF manifests and canvas images for the
+  onboarding wizard. Campaign sources come from arbitrary institutions, which
+  rules out both a CSP host allowlist and direct browser fetches (many IIIF
+  servers send no CORS headers); relaying same-origin solves both. Login-gated
+  and rate-limited; no credentials are attached upstream.
 - `/registry/…` — the campaign name registry blueprint: the name → (forge,
   repo id) mapping behind every campaign address, with the claim/register
   lifecycle around it. Claiming and registering are login-gated; resolving a
   name is public. Routes, lifecycle and admin: `registry.py`.
+
+## The registry's lifecycle
+
+A registry row is in one of three statuses: `pending` (a claim held for a
+setup in progress), `active` (a registered campaign) or `tombstoned` (a
+retired name that stays occupied). A name is taken in two steps because a
+campaign's setup takes a while and the name must be safe for the whole of it:
+`POST /registry/claim` holds it against a claim token from the moment the
+organiser picks it, and `POST /registry/register` presents that token when the
+setup is finished. Registration happens at the *end* of setup, not when the
+repository is created — a repository is not yet a campaign, and an abandoned
+setup must never be published as one. A claim is a short lease: one that
+nobody promotes occupies nothing once it has run out (reads report the name
+free and the next write drops the row), so there is no sweeper.
+
+The admin surface is two routes: `GET /registry/admin/slugs` (list everything)
+and `DELETE /registry/admin/slugs/<name>` (tombstone a name; the row is kept,
+so the name stays occupied).
+
+**`/registry/admin/` must be protected by institutional auth at the reverse
+proxy** before requests reach the broker (see `deploy/apache.conf`). The
+built-in `ADMIN_TOKEN` bearer check is defence in depth and a dev/local
+fallback, not the primary control: one shared secret, no rotation, no audit
+trail. With `ADMIN_TOKEN` unset, admin routes answer 503 (fail closed).
 
 Sessions are files under `instance/sessions` (gitignored, `0700`), shared
 between gunicorn workers on the same host; set `SESSION_DIR` to override. The
@@ -77,9 +106,10 @@ gunicorn -c gunicorn_config.py wsgi:app
 ```
 
 `wsgi.py` is a thin shim re-exporting `app`, so service managers can point at the
-conventional `wsgi:app` target; `gunicorn_config.py` holds the bind address and
-worker settings. Only the proxy needs to reach the bind address — keep it on
-loopback, or firewalled to the proxy host.
+conventional `wsgi:app` target; `gunicorn_config.py` is an empty file the
+deployer fills in with the bind address and worker settings. Only the proxy
+needs to reach the bind address — keep it on loopback, or firewalled to the
+proxy host.
 
 ## Test
 
@@ -110,8 +140,10 @@ they are reported separately from GitHub primary or secondary limits.
   front is fine.
 - **Trust the forwarded client IP** — behind a proxy every request appears to
   come from that proxy, which would turn the rate limits into one bucket shared
-  by all users. Wrap the app in `ProxyFix` (`x_for` set to the number of proxies
-  in front) and confirm `request.remote_addr` resolves to a real client.
+  by all users. `ProxyFix` is **not wired in the code**: wrapping the app in it
+  (`x_for` set to the number of proxies in front) is a deployer TODO, and until
+  it is done the per-client rate limits collapse into that single shared
+  bucket. Confirm `request.remote_addr` resolves to a real client.
 - **Nothing may rewrite the session cookie** — the production cookie name uses
   the `__Host-` prefix, which browsers reject outright unless the cookie is
   `Secure`, scoped to `Path=/`, and carries no `Domain` attribute. A proxy that

@@ -119,13 +119,15 @@ export async function registerCampaign(
 /**
  * Resolve a campaign name to its repo via the registry (name → stable repo id →
  * current owner/name). Returns null when no campaign of that name can be found —
- * including when the registry is unreachable.
+ * including when the registry is unreachable. A caller that has already looked
+ * the name up passes its `SlugInfo` to save the second registry round trip.
  */
 export async function resolveCampaign(
 	f: ForgeClient,
-	campaign: string
+	campaign: string,
+	info?: SlugInfo | null
 ): Promise<ResolvedCampaign | null> {
-	const info = await lookupSlug(campaign);
+	if (info === undefined) info = await lookupSlug(campaign);
 	// Only resolve a registry hit whose forge matches this deployment's — a repo
 	// id is only meaningful on its own forge, so a foreign-forge entry is not
 	// reachable here (and its id must never be fed to this forge's client). The
