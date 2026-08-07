@@ -23,10 +23,12 @@
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
+  import { readDockLayout } from "$lib/preview-dock.ts";
+  import DockPanel from "$lib/components/DockPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
-  import PiecePreview from "$lib/components/PiecePreview.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
-  import TaskDetail from "$lib/components/TaskDetail.svelte";
+  import PreviewDock from "$lib/components/PreviewDock.svelte";
+  import TaskPanel from "$lib/components/TaskPanel.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
   // from it (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -66,13 +68,15 @@
 
   const runner = new CommandRunner();
 
-  // UI-only state — one surface at a time: the board (default), a task's
-  // detail (?task= present), or the owner's manage takeover. Everything else
-  // derives from the tracking tables.
+  // UI-only state — the board, with the owner's manage takeover over it and
+  // the dock panels beside it: the score preview, plus the task panel when
+  // ?task= is present. Everything else derives from the tracking tables.
   let manage = $state(false);
   let showInfo = $state(false);
-  // The whole-score preview, opened over whichever surface is showing.
-  let showScore = $state(false);
+  // The dock panels and where each docks; the view lays out around them.
+  let showDock = $state(false);
+  let previewLayout = $state(readDockLayout("preview"));
+  let taskLayout = $state(readDockLayout("task"));
   // The scores a viewer can read end to end: the pieces the tasks address,
   // named from the campaign's config where it names them.
   const previewPieces = $derived.by(() => {
@@ -136,7 +140,7 @@
   );
 
   // --------------------------------------------------------- the task detail
-  // A task's detail drills into the view body; the URL carries it as ?task=
+  // A task's detail opens in the preview panel; the URL carries it as ?task=
   // so the row stays addressable (deep links, post-login resume).
   let detailTask = $state<string | null>(null);
   const detailCard = $derived(
@@ -144,15 +148,49 @@
   );
   function openTask(task: string) {
     detailTask = task;
+    showDock = true;
+    anchor = null;
     goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
       replaceState: true,
       noScroll: true,
       keepFocus: true,
     });
   }
+  // The score panel without a task: the whole-score preview.
+  function openScore() {
+    detailTask = null;
+    showDock = true;
+    anchor = null;
+    goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
+  // Close the task panel; the score preview stays open.
   function closeTask() {
     detailTask = null;
+    anchor = null;
     goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
+  // Close both panels.
+  function closeDock() {
+    detailTask = null;
+    showDock = false;
+    anchor = null;
+    goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
+
+  // The score panel, bound so an anchored comment can turn it to its page.
+  let previewDock = $state<ReturnType<typeof PreviewDock>>();
+  // The measure range a fail refers to, highlighted in the score panel.
+  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  function showAnchorFor(c: CommentRow) {
+    const m1 = Number(c.measure_start);
+    const m2 = Number(c.measure_end || c.measure_start);
+    anchor = {
+      page: Number(c.page),
+      m1: Number.isFinite(m1) ? m1 : 0,
+      m2: Number.isFinite(m2) ? m2 : 0,
+    };
+    previewDock?.setZones(true);
+    previewDock?.showPage(anchor.page - 1);
   }
 
   const copy = (text: string) =>
@@ -355,7 +393,10 @@
     if (!loaded || deepLinked) return;
     deepLinked = true;
     const task = page.url.searchParams.get("task");
-    if (task && findRow(taskDefs, task, "")) detailTask = task;
+    if (task && findRow(taskDefs, task, "")) {
+      detailTask = task;
+      showDock = true;
+    }
   });
 
   // "Claim the next task": act on the first card the viewer can work on — a
@@ -417,6 +458,14 @@
     return e === "now" ? "just now" : `${e} ago`;
   };
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key !== "Escape" || !showDock) return;
+    if (detailTask) closeTask();
+    else closeDock();
+  }}
+/>
 
 {#if runner.busy}
   <LoadingOverlay log={runner.log} />
@@ -497,15 +546,6 @@
 {/snippet}
 
 <div class="console">
-  {#if showScore && previewPieces.length > 0}
-    <PiecePreview
-      {owner}
-      {repo}
-      campaignTitle={title || repo}
-      pieces={previewPieces}
-      onclose={() => (showScore = false)}
-    />
-  {/if}
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else}
@@ -521,10 +561,12 @@
         </span>
       </div>
     {/if}
-    {#if !detailTask}
+    {#if !(showDock && detailCard)}
       {@render resultBanner()}
     {/if}
 
+    <div class="workarea t-{taskLayout.side}">
+    <div class="workmain p-{previewLayout.side}">
     <div class="viewcol">
       {#if notFound}
         <div class="banner err">
@@ -573,32 +615,6 @@
             page to initialise it.
           </span>
         </div>
-      {:else if detailTask && detailCard}
-        <TaskDetail
-          card={detailCard}
-          {campaign}
-          campaignTitle={title || repo}
-          {owner}
-          {repo}
-          {taskDefs}
-          {comments}
-          {locks}
-          {logins}
-          {viewer}
-          {canPush}
-          {runner}
-          {resultBanner}
-          {slotDot}
-          onclaim={claimValidate}
-          oneditor={editor}
-          onsubmitencoding={submitpr}
-          onvalidate={validate}
-          oncomment={postComment}
-          onresolve={resolveCommentRow}
-          onsendback={sendBackTask}
-          onrawlink={rawlink}
-          onclose={closeTask}
-        />
       {:else if manage && canPush}
         <div class="crumbrow">
           <button type="button" class="backlink" onclick={() => (manage = false)}
@@ -659,7 +675,7 @@
             <button
               type="button"
               class="pillbtn"
-              onclick={() => (showScore = true)}
+              onclick={openScore}
               disabled={previewPieces.length === 0}
               title="Show every page of the score, without opening a task."
               >Preview the score</button
@@ -831,7 +847,7 @@
                         <span class="mono card-id">{card.task}</span>
                       </div>
                       {#if card.pre}
-                        <div class="card-pre">Opens the corrector →</div>
+                        <div class="card-pre">Open measure corrector →</div>
                       {:else if card.column === "blocked"}
                         <div class="card-foot">
                           waits for <strong>{card.waitsFor}</strong>
@@ -965,6 +981,57 @@
         </div>
       {/if}
     </div>
+    {#if showDock && loaded && !notInitialised}
+      <PreviewDock
+        bind:this={previewDock}
+        bind:layout={previewLayout}
+        card={detailCard}
+        campaignTitle={title || repo}
+        {owner}
+        {repo}
+        {taskDefs}
+        pieces={previewPieces}
+        {anchor}
+        onclose={closeDock}
+      />
+    {/if}
+    </div>
+    {#if showDock && detailCard}
+      <DockPanel
+        bind:layout={taskLayout}
+        id="task"
+        label={`Task ${detailCard.title}`}
+        onclose={closeTask}
+      >
+        {#snippet header()}
+          <span class="dtitle">{detailCard.title}</span>
+          <span class="dsub">· {detailCard.task}</span>
+        {/snippet}
+        <TaskPanel
+          card={detailCard}
+          {campaign}
+          {comments}
+          {locks}
+          {logins}
+          {viewer}
+          {canPush}
+          {runner}
+          {resultBanner}
+          {slotDot}
+          currentPage={() => previewDock?.currentPage() ?? 0}
+          onshowanchor={showAnchorFor}
+          onclaim={claimValidate}
+          oneditor={editor}
+          onsubmitencoding={submitpr}
+          onvalidate={validate}
+          oncomment={postComment}
+          onresolve={resolveCommentRow}
+          onsendback={sendBackTask}
+          onrawlink={rawlink}
+        />
+      </DockPanel>
+    {/if}
+    </div>
   {/if}
 </div>
 
@@ -974,8 +1041,6 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    /* The containing block for the score preview, which covers the view. */
-    position: relative;
     background: var(--bg-alt);
     background-image:
       radial-gradient(
@@ -1093,24 +1158,72 @@
   }
 
   /* --------------------------------------------------------------- main */
+  /* The board and the dock panels share this area as nested splits: the task
+     panel's dock side splits the whole area, the score panel's splits what
+     remains beside the board. */
+  .workarea {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .workarea.t-left {
+    flex-direction: row-reverse;
+  }
+  .workarea.t-right {
+    flex-direction: row;
+  }
+  /* No explicit minimums: the content-based ones propagate out of here, so
+     the task panel is stopped by the board's and the score panel's needs. */
+  .workmain {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .workmain.p-left {
+    flex-direction: row-reverse;
+  }
+  .workmain.p-right {
+    flex-direction: row;
+  }
+
+  /* The task panel's header line, rendered into its dock panel. */
+  .dtitle {
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .dsub {
+    font-size: 14px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   /* The view's content stops widening at --page-max and centres past it; the
-     console's gradient behind it stays full-bleed. */
+     console's gradient behind it stays full-bleed. Its minimum height is its
+     content's, and the dock panels — shrinkable flex items — stop growing
+     right there, at any browser zoom. The width minimum is explicit: the
+     inline-size containment below makes the content's own width invisible to
+     sizing, and the board's stacking reacts to the column's width instead. */
   .viewcol {
     flex: 1;
-    min-width: 0;
+    min-width: 340px;
     width: 100%;
     max-width: var(--page-max);
     margin-inline: auto;
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    container-type: inline-size;
   }
 
   /* ---------------------------------------------------------- info block */
   /* Campaign info, collapsed into the header area behind the Info toggle. */
   .infoblock {
     flex: none;
-    margin: 0 32px;
+    margin: 0 32px 16px;
     padding: 14px 18px;
     background: var(--card);
     border: 1px solid var(--line);
@@ -1159,10 +1272,10 @@
   /* ---------------------------------------------------------------- hero */
   .hero {
     flex: none;
-    padding: 18px 32px 0;
+    padding: 18px 32px 16px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
   .hero-line {
     display: flex;
@@ -1227,6 +1340,11 @@
     gap: 14px;
     align-items: center;
     flex-wrap: wrap;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 18px;
+    box-shadow: var(--shadow-sm);
   }
   .hbar {
     flex: 1;
@@ -1295,7 +1413,9 @@
   /* --------------------------------------------------------------- board */
   .board {
     flex: 1;
-    min-height: 0;
+    /* Roughly a column head and one card row — the least the board is ever
+       shown with, so the dock panels stop growing before crushing it. */
+    min-height: 170px;
     display: flex;
     gap: 14px;
     padding: 0 32px;
@@ -1371,6 +1491,10 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Sized by its column, never by its cards: a long card list scrolls in
+       here instead of growing the board — and the board's own minimum stays
+       one card row, however many tasks there are. */
+    contain: size;
   }
   .card {
     position: relative;
@@ -1384,6 +1508,9 @@
     box-shadow: var(--shadow-sm);
     cursor: pointer;
     flex: none;
+    /* One height for every card, whichever footer line its column gives it. */
+    min-height: 88px;
+    box-sizing: border-box;
   }
   .card:hover {
     border-color: var(--accent);
@@ -1412,6 +1539,7 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--pre);
+    margin-top: 8px;
   }
   .donesum {
     background: color-mix(in srgb, var(--card) 60%, transparent);
@@ -1698,16 +1826,22 @@
   }
 
   /* --------------------------------------------------------- responsive */
-  @media (max-width: 1100px) {
+  /* Container-based, so the board also stacks when a side panel narrows it,
+     not only when the window itself is narrow. Stacked, the board scrolls
+     as a whole instead of per column — the containment moves up with the
+     scrolling, so the stack can't grow the view past the window either. */
+  @container (max-width: 1100px) {
     .board {
       flex-direction: column;
       overflow-y: auto;
+      contain: size;
     }
     .bcol {
       min-height: auto;
     }
     .well {
       overflow-y: visible;
+      contain: none;
     }
   }
 </style>

@@ -384,7 +384,7 @@
     {:else}
       {#if facsVisible && preview.facs?.length}
         <div class="pane">
-          <div class="pv-scroll">
+          <div class="pv-scroll" class:noh={pvZoom <= 1}>
             <div
               class="pv-spread"
               class:hug-right={pane === "both"}
@@ -440,7 +440,7 @@
       {/if}
       {#if encVisible && preview.pageCount > 0}
         <div class="pane">
-          <div class="pv-scroll">
+          <div class="pv-scroll" class:noh={pvZoom <= 1}>
             <div
               class="pv-spread"
               class:hug-left={pane === "both"}
@@ -616,22 +616,23 @@
     min-height: 0;
     background: var(--bg-inset);
     display: flex;
-    gap: 16px;
-    padding: 16px;
+    gap: 10px;
+    padding: 10px 10px 4px;
   }
   .pane {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 3px;
     min-height: 0;
   }
   .pane-cap {
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: var(--ink-faint);
     text-align: center;
     flex: none;
+    padding-bottom: 2px;
   }
   .pnote,
   .perr {
@@ -646,6 +647,12 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+  }
+  /* At 100% zoom and below the spread fits the pane's width, so no sideways
+     scrollbar can appear (a vertical scrollbar that takes up space would
+     otherwise provoke one). */
+  .pv-scroll.noh {
+    overflow-x: hidden;
   }
   /* Its width is the zoom level, so it must be free to fall below the pane's
      width — no min-width. Centred, so the fold of a two-page spread sits in the
