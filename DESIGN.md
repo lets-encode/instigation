@@ -159,9 +159,9 @@ jobs:
       - uses: actions/checkout@<pinned-sha>             # v4 — the CENTRAL repo only, never the fork
         if: steps.cfg.outputs.repo != ''
         with: { repository: '${{ steps.cfg.outputs.repo }}', ref: '${{ steps.cfg.outputs.ref }}', path: central }
-      - uses: actions/setup-node@<pinned-sha>           # v4; node 24 — bare-node type-stripping,
+      - uses: actions/setup-node@<pinned-sha>           # v4; node 22 — bare-node type-stripping,
         if: steps.cfg.outputs.repo != ''                # no build step
-        with: { node-version: 24 }
+        with: { node-version: 22 }
       # …wait for the background xmllint install (pull_request_target only)…
       - if: steps.cfg.outputs.repo != ''
         env:                                            # (b) event context → central
@@ -636,8 +636,8 @@ pipeline**, a validation *accept* (needs a second account — the no-self-valida
 one-account testing), and the full pre-task pipeline (zones submit → validate → encoding
 unblocked).
 
-**Runtime.** Central code is TypeScript run by bare `node` (≥23.6 type-stripping), so the caller pins
-`node-version: 24` and the coordinator imports use real `.ts` specifiers. The SPA imports the same
+**Runtime.** Central code is TypeScript run by bare `node` (type-stripping, default since 22.18), so
+the caller pins `node-version: 22` and the coordinator imports use real `.ts` specifiers. The SPA imports the same
 modules via Vite. No build step for the automation.
 
 ## 10. Roadmap & deferred
