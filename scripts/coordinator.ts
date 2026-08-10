@@ -47,6 +47,7 @@ import {
   checkValidation,
 } from "../src/lib/campaign-submit.ts";
 import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
+import { recordContribution } from "../src/lib/mei-provenance.ts";
 import { reapLocks } from "../src/lib/campaign-reaper.ts";
 import {
   addedRowFromPatch,
@@ -62,6 +63,7 @@ import {
   validationVerdict,
 } from "../src/lib/coordinator-policy.ts";
 import {
+  getCommitMessage,
   getRepoFile,
   getRepoHead,
   getPullRequestFiles,
@@ -332,6 +334,27 @@ async function decideEncoding(
       }
     }
   }
+  // Record the contribution in the assembled score's header — the revision,
+  // the contributor, and the editing application — before the machine check,
+  // so the updated header is validated with the rest of the file. Encodings
+  // are edited in mei-friend; a zones submission comes from the console
+  // itself, whose <application> entry every generated score already carries.
+  if (mei != null) {
+    const commitMessage = await getCommitMessage(
+      token,
+      headOwner,
+      headRepo,
+      headSha,
+    );
+    mei = recordContribution(mei, {
+      name: authorLabel,
+      message: commitMessage ?? `Encoding of ${task.task_id} accepted.`,
+      isodate: now.slice(0, 10),
+      application:
+        envelope?.command === "campaign.submitZones" ? undefined : "mei-friend",
+    });
+  }
+
   let meiValid = false;
   if (mei != null) {
     const check = await validateMei(mei);

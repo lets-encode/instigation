@@ -611,6 +611,21 @@ export async function getRepoHead(
 	return { branch, sha: refRes.data.object.sha, canPush: Boolean(repoRes.data.permissions?.push) };
 }
 
+/** A commit's message, or null when the commit cannot be read. */
+export async function getCommitMessage(
+	token: string,
+	owner: string,
+	repo: string,
+	sha: string
+): Promise<string | null> {
+	const res = await ghGet<{ message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/git/commits/${sha}`,
+		token
+	);
+	if (!res.ok) return null;
+	return res.data.message ?? null;
+}
+
 // Fork identities already ensured this session, keyed by upstream owner/repo.
 // Only the create + readiness poll is skipped for a known fork — the upstream
 // sync still runs on every call, since callers create branches at upstream

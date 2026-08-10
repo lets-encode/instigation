@@ -27,6 +27,13 @@
 
   const editing = $derived(view === "xml" && !showPages);
 
+  // Pre-fill the extent from the upload's page count — the full upload when it
+  // is known, otherwise the committed pages. Editable like any other field.
+  const knownPages = wizard.candidates.length || wizard.images.length;
+  if (!wizard.source.extent.trim() && knownPages > 0) {
+    wizard.source.extent = `${knownPages} page${knownPages === 1 ? "" : "s"}`;
+  }
+
   // Whether what is in the editor parses as XML, reported in its toolbar. On a
   // debounce, so it is not checked per keystroke.
   let wellFormed = $state<boolean | null>(null);

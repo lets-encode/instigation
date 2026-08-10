@@ -282,6 +282,7 @@
             license,
           },
           wizard.source,
+          { creator: user.login },
         );
         if (piece.kind === "encoded") {
           const encoding = wizard.encodings.find((e) => e.name === piece.encodingName);

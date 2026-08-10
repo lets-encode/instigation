@@ -152,10 +152,22 @@
         Composer
         <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
       </label>
+      <label class="field">
+        Lyricist
+        <input class="input" bind:value={meta.lyricist} placeholder="e.g. J. W. von Goethe" />
+      </label>
+      <label class="field">
+        Editor
+        <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
+      </label>
       <div class="pair">
         <label class="field grow">
           Publisher
           <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
+        </label>
+        <label class="field grow">
+          Place of publication
+          <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
         </label>
         <label class="field year">
           Year
@@ -169,8 +181,12 @@
           <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
         </label>
         <label class="field grow">
-          Place of publication
-          <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
+          Lyricist
+          <input class="input" bind:value={meta.lyricist} placeholder="e.g. J. W. von Goethe" />
+        </label>
+        <label class="field grow">
+          Editor
+          <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
         </label>
       </div>
       <div class="row">
@@ -178,9 +194,23 @@
           Publisher
           <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
         </label>
+        <label class="field grow">
+          Place of publication
+          <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
+        </label>
         <label class="field year">
           Year
           <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="field grow">
+          Edition
+          <input class="input" bind:value={meta.edition} placeholder="e.g. 2nd revised edition" />
+        </label>
+        <label class="field year">
+          Year of edition
+          <input class="input" bind:value={meta.editionDate} placeholder="e.g. 1854" />
         </label>
         <label class="field grow">
           Extent
@@ -189,9 +219,15 @@
       </div>
       <div class="row">
         <label class="field grow">
-          Condition
-          <input class="input" bind:value={meta.condition} placeholder="e.g. Foxing on the title page" />
+          Holding institution
+          <input class="input" bind:value={meta.repository} placeholder="e.g. Austrian National Library" />
         </label>
+        <label class="field grow">
+          Shelfmark
+          <input class="input" bind:value={meta.shelfmark} placeholder="e.g. Mus.Hs.16481" />
+        </label>
+      </div>
+      <div class="row">
         <label class="field grow">
           Note about the source
           <textarea class="input" bind:value={meta.note} rows="3"></textarea>
@@ -300,13 +336,13 @@
     display: grid;
     font-size: 12.5px;
   }
-  .row {
+  .read-back .row {
     display: flex;
     justify-content: space-between;
     gap: 12px;
     padding: 8px 12px;
   }
-  .row:not(:last-child) {
+  .read-back .row:not(:last-child) {
     border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
   }
   .key {

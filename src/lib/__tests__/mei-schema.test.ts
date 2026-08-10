@@ -12,6 +12,7 @@ import { buildFacsimileMei, initialFacsimileModel } from '../mei-facsimile.ts';
 import type { FacsimilePage } from '../mei-facsimile.ts';
 import { buildPieceHead, buildSourceHead, emptySourceMetadata } from '../source-metadata.ts';
 import type { SourceMetadata } from '../source-metadata.ts';
+import { recordContribution } from '../mei-provenance.ts';
 import { meiSchemaPath, validateMei } from '../../../scripts/mei-validate.ts';
 
 // `skip` counts as a skip whenever it is present, so an available checker has to
@@ -48,10 +49,16 @@ function source(): SourceMetadata {
 		publisher: 'Breitkopf & Härtel',
 		date: '1802',
 		composer: 'L. van Beethoven',
-		contributors: [{ name: 'A. Editor', role: 'editor' }],
+		editor: 'A. Editor',
+		lyricist: 'J. W. von Goethe',
+		contributors: [{ name: 'B. Engraver', role: 'engraver' }],
 		pubPlace: 'Leipzig',
+		edition: '2nd revised edition',
+		editionDate: '1854',
 		extent: '48 pages',
 		condition: 'Foxing on the title page',
+		repository: 'Austrian National Library',
+		shelfmark: 'Mus.Hs.16481',
 		note: 'Bound with two other sonatas.',
 		extraHeadXml: ''
 	};
@@ -83,6 +90,39 @@ test('a piece score validates when nothing about the source is known', { skip },
 test('a score carrying the source header validates', { skip }, async () => {
 	await checkBothStages(buildSourceHead(source()), 'source head');
 	await checkBothStages(buildSourceHead(emptySourceMetadata()), 'empty source head');
+});
+
+test('a piece score validates with its creation recorded', { skip }, async () => {
+	const head = buildPieceHead(
+		{ title: 'Sonata No. 1', composer: 'L. van Beethoven', license: 'CC BY 4.0' },
+		source(),
+		{ creator: 'octocat', date: '2026-08-10' }
+	);
+	await checkBothStages(head, 'piece head with origin');
+});
+
+test('a score still validates after a contribution is recorded', { skip }, async () => {
+	const contribution = {
+		name: 'octocat',
+		message: 'Encode page 3.',
+		isodate: '2026-08-10',
+		application: 'mei-friend'
+	};
+	// A piece score's header (appInfo and revisionDesc present)…
+	const pieceHead = buildPieceHead(
+		{ title: 'Sonata No. 1', composer: 'L. van Beethoven' },
+		source(),
+		{ creator: 'owner', date: '2026-08-09' }
+	);
+	const model = { ...initialFacsimileModel(PAGES), headXml: pieceHead };
+	const recorded = recordContribution(buildFacsimileMei(model), contribution);
+	const check = await validateMei(recorded);
+	assert.ok(check.ok, `piece score with contribution: ${check.error}`);
+	// …and one whose header has neither, so both blocks are created.
+	const bareModel = { ...initialFacsimileModel(PAGES), headXml: buildSourceHead(source()) };
+	const bare = recordContribution(buildFacsimileMei(bareModel), contribution);
+	const bareCheck = await validateMei(bare);
+	assert.ok(bareCheck.ok, `bare score with contribution: ${bareCheck.error}`);
 });
 
 test('preserved markup keeps the header valid, wherever it belongs', { skip }, async () => {

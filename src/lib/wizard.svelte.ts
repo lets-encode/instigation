@@ -275,8 +275,12 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
 	wizard.iiifManifestUrl = entries.iiifManifestUrl;
 	wizard.copyrightAccepted = entries.copyrightAccepted;
 	wizard.repo = draft.repo;
-	wizard.source = entries.source;
-	wizard.pieces = entries.pieces;
+	// Fields added to SourceMetadata since a draft was stored default to empty.
+	wizard.source = { ...emptySourceMetadata(), ...entries.source };
+	wizard.pieces = entries.pieces.map((piece) => ({
+		...piece,
+		meta: { ...emptySourceMetadata(), ...piece.meta }
+	}));
 	wizard.encodings = entries.encodings;
 	wizard.images = images;
 	// Picked files are not part of a draft; the upload step collects them again.
