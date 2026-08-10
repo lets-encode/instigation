@@ -191,7 +191,9 @@
   }
 
   function copyFromSource() {
-    wizard.pieces[selected].meta = copyMetadata(wizard.source);
+    // The title names this piece, so it stays.
+    const title = wizard.pieces[selected].meta.title;
+    wizard.pieces[selected].meta = { ...copyMetadata(wizard.source), title };
   }
 
   /**
@@ -279,6 +281,10 @@
           {
             title: piece.meta.title,
             composer: piece.meta.composer,
+            editor: piece.meta.editor,
+            lyricist: piece.meta.lyricist,
+            contributors: piece.meta.contributors,
+            note: piece.meta.note,
             license,
           },
           wizard.source,
@@ -570,24 +576,25 @@
   {/if}
 
   {#if piece}
-    <MetadataForm bind:meta={wizard.pieces[selected].meta}>
+    <MetadataForm bind:meta={wizard.pieces[selected].meta} variant="piece">
       {#snippet heading()}
         <span class="meta-for">
           Metadata for <span style="color: {pieceColour(selected)}">{label}</span>
         </span>
       {/snippet}
+      {#snippet subhead()}
+        <div class="copy-row">
+          <button type="button" class="pill pill-sm" onclick={copyFromSource}>
+            Copy from the source
+          </button>
+          {#if selected > 0}
+            <button type="button" class="pill pill-sm" onclick={copyFromPrevious}>
+              Copy from previous piece
+            </button>
+          {/if}
+        </div>
+      {/snippet}
     </MetadataForm>
-
-    <div class="copy-row">
-      <button type="button" class="pill pill-sm" onclick={copyFromSource}>
-        Copy from the source
-      </button>
-      {#if selected > 0}
-        <button type="button" class="pill pill-sm" onclick={copyFromPrevious}>
-          Copy from previous piece
-        </button>
-      {/if}
-    </div>
 
     {#if piece.kind === "facsimile"}
       <p class="covered">

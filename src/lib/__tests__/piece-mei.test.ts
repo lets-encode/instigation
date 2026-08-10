@@ -34,6 +34,26 @@ test('a piece header carries the piece title and the whole source beneath it', (
 	assert.match(head, /<useRestrict>CC-BY-4\.0<\/useRestrict>/);
 });
 
+test("a piece's own people and note reach its file description", () => {
+	const head = buildPieceHead(
+		{
+			title: 'Sonata I',
+			composer: 'L. van Beethoven',
+			editor: 'C. Czerny',
+			lyricist: 'J. W. von Goethe',
+			contributors: [{ name: 'B. Engraver', role: 'engraver' }],
+			note: 'First movement only.'
+		},
+		emptySourceMetadata()
+	);
+	assert.equal(SyntaxValidator.validate(`<mei>${head}</mei>`), true);
+	const fileDesc = /<fileDesc>[\s\S]*<\/fileDesc>/.exec(head)?.[0] ?? '';
+	assert.match(fileDesc, /<persName role="editor">C\. Czerny<\/persName>/);
+	assert.match(fileDesc, /<persName role="lyricist">J\. W\. von Goethe<\/persName>/);
+	assert.match(fileDesc, /<persName role="engraver">B\. Engraver<\/persName>/);
+	assert.match(fileDesc, /<notesStmt>\s*<annot>First movement only\.<\/annot>\s*<\/notesStmt>/);
+});
+
 test("a piece with no composer of its own inherits the source's", () => {
 	const head = buildPieceHead({ title: 'Sonata I', composer: '' }, source());
 	assert.equal(parseMeiHeader(`<mei>${head}</mei>`)?.composer, 'L. van Beethoven');

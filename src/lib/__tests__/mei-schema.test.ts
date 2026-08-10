@@ -94,7 +94,15 @@ test('a score carrying the source header validates', { skip }, async () => {
 
 test('a piece score validates with its creation recorded', { skip }, async () => {
 	const head = buildPieceHead(
-		{ title: 'Sonata No. 1', composer: 'L. van Beethoven', license: 'CC BY 4.0' },
+		{
+			title: 'Sonata No. 1',
+			composer: 'L. van Beethoven',
+			editor: 'C. Czerny',
+			lyricist: 'J. W. von Goethe',
+			contributors: [{ name: 'B. Engraver', role: 'engraver' }],
+			note: 'First movement only.',
+			license: 'CC BY 4.0'
+		},
 		source(),
 		{ creator: 'octocat', date: '2026-08-10' }
 	);

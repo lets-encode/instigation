@@ -81,13 +81,19 @@ export function createEncodedPiece(pieces: Piece[], encodingName: string): Piece
 }
 
 /**
- * A deep copy of another piece's metadata, for the "copy from previous piece"
- * control — pieces in one source usually share composer and publication data.
+ * A copy of the fields a piece can own — its people and note — for the "copy
+ * from the source" and "copy from previous piece" controls. The title and the
+ * source-level fields (publication, physical description) are left empty: a
+ * piece's header takes those from the whole-source metadata.
  */
 export function copyMetadata(meta: SourceMetadata): SourceMetadata {
 	return {
-		...meta,
-		contributors: meta.contributors.map((person) => ({ ...person }))
+		...emptySourceMetadata(),
+		composer: meta.composer,
+		editor: meta.editor,
+		lyricist: meta.lyricist,
+		contributors: meta.contributors.map((person) => ({ ...person })),
+		note: meta.note
 	};
 }
 

@@ -30,6 +30,8 @@
     xml = $bindable(""),
     externalEditor = false,
     heading,
+    subhead,
+    variant = "source",
   }: {
     meta: SourceMetadata;
     view?: View;
@@ -38,6 +40,13 @@
     externalEditor?: boolean;
     /** Rendered on the switcher's row, left of the pills. */
     heading?: Snippet;
+    /** Rendered on its own row directly below the switcher's row. */
+    subhead?: Snippet;
+    /**
+     * What the form describes. A piece owns its people and note; publication
+     * and physical details describe the source, so its variant leaves them out.
+     */
+    variant?: "source" | "piece";
   } = $props();
 
   function show(next: View) {
@@ -108,6 +117,7 @@
     {/each}
   </div>
 </div>
+{#if subhead}{@render subhead()}{/if}
 
 {#if view === "xml"}
   {#if externalEditor}
@@ -160,20 +170,22 @@
         Editor
         <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
       </label>
-      <div class="pair">
-        <label class="field grow">
-          Publisher
-          <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
-        </label>
-        <label class="field grow">
-          Place of publication
-          <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
-        </label>
-        <label class="field year">
-          Year
-          <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
-        </label>
-      </div>
+      {#if variant === "source"}
+        <div class="pair">
+          <label class="field grow">
+            Publisher
+            <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
+          </label>
+          <label class="field grow">
+            Place of publication
+            <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
+          </label>
+          <label class="field year">
+            Year
+            <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
+          </label>
+        </div>
+      {/if}
     {:else}
       <div class="row">
         <label class="field grow">
@@ -189,47 +201,49 @@
           <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
         </label>
       </div>
+      {#if variant === "source"}
+        <div class="row">
+          <label class="field grow">
+            Publisher
+            <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
+          </label>
+          <label class="field grow">
+            Place of publication
+            <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
+          </label>
+          <label class="field year">
+            Year
+            <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
+          </label>
+        </div>
+        <div class="row">
+          <label class="field grow">
+            Edition
+            <input class="input" bind:value={meta.edition} placeholder="e.g. 2nd revised edition" />
+          </label>
+          <label class="field year">
+            Year of edition
+            <input class="input" bind:value={meta.editionDate} placeholder="e.g. 1854" />
+          </label>
+          <label class="field grow">
+            Extent
+            <input class="input" bind:value={meta.extent} placeholder="e.g. 48 pages" />
+          </label>
+        </div>
+        <div class="row">
+          <label class="field grow">
+            Holding institution
+            <input class="input" bind:value={meta.repository} placeholder="e.g. Austrian National Library" />
+          </label>
+          <label class="field grow">
+            Shelfmark
+            <input class="input" bind:value={meta.shelfmark} placeholder="e.g. Mus.Hs.16481" />
+          </label>
+        </div>
+      {/if}
       <div class="row">
         <label class="field grow">
-          Publisher
-          <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
-        </label>
-        <label class="field grow">
-          Place of publication
-          <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
-        </label>
-        <label class="field year">
-          Year
-          <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
-        </label>
-      </div>
-      <div class="row">
-        <label class="field grow">
-          Edition
-          <input class="input" bind:value={meta.edition} placeholder="e.g. 2nd revised edition" />
-        </label>
-        <label class="field year">
-          Year of edition
-          <input class="input" bind:value={meta.editionDate} placeholder="e.g. 1854" />
-        </label>
-        <label class="field grow">
-          Extent
-          <input class="input" bind:value={meta.extent} placeholder="e.g. 48 pages" />
-        </label>
-      </div>
-      <div class="row">
-        <label class="field grow">
-          Holding institution
-          <input class="input" bind:value={meta.repository} placeholder="e.g. Austrian National Library" />
-        </label>
-        <label class="field grow">
-          Shelfmark
-          <input class="input" bind:value={meta.shelfmark} placeholder="e.g. Mus.Hs.16481" />
-        </label>
-      </div>
-      <div class="row">
-        <label class="field grow">
-          Note about the source
+          {variant === "piece" ? "Note about the piece" : "Note about the source"}
           <textarea class="input" bind:value={meta.note} rows="3"></textarea>
         </label>
       </div>

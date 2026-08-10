@@ -50,6 +50,25 @@ test('copies metadata without sharing the contributor objects', () => {
 	assert.equal(original.contributors[0].name, 'A. Editor');
 });
 
+test('copies only the fields a piece can own', () => {
+	const original = createPiece([]).meta;
+	original.title = 'First piece';
+	original.composer = 'L. van Beethoven';
+	original.lyricist = 'J. W. von Goethe';
+	original.note = 'Shared note.';
+	original.publisher = 'Breitkopf & Härtel';
+	original.date = '1802';
+	original.shelfmark = 'Mus.Hs.16481';
+	const copy = copyMetadata(original);
+	assert.equal(copy.composer, 'L. van Beethoven');
+	assert.equal(copy.lyricist, 'J. W. von Goethe');
+	assert.equal(copy.note, 'Shared note.');
+	assert.equal(copy.title, '');
+	assert.equal(copy.publisher, '');
+	assert.equal(copy.date, '');
+	assert.equal(copy.shelfmark, '');
+});
+
 test('lists the pages a piece covers, deduplicated and in order', () => {
 	const piece = facsimilePiece('piece-01', [
 		{ surface: 2, ...box(0, 0, 10, 10) },

@@ -265,6 +265,11 @@ export function buildSourceHead(meta: SourceMetadata): string {
 export interface PieceHead {
 	title: string;
 	composer: string;
+	editor?: string;
+	lyricist?: string;
+	contributors?: SourcePerson[];
+	/** Free-text note about the piece. */
+	note?: string;
 	license?: string;
 }
 
@@ -291,10 +296,25 @@ export function buildPieceHead(
 	origin: PieceHeadOrigin = {}
 ): string {
 	const composer = piece.composer.trim() || source.composer.trim();
-	const respStmt = composer
+	const piecePeople = [
+		...(composer ? [{ name: composer, role: 'composer' }] : []),
+		...(piece.editor?.trim() ? [{ name: piece.editor, role: 'editor' }] : []),
+		...(piece.lyricist?.trim() ? [{ name: piece.lyricist, role: 'lyricist' }] : []),
+		...(piece.contributors ?? []).filter((person) => person.name.trim())
+	];
+	const respStmt = piecePeople.length
 		? `${indent(4)}<respStmt>\n` +
-			`${indent(5)}<persName role="composer">${xmlEscape(composer)}</persName>\n` +
+			piecePeople
+				.map(
+					(person) =>
+						`${indent(5)}<persName role="${xmlEscape(person.role.trim())}">` +
+						`${xmlEscape(person.name.trim())}</persName>\n`
+				)
+				.join('') +
 			`${indent(4)}</respStmt>\n`
+		: '';
+	const notesStmt = piece.note?.trim()
+		? `${indent(3)}<notesStmt>\n` + optional('annot', piece.note, 4) + `${indent(3)}</notesStmt>\n`
 		: '';
 	const availability = piece.license?.trim()
 		? `${indent(4)}<availability>\n` +
@@ -351,6 +371,7 @@ export function buildPieceHead(
 		respStmt +
 		`${indent(3)}</titleStmt>\n` +
 		`${indent(3)}<pubStmt>\n${availability}${indent(3)}</pubStmt>\n` +
+		notesStmt +
 		(manifestation ? SOURCE_DESC_BLOCK : '') +
 		`${indent(2)}</fileDesc>\n` +
 		`${indent(2)}<encodingDesc>\n` +
