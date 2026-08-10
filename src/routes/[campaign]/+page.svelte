@@ -573,7 +573,7 @@
           <span>
             No campaign called <code>{campaign}</code> was found. It may have
             been removed, or the name may be misspelled.
-            <a href="/">Back to all campaigns</a>.
+            <a href="/campaigns">Back to all campaigns</a>.
           </span>
         </div>
       {:else if slugState === "pending"}
@@ -581,21 +581,21 @@
           <span>
             Someone is setting up a campaign called <code>{campaign}</code>.
             If they don't finish it, the name becomes free again.
-            <a href="/">Back to all campaigns</a>.
+            <a href="/campaigns">Back to all campaigns</a>.
           </span>
         </div>
       {:else if slugState === "reserved"}
         <div class="banner err">
           <span>
             <code>{campaign}</code> is reserved and can't be used for a
-            campaign. <a href="/">Back to all campaigns</a>.
+            campaign. <a href="/campaigns">Back to all campaigns</a>.
           </span>
         </div>
       {:else if slugState === "tombstoned"}
         <div class="banner err">
           <span>
             The name <code>{campaign}</code> has been blocked and can't be
-            used. <a href="/">Back to all campaigns</a>.
+            used. <a href="/campaigns">Back to all campaigns</a>.
           </span>
         </div>
       {:else if !resolved}

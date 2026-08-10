@@ -42,6 +42,10 @@ fi
 release=$deploy_root/releases/$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)
 mkdir -p "$release"
 cp -R build/. "$release"/
+# The project website owns "/": its index.html and assets sit next to the SPA
+# build (whose fallback is spa.html), so Apache serves the website for the
+# root and real files, and the SPA for everything else.
+cp -R website/. "$release"/
 
 # ln + mv -T so the symlink is replaced in one rename, never a dangling gap.
 ln -sfn "$release" "$deploy_root/current.new"

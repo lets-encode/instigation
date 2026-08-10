@@ -157,7 +157,7 @@
     // Give the name back so it is free again straight away. Best-effort: an
     // unreleased hold runs out on its own.
     if (claim) void releaseClaim(claim.name, claim.token);
-    void goto("/");
+    void goto("/campaigns");
   }
 </script>
 

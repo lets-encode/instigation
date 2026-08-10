@@ -31,9 +31,9 @@
   // column.
   const corrector = $derived(page.route.id === '/[campaign]/zones/[task]');
   const full = $derived(
-    page.route.id === '/' || page.route.id === '/[campaign]' || page.route.id === '/new'
+    page.route.id === '/campaigns' || page.route.id === '/[campaign]' || page.route.id === '/new'
   );
-  const onHome = $derived(page.route.id === '/');
+  const onHome = $derived(page.route.id === '/campaigns');
   const inCampaign = $derived(page.route.id === '/[campaign]');
 
   // Resolve any existing broker session once the app mounts (client-only).
@@ -43,14 +43,14 @@
 </script>
 
 <header>
-  <a class="brand" href="/">
+  <a class="brand" href="/campaigns">
     <img class="brand-light" src="/logo.svg" alt="Let's Encode" width="1391" height="400" />
     <img class="brand-dark" src="/logo-dark.svg" alt="" aria-hidden="true" width="1391" height="400" />
   </a>
   <!-- Closing a screen lands one level up: the campaign view returns to the
        listing, the corrector to the campaign it belongs to. -->
   {#if inCampaign}
-    <a class="nav-link back" href="/">← All campaigns</a>
+    <a class="nav-link back" href="/campaigns">← All campaigns</a>
   {:else if corrector}
     <a class="nav-link back" href={`/${page.params.campaign}`}
       >← {page.params.campaign}</a

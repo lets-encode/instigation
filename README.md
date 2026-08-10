@@ -128,7 +128,7 @@ Open <http://localhost:5173>. The routes:
 ## 5. Build / preview / test
 
 ```bash
-npm run build     # static site → ./build (SPA, index.html fallback)
+npm run build     # static site → ./build (SPA, spa.html fallback; website/ owns index.html)
 npm run preview   # serve the built site locally
 npm test          # pure campaign-logic unit tests (no network)
 ```

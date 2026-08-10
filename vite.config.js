@@ -1,12 +1,49 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+
+// Serve the project website (website/) on the dev server the way Apache serves
+// it deployed: its index.html answers "/", its files are served as-is, and
+// every other path falls through to the SPA. Registered before Vite's own
+// middleware, so the SPA router never sees these paths — same order as the
+// vhost's DocumentRoot lookup ahead of FallbackResource.
+const websiteRoot = join(import.meta.dirname, 'website');
+const websiteTypes = {
+	'.html': 'text/html',
+	'.css': 'text/css',
+	'.js': 'text/javascript',
+	'.svg': 'image/svg+xml',
+	'.png': 'image/png',
+	'.jpg': 'image/jpeg',
+	'.pdf': 'application/pdf'
+};
+const serveWebsite = () => ({
+	name: 'serve-website',
+	configureServer(server) {
+		server.middlewares.use(async (req, res, next) => {
+			const pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+			const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
+			const file = normalize(join(websiteRoot, rel));
+			if (!file.startsWith(websiteRoot + sep)) return next();
+			let body;
+			try {
+				body = await readFile(file);
+			} catch {
+				return next(); // not a website file: the SPA's
+			}
+			res.setHeader('Content-Type', websiteTypes[extname(file)] ?? 'application/octet-stream');
+			res.end(body);
+		});
+	}
+});
 
 export default defineConfig(({ mode }) => {
 	// svelte.config.js loads the PUBLIC_ env itself but has no access to Vite's
 	// mode; pass it through so both read the same .env files.
 	process.env.VITE_CONFIG_MODE = mode;
 	return {
-		plugins: [sveltekit()],
+		plugins: [serveWebsite(), sveltekit()],
 		define: {
 			// The footer's "app last updated" date, fixed at build time.
 			__BUILD_DATE__: JSON.stringify(

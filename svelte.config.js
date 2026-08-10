@@ -24,7 +24,9 @@ const config = {
 	kit: {
 		// Static SPA: all routes are client-rendered and served via the fallback,
 		// so the dynamic /campaign/[campaign] route resolves without a server.
-		adapter: adapter({ fallback: 'index.html' }),
+		// Named spa.html (not index.html) so the project website's index.html
+		// can sit at the docroot root and own "/".
+		adapter: adapter({ fallback: 'spa.html' }),
 		// Strict CSP as defence in depth: the forge token lives server-side in
 		// the broker session, but scripts on the page could still act through
 		// the authenticated proxy — allow only our own scripts and the exact

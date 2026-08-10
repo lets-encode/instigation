@@ -712,7 +712,7 @@
     <div class="deskwrap">
       <div class="banner err">
         No campaign called <code>{campaign}</code> was found.
-        <a href="/">Back to all campaigns</a>.
+        <a href="/campaigns">Back to all campaigns</a>.
       </div>
     </div>
   {:else if auth.status === "loading" || (!resolved && !notFound)}
