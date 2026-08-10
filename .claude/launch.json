@@ -10,8 +10,8 @@
     {
       "name": "broker",
       "runtimeExecutable": "broker/.venv/bin/flask",
-      "runtimeArgs": ["--app", "broker.app", "run", "--port", "8787"],
-      "port": 8787
+      "runtimeArgs": ["--app", "broker.app", "run", "--port", "7777"],
+      "port": 7777
     }
   ]
 }
