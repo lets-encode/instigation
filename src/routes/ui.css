@@ -279,10 +279,13 @@ textarea.input {
   background: var(--bg-inset);
 }
 /* Page thumbnails inside the material body, --per-row per row. Sized in
-   percent of the body so a zoom above 100% grows past it and scrolls. */
+   percent of the body so a zoom above 100% grows past it and scrolls. Below
+   100% the auto margins centre it; wider than the body, the over-constrained
+   margin gives way on the end side and the overflow scrolls. */
 .material-grid {
   box-sizing: border-box;
   min-width: 0;
+  margin-inline: auto;
   display: grid;
   grid-template-columns: repeat(var(--per-row, 4), minmax(0, 1fr));
   grid-auto-rows: min-content;

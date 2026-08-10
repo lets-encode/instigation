@@ -1,7 +1,6 @@
 <!--
   How many pages a row of previews holds. A tile takes an equal share of the
-  width it has, so fewer per row shows each page larger: this is the zoom for
-  every screen that lays pages out in rows.
+  width it has, so fewer per row shows each page larger.
 -->
 <script lang="ts">
   let {
@@ -17,18 +16,18 @@
 <span class="stepper">
   <button
     type="button"
-    aria-label="Show the pages smaller"
-    disabled={value >= most}
-    onclick={() => value++}
+    aria-label="Fewer pages per row"
+    disabled={value <= 1}
+    onclick={() => value--}
   >
     −
   </button>
   <span class="per-row">{value} per row</span>
   <button
     type="button"
-    aria-label="Show the pages larger"
-    disabled={value <= 1}
-    onclick={() => value--}
+    aria-label="More pages per row"
+    disabled={value >= most}
+    onclick={() => value++}
   >
     +
   </button>
