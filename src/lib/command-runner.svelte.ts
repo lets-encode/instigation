@@ -28,8 +28,11 @@ export interface CommandTarget {
  */
 export class CommandRunner {
 	busy = $state(false);
+	/** True once the command has finished and the overlay waits to be dismissed. */
+	held = $state(false);
 	readonly log = new ProgressLog();
 	result = $state<Result | null>(null);
+	private release: (() => void) | null = null;
 
 	/** A CommandContext against `target`, its progress wired to the busy log. */
 	context(f: ForgeClient, target: CommandTarget, opts: { meiFriendUrl?: string } = {}): CommandContext {
@@ -48,19 +51,32 @@ export class CommandRunner {
 
 	/**
 	 * Run one command behind the busy overlay and keep its result for the
-	 * banner. `after` runs while still busy — the page's refresh (or
-	 * navigation) after a command lands.
+	 * banner. Once the command has finished, the overlay is held open with its
+	 * step times until dismiss() — the overlay's Continue button. `after` runs
+	 * after that press, while still busy — the page's refresh (or navigation)
+	 * after a command lands.
 	 */
 	async run(command: () => Promise<Result>, after?: (result: Result) => Promise<void> | void): Promise<void> {
 		if (this.busy) return;
 		this.busy = true;
 		this.log.clear();
 		try {
-			this.result = await command();
-			if (after) await after(this.result);
+			const result = (this.result = await command());
+			this.log.done();
+			this.held = true;
+			await new Promise<void>((resolve) => (this.release = resolve));
+			this.release = null;
+			this.held = false;
+			if (after) await after(result);
 		} finally {
 			this.log.done();
+			this.held = false;
 			this.busy = false;
 		}
+	}
+
+	/** Close a finished command's overlay (its Continue button). */
+	dismiss(): void {
+		this.release?.();
 	}
 }

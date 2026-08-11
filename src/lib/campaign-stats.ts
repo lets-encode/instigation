@@ -44,6 +44,8 @@ export interface CampaignStats {
 	total: number;
 	/** Tasks claimable right now: encoding_required, unlocked, not blocked. */
 	ready: number;
+	/** Tasks with a validation slot open to claim right now. */
+	toValidate: number;
 	nearlyDone: boolean;
 	/** Distinct account ids the history records, most recent first. */
 	contributorIds: string[];
@@ -76,6 +78,25 @@ export function readyCount(d: Pick<GraphData, 'taskDefs' | 'rows' | 'locks'>): n
 			!blockedBy(d as GraphData, r.task_id) &&
 			!d.locks.some((l) => l.task_id === r.task_id && l.subtask_id === '' && l.kind === 'encoding')
 	).length;
+}
+
+/** Tasks with a validation slot open to claim (a slot neither decided nor locked). */
+export function validationReadyCount(
+	d: Pick<GraphData, 'rows' | 'validationColumns' | 'locks'>
+): number {
+	const hasOpenSlot = (r: StateRow): boolean => {
+		const finals = d.validationColumns.filter((c) => isFinalValidation(r[c] ?? '')).length;
+		const held = d.locks.filter(
+			(l) => l.task_id === r.task_id && l.subtask_id === r.subtask_id && l.kind === 'validation'
+		).length;
+		return finals + held < d.validationColumns.length;
+	};
+	const tasks = new Set(
+		d.rows
+			.filter((r) => r.subtask_id !== '' && r.status === 'validation_required' && hasOpenSlot(r))
+			.map((r) => r.task_id)
+	);
+	return tasks.size;
 }
 
 // A campaign counts as nearly done from 80% task completion.
@@ -233,6 +254,11 @@ async function fetchStats(
 		done,
 		total: tasks.length,
 		ready: readyCount({ taskDefs, rows: state.rows, locks }),
+		toValidate: validationReadyCount({
+			rows: state.rows,
+			validationColumns: state.validationColumns,
+			locks
+		}),
 		nearlyDone: isNearlyDone(done, tasks.length),
 		contributorIds,
 		logins,

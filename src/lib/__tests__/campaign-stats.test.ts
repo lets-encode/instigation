@@ -8,7 +8,8 @@ import {
 	isNearlyDone,
 	loadAllCampaignStats,
 	myTasksIn,
-	readyCount
+	readyCount,
+	validationReadyCount
 } from '../campaign-stats.ts';
 import type { CampaignStats } from '../campaign-stats.ts';
 import { RateLimitError } from '../forge/github-rest.ts';
@@ -65,6 +66,7 @@ const stats: CampaignStats = {
 	done: 0,
 	total: 4,
 	ready: 0,
+	toValidate: 0,
 	nearlyDone: false,
 	contributorIds: [],
 	logins: { '7': 'lisa', '9': 'tcrane' },
@@ -86,6 +88,15 @@ test('readyCount: locked and blocked tasks are not claimable', () => {
 	assert.equal(readyCount({ taskDefs, rows: state.rows, locks }), 0);
 	// Without the lock, only T0001 opens up (T0002 stays blocked).
 	assert.equal(readyCount({ taskDefs, rows: state.rows, locks: [] }), 1);
+});
+
+test('validationReadyCount: tasks with an undecided, unlocked validation slot', () => {
+	// T0003 and T0004 each have one verdict and one open slot.
+	const d = { rows: state.rows, validationColumns: state.validationColumns, locks };
+	assert.equal(validationReadyCount(d), 2);
+	// A validation lock on T0004's remaining slot takes it out of the count.
+	const reviewing = parseLockCsv(LOCK_HEADER + 'T0004,S0001,9,2026-08-01T10:00:00Z,validation\n');
+	assert.equal(validationReadyCount({ ...d, locks: reviewing }), 1);
 });
 
 test('isNearlyDone: from 80% up, but never when finished', () => {

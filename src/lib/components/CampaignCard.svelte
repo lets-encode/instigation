@@ -1,7 +1,8 @@
 <!--
   One campaign in the main screen's grid. The whole card is the link to the
-  campaign view. The viewer's own campaigns render in amber with a YOURS pill
-  and a health chip; other campaigns show how many tasks are open to claim.
+  campaign view. The viewer's own campaigns render in amber with a YOURS pill,
+  open-task counts and a health chip; other campaigns show how many tasks are
+  open to claim.
 -->
 <script lang="ts">
   import { elapsed } from "$lib/campaign-board.ts";
@@ -27,6 +28,14 @@
     return "no activity yet";
   });
   const attention = $derived(owned ? attentionCount(stats) : 0);
+  const open = $derived(
+    [
+      stats.ready > 0 ? `${stats.ready} ready` : "",
+      stats.toValidate > 0 ? `${stats.toValidate} to validate` : "",
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  );
   const meta = $derived(
     [stats.composer, stats.pages ? `${stats.pages} pages` : ""]
       .filter(Boolean)
@@ -52,16 +61,21 @@
     <span class="count">{stats.done}/{stats.total}</span>
   </div>
   <div class="foot">
-    {#if owned && attention > 0}
-      <span class="pill pill-amber"
-        >{attention} need{attention === 1 ? "s" : ""} attention</span
-      >
-    {:else if owned}
-      <span class="pill pill-green-on-amber">healthy</span>
-    {:else if stats.ready > 0 && stats.nearlyDone}
-      <span class="pill pill-green">{stats.ready} ready · nearly done</span>
-    {:else if stats.ready > 0}
-      <span class="pill pill-blue">{stats.ready} ready</span>
+    {#if owned}
+      {#if open}
+        <span class="pill pill-blue-on-amber">{open}</span>
+      {/if}
+      {#if attention > 0}
+        <span class="pill pill-amber"
+          >{attention} need{attention === 1 ? "s" : ""} attention</span
+        >
+      {:else}
+        <span class="pill pill-green-on-amber">healthy</span>
+      {/if}
+    {:else if open && stats.nearlyDone}
+      <span class="pill pill-green">{open} · nearly done</span>
+    {:else if open}
+      <span class="pill pill-blue">{open}</span>
     {:else}
       <span class="pill pill-grey">no open tasks</span>
     {/if}
@@ -200,6 +214,11 @@
   }
   .pill-green-on-amber {
     color: var(--ok);
+    background: var(--card);
+    border: 1px solid var(--owner-line);
+  }
+  .pill-blue-on-amber {
+    color: var(--info);
     background: var(--card);
     border: 1px solid var(--owner-line);
   }
