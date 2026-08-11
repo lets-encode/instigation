@@ -76,11 +76,17 @@
 
   const PV_ZOOM_MIN = 0.5;
   const PV_ZOOM_MAX = 4;
-  const pvZoomBy = (step: number) =>
-    (pvZoom = Math.min(
-      PV_ZOOM_MAX,
-      Math.max(PV_ZOOM_MIN, Math.round((pvZoom + step) * 100) / 100),
-    ));
+  // The slider runs on a log scale: equal drags multiply the zoom equally,
+  // so the low end moves in fine steps and the high end in coarse ones.
+  const PV_ZOOM_STOPS = 100;
+  const pvZoomPos = $derived(
+    Math.round(
+      (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) * PV_ZOOM_STOPS,
+    ),
+  );
+  const setPvZoomPos = (p: number) =>
+    (pvZoom =
+      Math.round(PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100) / 100);
 
   const pvPageTotal = $derived(
     preview ? Math.max(preview.facs?.length ?? 0, preview.pageCount) : 0,
@@ -360,21 +366,18 @@
       </label>
     {/if}
     <span class="vline"></span>
-    <button
-      type="button"
-      class="tbtn-sq"
-      onclick={() => pvZoomBy(-0.25)}
-      disabled={pvZoom <= PV_ZOOM_MIN}
-      aria-label="Zoom out">−</button
-    >
+    <input
+      class="zoomslider"
+      type="range"
+      aria-label="Zoom"
+      aria-valuetext={`${Math.round(pvZoom * 100)}%`}
+      min={0}
+      max={PV_ZOOM_STOPS}
+      step={1}
+      value={pvZoomPos}
+      oninput={(e) => setPvZoomPos(Number((e.target as HTMLInputElement).value))}
+    />
     <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
-    <button
-      type="button"
-      class="tbtn-sq"
-      onclick={() => pvZoomBy(0.25)}
-      disabled={pvZoom >= PV_ZOOM_MAX}
-      aria-label="Zoom in">+</button
-    >
   </div>
   <div class="pbody-panes">
     {#if !preview || preview.loading}
@@ -601,6 +604,11 @@
     height: 18px;
     background: var(--line);
     flex: none;
+  }
+  .zoomslider {
+    width: 110px;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
   .zval {
     font-size: 12px;
