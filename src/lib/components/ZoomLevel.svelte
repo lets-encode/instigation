@@ -36,6 +36,15 @@
     oninput={(e) => setPos(Number((e.target as HTMLInputElement).value))}
   />
   <span class="level">{value}%</span>
+  <button
+    type="button"
+    class="tbtn"
+    onclick={() => (value = 100)}
+    disabled={value === 100}
+    title="Fit to the pane width"
+  >
+    Fit
+  </button>
 </span>
 
 <style>

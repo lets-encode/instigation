@@ -34,6 +34,7 @@
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ZoomLevel from "./ZoomLevel.svelte";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -43,6 +44,7 @@
   const log = new ProgressLog();
 
   let perRow = $state(4);
+  let zoom = $state(100);
 
   // The page a range selection is measured from: the last one clicked on its own.
   let anchor: number | null = null;
@@ -231,6 +233,7 @@
       {/if}
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
+      <ZoomLevel bind:value={zoom} />
       <div class="toolbar-rule"></div>
       <button type="button" class="tbtn" onclick={() => setAll(true)} disabled={busy}>
         Keep all
@@ -239,7 +242,8 @@
         Keep none
       </button>
     </div>
-    <ol class="material-body material-grid" style="--per-row: {perRow}">
+    <div class="material-body">
+    <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
       {#each wizard.candidates as page, i (page.id)}
         <li
           class:out={!page.include}
@@ -296,6 +300,7 @@
         </li>
       {/each}
     </ol>
+    </div>
   </div>
 {/snippet}
 
