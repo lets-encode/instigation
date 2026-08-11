@@ -725,6 +725,13 @@
     return (m ? m + " " : "") + pages[p].zones[z].label;
   };
 
+  // Hover tooltip explaining a zone's break marker, if it carries one.
+  const zoneTitle = (p: number, z: number) => {
+    if (pbAt(z)) return "⇱ page beginning — automatic: the first measure on each page";
+    if (pages[p].zones[z].sb) return "↵ system beginning";
+    return "";
+  };
+
   // Measure/section colours reused for the box tint and the zone controls.
   // Teal and purple are deliberately outside the piece-region palette
   // (--zone-1…8), so a colour never carries two meanings.
@@ -737,7 +744,7 @@
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
 
 {#if runner.busy}
-  <LoadingOverlay log={runner.log} />
+  <LoadingOverlay log={runner.log} finished={runner.held} onContinue={() => runner.dismiss()} />
 {/if}
 
 <div class="corrector">
@@ -821,28 +828,19 @@
                     onpointerleave={hoverLeave}
                     onkeydown={(e) => zoneKeydown(e, p, z)}
                   >
-                    {#if pbAt(z)}
-                      <title>⇱ page beginning — automatic: the first measure on each page</title>
+                    {#if zoneTitle(p, z)}
+                      <title>{zoneTitle(p, z)}</title>
                     {/if}
                   </rect>
-                  {#if zone.sb && !pbAt(z)}
-                    <rect
-                      class="sysbar"
-                      x={zone.box.ulx}
-                      y={zone.box.uly}
-                      width={Math.max(8, pg.width / 130)}
-                      height={zone.box.lry - zone.box.uly}
-                      fill={accentFor(p, z)}
-                    />
-                  {/if}
                   {@const lbl = labelText(p, z)}
                   {@const fs = labelFont(p, pg.width)}
+                  {@const inset = fs * 0.6}
                   {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
-                  <rect class="labelbg" x={zone.box.ulx + 2} y={zone.box.uly + 3} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
+                  <rect class="labelbg" x={zone.box.ulx + inset} y={zone.box.uly + inset} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
                   <text
                     class="zonelabel"
-                    x={zone.box.ulx + 2 + lblW / 2}
-                    y={zone.box.uly + 3 + fs * 1.12}
+                    x={zone.box.ulx + inset + lblW / 2}
+                    y={zone.box.uly + inset + fs * 1.12}
                     text-anchor="middle"
                     font-size={fs}
                   >{lbl}</text>
@@ -1077,10 +1075,7 @@
           <p>drag on the page to draw a measure · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)</p>
         {/if}
         <p>⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages</p>
-        <p>
-          <span class="legend-sys">▍left bar = system start</span><br />
-          <span class="legend-mdiv">purple = movement start</span>
-        </p>
+        <p><span class="legend-mdiv">purple = movement start</span></p>
       </div>
     </aside>
   {/if}
@@ -1456,11 +1451,6 @@
     fill-opacity: 1;
     stroke-width: 3.5;
   }
-  /* A solid bar down a measure's left edge marks a system beginning. */
-  .sysbar {
-    opacity: 0.65;
-    pointer-events: none;
-  }
   .zone.mdivstart {
     stroke: rgba(139, 95, 191, 0.9);
     fill: rgba(139, 95, 191, 0.14);
@@ -1606,12 +1596,5 @@
   .legend-mdiv {
     color: var(--pre);
     font-weight: 600;
-  }
-  .legend-sys {
-    color: #0e8195;
-    font-weight: 600;
-  }
-  :global([data-theme="dark"]) .legend-sys {
-    color: #4db6c4;
   }
 </style>
