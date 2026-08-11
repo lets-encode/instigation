@@ -19,8 +19,10 @@
   });
 
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+  // The shared clock ticks every 100ms, so a just-opened step can read a
+  // `now` older than its own start; clamp so it never shows negative.
   const stepMs = (step: ProgressStep) =>
-    step.tookMs ?? (step.endedAt ?? now) - step.startedAt;
+    step.tookMs ?? Math.max(0, (step.endedAt ?? now) - step.startedAt);
   const took = (step: ProgressStep) => seconds(stepMs(step));
   // The step times added up — for a step that reported its own duration,
   // that duration rather than how long it was open.
