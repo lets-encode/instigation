@@ -228,7 +228,7 @@
 </script>
 
 {#if runner.busy}
-  <LoadingOverlay log={runner.log} />
+  <LoadingOverlay log={runner.log} finished={runner.held} onContinue={() => runner.dismiss()} />
 {/if}
 
 <div class="screen">

@@ -901,9 +901,9 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
 			const dispatchedAt = Date.now();
 			console.log('[reaper] dispatching caller.yml on', branch);
 			await f.dispatchWorkflow(owner, repo, 'caller.yml', branch);
-			ctx.progress({ step: 'Waiting for the reaper run to start…' });
 			// Only a run created after our dispatch counts (the watch applies
-			// clock-skew slack to `since`).
+			// clock-skew slack to `since`). The watch narrates the wait for the
+			// run itself, starting with the search for it.
 			const watch = new WorkflowRunWatch(
 				f,
 				owner,

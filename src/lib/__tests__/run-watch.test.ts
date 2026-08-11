@@ -62,12 +62,15 @@ test('narrates a run from search through steps to completion', async () => {
 
 	await watch.tick(); // nothing dispatched has shown up yet
 	assert.equal(phaseOf(watch), 'searching');
-	assert.deepEqual(updates, []);
+	assert.deepEqual(updates, [{ step: 'Waiting for the run to start on GitHub…' }]);
+
+	await watch.tick(); // still searching: announced once, not repeated
+	assert.equal(updates.length, 1);
 
 	listed = [current]; // the run appears, still queued
 	await watch.tick();
 	assert.equal(phaseOf(watch), 'running');
-	assert.deepEqual(updates, [{ detail: 'run queued on GitHub' }]);
+	assert.deepEqual(updates.at(-1), { step: 'Waiting for a free GitHub runner…' });
 
 	current = run({ status: 'in_progress' });
 	jobs = [job('Run the central coordinator', 'in_progress')];
@@ -75,7 +78,11 @@ test('narrates a run from search through steps to completion', async () => {
 	assert.deepEqual(updates.at(-1), { step: 'Run the central coordinator' });
 
 	await watch.tick(); // same step: announced once, not repeated
-	assert.equal(updates.length, 2);
+	assert.equal(updates.length, 3);
+
+	jobs = [job('Post Run actions/setup-node@abc123', 'in_progress')];
+	await watch.tick(); // the runner's cleanup steps are not narrated
+	assert.equal(updates.length, 3);
 
 	current = run({ status: 'completed', conclusion: 'success' });
 	await watch.tick();

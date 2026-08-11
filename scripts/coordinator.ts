@@ -111,6 +111,13 @@ type Verdict = { ok: boolean; reason?: string; detail?: string };
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
 
+// Log the wall-clock seconds since `startedAt` as a `[phase-timing]` line —
+// the form the run profiler (scripts/profile-actions.ts) extracts.
+const logPhase = (phase: string, startedAt: number): void =>
+  console.info(
+    `[phase-timing] ${phase} ${((Date.now() - startedAt) / 1000).toFixed(2)}s`,
+  );
+
 // Whether the PR author can push to the campaign repo — the privilege behind
 // owner-only operations (send-back without a fail of one's own, resolving
 // someone else's comment). A failed lookup means no.
@@ -146,6 +153,7 @@ async function attemptClaim(
   intent: { task_id: string; subtask_id: string; kind: string } | null,
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { lock?: LockRow }> {
+  const readStart = Date.now();
   const { branch, sha } = await getRepoHead(token, owner, repo);
   const [taskCsv, stateCsv, lockCsv, historyCsv, configText] =
     await Promise.all([
@@ -155,6 +163,7 @@ async function attemptClaim(
       getRepoFile(token, owner, repo, HISTORY_PATH, sha),
       getRepoFile(token, owner, repo, CONFIG_PATH, sha),
     ]);
+  logPhase("read_tables", readStart);
   const now = new Date().toISOString();
   const { kept: locks, removed } = reapLocks({
     locks: parseLockCsv(lockCsv ?? ""),
@@ -214,10 +223,12 @@ async function attemptClaim(
     ? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && "/" + verdict.lock!.subtask_id} for ${authorLabel} (${verdict.lock!.kind})`
     : `Reject claim by ${authorLabel} (${verdict.reason})`;
   // Non-fast-forward update fails if `main` moved since `sha` → we retry.
+  const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
     branch,
   });
+  logPhase("commit", commitStart);
   return verdict;
 }
 
@@ -259,7 +270,9 @@ async function runClaim(
   const body = verdict.ok
     ? `✅ Claim accepted — ${target} locked for ${authorLabel} (${verdict.lock!.kind}).`
     : `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
+  const closeStart = Date.now();
   await commentAndClosePr(token, owner, repo, prNumber, body);
+  logPhase("comment_and_close", closeStart);
   await cleanupHeadBranch();
 }
 
@@ -305,11 +318,14 @@ async function decideEncoding(
   // are both `mei_invalid` submissions; which of the two it was survives only
   // in `detail`, since the reason code is what the tables record.
   const isPageTask = task.locator.startsWith("surface-");
+  const readStart = Date.now();
   const [forkMei, baseMei, configText] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
     isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null,
     isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null,
   ]);
+  logPhase("read_pr_files", readStart);
+  const checkStart = Date.now();
   let mei = forkMei;
   let detail =
     forkMei == null ? `${task.fragment} is missing from the fork.` : "";
@@ -361,6 +377,7 @@ async function decideEncoding(
     meiValid = check.ok;
     if (!check.ok) detail = `${task.fragment}:${check.error}`;
   }
+  logPhase("mei_check", checkStart);
 
   const verdict = checkEncoding({
     tasks,
@@ -412,6 +429,7 @@ async function decideValidation(
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
+  const readStart = Date.now();
   const headStateCsv = await getRepoFile(
     token,
     headOwner,
@@ -419,6 +437,7 @@ async function decideValidation(
     STATE_PATH,
     headSha,
   );
+  logPhase("read_pr_files", readStart);
   const headState = headStateCsv == null ? null : parseStateCsv(headStateCsv);
   const diff = headState == null ? null : singleCellDiff(state, headState);
   if (!diff) {
@@ -554,6 +573,7 @@ async function attemptSubmit(
   changedPaths: string[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict> {
+  const readStart = Date.now();
   const { branch, sha } = await getRepoHead(token, owner, repo);
   const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
     getRepoFile(token, owner, repo, TASK_PATH, sha),
@@ -561,11 +581,13 @@ async function attemptSubmit(
     getRepoFile(token, owner, repo, LOCK_PATH, sha),
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
   ]);
+  logPhase("read_tables", readStart);
   const tasks = parseTaskCsv(taskCsv ?? "");
   const state = parseStateCsv(stateCsv ?? "");
   const locks = parseLockCsv(lockCsv ?? "");
   const now = new Date().toISOString();
 
+  const decideStart = Date.now();
   const outcome =
     kind === "validation"
       ? await decideValidation(sha, state, locks, changedPaths, now)
@@ -578,6 +600,7 @@ async function attemptSubmit(
           envelope,
           now,
         );
+  logPhase("decide", decideStart);
 
   const history: HistoryRow = {
     ...(outcome.history ?? {
@@ -598,10 +621,12 @@ async function attemptSubmit(
   const message = outcome.ok
     ? outcome.message!
     : `Reject ${kind} submission by ${authorLabel} (${outcome.reason})`;
+  const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
     branch,
   });
+  logPhase("commit", commitStart);
   return outcome;
 }
 
@@ -629,7 +654,9 @@ async function runSubmit(
     ? `✅ Submission accepted (${kind}).`
     : `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.` +
       (verdict.detail ? ` ${verdict.detail}` : "");
+  const closeStart = Date.now();
   await commentAndClosePr(token, owner, repo, prNumber, body);
+  logPhase("comment_and_close", closeStart);
   if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
 }
 
@@ -640,6 +667,7 @@ async function attemptComment(
   changedPaths: string[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { action: string }> {
+  const readStart = Date.now();
   const { branch, sha } = await getRepoHead(token, owner, repo);
   const [stateCsv, commentCsv, historyCsv, headCommentCsv] = await Promise.all([
     getRepoFile(token, owner, repo, STATE_PATH, sha),
@@ -647,6 +675,7 @@ async function attemptComment(
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
     getRepoFile(token, headOwner, headRepo, COMMENT_PATH, headSha),
   ]);
+  logPhase("read_tables", readStart);
   const state = parseStateCsv(stateCsv ?? "");
   const comments = parseCommentCsv(commentCsv ?? "");
   const headComments =
@@ -712,10 +741,12 @@ async function attemptComment(
       ? `Resolve comment ${row!.comment_id} (by ${authorLabel})`
       : `Record ${row!.kind} comment on ${row!.task_id} by ${authorLabel}`
     : `Reject comment by ${authorLabel} (${verdict.reason})`;
+  const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
     branch,
   });
+  logPhase("commit", commitStart);
   return {
     ok: verdict.ok,
     reason: verdict.ok ? undefined : verdict.reason,
@@ -749,7 +780,9 @@ async function runComment(
       ? "✅ Comment resolved."
       : "✅ Comment recorded."
     : `❌ Comment rejected: \`${verdict.reason}\`. No changes were made.`;
+  const closeStart = Date.now();
   await commentAndClosePr(token, owner, repo, prNumber, body);
+  logPhase("comment_and_close", closeStart);
   await cleanupHeadBranch();
 }
 
@@ -757,12 +790,14 @@ async function runComment(
 // Reaper (scheduled / manually dispatched)
 
 async function attemptReap(): Promise<void> {
+  const readStart = Date.now();
   const { branch, sha } = await getRepoHead(token, owner, repo);
   const [lockCsv, historyCsv, configText] = await Promise.all([
     getRepoFile(token, owner, repo, LOCK_PATH, sha),
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
     getRepoFile(token, owner, repo, CONFIG_PATH, sha),
   ]);
+  logPhase("read_tables", readStart);
   const now = new Date().toISOString();
 
   const { kept, removed } = reapLocks({
@@ -788,6 +823,7 @@ async function attemptReap(): Promise<void> {
     outcome: "released",
     detail: l.kind,
   }));
+  const commitStart = Date.now();
   await commitFiles(
     token,
     owner,
@@ -799,6 +835,7 @@ async function attemptReap(): Promise<void> {
     `Release ${removed.length} stale lock(s): ${removed.map((l) => l.task_id).join(", ")}`,
     { baseSha: sha, branch },
   );
+  logPhase("commit", commitStart);
   console.log(`Released ${removed.length} stale lock(s).`);
 }
 
@@ -830,6 +867,7 @@ async function run(): Promise<void> {
     throw new Error(`Unsupported event: ${eventName}`);
   }
 
+  const readStart = Date.now();
   const details = await getPullRequestDetails(token, owner, repo, prNumber);
   const files = await getPullRequestFiles(
     token,
@@ -838,6 +876,7 @@ async function run(): Promise<void> {
     prNumber,
     details.changedFiles,
   );
+  logPhase("read_pr", readStart);
   // The PR body may carry the console command's envelope; treated as data,
   // it feeds the command columns of the history row this run authors.
   const envelope = envelopeFromPrBody(details.body);
@@ -854,5 +893,9 @@ run()
     process.exitCode = 1;
   })
   .finally(() =>
-    console.info("[github-api-summary]", getGitHubRequestTelemetry()),
+    // JSON on one line, so log collectors can extract the whole summary.
+    console.info(
+      "[github-api-summary]",
+      JSON.stringify(getGitHubRequestTelemetry()),
+    ),
   );

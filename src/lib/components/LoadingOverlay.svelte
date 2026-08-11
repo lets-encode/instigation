@@ -1,24 +1,40 @@
 <!--
   A modal card over the whole viewport, shown while an action that runs on
   the forge is in flight: a spinner plus the action's timed step log, so what
-  is happening (and how long each stage takes) is visible while it runs. The
-  palette is fixed rather than themed, matching the console surfaces it covers.
+  is happening (and how long each stage takes) is visible while it runs. Once
+  the action has finished the card stays up, with the step times and their
+  total readable, until its Continue button is pressed. The palette is fixed
+  rather than themed, matching the console surfaces it covers.
 -->
 <script lang="ts">
   import ProgressSteps from "./ProgressSteps.svelte";
   import type { ProgressLog } from "$lib/progress-log.svelte.ts";
 
-  let { log }: { log: ProgressLog } = $props();
+  let {
+    log,
+    finished = false,
+    onContinue,
+  }: { log: ProgressLog; finished?: boolean; onContinue?: () => void } =
+    $props();
 </script>
 
 <div class="overlay" role="status" aria-live="polite">
   <div class="overlay-card">
-    <div class="spinner" aria-hidden="true"></div>
-    <p class="overlay-title">Working…</p>
-    <p class="overlay-sub">
-      The campaign automation runs on GitHub — this can take a few seconds.
-    </p>
+    {#if finished}
+      <p class="overlay-title">Finished</p>
+    {:else}
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="overlay-title">Working…</p>
+      <p class="overlay-sub">
+        The campaign automation runs on GitHub — this can take a few seconds.
+      </p>
+    {/if}
     <ProgressSteps {log} />
+    {#if finished}
+      <button type="button" class="btn btn-primary" onclick={onContinue}>
+        Continue
+      </button>
+    {/if}
   </div>
 </div>
 

@@ -19,14 +19,12 @@
   });
 
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
-  const took = (step: ProgressStep) =>
-    seconds(step.tookMs ?? (step.endedAt ?? now) - step.startedAt);
-  const total = $derived.by(() => {
-    const first = log.steps[0];
-    const last = log.steps.at(-1);
-    if (!first || !last) return 0;
-    return (last.endedAt ?? now) - first.startedAt;
-  });
+  const stepMs = (step: ProgressStep) =>
+    step.tookMs ?? (step.endedAt ?? now) - step.startedAt;
+  const took = (step: ProgressStep) => seconds(stepMs(step));
+  // The step times added up — for a step that reported its own duration,
+  // that duration rather than how long it was open.
+  const total = $derived(log.steps.reduce((sum, step) => sum + stepMs(step), 0));
 </script>
 
 {#if log.steps.length}

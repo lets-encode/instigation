@@ -1,6 +1,6 @@
 // Follows one GitHub Actions workflow run and narrates it: first the search
-// for the run an event triggered, then — once found — whether it is queued or
-// running, and which job step it is on, using the workflow's own step names.
+// for the run an event triggered, then the wait for a runner while it is
+// queued, then which job step it is on, using the workflow's own step names.
 // The caller owns the polling cadence: each tick() reads at most two API
 // endpoints (both ETag-cached, so unchanged polls are cheap) and reports what
 // changed through the progress callback.
@@ -46,7 +46,10 @@ export class WorkflowRunWatch {
 		if (this.state.phase === 'completed') return;
 		if (this.state.phase === 'searching') {
 			const run = await this.find();
-			if (!run) return;
+			if (!run) {
+				this.announce({ step: 'Waiting for the run to start on GitHub…' });
+				return;
+			}
 			this.state = { phase: 'running', run };
 			console.log('[run-watch] following run', run.id, run.html_url);
 		} else {
@@ -59,9 +62,13 @@ export class WorkflowRunWatch {
 			console.log('[run-watch] run', run.id, 'completed:', run.conclusion);
 			return;
 		}
+		if (run.status === 'queued') {
+			this.announce({ step: 'Waiting for a free GitHub runner…' });
+			return;
+		}
 		if (run.status !== 'in_progress') {
-			// queued/waiting/pending: no jobs to read yet.
-			this.progress({ detail: `run ${run.status} on GitHub` });
+			// waiting/pending: not queued for a runner, no jobs to read yet.
+			this.announce({ detail: `run ${run.status} on GitHub` });
 			return;
 		}
 		await this.announceCurrentStep(run.id);
@@ -84,12 +91,20 @@ export class WorkflowRunWatch {
 			if (job.status !== 'in_progress') continue;
 			const step = job.steps.find((s) => s.status === 'in_progress');
 			if (!step) continue;
-			const label = jobs.length > 1 ? `${job.name}: ${step.name}` : step.name;
-			if (label !== this.lastAnnounced) {
-				this.lastAnnounced = label;
-				this.progress({ step: label });
-			}
+			// The runner's own bookkeeping steps ("Post <step>" cleanup, "Complete
+			// job") say nothing about the workflow's progress; the step before
+			// them stays the one reported.
+			if (step.name.startsWith('Post ') || step.name === 'Complete job') return;
+			this.announce({ step: jobs.length > 1 ? `${job.name}: ${step.name}` : step.name });
 			return;
 		}
+	}
+
+	/** Pass one update through, skipping repeats of the last one. */
+	private announce(update: ProgressUpdate): void {
+		const label = update.step ?? update.detail ?? '';
+		if (label === this.lastAnnounced) return;
+		this.lastAnnounced = label;
+		this.progress(update);
 	}
 }
