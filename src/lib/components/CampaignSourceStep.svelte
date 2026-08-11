@@ -103,19 +103,11 @@
   onNext={() => leave(nextStep)}
 >
   <MetadataForm bind:meta={wizard.source} bind:view bind:xml externalEditor />
-  {#if view !== "xml" && wizard.images.length}
-    <p class="imprint-hint">Publisher and year usually sit on the title page.</p>
-  {/if}
 </WizardCard>
 
 <style>
   .head-name {
     color: var(--ink);
-  }
-  .imprint-hint {
-    margin: 14px 0 0;
-    font-size: 12px;
-    color: var(--ink-faint);
   }
   /* The pages shown from inside the XML view, with the way back floating over
      them. */

@@ -187,20 +187,18 @@
         </div>
       {/if}
     {:else}
-      <div class="row">
-        <label class="field grow">
-          Composer
-          <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
-        </label>
-        <label class="field grow">
-          Lyricist
-          <input class="input" bind:value={meta.lyricist} placeholder="e.g. J. W. von Goethe" />
-        </label>
-        <label class="field grow">
-          Editor
-          <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
-        </label>
-      </div>
+      <label class="field">
+        Composer
+        <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
+      </label>
+      <label class="field">
+        Lyricist
+        <input class="input" bind:value={meta.lyricist} placeholder="e.g. J. W. von Goethe" />
+      </label>
+      <label class="field">
+        Editor
+        <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
+      </label>
       {#if variant === "source"}
         <div class="row">
           <label class="field grow">
@@ -241,19 +239,12 @@
           </label>
         </div>
       {/if}
-      <div class="row">
-        <label class="field grow">
-          {variant === "piece" ? "Note about the piece" : "Note about the source"}
-          <textarea class="input" bind:value={meta.note} rows="3"></textarea>
-        </label>
-      </div>
-
       <fieldset>
         <legend>Other contributors</legend>
         {#each meta.contributors as contributor, i (i)}
           <div class="contributor">
             <input class="input" bind:value={contributor.name} placeholder="Name" aria-label="Contributor name" />
-            <input class="input" bind:value={contributor.role} placeholder="Role, e.g. editor" aria-label="Contributor role" />
+            <input class="input" bind:value={contributor.role} placeholder="Role, e.g. arranger" aria-label="Contributor role" />
             <button type="button" class="pill pill-sm" onclick={() => removeContributor(i)}>
               Remove
             </button>
@@ -261,6 +252,13 @@
         {/each}
         <button type="button" class="pill pill-sm" onclick={addContributor}>Add contributor</button>
       </fieldset>
+
+      <div class="row">
+        <label class="field grow">
+          {variant === "piece" ? "Note about the piece" : "Note about the source"}
+          <textarea class="input" bind:value={meta.note} rows="3"></textarea>
+        </label>
+      </div>
     {/if}
   </div>
 {/if}

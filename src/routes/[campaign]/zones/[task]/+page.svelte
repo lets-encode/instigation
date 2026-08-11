@@ -62,24 +62,54 @@
 
   const runner = new CommandRunner();
 
-  // Alternating system tint / accent: even systems blue, odd green.
-  const SYS_ACCENT = ["#3056d3", "#149650"];
-
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the page overflows and its container scrolls horizontally.
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 4;
-  const ZOOM_STEP = 0.25;
   let zoom = $state(1);
-  const zoomBy = (d: number) =>
-    (zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((zoom + d) * 100) / 100)));
+
+  // The slider runs on a log scale: equal drags multiply the zoom equally,
+  // so the low end moves in fine steps and the high end in coarse ones.
+  const ZOOM_STOPS = 100;
+  const zoomPos = $derived(
+    Math.round((Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * ZOOM_STOPS),
+  );
+  const setZoomPos = (p: number) =>
+    (zoom = Math.round(ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (p / ZOOM_STOPS) * 100) / 100);
+
+  // The desk's inner size, for the whole-page fit.
+  let deskW = $state(0);
+  let deskH = $state(0);
+
+  // The zoom at which a whole page fits in the desk: bounded by the height
+  // (using the tallest page), capped at 1 (the width fit). 58 covers the
+  // desk padding and the page heading above each sheet.
+  function fitZoom(): number {
+    if (!pages.length || !deskW || !deskH) return 1;
+    const aspect = Math.max(...pages.map((p) => p.height / p.width));
+    const pagesW = deskW - 48;
+    const colW = view === "double" ? (pagesW - 4) / 2 : pagesW;
+    const usableH = deskH - 58;
+    if (colW <= 0 || usableH <= 0) return 1;
+    const z = usableH / (colW * aspect);
+    return Math.min(1, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+  }
+
+  // Open each freshly loaded task at the whole-page fit (the desk size is
+  // bound after the desk renders, so this cannot run inside load itself).
+  let zoomInitFor = $state<FacsimileTaskData | null>(null);
+  $effect(() => {
+    if (!data || !pages.length || !deskW || !deskH || zoomInitFor === data) return;
+    zoomInitFor = data;
+    zoom = fitZoom();
+  });
 
   // Book-style paging: show one spread at a time rather than every page.
   // `view` is one or two pages per spread; `firstOnRight` places page 1 as a
   // right-hand page (recto), so a two-up view pairs 2|3, 4|5, … the way a
   // score opens — the printed page number's side can't be read without OCR, so
   // this convention (with the toggle) stands in for it.
-  let view = $state<"single" | "double">("single");
+  let view = $state<"single" | "double">("double");
   let firstOnRight = $state(true);
   // The lowest page index currently shown; the anchor navigation moves. Keeping
   // an anchor (not a spread index) preserves the visible page across view/side
@@ -449,6 +479,18 @@
     const target = LABEL_PX * damp;
     return canvasW[p] ? (target * pageW) / canvasW[p] : target;
   };
+
+  // Vertical anchor for the zone-controls pill (its top edge), as a percentage
+  // of the page height: centred in the box's upper third, but clamped so the
+  // pill — a fixed on-screen size — never pokes out of a short box's top.
+  const ZC_HALF_PX = 17;
+  function zcTop(p: number, box: MeasureBox): number {
+    const pg = pages[p];
+    // Screen pixels per page unit; the SVG keeps its aspect, so one scale.
+    const scale = canvasW[p] ? canvasW[p] / pg.width : 1;
+    const off = Math.max(6 / scale, (box.lry - box.uly) / 6 - ZC_HALF_PX / scale);
+    return ((box.uly + off) / pg.height) * 100;
+  }
   type Drag = {
     kind: "move" | "resize" | "draw";
     p: number;
@@ -457,8 +499,22 @@
     sy: number;
     orig: MeasureBox;
     moved: boolean;
+    // For a resize: which edges follow the pointer — "n", "s", "e", "w" or a
+    // corner's pair ("nw", "se", …).
+    edges: string;
   };
   let drag: Drag | null = null;
+
+  // The cursor class for a resize handle: a corner gets the diagonal arrows,
+  // a side the axis arrows.
+  const resizeCursor = (edges: string) =>
+    edges === "n" || edges === "s"
+      ? "h-ns"
+      : edges === "e" || edges === "w"
+        ? "h-ew"
+        : edges === "nw" || edges === "se"
+          ? "h-nwse"
+          : "h-nesw";
 
   function svgXY(e: PointerEvent, p: number): { x: number; y: number } {
     const svg = svgEls[p];
@@ -470,16 +526,22 @@
     };
   }
 
-  // Start a move (from the zone body) or resize (from its handle) drag. A
-  // click on the zone body selects it even read-only; the handle only exists
-  // in edit mode.
-  function startZoneDrag(e: PointerEvent, p: number, z: number, kind: "move" | "resize") {
+  // Start a move (from the zone body) or resize (from an edge or corner
+  // handle) drag. A click on the zone body selects it even read-only; the
+  // handles only exist in edit mode.
+  function startZoneDrag(
+    e: PointerEvent,
+    p: number,
+    z: number,
+    kind: "move" | "resize",
+    edges = "",
+  ) {
     if (kind === "move") selected = { p, z };
     if (!canEdit) return;
     e.stopPropagation();
     selected = { p, z };
     const { x, y } = svgXY(e, p);
-    drag = { kind, p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false };
+    drag = { kind, p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false, edges };
   }
 
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -507,17 +569,20 @@
     commitGeometry(p, pages[p].zones[z]);
   }
 
-  function handleKeydown(e: KeyboardEvent, p: number, z: number) {
+  // Arrow keys on a focused resize handle move that handle's edges.
+  function resizeKeydown(e: KeyboardEvent, p: number, z: number, edges: string) {
     if (!canEdit || !e.key.startsWith("Arrow")) return;
     e.preventDefault();
     e.stopPropagation();
     const box = pages[p].zones[z].box;
     const pg = pages[p];
     const step = e.shiftKey ? 10 : 2;
-    if (e.key === "ArrowLeft") box.lrx = Math.max(box.ulx + 5, box.lrx - step);
-    if (e.key === "ArrowRight") box.lrx = Math.min(pg.width, box.lrx + step);
-    if (e.key === "ArrowUp") box.lry = Math.max(box.uly + 5, box.lry - step);
-    if (e.key === "ArrowDown") box.lry = Math.min(pg.height, box.lry + step);
+    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+    if (edges.includes("w")) box.ulx = Math.max(0, Math.min(box.lrx - 5, box.ulx + dx));
+    if (edges.includes("e")) box.lrx = Math.min(pg.width, Math.max(box.ulx + 5, box.lrx + dx));
+    if (edges.includes("n")) box.uly = Math.max(0, Math.min(box.lry - 5, box.uly + dy));
+    if (edges.includes("s")) box.lry = Math.min(pg.height, Math.max(box.uly + 5, box.lry + dy));
     commitGeometry(p, pages[p].zones[z]);
   }
 
@@ -535,7 +600,7 @@
     });
     const z = pages[p].zones.length - 1;
     selected = { p, z };
-    drag = { kind: "draw", p, z, sx: x, sy: y, orig: { ulx: x, uly: y, lrx: x, lry: y }, moved: false };
+    drag = { kind: "draw", p, z, sx: x, sy: y, orig: { ulx: x, uly: y, lrx: x, lry: y }, moved: false, edges: "" };
   }
 
   function pointerMove(e: PointerEvent) {
@@ -553,10 +618,16 @@
       box.uly = Math.max(0, Math.min(pg.height - h, drag.orig.uly + dy));
       box.lrx = box.ulx + w;
       box.lry = box.uly + h;
-    } else {
-      // resize and draw both drag the lower-right corner.
+    } else if (drag.kind === "draw") {
+      // Drawing drags the lower-right corner from the start point.
       box.lrx = Math.max(box.ulx + 5, x);
       box.lry = Math.max(box.uly + 5, y);
+    } else {
+      // The grabbed edges follow the pointer; the opposite ones stay put.
+      if (drag.edges.includes("w")) box.ulx = Math.min(drag.orig.lrx - 5, x);
+      if (drag.edges.includes("e")) box.lrx = Math.max(drag.orig.ulx + 5, x);
+      if (drag.edges.includes("n")) box.uly = Math.min(drag.orig.lry - 5, y);
+      if (drag.edges.includes("s")) box.lry = Math.max(drag.orig.uly + 5, y);
     }
   }
 
@@ -630,16 +701,6 @@
     return entries;
   }
 
-  // Which system (0-based) each of a page's measures belongs to, for the
-  // alternating tint. A page's first measure and any system start begin one.
-  function systemIndices(pg: EditPage): number[] {
-    let s = -1;
-    return pg.zones.map((z, i) => {
-      if (i === 0 || z.sb) s++;
-      return s;
-    });
-  }
-
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
   const movementCount = $derived(
     1 +
@@ -664,10 +725,13 @@
     return (m ? m + " " : "") + pages[p].zones[z].label;
   };
 
-  // System/section colours reused for the box tint and the zone controls.
+  // Measure/section colours reused for the box tint and the zone controls.
+  // Teal and purple are deliberately outside the piece-region palette
+  // (--zone-1…8), so a colour never carries two meanings.
+  const MEASURE_ACCENT = "#0e8195";
   const MDIV_ACCENT = "#8b5fbf";
-  const accentFor = (systems: number[], p: number, z: number) =>
-    startsMovement(p, z) ? MDIV_ACCENT : SYS_ACCENT[systems[z] % 2];
+  const accentFor = (p: number, z: number) =>
+    startsMovement(p, z) ? MDIV_ACCENT : MEASURE_ACCENT;
 </script>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
@@ -677,37 +741,6 @@
 {/if}
 
 <div class="corrector">
-  {#if data}
-    <div class="taskrow">
-      <span class="abtitle">Measure review</span>
-      <code class="taskchip">{taskId}</code>
-      <span class="abcount">
-        {measureCount} measure{measureCount === 1 ? "" : "s"}
-        · {movementCount} movement{movementCount === 1 ? "" : "s"}
-      </span>
-      {#if !canEdit}
-        {#if data.status === "completed"}
-          <span class="lockpill grey">completed — read-only</span>
-        {:else if data.status !== "encoding_required"}
-          <span class="lockpill amber">submitted — awaiting validation, read-only</span>
-        {:else}
-          <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
-        {/if}
-      {/if}
-      <span class="abspacer"></span>
-      <button
-        type="button"
-        class="submitbtn"
-        onclick={() => submit()}
-        disabled={runner.busy || !canEdit}
-        title="Submit the corrected measures, breaks and movements for validation"
-      >
-        Submit corrections
-      </button>
-    </div>
-  {/if}
-
   {#if notFound}
     <div class="deskwrap">
       <div class="banner err">
@@ -729,80 +762,7 @@
   {:else if loadError}
     <div class="deskwrap"><div class="banner err">{loadError}</div></div>
   {:else if data}
-    <div class="toolpanel">
-      {#if canEdit}
-        <div class="tb-group">
-          <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
-          <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
-        </div>
-        <span class="vline"></span>
-      {/if}
-      <div class="tb-group">
-        <button type="button" class="round" onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out" title="Zoom out">−</button>
-        <span class="zoom-val">{Math.round(zoom * 100)}%</span>
-        <button type="button" class="round" onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in" title="Zoom in">+</button>
-        <button type="button" onclick={() => (zoom = 1)} disabled={zoom === 1} title="Fit page to width">Fit</button>
-      </div>
-      <span class="vline"></span>
-      <div class="tb-group">
-        <button type="button" class="round" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page" title="Previous page">‹</button>
-        <span class="nav-label">{spreadLabel}</span>
-        <button type="button" class="round" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page" title="Next page">›</button>
-      </div>
-      <span class="vline"></span>
-      <div class="tb-group">
-        <div class="viewseg">
-          <button type="button" class:on={view === "single"} onclick={() => (view = "single")} title="Show one page">1 page</button>
-          <button type="button" class:on={view === "double"} onclick={() => (view = "double")} title="Show a two-page spread">2 pages</button>
-        </div>
-        {#if view === "double"}
-          <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
-            <input type="checkbox" bind:checked={firstOnRight} /> P1 right
-          </label>
-        {/if}
-      </div>
-      {#if validation && submitted}
-        <span class="vline"></span>
-        <div class="tb-group tb-validation">
-          <span class="vstatus">
-            {#if validation.status === "completed"}
-              Validation complete
-            {:else if validation.lockUser}
-              {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
-            {:else if selfValidation}
-              Your own submission
-            {:else}
-              Awaiting validation
-            {/if}
-          </span>
-          <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
-            title="Reserve this subtask for validation. Encoders cannot validate their own work.">Claim</button>
-          <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation}
-            title="Record a passing verdict.">Pass</button>
-          <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation}
-            title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
-          {#if failOpen && holdsValidation}
-            <input
-              class="fail-note"
-              bind:value={failText}
-              placeholder="Why does this fail?"
-              onkeydown={(e) => {
-                if (e.key === "Enter" && failText.trim()) validate("fail");
-              }}
-            />
-            <button
-              type="button"
-              class="vfail"
-              onclick={() => validate("fail")}
-              disabled={runner.busy || !failText.trim()}
-              title="Submit the failing verdict with this comment."
-              >Submit fail</button
-            >
-          {/if}
-        </div>
-      {/if}
-    </div>
-
+    <div class="main">
     {#if runner.result && runner.result.error}
       <div class="banner err bar">
         {runner.result.error}
@@ -815,12 +775,11 @@
       </div>
     {/if}
 
-    <div class="desk">
+    <div class="desk" bind:clientWidth={deskW} bind:clientHeight={deskH}>
       <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
         {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
         {#each spread.pages as p (p)}
           {@const pg = pages[p]}
-          {@const systems = systemIndices(pg)}
           <div class="page">
             <p class="pagehead">Page {p + 1}</p>
             {#if pg.failed}
@@ -847,9 +806,8 @@
                 {/if}
                 {#each paintOrder(pg, p) as { zone, z } (z)}
                   <rect
-                    class="zone sys{systems[z] % 2}"
+                    class="zone"
                     class:selected={selected?.p === p && selected?.z === z}
-                    class:sysstart={sbActive(p, z)}
                     class:mdivstart={startsMovement(p, z)}
                     role="button"
                     tabindex={0}
@@ -862,7 +820,21 @@
                     onpointerenter={() => hoverEnter(p, z)}
                     onpointerleave={hoverLeave}
                     onkeydown={(e) => zoneKeydown(e, p, z)}
-                  />
+                  >
+                    {#if pbAt(z)}
+                      <title>⇱ page beginning — automatic: the first measure on each page</title>
+                    {/if}
+                  </rect>
+                  {#if zone.sb && !pbAt(z)}
+                    <rect
+                      class="sysbar"
+                      x={zone.box.ulx}
+                      y={zone.box.uly}
+                      width={Math.max(8, pg.width / 130)}
+                      height={zone.box.lry - zone.box.uly}
+                      fill={accentFor(p, z)}
+                    />
+                  {/if}
                   {@const lbl = labelText(p, z)}
                   {@const fs = labelFont(p, pg.width)}
                   {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
@@ -875,17 +847,45 @@
                     font-size={fs}
                   >{lbl}</text>
                   {#if canEdit && selected?.p === p && selected?.z === z}
-                    <circle
-                      class="handle"
-                      role="button"
-                      tabindex={0}
-                      aria-label={`Measure ${zone.label}: resize`}
-                      cx={zone.box.lrx}
-                      cy={zone.box.lry}
-                      r={Math.max(8, pg.width / 120)}
-                      onpointerdown={(e) => startZoneDrag(e, p, z, "resize")}
-                      onkeydown={(e) => handleKeydown(e, p, z)}
-                    />
+                    {@const r = Math.max(8, pg.width / 120)}
+                    {@const b = zone.box}
+                    {#each [
+                      { edges: "n", name: "top edge", x: b.ulx + r, y: b.uly - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
+                      { edges: "s", name: "bottom edge", x: b.ulx + r, y: b.lry - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
+                      { edges: "w", name: "left edge", x: b.ulx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
+                      { edges: "e", name: "right edge", x: b.lrx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
+                    ] as s (s.edges)}
+                      <rect
+                        class="edge {resizeCursor(s.edges)}"
+                        role="button"
+                        tabindex={0}
+                        aria-label={`Measure ${zone.label}: resize (${s.name})`}
+                        x={s.x}
+                        y={s.y}
+                        width={s.w}
+                        height={s.h}
+                        onpointerdown={(e) => startZoneDrag(e, p, z, "resize", s.edges)}
+                        onkeydown={(e) => resizeKeydown(e, p, z, s.edges)}
+                      />
+                    {/each}
+                    {#each [
+                      { edges: "nw", name: "top-left corner", cx: b.ulx, cy: b.uly },
+                      { edges: "ne", name: "top-right corner", cx: b.lrx, cy: b.uly },
+                      { edges: "sw", name: "bottom-left corner", cx: b.ulx, cy: b.lry },
+                      { edges: "se", name: "bottom-right corner", cx: b.lrx, cy: b.lry },
+                    ] as c (c.edges)}
+                      <circle
+                        class="handle {resizeCursor(c.edges)}"
+                        role="button"
+                        tabindex={0}
+                        aria-label={`Measure ${zone.label}: resize (${c.name})`}
+                        cx={c.cx}
+                        cy={c.cy}
+                        r={r}
+                        onpointerdown={(e) => startZoneDrag(e, p, z, "resize", c.edges)}
+                        onkeydown={(e) => resizeKeydown(e, p, z, c.edges)}
+                      />
+                    {/each}
                   {/if}
                 {/each}
               </svg>
@@ -896,7 +896,7 @@
                 {@const box = zone.box}
                 <div
                   class="zc"
-                  style={`left:${(((box.ulx + box.lrx) / 2) / pg.width) * 100}%; top:${(box.uly / pg.height) * 100}%; --accent:${accentFor(systems, p, z)}`}
+                  style={`left:${(((box.ulx + box.lrx) / 2) / pg.width) * 100}%; top:${zcTop(p, box)}%; --accent:${accentFor(p, z)}`}
                 >
                   <div
                     class="zc-inner"
@@ -947,17 +947,142 @@
         {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
       </div>
     </div>
-
-    <div class="statusbar">
-      {#if canEdit}
-        <span class="lockpill ok">you hold this task</span>
-        <span class="hints">drag on the page to draw a measure · drag a box to move · corner handle resizes · arrows nudge (⇧ ×5)</span>
-      {/if}
-      <span class="sspacer"></span>
-      <span class="hints">⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages</span>
-      <span class="ssep">·</span>
-      <span class="hints">blue/green = alternating systems · <span class="legend-mdiv">purple = movement start</span></span>
     </div>
+
+    <aside class="sidebar">
+      <div class="sb-section">
+        <div class="sb-title">
+          <span class="abtitle">Measure review</span>
+          <code class="taskchip">{taskId}</code>
+        </div>
+        <span class="abcount">
+          {measureCount} measure{measureCount === 1 ? "" : "s"}
+          · {movementCount} movement{movementCount === 1 ? "" : "s"}
+        </span>
+        {#if canEdit}
+          <span class="lockpill ok">you hold this task</span>
+        {:else if data.status === "completed"}
+          <span class="lockpill grey">completed — read-only</span>
+        {:else if data.status !== "encoding_required"}
+          <span class="lockpill amber">submitted — awaiting validation, read-only</span>
+        {:else}
+          <span class="lockpill amber">unclaimed — read-only</span>
+          <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+        {/if}
+        <button
+          type="button"
+          class="submitbtn"
+          onclick={() => submit()}
+          disabled={runner.busy || !canEdit}
+          title="Submit the corrected measures, breaks and movements for validation"
+        >
+          Submit corrections
+        </button>
+      </div>
+
+      {#if canEdit}
+        <div class="sb-section">
+          <span class="sb-label">Edit</span>
+          <div class="sb-row two">
+            <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
+            <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
+          </div>
+        </div>
+      {/if}
+
+      <div class="sb-section">
+        <span class="sb-label">Zoom</span>
+        <div class="sb-row">
+          <input
+            class="zoomslider"
+            type="range"
+            aria-label="Zoom"
+            aria-valuetext={`${Math.round(zoom * 100)}%`}
+            min={0}
+            max={ZOOM_STOPS}
+            step={1}
+            value={zoomPos}
+            oninput={(e) => setZoomPos(Number((e.target as HTMLInputElement).value))}
+          />
+          <span class="zoom-val">{Math.round(zoom * 100)}%</span>
+          <button type="button" onclick={() => (zoom = fitZoom())} disabled={zoom === fitZoom()} title="Fit the whole page in the view">Fit</button>
+        </div>
+      </div>
+
+      <div class="sb-section">
+        <span class="sb-label">Pages</span>
+        <div class="sb-row">
+          <button type="button" class="round" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page" title="Previous page">‹</button>
+          <span class="nav-label">{spreadLabel}</span>
+          <button type="button" class="round" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page" title="Next page">›</button>
+        </div>
+        <div class="viewseg">
+          <button type="button" class:on={view === "single"} onclick={() => (view = "single")} title="Show one page">1 page</button>
+          <button type="button" class:on={view === "double"} onclick={() => (view = "double")} title="Show a two-page spread">2 pages</button>
+        </div>
+        {#if view === "double"}
+          <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
+            <input type="checkbox" bind:checked={firstOnRight} /> P1 right
+          </label>
+        {/if}
+      </div>
+
+      {#if validation && submitted}
+        <div class="sb-section sb-validation">
+          <span class="sb-label">Validation</span>
+          <span class="vstatus">
+            {#if validation.status === "completed"}
+              Validation complete
+            {:else if validation.lockUser}
+              {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
+            {:else if selfValidation}
+              Your own submission
+            {:else}
+              Awaiting validation
+            {/if}
+          </span>
+          <div class="sb-row three">
+            <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
+              title="Reserve this subtask for validation. Encoders cannot validate their own work.">Claim</button>
+            <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation}
+              title="Record a passing verdict.">Pass</button>
+            <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation}
+              title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
+          </div>
+          {#if failOpen && holdsValidation}
+            <input
+              class="fail-note"
+              bind:value={failText}
+              placeholder="Why does this fail?"
+              onkeydown={(e) => {
+                if (e.key === "Enter" && failText.trim()) validate("fail");
+              }}
+            />
+            <div class="sb-row one">
+              <button
+                type="button"
+                class="vfail"
+                onclick={() => validate("fail")}
+                disabled={runner.busy || !failText.trim()}
+                title="Submit the failing verdict with this comment."
+                >Submit fail</button
+              >
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="sb-foot">
+        {#if canEdit}
+          <p>drag on the page to draw a measure · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)</p>
+        {/if}
+        <p>⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages</p>
+        <p>
+          <span class="legend-sys">▍left bar = system start</span><br />
+          <span class="legend-mdiv">purple = movement start</span>
+        </p>
+      </div>
+    </aside>
   {/if}
 </div>
 
@@ -979,27 +1104,54 @@
     text-decoration: underline;
   }
 
-  /* The whole tool: a task header, a tool panel, the desk the page sheets
-     float on (the only scrolling region), and a status strip. The app's
-     navigation bar comes from the layout, as on every other page. */
+  /* The whole tool: a sidebar with the task info and controls, and the desk
+     the page sheets float on (the only scrolling region). The app's
+     navigation bar and footer come from the layout, as on every other page. */
   .corrector {
     flex: 1;
     min-height: 0;
     display: flex;
-    flex-direction: column;
     background: var(--desk);
   }
 
-  /* ---------------------------------------------------------- task header */
-  .taskrow {
+  /* ---------------------------------------------------------------- sidebar
+     A column of ruled-off sections on the right: task, edit, zoom, pages,
+     validation, and the hints/legend foot. */
+  .sidebar {
     flex: none;
+    width: 264px;
     box-sizing: border-box;
-    background: var(--topbar-bg);
-    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px;
+    background: color-mix(in srgb, var(--card) 75%, transparent);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+  }
+  .sb-section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px 0;
+    border-top: 1px solid var(--line);
+  }
+  .sb-section:first-child {
+    border-top: 0;
+    padding-top: 4px;
+  }
+  .sb-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .sb-title {
     display: flex;
     align-items: center;
-    padding: 10px 24px;
-    gap: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .abtitle {
     font-size: 14px;
@@ -1019,10 +1171,8 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .abspacer {
-    flex: 1;
-  }
   .submitbtn {
+    align-self: stretch;
     font: 600 13.5px var(--font);
     padding: 8px 18px;
     border-radius: 999px;
@@ -1042,30 +1192,30 @@
     box-shadow: none;
   }
 
-  /* ---------------------------------------------------------- tool panel */
-  .toolpanel {
-    flex: none;
-    background: color-mix(in srgb, var(--card) 75%, transparent);
-    border-bottom: 1px solid var(--line);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    padding: 8px 24px;
-    gap: 12px 20px;
-  }
-  .tb-group {
+  /* A control row filling the sidebar's width; .one/.two/.three divide it
+     into that many equal cells. */
+  .sb-row {
+    align-self: stretch;
     display: flex;
     align-items: center;
     gap: 6px;
   }
-  .vline {
-    width: 1px;
-    height: 22px;
-    background: var(--line);
-    flex: none;
+  .sb-row.one,
+  .sb-row.two,
+  .sb-row.three {
+    display: grid;
+    grid-template-columns: repeat(var(--cells), 1fr);
   }
-  .toolpanel button {
+  .sb-row.one {
+    --cells: 1;
+  }
+  .sb-row.two {
+    --cells: 2;
+  }
+  .sb-row.three {
+    --cells: 3;
+  }
+  .sb-row button {
     font: 600 12.5px var(--font);
     padding: 6px 12px;
     border-radius: 999px;
@@ -1075,28 +1225,38 @@
     cursor: pointer;
     white-space: nowrap;
   }
-  .toolpanel button:hover:not(:disabled) {
+  .sb-row button:hover:not(:disabled) {
     border-color: var(--info-line);
   }
-  .toolpanel button:disabled {
+  .sb-row button:disabled {
     opacity: 0.45;
     cursor: default;
   }
-  .toolpanel button.round {
+  .sb-row button.round {
+    flex: none;
     width: 28px;
     height: 28px;
     padding: 0;
     color: var(--ink-soft);
   }
+  .zoomslider {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
   .zoom-val {
-    min-width: 42px;
-    text-align: center;
+    flex: none;
+    min-width: 38px;
+    text-align: right;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
   }
   .nav-label {
+    flex: 1;
+    text-align: center;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink-soft);
@@ -1105,16 +1265,21 @@
     padding: 0 2px;
   }
   .viewseg {
+    align-self: stretch;
     display: flex;
     background: var(--bg-tint);
     border-radius: 999px;
     padding: 3px;
   }
   .viewseg button {
+    flex: 1;
+    font: 600 12.5px var(--font);
     border: 0;
     background: none;
     color: var(--ink-faint);
     padding: 4px 12px;
+    border-radius: 999px;
+    cursor: pointer;
   }
   .viewseg button.on {
     background: var(--card);
@@ -1130,31 +1295,45 @@
     white-space: nowrap;
     cursor: pointer;
   }
-  .tb-validation .vstatus {
+  .sb-validation .vstatus {
     font-size: 12.5px;
     color: var(--ink-soft);
-    white-space: nowrap;
   }
-  .tb-validation .vpass {
+  .sb-validation .vpass {
     color: var(--ok);
   }
-  .tb-validation .vfail {
+  .sb-validation .vfail {
     color: var(--danger);
   }
-  .tb-validation .vfail.on {
+  .sb-validation .vfail.on {
     background: var(--danger-solid);
     border-color: var(--danger-solid);
     color: #fff;
   }
-  .tb-validation .fail-note {
+  .sb-validation .fail-note {
     font: inherit;
     font-size: 12.5px;
-    width: 220px;
+    width: 100%;
+    box-sizing: border-box;
     padding: 5px 10px;
     border: 1px solid var(--danger-line);
     border-radius: 999px;
     background: var(--card);
     color: var(--ink);
+  }
+  /* The hints and colour legend, pinned to the sidebar's bottom. */
+  .sb-foot {
+    margin-top: auto;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .sb-foot p {
+    margin: 0;
   }
 
   /* ------------------------------------------------------ banners & desk */
@@ -1191,17 +1370,22 @@
     padding: 1.25rem 2rem;
     box-sizing: border-box;
   }
+  /* The desk column beside the sidebar: result banners over the desk. */
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .desk {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 16px 40px;
+    padding: 16px 24px;
     box-sizing: border-box;
   }
   .pages {
     min-width: 0;
-    max-width: 1600px;
-    margin: 0 auto;
   }
   /* Two-up view: the spread's pages (and any empty-half spacer) share the row. */
   .pages.double {
@@ -1260,26 +1444,22 @@
     touch-action: none;
     user-select: none;
   }
+  /* Teal for measures, purple for movement starts: both hues sit outside the
+     piece-region palette (--zone-1…8), so a colour never carries two meanings. */
   .zone {
-    fill: rgba(48, 86, 211, 0.12);
-    stroke: rgba(48, 86, 211, 0.85);
+    fill: rgba(14, 129, 149, 0.12);
+    stroke: rgba(14, 129, 149, 0.85);
     stroke-width: 2;
     cursor: pointer;
-  }
-  .zone.sys0 {
-    fill: rgba(48, 86, 211, 0.12);
-    stroke: rgba(48, 86, 211, 0.85);
-  }
-  .zone.sys1 {
-    fill: rgba(20, 150, 80, 0.12);
-    stroke: rgba(20, 150, 80, 0.85);
   }
   .zone.selected {
     fill-opacity: 1;
     stroke-width: 3.5;
   }
-  .zone.sysstart {
-    stroke-width: 4;
+  /* A solid bar down a measure's left edge marks a system beginning. */
+  .sysbar {
+    opacity: 0.65;
+    pointer-events: none;
   }
   .zone.mdivstart {
     stroke: rgba(139, 95, 191, 0.9);
@@ -1298,18 +1478,35 @@
   }
   .handle {
     fill: #fff;
-    stroke: rgba(48, 86, 211, 0.85);
+    stroke: rgba(14, 129, 149, 0.85);
     stroke-width: 2;
+  }
+  /* The side strips are invisible grab areas along the box edges; a
+     transparent fill still catches pointer events. */
+  .edge {
+    fill: transparent;
+  }
+  .h-ns {
+    cursor: ns-resize;
+  }
+  .h-ew {
+    cursor: ew-resize;
+  }
+  .h-nwse {
     cursor: nwse-resize;
   }
+  .h-nesw {
+    cursor: nesw-resize;
+  }
 
-  /* The per-zone controls: a floating pill above the active box (number input ·
-     ↵ · § · ✕). The outer layer is a zero-size anchor at the box's top centre;
-     the pill hangs above it and re-enables the pointer. */
+  /* The per-zone controls: a floating pill inside the active box (number input ·
+     ↵ · § · ✕), in the box's upper third. The outer layer is a zero-size
+     anchor (zcTop keeps it inside the box); the pill hangs below it, centred,
+     and re-enables the pointer. */
   .zc {
     position: absolute;
     pointer-events: none;
-    transform: translate(-50%, calc(-100% - 8px));
+    transform: translate(-50%, 0);
     z-index: 5;
   }
   .zc-inner {
@@ -1367,19 +1564,6 @@
     color: var(--danger);
   }
 
-  /* ---------------------------------------------------------- status strip */
-  .statusbar {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px 24px;
-    background: color-mix(in srgb, var(--card) 85%, transparent);
-    border-top: 1px solid var(--line);
-    font-size: 12px;
-    color: var(--ink-faint);
-    min-width: 0;
-  }
   .lockpill {
     flex: none;
     font-size: 11.5px;
@@ -1419,20 +1603,15 @@
     opacity: 0.5;
     cursor: default;
   }
-  .hints {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .ssep {
-    color: var(--line-input);
-    flex: none;
-  }
-  .sspacer {
-    flex: 1;
-  }
   .legend-mdiv {
     color: var(--pre);
     font-weight: 600;
+  }
+  .legend-sys {
+    color: #0e8195;
+    font-weight: 600;
+  }
+  :global([data-theme="dark"]) .legend-sys {
+    color: #4db6c4;
   }
 </style>
