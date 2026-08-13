@@ -6,9 +6,12 @@
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FacsimileTaskData } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
+  import { handle } from "$lib/campaign-graph.ts";
+  import { elapsed } from "$lib/campaign-board.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
@@ -286,14 +289,48 @@
     viewer !== "" && validation?.lockUser === viewer,
   );
   const selfValidation = $derived(
-    !!data && data.encoder !== "" && data.encoder === viewer,
+    !!data && data.encoder !== "" && data.encoder === viewer && !data.allowSelfValidation,
   );
   const canClaimValidation = $derived(
     !!validation &&
       validation.status === "validation_required" &&
+      validation.openSlots > 0 &&
       !validation.lockUser &&
       !selfValidation,
   );
+  const failComments = $derived(data?.failComments ?? []);
+  const failedVerdicts = $derived(
+    (validation?.verdicts ?? []).filter((v) => v.verdict === "fail"),
+  );
+  // Sending a failed task back is open to a failing validator or push access —
+  // the same rule the automation enforces.
+  const canSendBack = $derived(
+    viewer !== "" &&
+      data?.status === "validation_required" &&
+      failedVerdicts.length > 0 &&
+      (data.canPush || failedVerdicts.some((v) => v.user === viewer)),
+  );
+  const sendBack = () =>
+    run((c) => invoke(commands.sendBack, { task_id: taskId }, c));
+
+  // Logins for verdict authors and fail-comment authors (id → login, display).
+  let logins = $state<Record<string, string>>({});
+  $effect(() => {
+    const ids = new Set<string>();
+    for (const v of data?.validation?.verdicts ?? []) if (v.user) ids.add(v.user);
+    for (const c of data?.failComments ?? []) if (c.author_id) ids.add(c.author_id);
+    for (const id of ids) {
+      if (logins[id]) continue;
+      const n = Number(id);
+      if (!Number.isInteger(n) || n <= 0) continue;
+      readForge()
+        .getUserLogin(n)
+        .then((login) => {
+          if (login) logins[id] = login;
+        })
+        .catch(() => {});
+    }
+  });
   const claimValidation = () =>
     run((c) =>
       invoke(
@@ -752,6 +789,8 @@
   />
 {/if}
 
+<PendingVerdicts />
+
 <div class="corrector">
   {#if notFound}
     <div class="deskwrap">
@@ -967,7 +1006,11 @@
         {:else if data.status === "completed"}
           <span class="lockpill grey">completed — read-only</span>
         {:else if data.status !== "encoding_required"}
-          <span class="lockpill amber">submitted — awaiting validation, read-only</span>
+          {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
+            <span class="lockpill red">validation failed — read-only</span>
+          {:else}
+            <span class="lockpill amber">submitted — awaiting validation, read-only</span>
+          {/if}
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
           <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
@@ -982,6 +1025,23 @@
           Submit corrections
         </button>
       </div>
+
+      {#if failComments.length > 0}
+        <div class="sb-section">
+          <span class="sb-label">Fail comments</span>
+          {#each failComments as c (c.comment_id)}
+            <div class="failnote" class:resolved={c.resolved === "true"}>
+              <span class="failwho"
+                >@{handle(logins, c.author_id)} · {elapsed(c.timestamp)}{c.resolved ===
+                "true"
+                  ? " · resolved"
+                  : ""}</span
+              >
+              <div class="failtext">“{c.body}”</div>
+            </div>
+          {/each}
+        </div>
+      {/if}
 
       {#if canEdit}
         <div class="sb-section">
@@ -1038,20 +1098,34 @@
               Validation complete
             {:else if validation.lockUser}
               {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
+            {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
+              Failed — send it back to redo the correction
             {:else if selfValidation}
               Your own submission
             {:else}
               Awaiting validation
             {/if}
           </span>
-          <div class="sb-row three">
-            <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
-              title="Reserve this subtask for validation. Encoders cannot validate their own work.">Claim</button>
-            <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation}
-              title="Record a passing verdict.">Pass</button>
-            <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation}
-              title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
-          </div>
+          {#each validation.verdicts as v, i (i)}
+            <span class="vline {v.verdict}"
+              >{v.verdict === "pass" ? "✓ pass" : "✗ fail"} · @{handle(
+                logins,
+                v.user,
+              )} · {elapsed(v.ts)}</span
+            >
+          {/each}
+          {#if validation.status !== "completed" && validation.openSlots > 0}
+            <div class="sb-row three">
+              <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
+                title={data?.allowSelfValidation
+                  ? "Reserve this subtask for validation."
+                  : "Reserve this subtask for validation. Encoders cannot validate their own work."}>Claim</button>
+              <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation}
+                title="Record a passing verdict.">Pass</button>
+              <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation}
+                title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
+            </div>
+          {/if}
           {#if failOpen && holdsValidation}
             <input
               class="fail-note"
@@ -1071,6 +1145,16 @@
                 >Submit fail</button
               >
             </div>
+          {/if}
+          {#if canSendBack}
+            <button
+              type="button"
+              class="sendbackbtn"
+              onclick={() => sendBack()}
+              disabled={runner.busy}
+              title="Return the task to measure correction: attribution and validations reset."
+              >Send back to measure correction</button
+            >
           {/if}
         </div>
       {/if}
@@ -1309,6 +1393,53 @@
     background: var(--danger-solid);
     border-color: var(--danger-solid);
     color: #fff;
+  }
+  .sb-validation .vline {
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .sb-validation .vline.pass {
+    color: var(--ok);
+  }
+  .sb-validation .vline.fail {
+    color: var(--danger);
+  }
+  .sendbackbtn {
+    align-self: stretch;
+    font: 600 12.5px var(--font);
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 0;
+    background: var(--danger-solid);
+    color: #fff;
+    cursor: pointer;
+  }
+  .sendbackbtn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .failnote {
+    align-self: stretch;
+    border: 1px solid var(--danger-line);
+    border-radius: 8px;
+    background: var(--danger-wash);
+    padding: 8px 10px;
+  }
+  .failnote.resolved {
+    opacity: 0.55;
+  }
+  .failwho {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--danger);
+  }
+  .failtext {
+    font-size: 12.5px;
+    color: var(--ink);
+    margin-top: 4px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
   }
   .sb-validation .fail-note {
     font: inherit;
@@ -1580,6 +1711,11 @@
     color: var(--ink-faint);
     background: var(--bg-tint);
     border: 1px solid var(--line);
+  }
+  .lockpill.red {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
   }
   .claimbtn {
     flex: none;
