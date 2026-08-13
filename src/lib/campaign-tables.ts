@@ -296,6 +296,11 @@ export function configNumber(yaml: string | null, key: string, fallback: number)
 	return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** A boolean scalar from config.yaml by key; false unless the value is `true`. */
+export function configFlag(yaml: string | null, key: string): boolean {
+	return configString(yaml, key) === 'true';
+}
+
 /**
  * Resolve every numeric account id the tables mention (encoders, lock
  * holders, history actors, comment authors, verdict authors) to its current

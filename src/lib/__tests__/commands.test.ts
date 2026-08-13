@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { commands, invoke, type CommandContext } from '../commands.ts';
+import { commands, invoke, setVerdictSink, type CommandContext } from '../commands.ts';
 import { envelopeFromPrBody } from '../command-envelope.ts';
 import type { ForgeClient, OpenedChangeRequest } from '../forge/types.ts';
 
@@ -46,6 +46,17 @@ async function withImmediateTimeouts<T>(run: () => Promise<T>): Promise<T> {
 }
 
 const lockHeader = 'task_id,subtask_id,user_id,timestamp,kind\n';
+
+// Capture the background settlement of an optimistic PR command: the promise
+// resolves when the command's verdict lands in the sink.
+function captureVerdict(): Promise<{ state: string; message: string }> {
+	return new Promise((resolve) => {
+		setVerdictSink({
+			begin: () => 'test',
+			settle: (_id, state, message) => resolve({ state, message })
+		});
+	});
+}
 
 test('readTables decodes generated quoted config values', async () => {
 	const files: Record<string, string> = {
@@ -188,12 +199,15 @@ test('a volunteer encoding submission cleans the encode branch in their fork', a
 		}
 	});
 
-	const result = await withImmediateTimeouts(() =>
-		invoke(commands.submitEncoding, { task_id: 'T0001' }, context(forge))
-	);
+	const settled = captureVerdict();
+	const { result, verdict } = await withImmediateTimeouts(async () => {
+		const result = await invoke(commands.submitEncoding, { task_id: 'T0001' }, context(forge));
+		return { result, verdict: await settled };
+	});
 
 	assert.equal(result.ok, true);
 	assert.equal(pullHead, 'volunteer:encode-T0001');
+	assert.equal(verdict.state, 'accepted');
 	assert.deepEqual(deleted, ['volunteer', 'campaign', 'encode-T0001']);
 });
 
@@ -211,10 +225,14 @@ test('a rejected volunteer encoding keeps its fork branch for correction', async
 		}
 	});
 
-	const result = await withImmediateTimeouts(() =>
-		invoke(commands.submitEncoding, { task_id: 'T0001' }, context(forge))
-	);
+	const settled = captureVerdict();
+	const { result, verdict } = await withImmediateTimeouts(async () => {
+		const result = await invoke(commands.submitEncoding, { task_id: 'T0001' }, context(forge));
+		return { result, verdict: await settled };
+	});
 
-	assert.match(result.error ?? '', /invalid_mei/);
+	assert.equal(result.ok, true);
+	assert.equal(verdict.state, 'rejected');
+	assert.match(verdict.message, /invalid_mei/);
 	assert.equal(deleted, false);
 });

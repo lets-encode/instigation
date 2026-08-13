@@ -25,6 +25,7 @@ import {
   serializeCommentCsv,
   appendComments,
   appendHistory,
+  configFlag,
 } from "../src/lib/campaign-tables.ts";
 import type {
   ParsedState,
@@ -184,6 +185,7 @@ async function attemptClaim(
         author,
         changedPaths,
         now,
+        allowSelfValidation: configFlag(configText, "allow_self_validation"),
       })
     : { ok: false, reason: "malformed_claim" };
 

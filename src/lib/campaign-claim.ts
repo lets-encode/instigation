@@ -29,6 +29,8 @@ export interface CheckClaimArgs {
 	changedPaths: string[];
 	/** ISO-8601 timestamp to stamp the lock. */
 	now: string;
+	/** config.yaml allow_self_validation: the encoder may validate their own work. */
+	allowSelfValidation?: boolean;
 }
 
 export type ClaimResult = { ok: true; lock: LockRow } | { ok: false; reason: string };
@@ -44,7 +46,16 @@ export function boundaryCheck(changedPaths: string[], allowed: string[]): boolea
 }
 
 /** Decide a claim. */
-export function checkClaim({ tasks, state, locks, intent, author, changedPaths, now }: CheckClaimArgs): ClaimResult {
+export function checkClaim({
+	tasks,
+	state,
+	locks,
+	intent,
+	author,
+	changedPaths,
+	now,
+	allowSelfValidation
+}: CheckClaimArgs): ClaimResult {
 	// A claim may only touch the lock table.
 	if (!boundaryCheck(changedPaths, ['tracking/lock.csv'])) return reject('out_of_bounds');
 
@@ -72,9 +83,10 @@ export function checkClaim({ tasks, state, locks, intent, author, changedPaths, 
 		if (activeSameKind.length > 0) return reject('already_locked');
 	} else {
 		if (row.status !== 'validation_required') return reject('wrong_state');
-		// The encoder is recorded on the task row; no validating your own encoding.
+		// The encoder is recorded on the task row; no validating your own
+		// encoding, unless the campaign's config allows it.
 		const taskRow = findRow(state.rows, intent.task_id, '');
-		if (author === taskRow?.encoder) return reject('self_validation');
+		if (!allowSelfValidation && author === taskRow?.encoder) return reject('self_validation');
 
 		// Open slot = (final pass/fail cells) + (active validation locks) < slots.
 		const finals = state.validationColumns.filter((c) => isFinalValidation(row[c] ?? '')).length;

@@ -24,6 +24,8 @@ export interface GraphData {
 	validationColumns: string[];
 	locks: LockRow[];
 	passThreshold: number;
+	/** validation.allow_self_validation from config.yaml: the encoder may validate their own work. */
+	allowSelfValidation?: boolean;
 }
 
 /** Status keys shared by node pills, chips and the tables view. */
@@ -244,7 +246,7 @@ function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', login
 	const taskStatus = taskState(d, row.task_id);
 	const waiting = !isEncoded(taskStatus?.status ?? '');
 	const pre = isPreTask(taskDef(d, row.task_id)?.locator ?? '');
-	const selfEncoded = viewer !== '' && taskStatus?.encoder === viewer;
+	const selfEncoded = viewer !== '' && taskStatus?.encoder === viewer && !d.allowSelfValidation;
 	return {
 		key: 'open',
 		sub: waiting
@@ -293,7 +295,7 @@ export function buildGraph(d: GraphData, viewer = '', logins: Logins = {}): Task
 						viewer !== '' &&
 						encoded &&
 						row.status === 'validation_required' &&
-						state?.encoder !== viewer &&
+						(d.allowSelfValidation || state?.encoder !== viewer) &&
 						slot === nextUnreservedSlot(d, row),
 					user: s.user,
 					ts: s.ts

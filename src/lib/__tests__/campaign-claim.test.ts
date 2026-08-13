@@ -142,6 +142,17 @@ test("validation claim by the task's encoder is rejected (no self-validation)", 
 	assert.equal(v.reason, 'self_validation');
 });
 
+test("validation claim by the task's encoder is accepted when the campaign allows self-validation", () => {
+	const v = claim({
+		state: validationRequired,
+		intent: validationIntent,
+		author: 'bob',
+		allowSelfValidation: true
+	});
+	assert.equal(v.ok, true);
+	assert.equal(v.lock!.kind, 'validation');
+});
+
 test('validation claim is rejected when the only slot is already a final outcome', () => {
 	const state = parseStateCsv(
 		STATE_HEADER + 'T0001,,validation_required,bob,t,\n' + 'T0001,S0001,validation_required,,,pass|carol|t\n'

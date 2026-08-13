@@ -27,12 +27,15 @@ import {
 	appendComments,
 	appendHistory,
 	findRow,
+	isFinalValidation,
 	configString,
 	configNumber,
+	configFlag,
 	configPieces,
 	resolveLogins
 } from './campaign-tables.ts';
 import { checkPlan } from './campaign-plan.ts';
+import { isPreTask } from './campaign-graph.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow, PieceRef } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
@@ -112,6 +115,7 @@ export async function invoke<I extends Record<string, unknown>, O>(
 					input: def.envelopeInput ? def.envelopeInput(input) : input
 				};
 	console.log('[command]', def.id, input);
+	ctx.progress({ command: def.id });
 	const output = await def.run(input, ctx, envelope);
 	if (def.log === 'direct' && envelope) await logDirect(ctx, envelope, output as Result);
 	return output;
@@ -302,6 +306,62 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
 	return { ok: true, prUrl, message: result.verdict };
 }
 
+/**
+ * Where background verdicts are reported. The UI store
+ * (pending-verdicts.svelte.ts) registers itself through setVerdictSink when it
+ * loads; headless callers keep the no-op. This module cannot import the store
+ * directly — it uses Svelte runes, which only exist under the Svelte compiler.
+ */
+export interface PendingVerdictSink {
+	begin(entry: { label: string; prNumber: number; prUrl: string }): string;
+	settle(id: string, state: 'accepted' | 'rejected' | 'timeout', message: string): void;
+}
+
+let verdictSink: PendingVerdictSink = { begin: () => '', settle: () => {} };
+
+export function setVerdictSink(sink: PendingVerdictSink): void {
+	verdictSink = sink;
+}
+
+// Resolve an optimistic PR command: the Result returns as soon as the PR is
+// open, and the automation's verdict is followed in the background through
+// the verdict sink (accepted entries settle quietly; a rejection stays on
+// screen until dismissed). Claims stay synchronous — their verdict gates the
+// user's next step — so this is only for submission-shaped commands. The
+// background wait reports no progress: the overlay belongs to the next
+// command by the time the verdict lands.
+function finishInBackground(
+	ctx: CommandContext,
+	pr: {
+		number: number;
+		html_url: string;
+		headSha?: string;
+		head?: { owner: string; repo: string; branch: string };
+		cleanup?: 'always' | 'accepted';
+	},
+	label: string
+): Result {
+	const id = verdictSink.begin({ label, prNumber: pr.number, prUrl: pr.html_url });
+	const background: CommandContext = { ...ctx, progress: () => {} };
+	void (async () => {
+		let res: Result;
+		try {
+			const outcome = await waitForPrProcessed(background, pr);
+			res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
+		} catch (e) {
+			res = { error: `${label}: ${(e as Error).message}` };
+		}
+		const state = res.error ? 'rejected' : res.warn ? 'timeout' : 'accepted';
+		console.log('[pending-verdict]', label, 'PR', pr.number, state);
+		verdictSink.settle(id, state, res.error ?? res.message ?? `${label} processed.`);
+	})();
+	return {
+		ok: true,
+		prUrl: pr.html_url,
+		message: `${label} — PR #${pr.number} opened. The verdict lands in the corner of the page.`
+	};
+}
+
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
 // the invoking command's envelope in its body. Shared by the claim command
 // and "open in mei-friend" (where opening == claiming).
@@ -359,6 +419,8 @@ export interface CampaignTables {
 	license: string;
 	/** validation.pass_threshold from config.yaml; 1 when unreadable. */
 	passThreshold: number;
+	/** validation.allow_self_validation from config.yaml; false when unreadable. */
+	allowSelfValidation: boolean;
 	/**
 	 * Numeric account id → current login, for every user referenced by the
 	 * tables (locks, encoders, history). The tables store the stable numeric id;
@@ -398,6 +460,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 				description: '',
 				license: '',
 				passThreshold: 1,
+				allowSelfValidation: false,
 				logins: {}
 			};
 		}
@@ -420,6 +483,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			description: configString(configYaml, 'description'),
 			license: configString(configYaml, 'license'),
 			passThreshold: configNumber(configYaml, 'pass_threshold', 1),
+			allowSelfValidation: configFlag(configYaml, 'allow_self_validation'),
 			logins: await resolveLogins((n) => f.getUserLogin(n), {
 				rows: state.rows,
 				locks,
@@ -575,12 +639,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[submitpr] submission PR opened', pr.number, pr.html_url);
-			const verdict = await waitForPrProcessed(ctx, {
-				...pr,
-				head: forkHead,
-				cleanup: 'accepted'
-			});
-			return verdictResult(verdict, pr.number, pr.html_url, `Opened submission PR #${pr.number} for ${task_id}.`);
+			return finishInBackground(ctx, { ...pr, head: forkHead, cleanup: 'accepted' }, `Encoding of ${task_id}`);
 		} catch (e) {
 			return { error: `Submission PR failed: ${(e as Error).message}` };
 		}
@@ -660,13 +719,7 @@ const submitValidation: CommandDef<
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[validate] validation PR opened', pr.number, pr.html_url);
-			const outcome = await waitForPrProcessed(ctx, pr);
-			return verdictResult(
-				outcome,
-				pr.number,
-				pr.html_url,
-				`Opened validation PR #${pr.number} for ${task_id}/${subtask_id} (${verdict}).`
-			);
+			return finishInBackground(ctx, pr, `Validation of ${task_id}/${subtask_id} (${verdict})`);
 		} catch (e) {
 			return { error: `Validate failed: ${(e as Error).message}` };
 		}
@@ -724,8 +777,7 @@ const submitComment: CommandDef<
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[comment] comment PR opened', pr.number, pr.html_url);
-			const outcome = await waitForPrProcessed(ctx, pr);
-			return verdictResult(outcome, pr.number, pr.html_url, `Opened comment PR #${pr.number} for ${input.task_id}.`);
+			return finishInBackground(ctx, pr, `Comment on ${input.task_id}`);
 		} catch (e) {
 			return { error: `Comment failed: ${(e as Error).message}` };
 		}
@@ -757,18 +809,17 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[comment] resolve PR opened', pr.number, pr.html_url);
-			const outcome = await waitForPrProcessed(ctx, pr);
-			return verdictResult(outcome, pr.number, pr.html_url, `Opened resolve PR #${pr.number}.`);
+			return finishInBackground(ctx, pr, `Resolution of comment ${comment_id}`);
 		} catch (e) {
 			return { error: `Resolve failed: ${(e as Error).message}` };
 		}
 	}
 };
 
-// Open a PR that sends a failed task back for encoding: the task resets to
-// encoding_required, its subtasks to pending, and every validation cell
-// clears. Allowed for a failing validator or anyone with push access — the
-// automation enforces it.
+// Open a PR that sends a failed task back to its work stage (encoding, or
+// measure correction for a pre-task): the task resets to encoding_required,
+// its subtasks to pending, and every validation cell clears. Allowed for a
+// failing validator or anyone with push access — the automation enforces it.
 const sendBack: CommandDef<{ task_id: string }, Result> = {
 	id: 'campaign.sendBack',
 	version: 1,
@@ -777,9 +828,15 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 		const { forge: f, repoId, owner, repo } = ctx;
 		try {
 			await muteOnce(f, repoId, owner, repo);
-			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
+			const [stateCsv, taskCsv] = await Promise.all([
+				f.getRepoFile(owner, repo, STATE_PATH),
+				f.getRepoFile(owner, repo, TASK_PATH)
+			]);
+			const state = parseStateCsv(stateCsv ?? '');
 			const row = findRow(state.rows, task_id, '');
 			if (!row) return { error: `Unknown task ${task_id}.` };
+			const locator = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.locator ?? '';
+			const stage = isPreTask(locator) ? 'measure correction' : 'encoding';
 			for (const r of state.rows) {
 				if (r.task_id !== task_id) continue;
 				if (r.subtask_id === '') {
@@ -792,17 +849,16 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 				for (const column of state.validationColumns) r[column] = '';
 			}
 			ctx.progress({ step: 'Opening the send-back PR…' });
-			const body = `Sends ${task_id} back for encoding after a failed validation. Opened from the campaign console.`;
+			const body = `Sends ${task_id} back for ${stage} after a failed validation. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
 				branch: `sendback-${task_id}-${rand()}`,
 				files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
-				message: `Send ${task_id} back for encoding`,
-				title: `Send ${task_id} back for encoding`,
+				message: `Send ${task_id} back for ${stage}`,
+				title: `Send ${task_id} back for ${stage}`,
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[sendback] PR opened', pr.number, pr.html_url);
-			const outcome = await waitForPrProcessed(ctx, pr);
-			return verdictResult(outcome, pr.number, pr.html_url, `Opened send-back PR #${pr.number} for ${task_id}.`);
+			return finishInBackground(ctx, pr, `Send-back of ${task_id}`);
 		} catch (e) {
 			return { error: `Send back failed: ${(e as Error).message}` };
 		}
@@ -953,13 +1009,23 @@ export interface FacsimileTaskData {
 	holdsLock: boolean;
 	/** Who submitted the task's work ('' while unsubmitted). Encoders cannot validate it. */
 	encoder: string;
+	/** validation.allow_self_validation from config.yaml; false when unreadable. */
+	allowSelfValidation: boolean;
+	/** Whether the viewer has push access to the campaign repo. */
+	canPush: boolean;
 	/** The task's validation subtask, so the editor can drive the review too. */
 	validation: {
 		subtask_id: string;
 		status: string;
 		/** Who holds the subtask's active validation lock ('' when unclaimed). */
 		lockUser: string;
+		/** The recorded final verdicts (`pass`/`fail` with author and timestamp), in slot order. */
+		verdicts: { verdict: string; user: string; ts: string }[];
+		/** Validation slots still empty (claimable while > active locks). */
+		openSlots: number;
 	} | null;
+	/** The task's fail comments from comment.csv, in table order. */
+	failComments: CommentRow[];
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -968,10 +1034,13 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 	log: 'none',
 	async run({ task_id }, ctx) {
 		const { forge: f, owner, repo, viewer } = ctx;
-		const [taskCsv, stateCsv, lockCsv] = await Promise.all([
+		const [taskCsv, stateCsv, lockCsv, commentCsv, configYaml, head] = await Promise.all([
 			f.getRepoFile(owner, repo, TASK_PATH),
 			f.getRepoFile(owner, repo, STATE_PATH),
-			f.getRepoFile(owner, repo, LOCK_PATH)
+			f.getRepoFile(owner, repo, LOCK_PATH),
+			f.getRepoFile(owner, repo, COMMENT_PATH),
+			f.getRepoFile(owner, repo, 'config.yaml'),
+			f.getRepoHead(owner, repo)
 		]);
 		const task = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '');
 		if (!task) throw new Error(`Unknown task ${task_id}.`);
@@ -989,9 +1058,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 		const holdsLock = locks.some(
 			(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === viewer
 		);
-		const stateRows = parseStateCsv(stateCsv ?? '').rows;
-		const taskState = findRow(stateRows, task_id, '');
-		const subRow = stateRows.find((r) => r.task_id === task_id && r.subtask_id !== '');
+		const state = parseStateCsv(stateCsv ?? '');
+		const taskState = findRow(state.rows, task_id, '');
+		const subRow = state.rows.find((r) => r.task_id === task_id && r.subtask_id !== '');
+		const cells = subRow ? state.validationColumns.map((c) => subRow[c] ?? '') : [];
 		const validation = subRow
 			? {
 					subtask_id: subRow.subtask_id,
@@ -1000,7 +1070,12 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 						locks.find(
 							(l) =>
 								l.task_id === task_id && l.subtask_id === subRow.subtask_id && l.kind === 'validation'
-						)?.user_id ?? ''
+						)?.user_id ?? '',
+					verdicts: cells.filter(isFinalValidation).map((cell) => {
+						const [verdict, user, ts] = cell.split('|');
+						return { verdict, user, ts };
+					}),
+					openSlots: cells.filter((cell) => cell === '').length
 				}
 			: null;
 		return {
@@ -1011,7 +1086,12 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 			status: taskState?.status ?? '',
 			holdsLock,
 			encoder: taskState?.encoder ?? '',
-			validation
+			allowSelfValidation: configFlag(configYaml, 'allow_self_validation'),
+			canPush: head.canPush,
+			validation,
+			failComments: parseCommentCsv(commentCsv ?? '').filter(
+				(c) => c.task_id === task_id && c.kind === 'fail'
+			)
 		};
 	}
 };
@@ -1079,8 +1159,7 @@ async function submitFacsimile(
 			body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 		});
 		console.log('[zones] PR opened', pr.number, pr.html_url);
-		const verdict = await waitForPrProcessed(ctx, { ...pr, cleanup: 'accepted' });
-		return verdictResult(verdict, pr.number, pr.html_url, `Opened submission PR #${pr.number} for ${task_id}.`);
+		return finishInBackground(ctx, { ...pr, cleanup: 'accepted' }, `Correction of ${task_id}`);
 	} catch (e) {
 		return { error: `Submission failed: ${(e as Error).message}` };
 	}
