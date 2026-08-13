@@ -26,6 +26,8 @@
   import { readDockLayout } from "$lib/preview-dock.ts";
   import DockPanel from "$lib/components/DockPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import PreviewDock from "$lib/components/PreviewDock.svelte";
   import TaskPanel from "$lib/components/TaskPanel.svelte";
@@ -65,6 +67,7 @@
   let description = $state("");
   let license = $state("");
   let passThreshold = $state(1);
+  let allowSelfValidation = $state(false);
 
   const runner = new CommandRunner();
 
@@ -128,6 +131,7 @@
     validationColumns,
     locks,
     passThreshold,
+    allowSelfValidation,
   });
   const board = $derived(
     buildBoard(graphData, comments, history, viewer, logins),
@@ -224,6 +228,7 @@
       description = tables.description;
       license = tables.license;
       passThreshold = tables.passThreshold;
+      allowSelfValidation = tables.allowSelfValidation;
       if (!notInitialised) {
         console.log(
           "[load] tables loaded:",
@@ -282,6 +287,18 @@
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
+  });
+
+  // Background verdicts refresh the tables when they land — unless a command
+  // overlay is up, whose own after-refresh will catch the change, or the
+  // campaign isn't resolved (nothing to refresh).
+  $effect(() => {
+    pendingVerdicts.onSettled = () => {
+      if (!runner.busy && owner && repo) load();
+    };
+    return () => {
+      pendingVerdicts.onSettled = null;
+    };
   });
 
   // Run a command: show the busy overlay, capture its result banner, then
@@ -475,6 +492,8 @@
     onContinue={() => runner.dismiss()}
   />
 {/if}
+
+<PendingVerdicts />
 
 {#snippet resultBanner()}
   {#if runner.result && runner.result.error}
