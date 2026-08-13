@@ -302,6 +302,16 @@ export function configFlag(yaml: string | null, key: string): boolean {
 }
 
 /**
+ * validation.pass_threshold from config.yaml: how many pass verdicts complete
+ * a subtask. Defaults to the full slot count and is capped by it — a threshold
+ * above the number of slots could never be met.
+ */
+export function passThresholdOf(yaml: string | null, validationSlots: number): number {
+	const slots = Math.max(1, validationSlots);
+	return Math.min(configNumber(yaml, 'pass_threshold', slots), slots);
+}
+
+/**
  * Resolve every numeric account id the tables mention (encoders, lock
  * holders, history actors, comment authors, verdict authors) to its current
  * login via `getUserLogin` (memoised in the forge client). An id that can't

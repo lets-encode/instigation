@@ -1,19 +1,26 @@
 <!--
-  Corner stack of background verdicts: one card per PR the campaign automation
-  is still processing (or has just settled). Processing and accepted cards are
-  transient; a rejection or timeout stays until dismissed.
+  Background verdicts. Processing, accepted and timed-out entries are quiet
+  cards in the corner; a REJECTION takes the viewport over with a modal card —
+  the submitted work did not land, which must not be missable.
 -->
 <script lang="ts">
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
-  // The verdict comments open with their own ✅/❌; the card already carries a
-  // state mark, so the duplicate symbol is dropped from the text.
+  // The verdict comments open with their own ✅/❌; the cards carry a state
+  // mark, so the duplicate symbol is dropped from the text.
   const text = (message: string) => message.replace(/^[✅❌]\s*/, "");
+
+  const corner = $derived(
+    pendingVerdicts.entries.filter((e) => e.state !== "rejected"),
+  );
+  const rejected = $derived(
+    pendingVerdicts.entries.filter((e) => e.state === "rejected"),
+  );
 </script>
 
-{#if pendingVerdicts.entries.length}
+{#if corner.length}
   <div class="stack" aria-live="polite">
-    {#each pendingVerdicts.entries as entry (entry.id)}
+    {#each corner as entry (entry.id)}
       <div class="card {entry.state}">
         {#if entry.state === "processing"}
           <span class="spinner" aria-hidden="true"></span>
@@ -25,7 +32,7 @@
           <span class="mark ok-mark" aria-hidden="true">✓</span>
           <span class="text">{text(entry.message)}</span>
         {:else}
-          <span class="mark bad-mark" aria-hidden="true">✕</span>
+          <span class="mark warn-mark" aria-hidden="true">…</span>
           <span class="text">
             {text(entry.message)}
             <a href={entry.prUrl} target="_blank" rel="noreferrer">PR #{entry.prNumber}</a>
@@ -39,6 +46,31 @@
         {/if}
       </div>
     {/each}
+  </div>
+{/if}
+
+{#if rejected.length}
+  <div class="overlay" role="alert">
+    <div class="overlay-card">
+      <div class="fail-mark" aria-hidden="true">✕</div>
+      <p class="overlay-title">Rejected</p>
+      {#each rejected as entry (entry.id)}
+        <div class="failure">
+          <p class="failure-label">{entry.label}</p>
+          <p class="failure-message">
+            {text(entry.message)}
+            <a href={entry.prUrl} target="_blank" rel="noreferrer">PR #{entry.prNumber}</a>
+          </p>
+        </div>
+      {/each}
+      <button
+        type="button"
+        class="btn btn-primary"
+        onclick={() => rejected.forEach((e) => pendingVerdicts.dismiss(e.id))}
+      >
+        Continue
+      </button>
+    </div>
   </div>
 {/if}
 
@@ -67,10 +99,6 @@
   .card.accepted {
     background: var(--ok-bg);
     border-color: var(--ok-line);
-  }
-  .card.rejected {
-    background: var(--danger-wash);
-    border-color: var(--danger-line);
   }
   .card.timeout {
     background: var(--warn-bg);
@@ -106,8 +134,8 @@
   .ok-mark {
     color: var(--ok);
   }
-  .bad-mark {
-    color: var(--danger);
+  .warn-mark {
+    color: var(--warn);
   }
   .close {
     flex: none;
@@ -119,5 +147,66 @@
     font-size: 1rem;
     line-height: 1;
     cursor: pointer;
+  }
+
+  /* The rejection modal mirrors the busy overlay's failed state. */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--scrim);
+    backdrop-filter: blur(2px);
+  }
+  .overlay-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: min(30rem, 92vw);
+    padding: 26px 34px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 12px 44px var(--shade);
+    text-align: center;
+  }
+  .fail-mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 3px solid var(--danger);
+    border-radius: 50%;
+    color: var(--danger);
+    font-weight: 700;
+  }
+  .overlay-title {
+    margin: 0;
+    color: var(--danger);
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .failure {
+    align-self: stretch;
+    padding: 10px 12px;
+    background: var(--danger-wash);
+    border: 1px solid var(--danger-line);
+    border-radius: 10px;
+    text-align: left;
+  }
+  .failure-label {
+    margin: 0 0 2px;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .failure-message {
+    margin: 0;
+    color: var(--danger);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
   }
 </style>

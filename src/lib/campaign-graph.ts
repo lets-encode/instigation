@@ -197,6 +197,11 @@ const validationLockForSlot = (d: GraphData, row: StateRow, slot: number) => {
 const nextUnreservedSlot = (d: GraphData, row: StateRow): number =>
 	cellsOf(d, row).findIndex((cell, slot) => cell === '' && !validationLockForSlot(d, row, slot));
 
+// Whether `viewer` already recorded a final verdict on this subtask row. One
+// verdict per person (unless self-validation is allowed), matching checkClaim.
+const hasVerdictBy = (d: GraphData, row: StateRow, viewer: string): boolean =>
+	cellsOf(d, row).some((cell) => isFinalValidation(cell) && cell.split('|')[1] === viewer);
+
 // The main node's status key: blocked wins, then a held encoding lock, then
 // the state.csv status itself. A claimed facsimile pre-task (measure
 // correction) reads as 'claimed' rather than 'encoding' — the work is a
@@ -222,8 +227,9 @@ interface SlotState {
 
 // The slot's state from its validate_status cell: a final verdict renders
 // solid, active locks occupy separate empty slots, and the rest are open.
-// `viewer` tailors the open-slot text: the encoder cannot validate their own
-// work, so they see that another volunteer is needed rather than a claim prompt.
+// `viewer` tailors the open-slot text: the encoder — and a validator who
+// already recorded a verdict on the subtask — sees that another volunteer is
+// needed rather than a claim prompt.
 function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', logins: Logins = {}): SlotState {
 	const cell = cellsOf(d, row)[slot] ?? '';
 	if (isFinalValidation(cell)) {
@@ -246,14 +252,19 @@ function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', login
 	const taskStatus = taskState(d, row.task_id);
 	const waiting = !isEncoded(taskStatus?.status ?? '');
 	const pre = isPreTask(taskDef(d, row.task_id)?.locator ?? '');
-	const selfEncoded = viewer !== '' && taskStatus?.encoder === viewer && !d.allowSelfValidation;
+	// The slot needs someone else: the viewer encoded the task or already
+	// recorded a verdict on this subtask (unless self-validation is allowed).
+	const needsAnother =
+		viewer !== '' &&
+		!d.allowSelfValidation &&
+		(taskStatus?.encoder === viewer || hasVerdictBy(d, row, viewer));
 	return {
 		key: 'open',
 		sub: waiting
 			? pre
 				? 'waiting for measure correction'
 				: 'waiting for encoding'
-			: selfEncoded
+			: needsAnother
 				? 'open — needs another volunteer'
 				: 'open — claim to review',
 		running: false,
@@ -295,7 +306,9 @@ export function buildGraph(d: GraphData, viewer = '', logins: Logins = {}): Task
 						viewer !== '' &&
 						encoded &&
 						row.status === 'validation_required' &&
-						(d.allowSelfValidation || state?.encoder !== viewer) &&
+						(d.allowSelfValidation ||
+							(state?.encoder !== viewer && !hasVerdictBy(d, row, viewer))) &&
+						!validationLocks(d, row.task_id, row.subtask_id).some((l) => l.user_id === viewer) &&
 						slot === nextUnreservedSlot(d, row),
 					user: s.user,
 					ts: s.ts

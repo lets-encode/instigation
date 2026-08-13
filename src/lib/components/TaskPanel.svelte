@@ -181,19 +181,22 @@
           title="Open the measure zones on the facsimile."
           >Open zone editor</a
         >
-      {:else}
+      {:else if card.column === "ready" || card.column === "encoding"}
+        <!-- Only while an encoding can land: a task in validation or done
+             cannot accept a submission, so no editor hand-off is offered. -->
         <button
           type="button"
           class="mbtn blue"
           onclick={() => oneditor(card.task)}
-          disabled={runner.busy || !auth.user || card.column === "blocked"}
+          disabled={runner.busy || !auth.user}
           title={editorLabel === "Open editor ↗"
             ? "Opens the score in mei-friend."
             : "Claims the task for you, then opens the score in mei-friend."}
           >{editorLabel}</button
         >
       {/if}
-      {#if mineEncoding}
+      {#if mineEncoding && !card.pre}
+        <!-- A pre-task's correction is submitted from the zone editor. -->
         <button
           type="button"
           class="mbtn primary"

@@ -174,6 +174,20 @@ test('two-slot subtask: same validator cannot claim twice, a second validator ca
 	assert.equal(claim({ ...base, author: 'dave' }).ok, true);
 });
 
+test('a validator with a recorded verdict cannot claim another slot of the subtask', () => {
+	const state = parseStateCsv(
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n' +
+			'T0001,,validation_required,bob,t,,\n' +
+			'T0001,S0001,validation_required,,,pass|carol|t,\n'
+	);
+	const base = { state, intent: validationIntent };
+	assert.equal(claim({ ...base, author: 'carol' }).reason, 'already_validated');
+	// A different validator takes the open slot.
+	assert.equal(claim({ ...base, author: 'dave' }).ok, true);
+	// The self-validation flag lifts the one-verdict-per-person rule.
+	assert.equal(claim({ ...base, author: 'carol', allowSelfValidation: true }).ok, true);
+});
+
 test('locks on other subtasks do not block a claim', () => {
 	// A validation lock on S0001 is irrelevant to an encoding claim on the task
 	// row, and vice versa — the composite key separates them.

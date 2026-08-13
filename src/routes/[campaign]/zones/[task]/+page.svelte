@@ -245,8 +245,12 @@
     await runner.run(
       () => command(ctx(f)),
       async (result) => {
-        if (opts.overviewOnSuccess && result.ok && !result.warn) {
-          await goto(`/${campaign}`);
+        // A rejected command changed nothing worth reloading for — and a
+        // reload would discard the zone edits the volunteer may retry from.
+        if (result.error) return;
+        if (opts.overviewOnSuccess) {
+          if (result.ok && !result.warn) await goto(`/${campaign}`);
+          // Still processing (warn): keep the editor and its edits as they are.
           return;
         }
         runner.log.step("Reloading…");
@@ -261,10 +265,10 @@
 
   // Opening the editor claims the task, the same way opening a score in
   // mei-friend does — a read-only look is served by the console's score
-  // preview, so reaching the editor means intent to edit. Fire once per task:
-  // if the claim is rejected (already held by someone else) the banner and the
-  // manual button remain as the fallback, and we don't re-open a doomed PR on
-  // every reload.
+  // preview, so reaching the editor means intent to edit. Fire once per task,
+  // and only when the claim can actually be granted: never while someone else
+  // holds the task or a dependency still blocks it — that PR would only come
+  // back rejected.
   let autoClaimedFor = $state<string | null>(null);
   $effect(() => {
     if (
@@ -272,7 +276,9 @@
       !runner.busy &&
       autoClaimedFor !== taskId &&
       data.status === "encoding_required" &&
-      !data.holdsLock
+      !data.holdsLock &&
+      !data.encodingLockUser &&
+      !data.blockedBy
     ) {
       autoClaimedFor = taskId;
       claim();
@@ -291,12 +297,20 @@
   const selfValidation = $derived(
     !!data && data.encoder !== "" && data.encoder === viewer && !data.allowSelfValidation,
   );
+  // One verdict per person: a validator who already recorded pass/fail here
+  // cannot claim another slot (matching the campaign automation's rule).
+  const alreadyValidated = $derived(
+    !!data &&
+      !data.allowSelfValidation &&
+      (validation?.verdicts ?? []).some((v) => v.user === viewer),
+  );
   const canClaimValidation = $derived(
     !!validation &&
       validation.status === "validation_required" &&
       validation.openSlots > 0 &&
       !validation.lockUser &&
-      !selfValidation,
+      !selfValidation &&
+      !alreadyValidated,
   );
   const failComments = $derived(data?.failComments ?? []);
   const failedVerdicts = $derived(
@@ -313,12 +327,14 @@
   const sendBack = () =>
     run((c) => invoke(commands.sendBack, { task_id: taskId }, c));
 
-  // Logins for verdict authors and fail-comment authors (id → login, display).
+  // Logins for verdict authors, fail-comment authors and the encoding lock
+  // holder (id → login, display).
   let logins = $state<Record<string, string>>({});
   $effect(() => {
     const ids = new Set<string>();
     for (const v of data?.validation?.verdicts ?? []) if (v.user) ids.add(v.user);
     for (const c of data?.failComments ?? []) if (c.author_id) ids.add(c.author_id);
+    if (data?.encodingLockUser) ids.add(data.encodingLockUser);
     for (const id of ids) {
       if (logins[id]) continue;
       const n = Number(id);
@@ -1011,6 +1027,12 @@
           {:else}
             <span class="lockpill amber">submitted — awaiting validation, read-only</span>
           {/if}
+        {:else if data.blockedBy}
+          <span class="lockpill grey">waits for {data.blockedBy} — read-only</span>
+        {:else if data.encodingLockUser}
+          <span class="lockpill amber"
+            >claimed by @{handle(logins, data.encodingLockUser)} — read-only</span
+          >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
           <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
@@ -1102,6 +1124,8 @@
               Failed — send it back to redo the correction
             {:else if selfValidation}
               Your own submission
+            {:else if alreadyValidated}
+              You validated this — another volunteer is needed
             {:else}
               Awaiting validation
             {/if}

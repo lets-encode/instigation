@@ -15,7 +15,8 @@ import {
 	appendComments,
 	findRow,
 	isFinalValidation,
-	configPieces
+	configPieces,
+	passThresholdOf
 } from '../campaign-tables.ts';
 import { buildCampaignConfig, configToYaml } from '../campaign-init.ts';
 
@@ -254,4 +255,15 @@ test('configPieces: reads the pieces configToYaml writes, in order', () => {
 test('configPieces: a config without pieces yields none', () => {
 	assert.deepEqual(configPieces('pieces: []\nfragmentation:\n  strategy: "by-piece"\n'), []);
 	assert.deepEqual(configPieces(null), []);
+});
+
+test('passThresholdOf: reads the config value, capped by the slot count', () => {
+	assert.equal(passThresholdOf('validation:\n  pass_threshold: 2\n', 3), 2);
+	assert.equal(passThresholdOf('validation:\n  pass_threshold: 5\n', 2), 2);
+});
+
+test('passThresholdOf: defaults to the slot count when the key is absent', () => {
+	assert.equal(passThresholdOf(null, 3), 3);
+	assert.equal(passThresholdOf('', 1), 1);
+	assert.equal(passThresholdOf(null, 0), 1);
 });

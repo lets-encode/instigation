@@ -268,7 +268,7 @@ export function buildBoard(
 			dots: n.slots.map((s) => s.key),
 			counts,
 			doneLine:
-				n.kind === 'pre'
+				n.kind === 'pre' || n.threshold === 0
 					? `✓ finished by ${handle(logins, state?.encoder ?? '') || '—'}`
 					: `✓ ${n.passes} of ${n.threshold} validations`,
 			nextUp: n.nextUp,

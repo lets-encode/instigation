@@ -137,6 +137,32 @@ test('anonymous viewers can inspect the projection but cannot claim work', () =>
 	assert.equal(nodes.flatMap((node) => node.slots).some((slot) => slot.claimable), false);
 });
 
+test('buildGraph: a validator with a recorded verdict is not offered the next slot', () => {
+	const d = facsimileData();
+	d.locks = [];
+	// carol recorded the slot-1 pass on T0001/S0001; the open slot needs
+	// someone else.
+	const asCarol = buildGraph(d, 'carol').find((n) => n.task === 'T0001')!.slots;
+	assert.equal(asCarol[1].claimable, false);
+	assert.equal(asCarol[1].who, 'open — needs another volunteer');
+	const asOther = buildGraph(d, 'you').find((n) => n.task === 'T0001')!.slots;
+	assert.equal(asOther[1].claimable, true);
+	// The self-validation flag lifts the rule.
+	d.allowSelfValidation = true;
+	const allowed = buildGraph(d, 'carol').find((n) => n.task === 'T0001')!.slots;
+	assert.equal(allowed[1].claimable, true);
+});
+
+test('buildGraph: a reviewer already holding a slot is not offered the next one', () => {
+	const d = facsimileData();
+	d.rows[4] = state('T0001', 'S0001', 'validation_required');
+	d.locks = [
+		{ task_id: 'T0001', subtask_id: 'S0001', user_id: 'carol', timestamp: 't1', kind: 'validation' }
+	];
+	const slots = buildGraph(d, 'carol').find((n) => n.task === 'T0001')!.slots;
+	assert.equal(slots.some((slot) => slot.claimable), false);
+});
+
 test('buildGraph: the encoder sees an open slot needs another volunteer, not a claim', () => {
 	const d = facsimileData();
 	// Alice encoded P0001; her open validation slot is not hers to claim.

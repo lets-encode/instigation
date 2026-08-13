@@ -63,7 +63,7 @@ test('readTables decodes generated quoted config values', async () => {
 		'tracking/task.csv':
 			'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\nT0001,,sources/score.mei,,,,\n',
 		'tracking/state.csv':
-			'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\nT0001,,encoding_required,,,\n',
+			'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\nT0001,,encoding_required,,,,\n',
 		'tracking/lock.csv': lockHeader,
 		'tracking/history.csv':
 			'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,command_version,command_input\n',

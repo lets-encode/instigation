@@ -191,8 +191,9 @@
   }
 
   function copyFromSource() {
-    // The title names this piece, so it stays.
-    const title = wizard.pieces[selected].meta.title;
+    // The title names this piece, so a title already given stays; an empty one
+    // takes the source's.
+    const title = wizard.pieces[selected].meta.title.trim() || wizard.source.title;
     wizard.pieces[selected].meta = { ...copyMetadata(wizard.source), title };
   }
 

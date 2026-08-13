@@ -26,6 +26,7 @@ import {
   appendComments,
   appendHistory,
   configFlag,
+  passThresholdOf,
 } from "../src/lib/campaign-tables.ts";
 import type {
   ParsedState,
@@ -105,6 +106,45 @@ const DEFAULT_STALE_MINUTES = 120;
 // A rejection's `reason` is the machine-readable code recorded in the history
 // table; `detail` is the human explanation behind it, for the PR comment only.
 type Verdict = { ok: boolean; reason?: string; detail?: string };
+
+// Human explanations for the rejection codes, appended to the PR comment
+// (which the console shows verbatim). The code itself stays in the comment
+// and in the history row.
+const REASON_TEXT: Record<string, string> = {
+  malformed_claim: "the PR does not add exactly one lock row",
+  malformed_validation:
+    "the PR is neither a single verdict nor a clean send-back reset",
+  malformed_comment: "the PR does not append or resolve exactly one comment row",
+  out_of_bounds: "the PR changes files outside the ones this operation may touch",
+  invalid_kind: "unknown claim or comment kind",
+  invalid_target: "the claim addresses the wrong row for its kind",
+  unknown_task: "no such task",
+  dependency_incomplete: "this task opens once the task it depends on is completed",
+  wrong_state: "the task is not in the right state for this operation",
+  already_locked: "someone already holds this claim",
+  self_validation: "the encoder cannot validate their own work",
+  already_validated: "this person already recorded a verdict on this subtask",
+  no_open_validation_slot: "no validation slot is open",
+  not_lock_holder: "the author does not hold the required claim",
+  mei_invalid: "the submitted MEI failed the machine check",
+  invalid_verdict: "a validation verdict must be pass or fail",
+  fail_without_comment: "a fail must carry a comment saying why",
+  no_recorded_fail: "the task has no recorded fail to send it back for",
+  not_permitted: "only a failing validator or a maintainer may do this",
+  empty_comment: "the comment is empty",
+  unknown_parent: "the reply's parent comment does not exist",
+  invalid_parent: "only a reply carries a parent comment",
+  unknown_comment: "no such comment",
+  already_resolved: "the comment is already resolved",
+  no_changes: "the PR changes nothing",
+};
+
+// "`code` — explanation" for a rejection comment; just the code when unmapped.
+const explainReason = (reason: string | undefined): string => {
+  const code = reason ?? "rejected";
+  const text = REASON_TEXT[code];
+  return text ? `\`${code}\` — ${text}` : `\`${code}\``;
+};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -271,7 +311,7 @@ async function runClaim(
     : "";
   const body = verdict.ok
     ? `✅ Claim accepted — ${target} locked for ${authorLabel} (${verdict.lock!.kind}).`
-    : `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
+    : `❌ Claim rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
   // Branch cleanup is independent of the comment/close pair and overlaps it.
   await Promise.all([
@@ -483,11 +523,7 @@ async function decideValidation(
     },
     author,
     changedPaths,
-    passThreshold: numberFromConfig(
-      configText,
-      "pass_threshold",
-      state.validationColumns.length,
-    ),
+    passThreshold: passThresholdOf(configText, state.validationColumns.length),
     failComment,
     now,
   });
@@ -653,7 +689,7 @@ async function runSubmit(
 
   const body = verdict.ok
     ? `✅ Submission accepted (${kind}).`
-    : `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.` +
+    : `❌ Submission rejected: ${explainReason(verdict.reason)}. No changes were made.` +
       (verdict.detail ? ` ${verdict.detail}` : "");
   const closeStart = Date.now();
   await Promise.all([
@@ -782,7 +818,7 @@ async function runComment(
     ? verdict.action === "resolve_comment"
       ? "✅ Comment resolved."
       : "✅ Comment recorded."
-    : `❌ Comment rejected: \`${verdict.reason}\`. No changes were made.`;
+    : `❌ Comment rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
   await Promise.all([
     commentAndClosePr(token, owner, repo, prNumber, body),

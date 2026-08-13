@@ -9,6 +9,7 @@ import type { GraphData } from './campaign-graph.ts';
 import { cardTitle } from './campaign-board.ts';
 import {
 	configNumber,
+	passThresholdOf,
 	configString,
 	findRow,
 	isFinalValidation,
@@ -235,7 +236,7 @@ async function fetchStats(
 		return m ? Math.max(max, Number(m[1])) : max;
 	}, 0);
 
-	const passThreshold = configNumber(yaml, 'pass_threshold', 1);
+	const passThreshold = passThresholdOf(yaml, state.validationColumns.length);
 	const staleAfterMinutes = configNumber(yaml, 'stale_after_minutes', 0);
 
 	// The composer from config's source header; the score header is the

@@ -87,6 +87,14 @@ export function checkClaim({
 		// encoding, unless the campaign's config allows it.
 		const taskRow = findRow(state.rows, intent.task_id, '');
 		if (!allowSelfValidation && author === taskRow?.encoder) return reject('self_validation');
+		// One verdict per person: a validator who already recorded pass/fail on
+		// this subtask cannot claim another of its slots. The same config flag
+		// lifts it — a single-person campaign fills every slot themselves.
+		const hasVerdict = state.validationColumns.some((c) => {
+			const cell = row[c] ?? '';
+			return isFinalValidation(cell) && cell.split('|')[1] === author;
+		});
+		if (!allowSelfValidation && hasVerdict) return reject('already_validated');
 
 		// Open slot = (final pass/fail cells) + (active validation locks) < slots.
 		const finals = state.validationColumns.filter((c) => isFinalValidation(row[c] ?? '')).length;

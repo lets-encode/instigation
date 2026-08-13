@@ -12,6 +12,7 @@
   import { provider } from "$lib/forge/config.ts";
   import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
   import { claimName, lookupSlug, releaseClaim } from "$lib/campaign-resolve.ts";
+  import { readDraft } from "$lib/wizard-draft.ts";
   import { isValidHandle } from "$lib/campaign-handle.ts";
   import { wizard, nextStep, MAX_DESCRIPTION_LENGTH } from "$lib/wizard.svelte.ts";
   import type { RepoSummary } from "$lib/forge/types.ts";
@@ -50,6 +51,8 @@
     | { state: "available" }
     | { state: "held" }
     | { state: "taken"; by: string }
+    /** Reserved by this browser's own unfinished setup of the same name. */
+    | { state: "draft"; resumable: boolean }
     | { state: "unknown" }
   >({ state: "idle" });
   let handleCheckSeq = 0;
@@ -100,7 +103,14 @@
         ]);
         if (seq !== handleCheckSeq) return;
         if (slug && slug.status !== "free") {
-          handleCheck = { state: "taken", by: "an existing campaign" };
+          // A pending hold may be this browser's own: an unfinished setup of
+          // the same name keeps its claim token in its draft record.
+          const draft = slug.status === "pending" ? readDraft(h) : null;
+          if (draft?.owner === user.login && draft.claim?.name === h) {
+            handleCheck = { state: "draft", resumable: draft.repo !== null };
+          } else {
+            handleCheck = { state: "taken", by: "an existing campaign" };
+          }
         } else if (exists) {
           handleCheck = { state: "taken", by: `${user.login}/${h}` };
         } else if (!slug) {
@@ -121,6 +131,7 @@
     wizard.title.trim() !== "" &&
       isValidHandle(wizard.handle.trim()) &&
       handleCheck.state !== "taken" &&
+      handleCheck.state !== "draft" &&
       handleCheck.state !== "checking",
   );
 
@@ -157,6 +168,17 @@
         : result.error === "invalid"
           ? `“${name}” cannot be used as a campaign name.`
           : "The name could not be reserved just now. Check your connection and try again.";
+  }
+
+  // Take over the name held by this browser's unfinished setup of the same
+  // name. Its record is keyed by the name, so this setup's next save replaces
+  // it. Only while that setup has no repository — once one exists, the name
+  // belongs to it and the setup must be continued instead.
+  function adoptClaim() {
+    const h = wizard.handle.trim();
+    const draft = readDraft(h);
+    if (draft?.owner !== auth.user?.login || draft?.claim?.name !== h || draft?.repo) return;
+    wizard.claim = draft.claim;
   }
 
   async function changeName() {
@@ -198,6 +220,19 @@
         <span class="hint hint-ok">✓ Available</span>
       {:else if handleCheck.state === "taken"}
         <span class="hint hint-err">✗ Already used by {handleCheck.by}</span>
+      {:else if handleCheck.state === "draft"}
+        <span class="hint hint-err">
+          ✗ Reserved by your unfinished setup of this campaign
+        </span>
+        {#if handleCheck.resumable}
+          <a class="hint" href="/campaigns">
+            Continue that setup from the campaign list
+          </a>
+        {:else}
+          <button type="button" class="btn btn-ghost btn-inline" onclick={adoptClaim}>
+            Use the name here — replaces that setup
+          </button>
+        {/if}
       {:else if handleCheck.state === "invalid"}
         <span class="hint hint-err">
           3–40 characters: lowercase letters, digits, and single internal

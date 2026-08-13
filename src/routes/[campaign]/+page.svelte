@@ -854,11 +854,8 @@
                       class:pre={card.pre}
                       class:failtint={card.counts.fails > 0 &&
                         card.column !== "done"}
-                      onclick={() =>
-                        card.pre ? claimCard(card) : openTask(card.task)}
-                      title={card.pre
-                        ? "Open the measure corrector"
-                        : "Open this task"}
+                      onclick={() => openTask(card.task)}
+                      title="Open this task"
                     >
                       {#if card.nextUp}
                         <span class="nextup-badge">next step</span>
@@ -870,11 +867,27 @@
                           : card.typeLine}
                         <span class="mono card-id">{card.task}</span>
                       </div>
-                      {#if card.pre}
-                        <div class="card-pre">Open measure corrector →</div>
-                      {:else if card.column === "blocked"}
+                      {#if card.column === "blocked"}
                         <div class="card-foot">
                           waits for <strong>{card.waitsFor}</strong>
+                        </div>
+                      {:else if card.pre && card.column === "ready"}
+                        <div class="card-pre">
+                          <span
+                            class="claimlink"
+                            role="button"
+                            tabindex="-1"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              claimCard(card);
+                            }}
+                            onkeydown={(e) => {
+                              if (e.key === "Enter") {
+                                e.stopPropagation();
+                                claimCard(card);
+                              }
+                            }}>Open measure corrector →</span
+                          >
                         </div>
                       {:else if card.column === "ready" && card.claimable}
                         <div class="card-claim">
@@ -903,7 +916,25 @@
                             >{card.worker.login} · {card.worker
                               .elapsed}</span
                           >
-                          {#if card.worker.mine}
+                          {#if card.worker.mine && card.pre}
+                            <span
+                              class="claimlink"
+                              role="button"
+                              tabindex="-1"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                claimCard(card);
+                              }}
+                              onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.stopPropagation();
+                                  claimCard(card);
+                                }
+                              }}
+                              title="Continue correcting the measures in the zone editor."
+                              >Continue →</span
+                            >
+                          {:else if card.worker.mine}
                             <span
                               class="claimlink"
                               role="button"

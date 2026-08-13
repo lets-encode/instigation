@@ -29,7 +29,7 @@ import {
 	findRow,
 	isFinalValidation,
 	configString,
-	configNumber,
+	passThresholdOf,
 	configFlag,
 	configPieces,
 	resolveLogins
@@ -317,7 +317,14 @@ export interface PendingVerdictSink {
 	settle(id: string, state: 'accepted' | 'rejected' | 'timeout', message: string): void;
 }
 
-let verdictSink: PendingVerdictSink = { begin: () => '', settle: () => {} };
+// The fallback sink cannot render anything, but a rejection must never
+// disappear silently — it is at least an error in the console.
+let verdictSink: PendingVerdictSink = {
+	begin: () => '',
+	settle: (_id, state, message) => {
+		if (state !== 'accepted') console.error('[pending-verdict] unrendered verdict:', state, message);
+	}
+};
 
 export function setVerdictSink(sink: PendingVerdictSink): void {
 	verdictSink = sink;
@@ -417,7 +424,7 @@ export interface CampaignTables {
 	description: string;
 	/** campaign.license from config.yaml; '' when unreadable. */
 	license: string;
-	/** validation.pass_threshold from config.yaml; 1 when unreadable. */
+	/** validation.pass_threshold from config.yaml, capped by the slot count; the slot count when unreadable. */
 	passThreshold: number;
 	/** validation.allow_self_validation from config.yaml; false when unreadable. */
 	allowSelfValidation: boolean;
@@ -482,7 +489,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
 			title: configString(configYaml, 'title'),
 			description: configString(configYaml, 'description'),
 			license: configString(configYaml, 'license'),
-			passThreshold: configNumber(configYaml, 'pass_threshold', 1),
+			passThreshold: passThresholdOf(configYaml, state.validationColumns.length),
 			allowSelfValidation: configFlag(configYaml, 'allow_self_validation'),
 			logins: await resolveLogins((n) => f.getUserLogin(n), {
 				rows: state.rows,
@@ -1007,6 +1014,10 @@ export interface FacsimileTaskData {
 	status: string;
 	/** Whether the viewer holds the task's active encoding lock (may edit/submit). */
 	holdsLock: boolean;
+	/** Who holds the task's active encoding lock ('' when unclaimed). */
+	encodingLockUser: string;
+	/** The incomplete task this one waits for (task.csv depends_on); '' when none. */
+	blockedBy: string;
 	/** Who submitted the task's work ('' while unsubmitted). Encoders cannot validate it. */
 	encoder: string;
 	/** validation.allow_self_validation from config.yaml; false when unreadable. */
@@ -1055,11 +1066,16 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 			model.pages.map((page) => page.image)
 		);
 		const locks = parseLockCsv(lockCsv ?? '');
-		const holdsLock = locks.some(
-			(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding' && l.user_id === viewer
+		const encodingLock = locks.find(
+			(l) => l.task_id === task_id && l.subtask_id === '' && l.kind === 'encoding'
 		);
+		const holdsLock = viewer !== '' && encodingLock?.user_id === viewer;
 		const state = parseStateCsv(stateCsv ?? '');
 		const taskState = findRow(state.rows, task_id, '');
+		const blockedBy =
+			task.depends_on && findRow(state.rows, task.depends_on, '')?.status !== 'completed'
+				? task.depends_on
+				: '';
 		const subRow = state.rows.find((r) => r.task_id === task_id && r.subtask_id !== '');
 		const cells = subRow ? state.validationColumns.map((c) => subRow[c] ?? '') : [];
 		const validation = subRow
@@ -1085,6 +1101,8 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 			locator: task.locator,
 			status: taskState?.status ?? '',
 			holdsLock,
+			encodingLockUser: encodingLock?.user_id ?? '',
+			blockedBy,
 			encoder: taskState?.encoder ?? '',
 			allowSelfValidation: configFlag(configYaml, 'allow_self_validation'),
 			canPush: head.canPush,
@@ -1159,7 +1177,11 @@ async function submitFacsimile(
 			body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 		});
 		console.log('[zones] PR opened', pr.number, pr.html_url);
-		return finishInBackground(ctx, { ...pr, cleanup: 'accepted' }, `Correction of ${task_id}`);
+		// The verdict is awaited here, not in the background: the zone editor
+		// navigates away on acceptance, so a rejection must land while the
+		// volunteer's corrections are still on screen to retry from.
+		const verdict = await waitForPrProcessed(ctx, { ...pr, cleanup: 'accepted' });
+		return verdictResult(verdict, pr.number, pr.html_url, `Correction of ${task_id} submitted.`);
 	} catch (e) {
 		return { error: `Submission failed: ${(e as Error).message}` };
 	}
