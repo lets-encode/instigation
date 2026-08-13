@@ -174,7 +174,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
 };
 
 // The human line behind a history action, or null for rows the ticker skips.
-function tickerText(h: HistoryRow, title: string): string | null {
+function tickerText(h: HistoryRow, title: string, pre = false): string | null {
 	if (h.outcome !== 'accepted' && h.outcome !== 'released') return null;
 	switch (h.action) {
 		case 'claim_encoding':
@@ -186,7 +186,7 @@ function tickerText(h: HistoryRow, title: string): string | null {
 		case 'submit_validation':
 			return h.detail === 'fail' ? `failed a validation on ${title}` : `passed a validation on ${title}`;
 		case 'send_back':
-			return `sent ${title} back for encoding`;
+			return `sent ${title} back for ${pre ? 'measure correction' : 'encoding'}`;
 		case 'submit_comment':
 			return `commented on ${title}`;
 		case 'resolve_comment':
@@ -210,7 +210,11 @@ function buildTicker(
 	for (let i = history.length - 1; i >= 0 && entries.length < limit; i--) {
 		const h = history[i];
 		const def = findRow(d.taskDefs, h.task_id, '');
-		const text = tickerText(h, def ? cardTitle(def.fragment, def.locator) : h.task_id);
+		const text = tickerText(
+			h,
+			def ? cardTitle(def.fragment, def.locator) : h.task_id,
+			def ? isPreTask(def.locator) : false
+		);
 		if (text) entries.push({ login: handle(logins, h.user_id), text, elapsed: elapsed(h.timestamp, now) });
 	}
 	return entries;

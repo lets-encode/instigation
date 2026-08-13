@@ -254,8 +254,10 @@
                   class="dangerbtn"
                   onclick={() => onsendback(card.task)}
                   disabled={runner.busy}
-                  title="Return the task to encoding: attribution and validations reset."
-                  >Send back for encoding</button
+                  title={`Return the task to ${card.pre ? "measure correction" : "encoding"}: attribution and validations reset.`}
+                  >{card.pre
+                    ? "Send back to measure correction"
+                    : "Send back for encoding"}</button
                 >
               {/if}
             </div>
@@ -358,7 +360,7 @@
             {@render slotDot("fail")}
             <span
               class="failtitle"
-              title="This fail was recorded before the task was sent back for encoding."
+              title="This fail was recorded before the task was sent back."
               >Fail · before send-back</span
             >
             <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>

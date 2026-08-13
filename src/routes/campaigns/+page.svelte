@@ -95,7 +95,7 @@
           .flatMap((s) => commentsOnMyWork(s, viewer))
           .filter(
             (f) =>
-              (f.comment.kind === "question" || f.comment.kind === "note") &&
+              (f.comment.kind === "question" || f.comment.kind === "addition") &&
               f.comment.resolved !== "true",
           )
           .sort(
