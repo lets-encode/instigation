@@ -18,6 +18,7 @@
     buildThreads,
     elapsed,
     initialOf,
+    orphanedFails,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
 
@@ -73,6 +74,7 @@
   } = $props();
 
   const record = $derived(buildRecord(card, comments, viewer, logins));
+  const orphanFails = $derived(orphanedFails(card, comments));
   const threads = $derived(buildThreads(comments, card.task));
   const mineEncoding = $derived(
     viewer !== "" &&
@@ -106,11 +108,15 @@
   let replyTo = $state<CommentRow | null>(null);
 
   const anchorLabel = (c: CommentRow): string => {
-    const range =
-      c.measure_end && c.measure_end !== c.measure_start
-        ? `m. ${c.measure_start}–${c.measure_end}`
-        : `m. ${c.measure_start}`;
-    return `${c.page ? `p. ${c.page} · ` : ""}${range}`;
+    const parts: string[] = [];
+    if (c.page) parts.push(`p. ${c.page}`);
+    if (c.measure_start)
+      parts.push(
+        c.measure_end && c.measure_end !== c.measure_start
+          ? `m. ${c.measure_start}–${c.measure_end}`
+          : `m. ${c.measure_start}`,
+      );
+    return parts.join(" · ");
   };
   const hasAnchor = (c: CommentRow): boolean =>
     c.measure_start !== "" || c.page !== "";
@@ -345,6 +351,43 @@
             </div>
           {/if}
         {/if}
+      {/each}
+      {#each orphanFails as c (c.comment_id)}
+        <div class="failbox">
+          <div class="failhead">
+            {@render slotDot("fail")}
+            <span
+              class="failtitle"
+              title="This fail was recorded before the task was sent back for encoding."
+              >Fail · before send-back</span
+            >
+            <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
+          </div>
+          <div class="failbody">“{c.body}”</div>
+          {#if hasAnchor(c)}
+            <div class="failchips">
+              <button
+                type="button"
+                class="chip chip-question anchorchip"
+                onclick={() => onshowanchor(c)}
+                title="Highlight this place in the preview"
+                >{anchorLabel(c)} — show in the preview</button
+              >
+            </div>
+          {/if}
+          {#if canResolve(c)}
+            <div class="failacts">
+              <button
+                type="button"
+                class="linkish"
+                onclick={() => onresolve(c.comment_id)}
+                disabled={runner.busy}
+                title="Mark this fail's comment as handled — it leaves the attention counts."
+                >Resolve</button
+              >
+            </div>
+          {/if}
+        </div>
       {/each}
       <div class="rfoot">
         A fail always carries a comment — the validator cannot submit one

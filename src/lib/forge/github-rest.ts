@@ -386,8 +386,12 @@ export async function getAuthenticatedUser(
 const RESOLVE_TTL_MS = 5 * 60_000;
 const loginCache = new Map<number, { value: string; expires: number }>();
 const repoRefCache = new Map<number, { value: RepoRef; expires: number }>();
+// Default branch + push permission per repo. Both change rarely; the TTL
+// bounds how long a change stays hidden. Skips one round trip on every
+// getRepoHead call after the first.
+const repoHeadInfoCache = new Map<string, { value: { branch: string; canPush: boolean }; expires: number }>();
 
-function memoGet<T>(cache: Map<number, { value: T; expires: number }>, key: number): T | undefined {
+function memoGet<K, T>(cache: Map<K, { value: T; expires: number }>, key: K): T | undefined {
 	const hit = cache.get(key);
 	if (hit && hit.expires > Date.now()) return hit.value;
 	if (hit) cache.delete(key);
@@ -598,17 +602,24 @@ export async function getRepoHead(
 	owner: string,
 	repo: string
 ): Promise<{ branch: string; sha: string; canPush: boolean }> {
-	const repoRes = await ghGet<RepoData>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
-	if (!repoRes.ok)
-		throw new Error(`${repoRes.data?.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
-	const branch = repoRes.data.default_branch;
+	// The branch name and push permission are memoised; the head SHA is read
+	// fresh on every call — callers rely on it for optimistic concurrency.
+	const key = `${owner}/${repo}`;
+	let info = memoGet(repoHeadInfoCache, key);
+	if (!info) {
+		const repoRes = await ghGet<RepoData>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
+		if (!repoRes.ok)
+			throw new Error(`${repoRes.data?.message || 'Failed to read repository'} (${repoRes.status} GET repo)`);
+		info = { branch: repoRes.data.default_branch, canPush: Boolean(repoRes.data.permissions?.push) };
+		repoHeadInfoCache.set(key, { value: info, expires: Date.now() + RESOLVE_TTL_MS });
+	}
 	const refRes = await ghGet<{ object: { sha: string }; message?: string }>(
-		`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${branch}`,
+		`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${info.branch}`,
 		token
 	);
 	if (!refRes.ok)
-		throw new Error(`${refRes.data?.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${branch})`);
-	return { branch, sha: refRes.data.object.sha, canPush: Boolean(repoRes.data.permissions?.push) };
+		throw new Error(`${refRes.data?.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${info.branch})`);
+	return { branch: info.branch, sha: refRes.data.object.sha, canPush: info.canPush };
 }
 
 /** A commit's message, or null when the commit cannot be read. */
@@ -979,6 +990,10 @@ export async function waitForRepoContents(
  * `opts.branch` to target a branch other than the repo default (e.g. a feature
  * branch being prepared for a pull request).
  *
+ * Pass `opts.newBranch` (with `baseSha`) to create that branch at the new
+ * commit instead of updating an existing ref — one call replaces the
+ * create-branch/fast-forward pair, and no ref exists until the commit does.
+ *
  * Binary files are uploaded one at a time, which for images is the long part of
  * the commit; `opts.onUpload` is called after each one with how many of them are
  * done, so a caller can report progress through them.
@@ -993,15 +1008,18 @@ export async function commitFiles(
 	{
 		baseSha,
 		branch,
+		newBranch,
 		deletePaths = [],
 		onUpload
 	}: {
 		baseSha?: string;
 		branch?: string;
+		newBranch?: string;
 		deletePaths?: string[];
 		onUpload?: (uploaded: number, total: number) => void;
 	} = {}
 ): Promise<string> {
+	if (newBranch && !baseSha) throw new Error('newBranch requires baseSha (the commit to branch from).');
 	for (const file of files) {
 		const hasText = file.content != null;
 		const hasBinary = file.contentBase64 != null;
@@ -1020,8 +1038,9 @@ export async function commitFiles(
 		return data as T;
 	};
 
-	// Resolve the target branch and the parent commit to build on.
-	const targetBranch = branch ?? (await gh<{ default_branch: string }>('')).default_branch;
+	// Resolve the target branch and the parent commit to build on. A new
+	// branch's parent is always the given baseSha; no ref exists to resolve.
+	const targetBranch = newBranch ?? branch ?? (await gh<{ default_branch: string }>('')).default_branch;
 	let headSha = baseSha;
 	if (!headSha) {
 		const ref = await gh<{ object: { sha: string } }>(`/git/ref/heads/${targetBranch}`);
@@ -1066,10 +1085,17 @@ export async function commitFiles(
 		body: JSON.stringify({ message, tree: tree.sha, parents: [headSha] })
 	});
 
-	await gh(`/git/refs/heads/${targetBranch}`, {
-		method: 'PATCH',
-		body: JSON.stringify({ sha: commit.sha })
-	});
+	if (newBranch) {
+		await gh('/git/refs', {
+			method: 'POST',
+			body: JSON.stringify({ ref: `refs/heads/${newBranch}`, sha: commit.sha })
+		});
+	} else {
+		await gh(`/git/refs/heads/${targetBranch}`, {
+			method: 'PATCH',
+			body: JSON.stringify({ sha: commit.sha })
+		});
+	}
 
 	return commit.sha;
 }
@@ -1186,11 +1212,12 @@ export async function openChangePr(
 	const { branch: base, sha, canPush } = await getRepoHead(token, owner, repo);
 	const target = canPush ? { owner, repo } : await ensureFork(token, owner, repo);
 
+	// The commit is built first and the branch created at it in one step; no
+	// ref exists until the commit does, so only a failed PR needs cleanup.
 	let branchCreated = false;
 	try {
-		await createBranch(token, target.owner, target.repo, branch, sha);
+		await commitFiles(token, target.owner, target.repo, files, message, { baseSha: sha, newBranch: branch });
 		branchCreated = true;
-		await commitFiles(token, target.owner, target.repo, files, message, { baseSha: sha, branch });
 
 		const head = canPush ? branch : `${target.owner}:${branch}`;
 		const pr = await createPullRequest(token, owner, repo, { title, head, base, body });

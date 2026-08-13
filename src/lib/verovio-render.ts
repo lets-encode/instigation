@@ -59,5 +59,8 @@ export function loadedVerovio(): VerovioToolkit | null {
  * this is what makes the markup safe to inject.
  */
 export function renderPage(tk: VerovioToolkit, page: number): string {
-	return DOMPurify.sanitize(tk.renderToSVG(page), SANITIZE_SVG);
+	// DOMPurify serialises through HTML, which writes U+00A0 as &nbsp; — an
+	// entity XML does not define. Rewritten numeric so the SVG also parses as
+	// XML (multimeasure-rest markers carry it).
+	return DOMPurify.sanitize(tk.renderToSVG(page), SANITIZE_SVG).replaceAll('&nbsp;', '&#160;');
 }

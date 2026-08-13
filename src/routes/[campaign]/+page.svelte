@@ -468,7 +468,12 @@
 />
 
 {#if runner.busy}
-  <LoadingOverlay log={runner.log} finished={runner.held} onContinue={() => runner.dismiss()} />
+  <LoadingOverlay
+    log={runner.log}
+    finished={runner.held}
+    error={runner.result?.error}
+    onContinue={() => runner.dismiss()}
+  />
 {/if}
 
 {#snippet resultBanner()}

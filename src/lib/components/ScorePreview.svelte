@@ -122,6 +122,9 @@
     if (!svg || !a) return svg;
     try {
       const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+      // A failed parse yields a parsererror document, not an exception — the
+      // page then shows unflagged rather than serialised error text.
+      if (doc.querySelector("parsererror")) return svg;
       for (const g of doc.querySelectorAll("g.measure")) {
         const n = Number(g.getAttribute("data-n") ?? "");
         if (Number.isFinite(n) && n >= a.m1 && n <= a.m2)

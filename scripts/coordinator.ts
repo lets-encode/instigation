@@ -271,9 +271,12 @@ async function runClaim(
     ? `✅ Claim accepted — ${target} locked for ${authorLabel} (${verdict.lock!.kind}).`
     : `❌ Claim rejected: \`${verdict.reason}\`. No changes were made.`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  // Branch cleanup is independent of the comment/close pair and overlaps it.
+  await Promise.all([
+    commentAndClosePr(token, owner, repo, prNumber, body),
+    cleanupHeadBranch(),
+  ]);
   logPhase("comment_and_close", closeStart);
-  await cleanupHeadBranch();
 }
 
 // ---------------------------------------------------------------------------
@@ -319,10 +322,11 @@ async function decideEncoding(
   // in `detail`, since the reason code is what the tables record.
   const isPageTask = task.locator.startsWith("surface-");
   const readStart = Date.now();
-  const [forkMei, baseMei, configText] = await Promise.all([
+  const [forkMei, baseMei, configText, commitMessage] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
     isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null,
     isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null,
+    getCommitMessage(token, headOwner, headRepo, headSha),
   ]);
   logPhase("read_pr_files", readStart);
   const checkStart = Date.now();
@@ -356,12 +360,6 @@ async function decideEncoding(
   // are edited in mei-friend; a zones submission comes from the console
   // itself, whose <application> entry every generated score already carries.
   if (mei != null) {
-    const commitMessage = await getCommitMessage(
-      token,
-      headOwner,
-      headRepo,
-      headSha,
-    );
     mei = recordContribution(mei, {
       name: authorLabel,
       message: commitMessage ?? `Encoding of ${task.task_id} accepted.`,
@@ -429,14 +427,20 @@ async function decideValidation(
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
+  // Everything the decision might need is read in one parallel batch: the
+  // comment tables only when the PR touches them (a fail's mandatory comment),
+  // the config always (pass_threshold). A send-back over-reads two files.
+  const wantsComments = changedPaths.includes(COMMENT_PATH);
   const readStart = Date.now();
-  const headStateCsv = await getRepoFile(
-    token,
-    headOwner,
-    headRepo,
-    STATE_PATH,
-    headSha,
-  );
+  const [headStateCsv, configText, baseCommentCsv, headCommentCsv] =
+    await Promise.all([
+      getRepoFile(token, headOwner, headRepo, STATE_PATH, headSha),
+      getRepoFile(token, owner, repo, CONFIG_PATH, sha),
+      wantsComments ? getRepoFile(token, owner, repo, COMMENT_PATH, sha) : null,
+      wantsComments
+        ? getRepoFile(token, headOwner, headRepo, COMMENT_PATH, headSha)
+        : null,
+    ]);
   logPhase("read_pr_files", readStart);
   const headState = headStateCsv == null ? null : parseStateCsv(headStateCsv);
   const diff = headState == null ? null : singleCellDiff(state, headState);
@@ -458,11 +462,7 @@ async function decideValidation(
   // fork's values.
   let baseComments: CommentRow[] = [];
   let failComment: CommentRow | null = null;
-  if (changedPaths.includes(COMMENT_PATH)) {
-    const [baseCommentCsv, headCommentCsv] = await Promise.all([
-      getRepoFile(token, owner, repo, COMMENT_PATH, sha),
-      getRepoFile(token, headOwner, headRepo, COMMENT_PATH, headSha),
-    ]);
+  if (wantsComments) {
     baseComments = parseCommentCsv(baseCommentCsv ?? "");
     const added =
       headCommentCsv == null
@@ -471,7 +471,6 @@ async function decideValidation(
     failComment = added?.length === 1 ? added[0] : null;
   }
 
-  const configText = await getRepoFile(token, owner, repo, CONFIG_PATH, sha);
   const verdict = checkValidation({
     state,
     locks,
@@ -655,9 +654,11 @@ async function runSubmit(
     : `❌ Submission rejected: \`${verdict.reason}\`. No changes were made.` +
       (verdict.detail ? ` ${verdict.detail}` : "");
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await Promise.all([
+    commentAndClosePr(token, owner, repo, prNumber, body),
+    shouldCleanupSubmission(kind, verdict.ok) ? cleanupHeadBranch() : null,
+  ]);
   logPhase("comment_and_close", closeStart);
-  if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
 }
 
 // ---------------------------------------------------------------------------
@@ -781,9 +782,11 @@ async function runComment(
       : "✅ Comment recorded."
     : `❌ Comment rejected: \`${verdict.reason}\`. No changes were made.`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await Promise.all([
+    commentAndClosePr(token, owner, repo, prNumber, body),
+    cleanupHeadBranch(),
+  ]);
   logPhase("comment_and_close", closeStart);
-  await cleanupHeadBranch();
 }
 
 // ---------------------------------------------------------------------------
