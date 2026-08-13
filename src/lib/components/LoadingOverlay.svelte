@@ -3,8 +3,10 @@
   the forge is in flight: a spinner plus the action's timed step log, so what
   is happening (and how long each stage takes) is visible while it runs. Once
   the action has finished the card stays up, with the step times and their
-  total readable, until its Continue button is pressed. The palette is fixed
-  rather than themed, matching the console surfaces it covers.
+  total readable, until its Continue button is pressed. An action that ended
+  in an error shows that error on the card itself, in place of the finished
+  title. The palette is fixed rather than themed, matching the console
+  surfaces it covers.
 -->
 <script lang="ts">
   import ProgressSteps from "./ProgressSteps.svelte";
@@ -13,14 +15,24 @@
   let {
     log,
     finished = false,
+    error,
     onContinue,
-  }: { log: ProgressLog; finished?: boolean; onContinue?: () => void } =
-    $props();
+  }: {
+    log: ProgressLog;
+    finished?: boolean;
+    /** The finished action's error, when it ended in one. */
+    error?: string;
+    onContinue?: () => void;
+  } = $props();
 </script>
 
-<div class="overlay" role="status" aria-live="polite">
+<div class="overlay" role={finished && error ? "alert" : "status"} aria-live="polite">
   <div class="overlay-card">
-    {#if finished}
+    {#if finished && error}
+      <div class="fail-mark" aria-hidden="true">✕</div>
+      <p class="overlay-title failed">Failed</p>
+      <p class="overlay-error">{error}</p>
+    {:else if finished}
       <p class="overlay-title">Finished</p>
     {:else}
       <div class="spinner" aria-hidden="true"></div>
@@ -90,6 +102,27 @@
     margin: 0;
     font-weight: 600;
     font-size: 14px;
+  }
+  .overlay-title.failed {
+    color: var(--danger);
+  }
+  /* Sits where the spinner was: a ring of the same size around a cross. */
+  .fail-mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 3px solid var(--danger);
+    border-radius: 50%;
+    color: var(--danger);
+    font-weight: 700;
+  }
+  .overlay-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
   }
   .overlay-sub {
     margin: 0;

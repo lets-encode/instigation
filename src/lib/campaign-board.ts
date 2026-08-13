@@ -352,6 +352,24 @@ export function buildRecord(
 	}));
 }
 
+/**
+ * A task's unresolved fail comments no longer matched by a fail cell — a
+ * send-back cleared the verdicts they arrived with. They count as plain
+ * comments (see taskCounts), so the record renders them after its slot rows.
+ */
+export function orphanedFails(
+	card: Pick<BoardCard, 'task' | 'slots'>,
+	comments: CommentRow[]
+): CommentRow[] {
+	return comments.filter(
+		(c) =>
+			c.task_id === card.task &&
+			c.kind === 'fail' &&
+			c.resolved !== 'true' &&
+			!card.slots.some((s) => s.key === 'fail' && s.sub === c.subtask_id && s.ts === c.timestamp)
+	);
+}
+
 /** One discussion thread: a top-level comment and its replies, oldest first. */
 export interface Thread {
 	root: CommentRow;

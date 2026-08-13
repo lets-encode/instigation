@@ -62,7 +62,10 @@ export class CommandRunner {
 		this.log.clear();
 		try {
 			const result = (this.result = await command());
-			this.log.done();
+			// A command that resolved to an error stopped in its open step; mark
+			// it so the log shows where, rather than closing it as got-through.
+			if (result?.error) this.log.fail();
+			else this.log.done();
 			this.held = true;
 			await new Promise<void>((resolve) => (this.release = resolve));
 			this.release = null;
