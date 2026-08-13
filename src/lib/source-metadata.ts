@@ -15,6 +15,8 @@
 // Same conventions as mei-facsimile.ts / mei-header.ts: pure regex and string
 // handling, no DOM, filesystem or network access.
 
+import { addXmlIds } from './mei-ids.ts';
+
 /** One named agent in the statement of responsibility. */
 export interface SourcePerson {
 	name: string;
@@ -216,7 +218,8 @@ function splitAtManifestationSlot(extra: string): [string, string] {
 
 /**
  * Build the <meiHead> for a source. Empty fields are left out rather than
- * emitted blank, so the header states only what is actually known.
+ * emitted blank, so the header states only what is actually known. Every
+ * element carries a deterministic xml:id.
  */
 export function buildSourceHead(meta: SourceMetadata): string {
 	const people = [
@@ -243,7 +246,7 @@ export function buildSourceHead(meta: SourceMetadata): string {
 	const manifestation = manifestationListBlock(described.identifier + described.parts);
 
 	const [before, after] = splitAtManifestationSlot(meta.extraHeadXml);
-	return (
+	return addXmlIds(
 		`${indent(1)}<meiHead>\n` +
 		`${indent(2)}<fileDesc>\n` +
 		`${indent(3)}<titleStmt>\n` +
@@ -288,7 +291,8 @@ export interface PieceHeadOrigin {
  *
  * Each piece carries the source description rather than referring to a shared
  * file, so a piece MEI stays meaningful on its own — opened in an editor, or
- * extracted from the campaign entirely.
+ * extracted from the campaign entirely. Every element carries a deterministic
+ * xml:id.
  */
 export function buildPieceHead(
 	piece: PieceHead,
@@ -360,7 +364,7 @@ export function buildPieceHead(
 			`${indent(4)}</respStmt>\n`
 		: '';
 
-	return (
+	return addXmlIds(
 		`${indent(1)}<meiHead>\n` +
 		`${indent(2)}<fileDesc>\n` +
 		`${indent(3)}<titleStmt>\n` +

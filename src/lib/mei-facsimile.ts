@@ -19,6 +19,8 @@
 // parseFacsimileMei reads any stage back into the model; the <meiHead> block
 // is carried verbatim across rebuilds.
 
+import { addXmlIds } from './mei-ids.ts';
+
 /** A detected measure box, in the page image's pixel space. */
 export interface MeasureBox {
 	ulx: number;
@@ -187,8 +189,8 @@ export function initialFacsimileModel(pages: FacsimilePage[], meta: ScoreMeta = 
 /**
  * Emit the model as MEI. Stage A (`{}`) contains facsimile zones only; stage C
  * (`{ withBreaks: true }`) adds measures, page/system breaks and movements.
- * xml:ids are deterministic (surface-1, zone-1-2, measure-3, …) so rebuilds
- * are stable and diffable.
+ * Every element carries a deterministic xml:id (surface-1, zone-1-2,
+ * measure-3, staff-4, …) so rebuilds are stable and diffable.
  */
 export function buildFacsimileMei(
 	model: FacsimileModel,
@@ -268,7 +270,7 @@ export function buildFacsimileMei(
 			`         </mdiv>`
 	);
 
-	return (
+	return addXmlIds(
 		`<?xml version="1.0" encoding="UTF-8"?>\n` +
 		`<?xml-model href="https://music-encoding.org/schema/5.0/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
 		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0">\n` +
@@ -292,7 +294,8 @@ export function buildFacsimileMei(
  * tasks address the same `surface-N` locators a facsimile campaign uses (the
  * page-span join replaces a page's content wholesale; see mei-page-splice.ts).
  * Without one, a single seed measure gives the encoder a valid file to start
- * from. xml:ids are deterministic so rebuilds are stable and diffable.
+ * from. Every element carries a deterministic xml:id so rebuilds are stable
+ * and diffable.
  */
 export function buildBlankScoreMei(headXml: string, pages = 0): string {
 	const parts: string[] = [];
@@ -310,7 +313,7 @@ export function buildBlankScoreMei(headXml: string, pages = 0): string {
 				`               </measure>`
 		);
 	}
-	return (
+	return addXmlIds(
 		`<?xml version="1.0" encoding="UTF-8"?>\n` +
 		`<?xml-model href="https://music-encoding.org/schema/5.0/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
 		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0">\n` +
@@ -359,7 +362,7 @@ export interface ParsedFacsimile extends FacsimileModel {
  * <sb/>/<pb/> tokens where present, else from the row grouping.
  */
 export function parseFacsimileMei(text: string): ParsedFacsimile {
-	const headXml = /[ \t]*<meiHead>[\s\S]*?<\/meiHead>/.exec(text)?.[0];
+	const headXml = /[ \t]*<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(text)?.[0];
 	if (!headXml) throw new Error('Not a facsimile score: no <meiHead> found.');
 
 	// Which zones the body marks as system/page starts and as movement starts

@@ -36,24 +36,24 @@ test('round-trips every field it models', () => {
 test('escapes markup-significant characters in values', () => {
 	const meta = { ...emptySourceMetadata(), title: 'Sonata <b> & "Co"' };
 	const xml = buildSourceHead(meta);
-	assert.ok(xml.includes('<title>Sonata &lt;b&gt; &amp; &quot;Co&quot;</title>'));
+	assert.match(xml, /<title[^>]*>Sonata &lt;b&gt; &amp; &quot;Co&quot;<\/title>/);
 	assert.equal(parseSourceHead(xml).title, 'Sonata <b> & "Co"');
 });
 
 test('leaves unknown fields out rather than emitting empty elements', () => {
 	const xml = buildSourceHead({ ...emptySourceMetadata(), title: 'Untitled' });
-	assert.ok(!xml.includes('<publisher>'));
-	assert.ok(!xml.includes('<sourceDesc>'));
-	assert.ok(!xml.includes('<respStmt>'));
+	assert.ok(!xml.includes('<publisher'));
+	assert.ok(!xml.includes('<sourceDesc'));
+	assert.ok(!xml.includes('<respStmt'));
 	// pubStmt is required by MEI, so it stays even when empty.
-	assert.ok(xml.includes('<pubStmt>'));
+	assert.match(xml, /<pubStmt\b/);
 });
 
 test('keeps the composer and editor distinct from other contributors', () => {
 	const xml = buildSourceHead(filled());
-	assert.ok(xml.includes('<persName role="composer">L. van Beethoven</persName>'));
-	assert.ok(xml.includes('<persName role="editor">A. Editor</persName>'));
-	assert.ok(xml.includes('<persName role="lyricist">J. W. von Goethe</persName>'));
+	assert.match(xml, /<persName[^>]*role="composer"[^>]*>L\. van Beethoven<\/persName>/);
+	assert.match(xml, /<persName[^>]*role="editor"[^>]*>A\. Editor<\/persName>/);
+	assert.match(xml, /<persName[^>]*role="lyricist"[^>]*>J\. W\. von Goethe<\/persName>/);
 	const parsed = parseSourceHead(xml);
 	assert.equal(parsed.composer, 'L. van Beethoven');
 	assert.equal(parsed.editor, 'A. Editor');
@@ -66,14 +66,14 @@ test('keeps the composer and editor distinct from other contributors', () => {
 
 test("the edition's year is a date within the edition", () => {
 	const xml = buildSourceHead(filled());
-	assert.ok(xml.includes('<edition>2nd revised edition <date>1854</date></edition>'));
+	assert.match(xml, /<edition[^>]*>2nd revised edition <date[^>]*>1854<\/date><\/edition>/);
 	const parsed = parseSourceHead(xml);
 	assert.equal(parsed.edition, '2nd revised edition');
 	assert.equal(parsed.editionDate, '1854');
 
 	// A year with no edition text still has a home.
 	const dateOnly = buildSourceHead({ ...emptySourceMetadata(), editionDate: '1854' });
-	assert.ok(dateOnly.includes('<edition><date>1854</date></edition>'));
+	assert.match(dateOnly, /<edition[^>]*><date[^>]*>1854<\/date><\/edition>/);
 	assert.equal(parseSourceHead(dateOnly).editionDate, '1854');
 });
 
@@ -104,10 +104,12 @@ test('preserves head markup the form does not model, across a round trip', () =>
 	assert.equal(parsed.title, 'Hand written');
 	assert.ok(parsed.extraHeadXml.includes('<workList>'));
 
-	// The preserved block survives a rebuild, and a second parse is stable.
+	// The preserved block survives a rebuild — gaining xml:ids like every other
+	// element — and a further parse/rebuild cycle is stable.
 	const rebuilt = buildSourceHead(parsed);
-	assert.ok(rebuilt.includes('<work><title>The work behind the source</title></work>'));
-	assert.deepEqual(parseSourceHead(rebuilt), parsed);
+	assert.match(rebuilt, /<work[^>]*><title[^>]*>The work behind the source<\/title><\/work>/);
+	assert.equal(parseSourceHead(rebuilt).title, parsed.title);
+	assert.equal(buildSourceHead(parseSourceHead(rebuilt)), rebuilt);
 });
 
 test('returns empty metadata for text with no header', () => {
@@ -117,22 +119,25 @@ test('returns empty metadata for text with no header', () => {
 test('describes the source in the manifestation, not the file', () => {
 	const xml = buildSourceHead(filled());
 	const manifestation = /<manifestation\b[\s\S]*<\/manifestation>/.exec(xml)?.[0] ?? '';
-	assert.match(manifestation, /<pubStmt>[\s\S]*<publisher>Breitkopf &amp; Härtel<\/publisher>/);
-	assert.match(manifestation, /<editionStmt>\s*<edition>2nd revised edition <date>1854<\/date><\/edition>/);
+	assert.match(manifestation, /<pubStmt[^>]*>[\s\S]*<publisher[^>]*>Breitkopf &amp; Härtel<\/publisher>/);
 	assert.match(
 		manifestation,
-		/<physLoc>\s*<repository>Austrian National Library<\/repository>\s*<identifier>Mus\.Hs\.16481<\/identifier>/
+		/<editionStmt[^>]*>\s*<edition[^>]*>2nd revised edition <date[^>]*>1854<\/date><\/edition>/
+	);
+	assert.match(
+		manifestation,
+		/<physLoc[^>]*>\s*<repository[^>]*>Austrian National Library<\/repository>\s*<identifier[^>]*>Mus\.Hs\.16481<\/identifier>/
 	);
 	// The file's own pubStmt stays, but says nothing about the source.
 	const fileDesc = /<fileDesc\b[\s\S]*<\/fileDesc>/.exec(xml)?.[0] ?? '';
-	assert.ok(!fileDesc.includes('<publisher>'));
+	assert.ok(!fileDesc.includes('<publisher'));
 });
 
 test('a shelfmark without a repository becomes the manifestation identifier', () => {
 	const meta = { ...emptySourceMetadata(), shelfmark: 'Mus.Hs.16481' };
 	const xml = buildSourceHead(meta);
-	assert.ok(!xml.includes('<physLoc>'));
-	assert.match(xml, /<manifestation[^>]*>\s*<identifier>Mus\.Hs\.16481<\/identifier>/);
+	assert.ok(!xml.includes('<physLoc'));
+	assert.match(xml, /<manifestation[^>]*>\s*<identifier[^>]*>Mus\.Hs\.16481<\/identifier>/);
 	assert.equal(parseSourceHead(xml).shelfmark, 'Mus.Hs.16481');
 });
 
@@ -150,5 +155,5 @@ test('reads publication details from a header that carries them in fileDesc', ()
 
 test('trims surrounding whitespace from typed values', () => {
 	const xml = buildSourceHead({ ...emptySourceMetadata(), title: '  Padded  ' });
-	assert.ok(xml.includes('<title>Padded</title>'));
+	assert.match(xml, /<title[^>]*>Padded<\/title>/);
 });

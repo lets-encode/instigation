@@ -25,13 +25,13 @@ test('a piece header carries the piece title and the whole source beneath it', (
 	assert.equal(SyntaxValidator.validate(`<mei>${head}</mei>`), true);
 
 	// The piece names itself...
-	assert.match(head, /<titleStmt>\s*<title>Sonata I<\/title>/);
+	assert.match(head, /<titleStmt[^>]*>\s*<title[^>]*>Sonata I<\/title>/);
 	// ...and the source it was read from is copied in, not referenced.
-	assert.match(head, /<sourceDesc>[\s\S]*<title>Drei Sonaten<\/title>/);
-	assert.match(head, /<publisher>Breitkopf &amp; Härtel<\/publisher>/);
-	assert.match(head, /<extent>48 pages<\/extent>/);
-	assert.match(head, /<annot>Bound with two other sonatas\.<\/annot>/);
-	assert.match(head, /<useRestrict>CC-BY-4\.0<\/useRestrict>/);
+	assert.match(head, /<sourceDesc[^>]*>[\s\S]*<title[^>]*>Drei Sonaten<\/title>/);
+	assert.match(head, /<publisher[^>]*>Breitkopf &amp; Härtel<\/publisher>/);
+	assert.match(head, /<extent[^>]*>48 pages<\/extent>/);
+	assert.match(head, /<annot[^>]*>Bound with two other sonatas\.<\/annot>/);
+	assert.match(head, /<useRestrict[^>]*>CC-BY-4\.0<\/useRestrict>/);
 });
 
 test("a piece's own people and note reach its file description", () => {
@@ -47,11 +47,11 @@ test("a piece's own people and note reach its file description", () => {
 		emptySourceMetadata()
 	);
 	assert.equal(SyntaxValidator.validate(`<mei>${head}</mei>`), true);
-	const fileDesc = /<fileDesc>[\s\S]*<\/fileDesc>/.exec(head)?.[0] ?? '';
-	assert.match(fileDesc, /<persName role="editor">C\. Czerny<\/persName>/);
-	assert.match(fileDesc, /<persName role="lyricist">J\. W\. von Goethe<\/persName>/);
-	assert.match(fileDesc, /<persName role="engraver">B\. Engraver<\/persName>/);
-	assert.match(fileDesc, /<notesStmt>\s*<annot>First movement only\.<\/annot>\s*<\/notesStmt>/);
+	const fileDesc = /<fileDesc\b[\s\S]*<\/fileDesc>/.exec(head)?.[0] ?? '';
+	assert.match(fileDesc, /<persName[^>]*role="editor"[^>]*>C\. Czerny<\/persName>/);
+	assert.match(fileDesc, /<persName[^>]*role="lyricist"[^>]*>J\. W\. von Goethe<\/persName>/);
+	assert.match(fileDesc, /<persName[^>]*role="engraver"[^>]*>B\. Engraver<\/persName>/);
+	assert.match(fileDesc, /<notesStmt[^>]*>\s*<annot[^>]*>First movement only\.<\/annot>\s*<\/notesStmt>/);
 });
 
 test("a piece with no composer of its own inherits the source's", () => {
@@ -85,7 +85,7 @@ test('the piece header drops into a facsimile scaffold', () => {
 		]
 	});
 	assert.equal(SyntaxValidator.validate(mei), true);
-	assert.match(mei, /<title>Sonata I<\/title>/);
+	assert.match(mei, /<title[^>]*>Sonata I<\/title>/);
 	assert.match(mei, /<zone [^>]*type="measure"/);
 });
 

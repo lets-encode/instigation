@@ -22,12 +22,12 @@ const PAGES: FacsimilePage[] = [
 // measure-correction pre-task; every measure holds an <mRest/>.
 const base = buildFacsimileMei(initialFacsimileModel(PAGES), { withBreaks: true });
 // A fork that "encoded" every page: each <mRest/> became a note.
-const forkAll = base.replaceAll('<mRest/>', '<note dur="4" oct="4" pname="c"/>');
+const forkAll = base.replace(/<mRest\b[^>]*\/>/g, '<note dur="4" oct="4" pname="c"/>');
 
 test('splicePage takes only the target page\'s measures from the fork', () => {
 	const spliced = splicePage(base, forkAll, 'surface-2');
 	// Page 1 (2 measures) stays as it is in the base; page 2 (3) takes the fork.
-	assert.equal((spliced.match(/<mRest\/>/g) ?? []).length, 2);
+	assert.equal((spliced.match(/<mRest\b/g) ?? []).length, 2);
 	assert.equal((spliced.match(/<note /g) ?? []).length, 3);
 	// Structure around the untouched page is byte-identical to the base.
 	assert.ok(spliced.includes('<measure xml:id="measure-1"'));

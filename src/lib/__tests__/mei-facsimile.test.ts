@@ -106,7 +106,7 @@ test('movements: a flagged zone opens a new <mdiv>; flags round-trip', () => {
 	m.pages[1].zones[0].mdiv = true;
 	const mei = buildFacsimileMei(m, { withBreaks: true });
 	assert.equal((mei.match(/<mdiv /g) ?? []).length, 2);
-	assert.equal((mei.match(/<scoreDef>/g) ?? []).length, 2);
+	assert.equal((mei.match(/<scoreDef\b/g) ?? []).length, 2);
 	// The second movement holds page 2's break and measure.
 	const second = mei.slice(mei.indexOf('<mdiv xml:id="mdiv-2"'));
 	assert.ok(/<pb[^>]*facs="#surface-2"/.test(second));
@@ -163,9 +163,9 @@ test('movements: the first zone never opens a second <mdiv>', () => {
 
 test('fills and escapes the header metadata', () => {
 	const mei = buildFacsimileMei(initialFacsimileModel(twoPages, { title: 'A & B', composer: '<X>', license: 'CC-BY-4.0' }));
-	assert.ok(mei.includes('<title>A &amp; B</title>'));
-	assert.ok(mei.includes('<persName role="composer">&lt;X&gt;</persName>'));
-	assert.ok(mei.includes('<useRestrict>CC-BY-4.0</useRestrict>'));
+	assert.match(mei, /<title[^>]*>A &amp; B<\/title>/);
+	assert.match(mei, /<persName[^>]*role="composer"[^>]*>&lt;X&gt;<\/persName>/);
+	assert.match(mei, /<useRestrict[^>]*>CC-BY-4\.0<\/useRestrict>/);
 });
 
 test('sortReadingOrder groups systems top-to-bottom and orders each left-to-right', () => {
