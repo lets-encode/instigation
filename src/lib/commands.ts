@@ -221,7 +221,10 @@ async function waitForPrProcessed(
 			)
 		: null;
 	const deadline = Date.now() + 90_000;
-	let delayMs = 2_000;
+	// Fast cadence, low cap: the PR-state and run reads are ETag-cached, so an
+	// unchanged poll answers 304 and does not count against the API rate limit —
+	// the cap trades a few extra free polls for catching the close sooner.
+	let delayMs = 1_000;
 	while (Date.now() < deadline) {
 		await sleep(delayMs);
 		// The PR-state read and the run-watch tick are independent reads — one
@@ -249,7 +252,7 @@ async function waitForPrProcessed(
 			console.log('[pr] Actions run for PR', pr.number, 'failed:', watch.state.run.conclusion);
 			return { state: 'run_failed', runUrl: watch.state.run.html_url };
 		}
-		delayMs = Math.min(8_000, Math.ceil(delayMs * 1.5));
+		delayMs = Math.min(3_000, Math.ceil(delayMs * 1.5));
 	}
 	console.log('[pr] PR', pr.number, 'not processed within 90s (still in flight)');
 	return { state: 'timeout' };
@@ -913,7 +916,7 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
 			);
 			const deadline = Date.now() + 90_000;
 			while (Date.now() < deadline) {
-				await sleep(3000);
+				await sleep(2000);
 				await watch.tick();
 				if (watch.state.phase === 'completed') {
 					const { conclusion, html_url } = watch.state.run;

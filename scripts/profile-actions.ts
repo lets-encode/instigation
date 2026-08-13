@@ -36,8 +36,22 @@ const headers = {
   Authorization: `Bearer ${token}`,
 };
 
+// fetch with retries on network errors (connection resets, read timeouts),
+// which otherwise abort a long collection run partway through.
+async function fetchRetry(url: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      if (attempt === 3) throw e;
+      console.error(`fetch ${url} failed (attempt ${attempt}), retrying: ${(e as Error).message}`);
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
+  }
+}
+
 async function api<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`, { headers });
+  const res = await fetchRetry(`${API}${path}`, { headers });
   if (!res.ok) {
     throw new Error(`GET ${path} failed (${res.status}): ${await res.text()}`);
   }
@@ -124,14 +138,14 @@ async function prKind(prNumber: number): Promise<string> {
 // must be fetched WITHOUT the Authorization header, so the redirect is
 // followed by hand. Expired logs (404/410) yield an empty string.
 async function jobLog(jobId: number): Promise<string> {
-  const res = await fetch(
+  const res = await fetchRetry(
     `${API}/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`,
     { headers, redirect: "manual" },
   );
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get("location");
     if (!location) throw new Error(`Job ${jobId} log redirect had no location`);
-    const raw = await fetch(location);
+    const raw = await fetchRetry(location);
     if (!raw.ok) throw new Error(`Job ${jobId} log fetch failed (${raw.status})`);
     return await raw.text();
   }
@@ -206,6 +220,16 @@ async function main(): Promise<void> {
         ...base,
         "job_total",
         seconds(job.started_at, job.completed_at),
+        job.conclusion,
+        "",
+      ]);
+      // The full pre-execution wait. A run held by the workflow's concurrency
+      // group reports run_started_at == created_at (queue_s misses the hold);
+      // only the job's started_at shows when work actually began.
+      emit([
+        ...base,
+        "run_created_to_job_started",
+        seconds(run.created_at, job.started_at),
         job.conclusion,
         "",
       ]);
