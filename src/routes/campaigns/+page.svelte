@@ -22,6 +22,7 @@
     commentsOnMyWork,
     invalidateStats,
     loadAllCampaignStats,
+    loadCampaignStats,
     myTasksIn,
   } from "$lib/campaign-stats.ts";
   import type {
@@ -32,6 +33,7 @@
   import CampaignCard from "$lib/components/CampaignCard.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
   const PER_PAGE = 12;
 
@@ -76,6 +78,7 @@
   );
   const fix = $derived(tasks.filter((t) => t.group === "fix"));
   const encoding = $derived(tasks.filter((t) => t.group === "encoding"));
+  const validating = $derived(tasks.filter((t) => t.group === "validating"));
   const awaiting = $derived(tasks.filter((t) => t.group === "awaiting"));
   const done = $derived(
     tasks
@@ -137,6 +140,27 @@
     );
   };
 
+  // Re-read one campaign's stats and swap its grid row in place, leaving the
+  // rest of the listing as it is.
+  async function refreshStats(s: CampaignStats) {
+    invalidateStats(s.repoId);
+    try {
+      const fresh = await loadCampaignStats(readForge(), {
+        id: s.repoId,
+        owner: s.owner,
+        name: s.repo,
+        full_name: `${s.owner}/${s.repo}`,
+        html_url: `https://github.com/${s.owner}/${s.repo}`,
+        private: s.isPrivate,
+        description: null,
+        updated_at: "",
+      });
+      stats = stats.map((x) => (x.repoId === fresh.repoId ? fresh : x));
+    } catch {
+      // The stale row stays; the next full listing load replaces it.
+    }
+  }
+
   async function run(
     t: MyTask,
     command: (c: CommandContext) => Promise<Result>,
@@ -145,14 +169,25 @@
     if (!c) return;
     await runner.run(
       () => command(c),
-      () => {
+      async () => {
         runner.log.step("Refreshing…");
-        invalidateStats(c.repoId);
-        listLoaded = false;
-        stats = [];
+        const s = stats.find((x) => x.repoId === c.repoId);
+        if (s) await refreshStats(s);
       },
     );
   }
+
+  // Background verdicts settle against a campaign the viewer has work in;
+  // refresh those campaigns' rows so the settled task moves group.
+  $effect(() =>
+    pendingVerdicts.onSettled(() => {
+      if (runner.busy) return;
+      const mine = new Set(
+        tasks.filter((t) => t.group !== "done").map((t) => t.campaignSlug),
+      );
+      for (const s of stats) if (mine.has(s.name)) refreshStats(s);
+    }),
+  );
 
   const openEditor = async (t: MyTask) => {
     await run(t, (c) => invoke(commands.openEditor, { task_id: t.task }, c));
@@ -314,7 +349,7 @@
       <div class="rows">
         {#if listLoading && tasks.length === 0}
           <p class="note">Looking for your claimed tasks…</p>
-        {:else if encoding.length === 0 && awaiting.length === 0 && fix.length === 0}
+        {:else if encoding.length === 0 && validating.length === 0 && awaiting.length === 0 && fix.length === 0}
           <p class="note">
             Nothing in motion — claim a task from a campaign below.
           </p>
@@ -340,6 +375,21 @@
               class="rbtn primary"
               disabled={runner.busy}
               onclick={() => submit(t)}>Submit</button
+            >
+          </div>
+        {/each}
+        {#each validating as t (t.campaignSlug + t.task)}
+          <div class="row">
+            <span class="rowtitle">{taskLine(t)}</span>
+            <span class="pill grey">validating</span>
+            <span class="rowmeta"
+              >claimed {ago(t.claimedAt)}{expiresIn(t)
+                ? ` · ${expiresIn(t)}`
+                : ""}</span
+            >
+            <span class="spacer"></span>
+            <a class="golink" href={taskHref(t.campaignSlug, t.task)}
+              >Details →</a
             >
           </div>
         {/each}
@@ -442,7 +492,7 @@
       <p class="note">Couldn't load the campaigns: {listError}</p>
     {:else if listLoaded && stats.length === 0}
       <p class="note">No campaigns yet. Be the first to create one!</p>
-    {:else if listLoading && stats.length === 0}
+    {:else if (listLoading || auth.status === "loading") && stats.length === 0}
       <p class="note">Loading campaigns…</p>
     {:else if shown.length === 0}
       <p class="note">No campaign matches.</p>

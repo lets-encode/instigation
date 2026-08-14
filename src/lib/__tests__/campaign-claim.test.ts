@@ -188,6 +188,38 @@ test('a validator with a recorded verdict cannot claim another slot of the subta
 	assert.equal(claim({ ...base, author: 'carol', allowSelfValidation: true }).ok, true);
 });
 
+test('pass threshold below the slot count closes claiming once it is reachable', () => {
+	// Two slots, threshold 1: a recorded pass leaves a physically open slot
+	// whose verdict could never land — the claim is rejected.
+	const state = parseStateCsv(
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n' +
+			'T0001,,validation_required,bob,t,,\n' +
+			'T0001,S0001,validation_required,,,pass|carol|t,\n'
+	);
+	const v = claim({ state, intent: validationIntent, author: 'dave', passThreshold: 1 });
+	assert.equal(v.reason, 'no_open_validation_slot');
+});
+
+test('pass threshold below the slot count counts active locks as prospective passes', () => {
+	// Two slots, threshold 1: carol's in-flight validation already covers the
+	// one needed pass, so a second claim is rejected.
+	const locks = parseLockCsv(LOCK_HEADER + 'T0001,S0001,carol,t,validation\n');
+	const base = { state: validationTwoSlots, locks, intent: validationIntent, author: 'dave' };
+	assert.equal(claim({ ...base, passThreshold: 1 }).reason, 'no_open_validation_slot');
+	// At threshold 2 the second slot is still needed.
+	assert.equal(claim({ ...base, passThreshold: 2 }).ok, true);
+});
+
+test('a fail verdict does not count toward the pass threshold', () => {
+	const state = parseStateCsv(
+		'task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n' +
+			'T0001,,validation_required,bob,t,,\n' +
+			'T0001,S0001,validation_required,,,fail|carol|t,\n'
+	);
+	const v = claim({ state, intent: validationIntent, author: 'dave', passThreshold: 1 });
+	assert.equal(v.ok, true);
+});
+
 test('locks on other subtasks do not block a claim', () => {
 	// A validation lock on S0001 is irrelevant to an encoding claim on the task
 	// row, and vice versa — the composite key separates them.

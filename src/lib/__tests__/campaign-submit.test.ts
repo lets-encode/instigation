@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 
 import { parseTaskCsv, parseStateCsv, parseLockCsv, serializeStateCsv, serializeLockCsv, findRow } from '../campaign-tables.ts';
 import type { ParsedState, LockRow, CommentRow } from '../campaign-tables.ts';
-import { checkComment, checkEncoding, checkResolveComment, checkSendBack, checkValidation } from '../campaign-submit.ts';
+import {
+	checkComment,
+	checkEncoding,
+	checkResolveComment,
+	checkSendBack,
+	checkValidation,
+	resolveCommentThread
+} from '../campaign-submit.ts';
 import type { CheckEncodingArgs, CheckValidationArgs } from '../campaign-submit.ts';
 
 // A relaxed view of the submit result for assertions, where the accepted-branch
@@ -410,6 +417,61 @@ test('comments: rejects bad kinds, empty bodies, unknown tasks and dangling repl
 		'invalid_parent'
 	);
 	assert.equal(checkComment({ ...base, added: comment({ kind: 'reply', parent_id: 'c1' }) }).ok, true);
+});
+
+test('comments: a reply must answer a top-level question or addition', () => {
+	const base = {
+		state: validationState(),
+		comments: [
+			comment({ comment_id: 'c1', kind: 'question' }),
+			comment({ comment_id: 'c2', kind: 'reply', parent_id: 'c1' }),
+			comment({ comment_id: 'c3', kind: 'fail' })
+		],
+		author: 'carol',
+		changedPaths: ['tracking/comment.csv'],
+		now: NOW,
+		newId: 'c4'
+	};
+	assert.equal(checkComment({ ...base, added: comment({ kind: 'reply', parent_id: 'c1' }) }).ok, true);
+	// A reply to a reply has no thread to render under.
+	assert.equal(
+		(checkComment({ ...base, added: comment({ kind: 'reply', parent_id: 'c2' }) }) as { reason?: string }).reason,
+		'invalid_parent'
+	);
+	// Fail comments live in the validation record, not the discussion threads.
+	assert.equal(
+		(checkComment({ ...base, added: comment({ kind: 'reply', parent_id: 'c3' }) }) as { reason?: string }).reason,
+		'invalid_parent'
+	);
+});
+
+test('comments: resolving a root resolves its reply chain with it', () => {
+	const comments = [
+		comment({ comment_id: 'c1', kind: 'question', author_id: 'carol' }),
+		comment({ comment_id: 'c2', kind: 'reply', parent_id: 'c1', author_id: 'dave' }),
+		comment({ comment_id: 'c3', kind: 'reply', parent_id: 'c2', author_id: 'erin' }),
+		comment({ comment_id: 'c4', kind: 'question', author_id: 'carol' })
+	];
+	const v = checkResolveComment({
+		comments,
+		comment_id: 'c1',
+		author: 'carol',
+		changedPaths: ['tracking/comment.csv'],
+		isCollaborator: false
+	});
+	assert.equal(v.ok, true);
+	if (v.ok) {
+		assert.equal(v.row.comment_id, 'c1');
+		assert.deepEqual(
+			v.comments.map((c) => c.resolved),
+			['true', 'true', 'true', '']
+		);
+	}
+	// The pure helper leaves rows outside the thread untouched.
+	assert.deepEqual(
+		resolveCommentThread(comments, 'c4').map((c) => c.resolved),
+		['', '', '', 'true']
+	);
 });
 
 test('comments: resolving is author- or push-access-only', () => {

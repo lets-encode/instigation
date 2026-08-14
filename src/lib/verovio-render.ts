@@ -22,31 +22,41 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 	if (!href?.startsWith('#')) node.remove();
 });
 
-// Verovio is a ~2 MB WASM module — loaded on first preview, then reused.
+// Verovio is a ~2 MB WASM module — loaded on first preview, then reused. The
+// promise is what is cached, so concurrent first calls share one load; a
+// failed load is forgotten, so the next call retries it.
 let toolkit: VerovioToolkit | null = null;
+let loading: Promise<VerovioToolkit> | null = null;
 
-export async function getVerovio(): Promise<VerovioToolkit> {
-	if (!toolkit) {
-		const [{ default: createVerovioModule }, { VerovioToolkit }] = await Promise.all([
-			import('verovio/wasm'),
-			import('verovio/esm')
-		]);
-		toolkit = new VerovioToolkit(await createVerovioModule());
-		toolkit.setOptions({
-			pageWidth: 2100,
-			pageHeight: 2970,
-			adjustPageHeight: true,
-			scale: 40,
-			footer: 'none',
-			svgViewBox: true,
-			// Render every movement — without this only the first <mdiv> paginates.
-			mdivAll: true,
-			// Write each measure's number as data-n, so a fail's measure range can
-			// be highlighted in the rendered encoding.
-			svgAdditionalAttribute: ['measure@n']
-		});
-	}
-	return toolkit;
+export function getVerovio(): Promise<VerovioToolkit> {
+	loading ??= loadVerovio().catch((err) => {
+		loading = null;
+		throw err;
+	});
+	return loading;
+}
+
+async function loadVerovio(): Promise<VerovioToolkit> {
+	const [{ default: createVerovioModule }, { VerovioToolkit }] = await Promise.all([
+		import('verovio/wasm'),
+		import('verovio/esm')
+	]);
+	const tk = new VerovioToolkit(await createVerovioModule());
+	tk.setOptions({
+		pageWidth: 2100,
+		pageHeight: 2970,
+		adjustPageHeight: true,
+		scale: 40,
+		footer: 'none',
+		svgViewBox: true,
+		// Render every movement — without this only the first <mdiv> paginates.
+		mdivAll: true,
+		// Write each measure's number as data-n, so a fail's measure range can
+		// be highlighted in the rendered encoding.
+		svgAdditionalAttribute: ['measure@n']
+	});
+	toolkit = tk;
+	return tk;
 }
 
 /** The loaded toolkit, or null before the first `getVerovio()` has resolved. */

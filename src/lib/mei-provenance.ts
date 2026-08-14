@@ -7,6 +7,8 @@
 // rest of the file. Same conventions as source-metadata.ts: pure regex and
 // string handling, no DOM, filesystem or network access.
 
+import { escapeRegex, indent, xmlEscape } from './mei-xml.ts';
+
 /** One accepted contribution, as recorded in the header. */
 export interface Contribution {
 	/** The contributor's name, e.g. a GitHub login. */
@@ -18,16 +20,6 @@ export interface Contribution {
 	/** The editing application's name, when known. */
 	application?: string;
 }
-
-function xmlEscape(value: string): string {
-	return value
-		.replaceAll('&', '&amp;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;')
-		.replaceAll('"', '&quot;');
-}
-
-const indent = (depth: number) => ' '.repeat(depth * 3);
 
 /** Insert `addition` into `xml` directly before the first `closer`. */
 function insertBefore(xml: string, closer: string, addition: string): string {
@@ -56,12 +48,13 @@ function withContributor(head: string, name: string): string {
 				'</titleStmt>',
 				`${indent(4)}<respStmt>\n${entry}${indent(4)}</respStmt>\n${indent(3)}`
 			);
-	return head.replace(titleStmt[0], updated);
+	// Function replacement: `updated` carries user text, which must not be read for $-patterns.
+	return head.replace(titleStmt[0], () => updated);
 }
 
 /** The application among <appInfo>'s entries, added once (matched by name). */
 function withApplication(head: string, name: string): string {
-	const present = new RegExp(`<name[^>]*>\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*</name>`);
+	const present = new RegExp(`<name[^>]*>\\s*${escapeRegex(name)}\\s*</name>`);
 	if (present.test(head)) return head;
 
 	const id = `app-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'unnamed'}`;
@@ -79,9 +72,10 @@ function withApplication(head: string, name: string): string {
 		const at = encodingDesc.index + encodingDesc[0].length;
 		return head.slice(0, at) + `\n${appInfo}${indent(2)}` + head.slice(at);
 	}
+	// Function replacement: `appInfo` carries user text, which must not be read for $-patterns.
 	return head.replace(
 		'</fileDesc>',
-		`</fileDesc>\n${indent(2)}<encodingDesc>\n${appInfo}${indent(2)}</encodingDesc>`
+		() => `</fileDesc>\n${indent(2)}<encodingDesc>\n${appInfo}${indent(2)}</encodingDesc>`
 	);
 }
 

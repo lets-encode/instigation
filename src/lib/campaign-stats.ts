@@ -4,7 +4,7 @@
 // can pull one user's work out of them. Derivations are pure functions of the
 // tables; loadCampaignStats does the fetching and caches per repo id.
 
-import { blockedBy } from './campaign-graph.ts';
+import { blockedBy, taskThreshold } from './campaign-graph.ts';
 import type { GraphData } from './campaign-graph.ts';
 import { cardTitle } from './campaign-board.ts';
 import {
@@ -247,7 +247,9 @@ async function fetchStats(
 		repoId: summary.id,
 		owner,
 		repo,
-		name: summary.name,
+		// The slug comes from the config (campaign.name), which — like the
+		// registry — survives a repo rename; the repo name is the fallback.
+		name: configString(yaml, 'name') || summary.name,
 		isPrivate: summary.private,
 		title: configString(yaml, 'title') || summary.name,
 		composer,
@@ -318,7 +320,7 @@ async function loadPreview(f: ForgeClient, stats: CampaignStats): Promise<Campai
 
 /** One task of the viewer's, grouped for the personal dashboard. */
 export interface MyTask {
-	group: 'fix' | 'encoding' | 'awaiting' | 'done';
+	group: 'fix' | 'encoding' | 'validating' | 'awaiting' | 'done';
 	campaign: string;
 	campaignSlug: string;
 	repoPath: string;
@@ -385,7 +387,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
 			claimedAt: '',
 			expiresAt: '',
 			passes: dots.filter((d) => d === 'pass').length,
-			threshold: stats.passThreshold * Math.max(1, subRows.length),
+			threshold: taskThreshold(stats.passThreshold, subRows.length),
 			dots,
 			failComment: null,
 			submittedAt: findRow(stats.rows, task, '')?.encoded_at ?? '',
@@ -393,14 +395,18 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
 		};
 	};
 
-	// Held encoding claims → "encoding now".
+	// Held claims → "encoding now" / "validating now", with the reaper-derived expiry.
+	const lockExpiry = (lock: LockRow): string =>
+		stats.staleAfterMinutes > 0 && Number.isFinite(Date.parse(lock.timestamp))
+			? new Date(Date.parse(lock.timestamp) + stats.staleAfterMinutes * 60_000).toISOString()
+			: '';
 	for (const lock of stats.locks) {
-		if (lock.kind !== 'encoding' || lock.user_id !== viewer || lock.subtask_id !== '') continue;
-		const expires =
-			stats.staleAfterMinutes > 0 && Number.isFinite(Date.parse(lock.timestamp))
-				? new Date(Date.parse(lock.timestamp) + stats.staleAfterMinutes * 60_000).toISOString()
-				: '';
-		out.push({ ...base(lock.task_id), group: 'encoding', claimedAt: lock.timestamp, expiresAt: expires });
+		if (lock.user_id !== viewer) continue;
+		if (lock.kind === 'encoding' && lock.subtask_id === '') {
+			out.push({ ...base(lock.task_id), group: 'encoding', claimedAt: lock.timestamp, expiresAt: lockExpiry(lock) });
+		} else if (lock.kind === 'validation') {
+			out.push({ ...base(lock.task_id), group: 'validating', claimedAt: lock.timestamp, expiresAt: lockExpiry(lock) });
+		}
 	}
 
 	// Tasks the viewer encoded: failed → fix requested, else awaiting / done.

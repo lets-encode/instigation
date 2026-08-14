@@ -27,6 +27,12 @@ export interface PageMeasures {
 	 * to its result. A cached result keeps the time its detection took.
 	 */
 	tookMs: number;
+	/**
+	 * Whether the detector itself failed on this page (its HTTP 500). The boxes
+	 * are empty and the result is not cached, so awaiting the page again
+	 * re-attempts the detection.
+	 */
+	detectorFailed?: boolean;
 }
 
 export interface DetectionOptions {
@@ -67,10 +73,10 @@ async function contentKey(blob: Blob, detectorUrl: string): Promise<string> {
 
 /**
  * Detect one page's measures and return them in pixels, sorted into reading
- * order. Successes — including pages the detector itself failed on, which come
- * back with no boxes — are cached by the image's content, so the same bytes
- * are never sent twice; a failed attempt is forgotten, so awaiting the page
- * again retries it.
+ * order. Successes — a genuine empty detection included — are cached by the
+ * image's content, so the same bytes are never sent twice. A failed attempt
+ * is forgotten, and so is a page the detector itself failed on (returned with
+ * no boxes and `detectorFailed` set), so awaiting the page again retries it.
  */
 async function detectPageMeasures(
 	blob: Blob,
@@ -92,6 +98,10 @@ async function detectPageMeasures(
 				downscale(blob, DETECTOR_IMAGE_EDGE)
 			]);
 			const normalized = await detectMeasures(copy, name, detectorUrl);
+			// null is the detector failing on this page, not an empty page: serve
+			// this attempt's empty result, but drop it from the cache so a later
+			// await re-attempts instead of treating the failure as "no measures".
+			if (normalized === null) cache.delete(key);
 			const boxes = sortReadingOrder(normalized ?? []).map((b) => ({
 				ulx: b.ulx * size.width,
 				uly: b.uly * size.height,
@@ -102,7 +112,8 @@ async function detectPageMeasures(
 				width: size.width,
 				height: size.height,
 				boxes,
-				tookMs: performance.now() - startedAt
+				tookMs: performance.now() - startedAt,
+				...(normalized === null ? { detectorFailed: true } : {})
 			};
 		} finally {
 			release();
@@ -143,7 +154,13 @@ export function startDetection(
 		const name = image.path.split('/').pop() ?? `${index + 1}.jpg`;
 		const job = detectPageMeasures(image.blob, name, detectorUrl, options);
 		started[index] = job;
-		job.catch(() => (started[index] = undefined));
+		job.then(
+			// A detector failure is served once but not kept, matching the cache.
+			(result) => {
+				if (result.detectorFailed) started[index] = undefined;
+			},
+			() => (started[index] = undefined)
+		);
 		return job;
 	};
 	let next = 0;

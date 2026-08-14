@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addXmlIds } from '../mei-ids.ts';
-import { buildBlankScoreMei, buildFacsimileMei, buildMeiHead, initialFacsimileModel } from '../mei-facsimile.ts';
+import { buildBlankScoreMei, buildFacsimileMei, initialFacsimileModel } from '../mei-facsimile.ts';
 import { buildPieceHead, buildSourceHead, emptySourceMetadata } from '../source-metadata.ts';
 
 // Every start tag in `xml`, full tag text.
@@ -54,7 +54,7 @@ test('every element of a generated score carries an xml:id', () => {
 		buildFacsimileMei({ ...initialFacsimileModel(pages), headXml: head }),
 		buildFacsimileMei({ ...initialFacsimileModel(pages), headXml: head }, { withBreaks: true }),
 		buildBlankScoreMei(head, 2),
-		buildBlankScoreMei(buildMeiHead({ title: 'T' })),
+		buildBlankScoreMei(head),
 		buildSourceHead(emptySourceMetadata())
 	];
 	for (const score of scores) {

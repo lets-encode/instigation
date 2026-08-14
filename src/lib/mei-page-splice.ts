@@ -7,72 +7,129 @@
 //
 // A page's extent is delimited by the `<pb/>` markers written at stage C
 // (mei-facsimile.ts): the page's `<pb facs="#surface-N"/>` opens it and the
-// next `<pb/>` (or the end of the body) closes it. Every `<measure>` in that
-// span belongs to the page. The join keeps the base file verbatim except for
-// those measures, each replaced by the same-xml:id measure from the fork.
-//
-// A physical piece (blank score, no facsimile) has no fixed measure grid to
-// match by id, so its pages are joined by replacing the whole span instead
-// (splicePageSpan).
+// next page's `<pb/>` (or the end of the enclosing element, on the last page)
+// closes it. The join keeps the base file verbatim outside that span and takes
+// the fork's span content wholesale, so everything the volunteer wrote inside
+// their page — measures, a mid-piece <scoreDef>, added or removed measures —
+// lands in the base. The base's own `<pb/>` markers stay authoritative: which
+// surface follows the page comes from the base's page order, both spans are
+// delimited by the same facs-matched `<pb>` elements, and the result is
+// checked afterwards (assertSpliceIntegrity) so a fork that smuggles in a
+// page break or a duplicate measure is rejected rather than merged.
 
-// A measure element with its xml:id captured. Measures do not nest, so a
-// non-greedy match to the first </measure> is exact.
-const MEASURE_RE = /<measure\b[^>]*\bxml:id="([^"]*)"[^>]*>[\s\S]*?<\/measure>/g;
+import { escapeRegex } from './mei-xml.ts';
 
-function escapeRegex(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The first facs-matched `<pb>` for `surfaceId` at or after `from`. */
+function pbTagAt(xml: string, surfaceId: string, from = 0): RegExpExecArray | null {
+	const pb = new RegExp(`<pb\\b[^>]*\\bfacs="#${escapeRegex(surfaceId)}"[^>]*>`, 'g');
+	pb.lastIndex = from;
+	return pb.exec(xml);
 }
 
-/** Map every `<measure>` element by its xml:id to its full element text. */
-function measuresById(xml: string): Map<string, string> {
-	const byId = new Map<string, string>();
-	for (const match of xml.matchAll(MEASURE_RE)) byId.set(match[1], match[0]);
-	return byId;
-}
-
-/** The page's span: from its `<pb>` to the next `<pb>`/end, with its offsets. */
-function pageSpanAt(xml: string, surfaceId: string): { from: number; to: number } {
-	const pb = new RegExp(`<pb\\b[^>]*\\bfacs="#${escapeRegex(surfaceId)}"[^>]*>`).exec(xml);
+/**
+ * The page's span with its offsets: from `surfaceId`'s `<pb>` to
+ * `nextSurfaceId`'s, or — for the last page (`nextSurfaceId` null) — to the
+ * close of the enclosing element. Ending at the next surface's own marker
+ * rather than at just any `<pb>` keeps a stray page break inside the span,
+ * where the integrity checks see it, instead of silently truncating there.
+ */
+function pageSpanAt(
+	xml: string,
+	surfaceId: string,
+	nextSurfaceId: string | null
+): { from: number; to: number } {
+	const pb = pbTagAt(xml, surfaceId);
 	if (!pb) throw new Error(`No page break found for ${surfaceId}.`);
 	const from = pb.index + pb[0].length;
-	const next = xml.indexOf('<pb', from);
-	return { from, to: next === -1 ? closeOfEnclosure(xml, from) : next };
+	if (nextSurfaceId === null) return { from, to: closeOfEnclosure(xml, from) };
+	const next = pbTagAt(xml, nextSurfaceId, from);
+	if (!next) throw new Error(`No page break found for ${nextSurfaceId}.`);
+	return { from, to: next.index };
 }
 
 // A span that runs to the end of the body must not swallow the enclosing
-// section/score markup: it closes at the first closing tag after the last
-// measure of the page.
+// section/score markup: it closes at the matching close of the element
+// enclosing it. <section>/<mdiv> elements opened inside the span are tracked
+// by depth, so a nested section's close does not end the span early.
 function closeOfEnclosure(xml: string, from: number): number {
-	const close = xml.indexOf('</section>', from);
-	return close === -1 ? xml.length : close;
+	const tags = /<(\/?)(section|mdiv)\b[^>]*?(\/?)>/g;
+	tags.lastIndex = from;
+	let depth = 0;
+	for (let match = tags.exec(xml); match; match = tags.exec(xml)) {
+		if (match[3]) continue; // self-closing: opens nothing
+		if (!match[1]) depth++;
+		else if (depth === 0) return match.index;
+		else depth--;
+	}
+	return xml.length;
 }
 
-/** The page's span in the base body: from its `<pb>` to the next `<pb>`/end. */
-function pageSpan(base: string, surfaceId: string): string {
-	const { from, to } = pageSpanAt(base, surfaceId);
-	return base.slice(from, to);
+/** Every `<pb>` facs target ("surface-N") in `xml`, in document order. */
+function pbSurfaces(xml: string): string[] {
+	return [...xml.matchAll(/<pb\b[^>]*\bfacs="#([^"]*)"[^>]*>/g)].map((match) => match[1]);
+}
+
+/**
+ * Assert the structural invariants a page splice must keep: the result carries
+ * exactly the base's `<pb>` markers (one per surface, none smuggled in or
+ * lost), and no measure xml:id appears twice document-wide. Throws a
+ * descriptive Error on the first violation; the checks are what turn a fork
+ * that would silently corrupt the score into a loud rejection.
+ */
+export function assertSpliceIntegrity(baseMei: string, splicedMei: string, locator: string): void {
+	const baseSurfaces = new Set(pbSurfaces(baseMei));
+	const counts = new Map<string, number>();
+	for (const surface of pbSurfaces(splicedMei)) {
+		counts.set(surface, (counts.get(surface) ?? 0) + 1);
+	}
+	for (const [surface, count] of counts) {
+		if (!baseSurfaces.has(surface)) {
+			throw new Error(
+				`Splicing ${locator} introduced a page break for ${surface} the base score does not have.`
+			);
+		}
+		if (count > 1) {
+			throw new Error(`${count} page breaks for ${surface} after splicing ${locator}.`);
+		}
+	}
+	for (const surface of baseSurfaces) {
+		if (!counts.has(surface)) {
+			throw new Error(`The page break for ${surface} is missing after splicing ${locator}.`);
+		}
+	}
+
+	const measureIds = new Set<string>();
+	for (const match of splicedMei.matchAll(/<measure\b[^>]*\bxml:id="([^"]*)"/g)) {
+		if (measureIds.has(match[1])) {
+			throw new Error(`Duplicate measure xml:id "${match[1]}" after splicing ${locator}.`);
+		}
+		measureIds.add(match[1]);
+	}
+}
+
+/** Replace the base's page span with the fork's, both delimited by `locator`'s `<pb>`. */
+function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
+	// Which surface follows the page is the base's to say.
+	const surfaces = pbSurfaces(baseMei);
+	const at = surfaces.indexOf(locator);
+	const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
+	const base = pageSpanAt(baseMei, locator, nextSurface);
+	const fork = pageSpanAt(forkMei, locator, nextSurface);
+	const spliced =
+		baseMei.slice(0, base.from) + forkMei.slice(fork.from, fork.to) + baseMei.slice(base.to);
+	assertSpliceIntegrity(baseMei, spliced, locator);
+	return spliced;
 }
 
 /**
  * Splice the fork's encoding of one page into the base score. `locator` is the
- * page's `surface-N` id; only the measures inside that page's `<pb>` span are
- * taken from `forkMei`, matched by xml:id, and everything else in `baseMei` is
- * preserved. Throws if the page break is missing, the page has no measures, or
- * the fork is missing a measure the base places on the page.
+ * page's `surface-N` id; the base's span for that page is replaced by the
+ * fork's span content wholesale, and everything outside it is preserved from
+ * the base. Throws if either side is missing the page break or the result
+ * fails the integrity checks (assertSpliceIntegrity).
  */
 export function splicePage(baseMei: string, forkMei: string, locator: string): string {
-	const pageIds = [...measuresById(pageSpan(baseMei, locator)).keys()];
-	if (pageIds.length === 0) throw new Error(`No measures found for ${locator}.`);
-
-	const forkMeasures = measuresById(forkMei);
-	let result = baseMei;
-	for (const id of pageIds) {
-		const replacement = forkMeasures.get(id);
-		if (replacement === undefined) throw new Error(`Fork is missing measure ${id} for ${locator}.`);
-		const re = new RegExp(`<measure\\b[^>]*\\bxml:id="${escapeRegex(id)}"[^>]*>[\\s\\S]*?<\\/measure>`);
-		result = result.replace(re, () => replacement);
-	}
-	return result;
+	return spliceSpan(baseMei, forkMei, locator);
 }
 
 /**
@@ -85,7 +142,5 @@ export function splicePage(baseMei: string, forkMei: string, locator: string): s
  * per-page tasks still cannot touch each other's pages.
  */
 export function splicePageSpan(baseMei: string, forkMei: string, locator: string): string {
-	const base = pageSpanAt(baseMei, locator);
-	const fork = pageSpanAt(forkMei, locator);
-	return baseMei.slice(0, base.from) + forkMei.slice(fork.from, fork.to) + baseMei.slice(base.to);
+	return spliceSpan(baseMei, forkMei, locator);
 }

@@ -20,6 +20,7 @@
 // is carried verbatim across rebuilds.
 
 import { addXmlIds } from './mei-ids.ts';
+import { xmlEscape, xmlUnescape } from './mei-xml.ts';
 
 /** A detected measure box, in the page image's pixel space. */
 export interface MeasureBox {
@@ -74,22 +75,6 @@ export interface FacsimilePage {
 	measures: MeasureBox[];
 }
 
-export interface ScoreMeta {
-	title?: string;
-	composer?: string;
-	license?: string;
-}
-
-// Escape the minimum needed to keep substituted values well-formed XML, in
-// text and double-quoted attribute contexts.
-function xmlEscape(value: unknown): string {
-	return String(value ?? '')
-		.replaceAll('&', '&amp;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;')
-		.replaceAll('"', '&quot;');
-}
-
 /**
  * Group measure boxes into systems (rows), top-to-bottom, each row ordered
  * left-to-right. Boxes are grouped greedily: a box joins the current row if its
@@ -127,42 +112,15 @@ export function nextLabel(prevLabel: string | undefined): string {
 	return String((Number.isNaN(n) ? 0 : n) + 1);
 }
 
-/** Build the `<meiHead>` block from campaign metadata. */
-export function buildMeiHead(meta: ScoreMeta = {}): string {
-	return (
-		`   <meiHead>\n` +
-		`      <fileDesc>\n` +
-		`         <titleStmt>\n` +
-		`            <title>${xmlEscape(meta.title)}</title>\n` +
-		`            <respStmt>\n` +
-		`               <persName role="composer">${xmlEscape(meta.composer)}</persName>\n` +
-		`            </respStmt>\n` +
-		`         </titleStmt>\n` +
-		`         <pubStmt>\n` +
-		`            <availability>\n` +
-		`               <useRestrict>${xmlEscape(meta.license)}</useRestrict>\n` +
-		`            </availability>\n` +
-		`         </pubStmt>\n` +
-		`      </fileDesc>\n` +
-		`      <encodingDesc>\n` +
-		`         <appInfo>\n` +
-		`            <application version="1">\n` +
-		`               <name>Let's Encode!</name>\n` +
-		`            </application>\n` +
-		`         </appInfo>\n` +
-		`      </encodingDesc>\n` +
-		`   </meiHead>`
-	);
-}
-
 /**
  * The initial model for freshly detected pages: labels numbered continuously
- * across pages in the given order, system flags from the row grouping.
+ * across pages in the given order, system flags from the row grouping. The
+ * header is left empty — the caller supplies its own headXml (buildPieceHead).
  */
-export function initialFacsimileModel(pages: FacsimilePage[], meta: ScoreMeta = {}): FacsimileModel {
+export function initialFacsimileModel(pages: FacsimilePage[]): FacsimileModel {
 	let label: string | undefined;
 	return {
-		headXml: buildMeiHead(meta),
+		headXml: '',
 		pages: pages.map((page) => {
 			const rows = readingOrderRows(page.measures);
 			let firstOfPage = true;
@@ -341,12 +299,7 @@ export function buildBlankScoreMei(headXml: string, pages = 0): string {
 // One attribute's value from an XML tag string, unescaped; null if absent.
 function attr(tag: string, name: string): string | null {
 	const m = new RegExp(`\\b${name}="([^"]*)"`).exec(tag);
-	if (!m) return null;
-	return m[1]
-		.replaceAll('&quot;', '"')
-		.replaceAll('&lt;', '<')
-		.replaceAll('&gt;', '>')
-		.replaceAll('&amp;', '&');
+	return m ? xmlUnescape(m[1]) : null;
 }
 
 /** What stage the parsed file was at, alongside the model. */
@@ -403,8 +356,11 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 
 	const pages: PageModel[] = [];
 	let label: string | undefined;
-	for (const surfaceMatch of text.matchAll(/<surface\b[^>]*>([\s\S]*?)<\/surface>/g)) {
-		const body = surfaceMatch[1];
+	// A self-closing <surface/> is a complete (zone-less, graphic-less) element,
+	// so the first alternative keeps it from swallowing text up to the next
+	// </surface>.
+	for (const surfaceMatch of text.matchAll(/<surface\b[^>]*\/>|<surface\b[^>]*>([\s\S]*?)<\/surface>/g)) {
+		const body = surfaceMatch[1] ?? '';
 		const graphic = /<graphic\b[^>]*>/.exec(body)?.[0];
 		if (!graphic) continue;
 		const zones: ZoneModel[] = [];
@@ -465,7 +421,9 @@ export interface FacsimileImage {
  */
 export function relinkFacsimileImages(mei: string, images: FacsimileImage[]): string {
 	let index = 0;
-	return mei.replace(/<surface\b[^>]*>[\s\S]*?<\/surface>/g, (surface) => {
+	// The first alternative matches a self-closing <surface/> whole, so it does
+	// not swallow text up to the next </surface>.
+	return mei.replace(/<surface\b[^>]*\/>|<surface\b[^>]*>[\s\S]*?<\/surface>/g, (surface) => {
 		const image = images[index++];
 		const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
 		if (!image || !graphic) return surface;

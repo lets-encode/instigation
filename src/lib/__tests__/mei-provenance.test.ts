@@ -90,6 +90,27 @@ test('escapes markup-significant characters from the contribution', () => {
 	assert.match(out, /<p>Ties &amp; &lt;slurs&gt;<\/p>/);
 });
 
+test('a name carrying replacement-string patterns is inserted literally', () => {
+	// "$'" and "$&" are special in String.replace replacement text; a name
+	// carrying them must not splice header text into itself.
+	const out = recordContribution(pieceScore(), { ...CONTRIBUTION, name: "$' $& o'brien" });
+	assert.equal(SyntaxValidator.validate(out), true);
+	assert.match(out, /<persName role="contributor">\$' \$&amp; o'brien<\/persName>/);
+	// The header still holds exactly one titleStmt: nothing was duplicated.
+	assert.equal((out.match(/<titleStmt\b/g) ?? []).length, 1);
+});
+
+test('an application name carrying replacement-string patterns is inserted literally', () => {
+	// A header without <encodingDesc> takes the replace-based insertion path.
+	const bare =
+		'<mei>\n   <meiHead>\n      <fileDesc>\n         <titleStmt>\n            <title>Bare</title>\n' +
+		'         </titleStmt>\n         <pubStmt>\n         </pubStmt>\n      </fileDesc>\n   </meiHead>\n   <music/>\n</mei>';
+	const out = recordContribution(bare, { ...CONTRIBUTION, application: "ed$'tor" });
+	assert.equal(SyntaxValidator.validate(out), true);
+	assert.match(out, /<name>ed\$'tor<\/name>/);
+	assert.equal((out.match(/<fileDesc\b/g) ?? []).length, 1);
+});
+
 test('returns a score with no header unchanged', () => {
 	assert.equal(recordContribution('<mei><music/></mei>', CONTRIBUTION), '<mei><music/></mei>');
 });

@@ -5,8 +5,12 @@ import {
 	SESSION,
 	routeSessionVia,
 	getRepoAccess,
+	getRepoFile,
 	getPullRequestDetails,
 	getPullRequestFiles,
+	getLastIssueComment,
+	searchReposByTopic,
+	commentAndClosePr,
 	commitFiles,
 	ensureFork,
 	fastForwardBranch,
@@ -52,10 +56,87 @@ test('getPullRequestFiles rejects PRs beyond GitHub’s inspection limit without
 	assert.equal(fetch.mock.callCount(), 0);
 });
 
+test('getLastIssueComment follows the Link header to the newest comment', async (t) => {
+	const urls: string[] = [];
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+		const url = String(input);
+		urls.push(url);
+		const page = new URL(url).searchParams.get('page');
+		if (page === '3') return Response.json([{ body: 'newest verdict' }]);
+		return Response.json([{ body: 'oldest comment' }], {
+			headers: {
+				Link: '<https://api.github.com/repos/owner/paged/issues/7/comments?per_page=1&page=2>; rel="next", <https://api.github.com/repos/owner/paged/issues/7/comments?per_page=1&page=3>; rel="last"'
+			}
+		});
+	});
+	assert.equal(await getLastIssueComment('token', 'owner', 'paged', 7), 'newest verdict');
+	assert.deepEqual(
+		urls.map((url) => new URL(url).searchParams.get('page')),
+		[null, '3']
+	);
+});
+
+test('getLastIssueComment without pagination returns the only comment, or null', async (t) => {
+	let calls = 0;
+	t.mock.method(globalThis, 'fetch', async () => {
+		calls++;
+		return Response.json([{ body: 'only comment' }]);
+	});
+	assert.equal(await getLastIssueComment('token', 'owner', 'single', 7), 'only comment');
+	assert.equal(calls, 1);
+	t.mock.method(globalThis, 'fetch', async () => Response.json([]));
+	assert.equal(await getLastIssueComment('token', 'owner', 'no-comments', 7), null);
+});
+
+test('getRepoFile falls back to the raw media type when inline content is unavailable', async (t) => {
+	const accepts: Array<string | null> = [];
+	t.mock.method(globalThis, 'fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+		const accept = new Headers(init?.headers).get('Accept');
+		accepts.push(accept);
+		if (accept === 'application/vnd.github.raw') return new Response('large file text');
+		return Response.json({ content: '', encoding: 'none', sha: 'blob-sha' });
+	});
+	assert.equal(await getRepoFile('token', 'owner', 'large', 'big.mei'), 'large file text');
+	assert.equal(accepts.at(-1), 'application/vnd.github.raw');
+});
+
+test('getRepoFile rejects a directory path instead of returning empty content', async (t) => {
+	t.mock.method(globalThis, 'fetch', async () => Response.json([{ name: 'a.mei' }]));
+	await assert.rejects(getRepoFile('token', 'owner', 'dir', 'sources'), /sources: the path is a directory/);
+});
+
+test('searchReposByTopic reads every search page', async (t) => {
+	const urls: string[] = [];
+	const item = (i: number) => ({
+		id: i,
+		full_name: `owner/repo-${i}`,
+		name: `repo-${i}`,
+		owner: { login: 'owner' },
+		html_url: `https://example.test/repo-${i}`,
+		private: false,
+		description: null,
+		updated_at: '2026-08-14T00:00:00Z'
+	});
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+		const url = String(input);
+		urls.push(url);
+		const page = new URL(url).searchParams.get('page');
+		return Response.json({
+			items: page === '1' ? Array.from({ length: 100 }, (_, i) => item(i)) : [item(100)]
+		});
+	});
+	const repos = await searchReposByTopic('paged-topic', 'token');
+	assert.equal(repos.length, 101);
+	assert.deepEqual(
+		urls.map((url) => new URL(url).searchParams.get('page')),
+		['1', '2']
+	);
+});
+
 test('SESSION routes through the broker without exposing an Authorization header', async (t) => {
-	routeSessionVia('/oauth/proxy/api.github.com');
+	routeSessionVia('/auth/proxy/api.github.com');
 	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-		assert.equal(String(input), '/oauth/proxy/api.github.com/repos/owner/repo');
+		assert.equal(String(input), '/auth/proxy/api.github.com/repos/owner/repo');
 		assert.equal(new Headers(init?.headers).get('Authorization'), null);
 		return Response.json({ private: true, permissions: { push: true } });
 	});
@@ -356,6 +437,24 @@ test('broker throttling is distinguished from a GitHub rate limit', async (t) =>
 			/OAuth broker request rate limit exceeded/.test(error.message)
 	);
 	assert.equal(getGitHubRequestTelemetry().rateLimited, 1);
+});
+
+test('a broker origin rejection surfaces its own message, not a rate limit', async (t) => {
+	routeSessionVia('/auth/proxy/api.github.com');
+	t.mock.method(console, 'info', () => {});
+	t.mock.method(globalThis, 'fetch', async () =>
+		Response.json(
+			{ error: 'cross-origin request rejected' },
+			{ status: 403, headers: { 'X-Lets-Encode-Upstream': 'broker' } }
+		)
+	);
+	await assert.rejects(
+		commentAndClosePr(SESSION, 'owner', 'repo', 7, 'verdict'),
+		(error: unknown) =>
+			error instanceof Error &&
+			!(error instanceof RateLimitError) &&
+			/cross-origin request rejected/.test(error.message)
+	);
 });
 
 test('ordinary permission failures are not mislabeled as rate limits', async (t) => {

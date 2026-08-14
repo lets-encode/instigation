@@ -95,9 +95,9 @@
 
 {#if drafts.length}
   <section class="drafts">
+    <span class="dlabel">Drafts</span>
     {#each drafts as draft (draft.handle)}
       <div class="drow">
-        <span class="dlabel">Drafts</span>
         <span class="dline">
           {draft.entries?.title?.trim() || draft.handle} — {stepLine(draft)} ·
           {draft.handle}

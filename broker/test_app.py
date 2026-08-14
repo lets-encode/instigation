@@ -202,6 +202,39 @@ class BrokerTest(unittest.TestCase):
                 response = self.client.get("/iiif?url=https://ex.test/m")
         self.assertEqual(response.status_code, 400)
 
+    def test_cross_origin_writes_are_rejected(self):
+        # reject_cross_origin_writes runs before any route: a POST whose Origin
+        # names another host is refused even without a session.
+        response = self.client.post(
+            "/logout", headers={"Origin": "https://evil.test"}
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.get_json(), {"error": "cross-origin request rejected"}
+        )
+        # The same write from the request's own origin passes the guard.
+        response = self.client.post(
+            "/logout", headers={"Origin": "http://localhost"}
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_authorize_rotates_the_session_id(self):
+        # A session ID fixed before login must not survive into the
+        # authenticated session (see app.session_interface.regenerate).
+        self.client.get("/login?return_to=/")
+        before = self.client.get_cookie("lets_encode_session").value
+
+        token = {"access_token": "fresh-token"}
+        user = SimpleNamespace(ok=True, json=lambda: {"login": "alice"})
+        with patch.object(broker.github, "authorize_access_token", return_value=token):
+            with patch.object(broker.github, "get", return_value=user):
+                self.client.get("/authorize")
+
+        after = self.client.get_cookie("lets_encode_session").value
+        self.assertNotEqual(before, after)
+        with self.client.session_transaction() as current:
+            self.assertEqual(current["githubToken"], "fresh-token")
+
     def test_logout_revokes_then_clears_the_session(self):
         self.authenticate()
         with patch.object(broker, "revoke_github_token") as revoke:

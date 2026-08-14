@@ -87,6 +87,20 @@ test('rejects records that are unreadable, of another version, or incomplete', (
 		parseDraft(JSON.stringify({ ...draft(), entries: { ...entries(), pieces: 'one' } })),
 		null
 	);
+	// Corrupted scalar fields: a step outside the wizard's, and non-strings
+	// where the wizard stores strings.
+	assert.equal(
+		parseDraft(JSON.stringify({ ...draft(), entries: { ...entries(), step: 'no-such-step' } })),
+		null
+	);
+	assert.equal(
+		parseDraft(JSON.stringify({ ...draft(), entries: { ...entries(), title: 7 } })),
+		null
+	);
+	assert.equal(
+		parseDraft(JSON.stringify({ ...draft(), entries: { ...entries(), license: null } })),
+		null
+	);
 });
 
 test('lists the signed-in account’s unfinished setups, most recently changed first', () => {

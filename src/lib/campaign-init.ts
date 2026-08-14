@@ -20,6 +20,15 @@
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
 
+import {
+	COMMENT_COLUMNS,
+	HISTORY_COLUMNS,
+	LOCK_COLUMNS,
+	STATE_BASE_COLUMNS,
+	TASK_COLUMNS,
+	csvRow
+} from './campaign-tables.ts';
+
 /** The central automation pointer the campaign's caller workflow reads (§4a). */
 export interface AutomationPointer {
 	central_repository: string;
@@ -104,12 +113,6 @@ export interface CampaignFields {
 	stale_after_minutes?: number;
 }
 
-const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist', 'depends_on'];
-const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
-const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
-const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
-const COMMENT_COLUMNS = ['comment_id', 'task_id', 'subtask_id', 'kind', 'page', 'measure_start', 'measure_end', 'author_id', 'timestamp', 'resolved', 'parent_id', 'body'];
-
 // Defaults for fields the create form does not surface.
 const DEFAULTS = {
 	language: 'en',
@@ -121,14 +124,6 @@ const DEFAULTS = {
 
 /** The repo path a piece's MEI is committed to, and its tasks address. */
 export const piecePath = (id: string): string => `sources/${id}/score.mei`;
-
-// RFC-4180 field: quote only when it contains a comma, quote or newline.
-function csvField(value: unknown): string {
-	const s = value == null ? '' : String(value);
-	return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-}
-
-const csvRow = (fields: unknown[]): string => fields.map(csvField).join(',');
 
 // JSON string syntax is valid for YAML double-quoted scalars and escapes
 // quotes, backslashes, newlines and control characters.

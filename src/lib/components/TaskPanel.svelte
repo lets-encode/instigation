@@ -394,10 +394,6 @@
           {/if}
         </div>
       {/each}
-      <div class="rfoot">
-        A fail always carries a comment — the validator cannot submit one
-        without saying why.
-      </div>
     </div>
     <div class="rsec discussion">
       <div class="rlabel">
@@ -769,12 +765,6 @@
   .dangerbtn:disabled {
     opacity: 0.55;
     cursor: default;
-  }
-  .rfoot {
-    font-size: 11.5px;
-    color: var(--ink-faint);
-    margin-top: 8px;
-    line-height: 1.5;
   }
   .failform {
     border: 1px solid var(--danger-line);

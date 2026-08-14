@@ -18,13 +18,14 @@ Config (environment variables, loaded from broker/.env if present):
                          https://your-domain.example/oauth/authorize
   SESSION_DIR            where session files live (default: instance/sessions)
   FLASK_ENV              set to "development" to allow the cookie over plain HTTP
+  PROXY_FIX_X_FOR        number of reverse proxies in front of the broker; when
+                         set, X-Forwarded-For (that many hops deep) supplies the
+                         client address the rate limits key on (default: unset,
+                         header not trusted)
+  RATELIMIT_STORAGE_URI  flask-limiter counter storage (default: memory://,
+                         which keeps counters per worker process)
 
 See README.md for setup, and deploy/apache.conf for the production mount.
-
-Behind a reverse proxy the client address Flask sees is the proxy's own, so the
-rate limits below would collapse into a single shared bucket. Wrap the app in
-werkzeug's ProxyFix to read X-Forwarded-For, matching x_for to the number of
-proxies actually in front of it.
 """
 
 import ipaddress
@@ -45,6 +46,7 @@ from flask import Flask, jsonify, redirect, request, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_session import Session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Load broker/.env (next to this file) into the environment — found regardless of
 # the working directory flask/gunicorn is launched from. Real environment
@@ -101,7 +103,26 @@ app.config["SESSION_PERMANENT"] = False
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 Session(app)
 
-limiter = Limiter(get_remote_address, app=app, default_limits=["20 per second"])
+# Behind a reverse proxy the client address Flask sees is the proxy's own, so
+# the per-client rate limits below would collapse into a single shared bucket.
+# PROXY_FIX_X_FOR names the number of proxies actually in front (1 for the
+# deploy/ Apache vhosts); X-Forwarded-For is then trusted that many hops deep.
+# Off by default: without a trusted proxy the header is client-supplied and
+# trivially spoofed.
+proxy_hops = int(getenv("PROXY_FIX_X_FOR") or "0")
+if proxy_hops:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops)
+
+# Rate-limit counters live in the storage RATELIMIT_STORAGE_URI names. The
+# default memory:// keeps them in-process: with several gunicorn workers the
+# effective limit is the stated limit times the worker count, and counters
+# reset on restart. Point the URI at redis/memcached to share counters.
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["20 per second"],
+    storage_uri=getenv("RATELIMIT_STORAGE_URI") or "memory://",
+)
 
 
 # CSRF guard: state-changing requests must originate from this same origin.
@@ -131,6 +152,23 @@ try:
 except ImportError:  # run as a top-level module (flask --app app run, gunicorn app:app)
     from registry import registry
 app.register_blueprint(registry, url_prefix="/registry")
+
+# The registry's admin routes serve only when ADMIN_TOKEN and
+# ADMIN_ROUTES_ENABLED=1 are BOTH set (see registry.py), so a token set for CLI
+# use alone cannot expose them. Flag the half-configured state at startup.
+if getenv("ADMIN_TOKEN") and getenv("ADMIN_ROUTES_ENABLED") != "1":
+    app.logger.warning(
+        "admin_routes %s",
+        json.dumps(
+            {
+                "source": "broker",
+                "event": "admin_token_without_flag",
+                "detail": "ADMIN_TOKEN is set but ADMIN_ROUTES_ENABLED is not;"
+                " admin routes answer 503",
+            },
+            separators=(",", ":"),
+        ),
+    )
 
 
 @app.errorhandler(429)
@@ -298,7 +336,17 @@ def revoke_github_token(token):
             timeout=5,
         )
     except requests.RequestException as e:
-        print("Could not revoke GitHub token on logout:", e)
+        app.logger.warning(
+            "token_revoke %s",
+            json.dumps(
+                {
+                    "source": "broker",
+                    "event": "revoke_failed",
+                    "error": str(e),
+                },
+                separators=(",", ":"),
+            ),
+        )
 
 
 @app.route("/logout", methods=["POST"])

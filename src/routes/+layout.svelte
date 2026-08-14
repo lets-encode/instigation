@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { auth, initAuth, login, logout } from '$lib/auth.svelte.ts';
+  import PendingVerdicts from '$lib/components/PendingVerdicts.svelte';
   import './theme.css';
   import './ui.css';
 
@@ -107,6 +108,10 @@
   {/if}
   {@render children()}
 {/snippet}
+
+<!-- Background verdicts overlay every page: a submission's rejection must
+     reach the viewer wherever they navigated to in the meantime. -->
+<PendingVerdicts />
 
 <main class:full={full || corrector}>
   {#if corrector || full}
@@ -217,10 +222,10 @@
     justify-content: space-between;
     gap: 0.6rem;
     padding: 0.6rem 0.8rem;
-    border: 1px solid #e0b4b4;
+    border: 1px solid var(--danger-line);
     border-radius: 6px;
-    background: #fdf2f2;
-    color: #9f3a38;
+    background: var(--danger-bg);
+    color: var(--danger);
   }
   main {
     flex: 1;

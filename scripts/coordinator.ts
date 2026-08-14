@@ -26,6 +26,7 @@ import {
   appendComments,
   appendHistory,
   configFlag,
+  configNumber,
   passThresholdOf,
 } from "../src/lib/campaign-tables.ts";
 import type {
@@ -53,15 +54,14 @@ import { recordContribution } from "../src/lib/mei-provenance.ts";
 import { reapLocks } from "../src/lib/campaign-reaper.ts";
 import {
   addedRowFromPatch,
-  appendedComments,
+  appendedCommentsFromPatch,
   classifyPullRequest,
-  numberFromConfig,
   pieceKindForPath,
   resolveEncodingTask,
-  resolvedCommentDiff,
+  resolvedCommentFromPatch,
   shouldCleanupSubmission,
-  singleCellDiff,
-  taskResetDiff,
+  taskResetFromPatch,
+  validationIntentFromPatch,
   validationVerdict,
 } from "../src/lib/coordinator-policy.ts";
 import {
@@ -133,10 +133,10 @@ const REASON_TEXT: Record<string, string> = {
   not_permitted: "only a failing validator or a maintainer may do this",
   empty_comment: "the comment is empty",
   unknown_parent: "the reply's parent comment does not exist",
-  invalid_parent: "only a reply carries a parent comment",
+  invalid_parent:
+    "a parent comment must be a top-level question or addition, and only replies carry one",
   unknown_comment: "no such comment",
   already_resolved: "the comment is already resolved",
-  no_changes: "the PR changes nothing",
 };
 
 // "`code` — explanation" for a rejection comment; just the code when unmapped.
@@ -151,6 +151,23 @@ const explainReason = (reason: string | undefined): string => {
 
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
+
+// Run one optimistic decide-and-apply pass, retrying when it throws — most
+// often the non-fast-forward commit failing because the branch head moved.
+// Every error is retried (up to MAX_ATTEMPTS): each attempt re-reads the
+// tables before writing, so retrying a transient read failure is equally safe.
+async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await attempt();
+    } catch (e) {
+      if (i === MAX_ATTEMPTS - 1) throw e;
+      console.warn(
+        `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
+      );
+    }
+  }
+}
 
 // Log the wall-clock seconds since `startedAt` as a `[phase-timing]` line —
 // the form the run profiler (scripts/profile-actions.ts) extracts.
@@ -208,7 +225,7 @@ async function attemptClaim(
   const now = new Date().toISOString();
   const { kept: locks, removed } = reapLocks({
     locks: parseLockCsv(lockCsv ?? ""),
-    staleAfterMinutes: numberFromConfig(
+    staleAfterMinutes: configNumber(
       configText,
       "stale_after_minutes",
       DEFAULT_STALE_MINUTES,
@@ -216,16 +233,18 @@ async function attemptClaim(
     now,
   });
 
+  const claimState = parseStateCsv(stateCsv ?? "");
   const verdict: Verdict & { lock?: LockRow } = intent
     ? checkClaim({
         tasks: parseTaskCsv(taskCsv ?? ""),
-        state: parseStateCsv(stateCsv ?? ""),
+        state: claimState,
         locks,
         intent,
         author,
         changedPaths,
         now,
         allowSelfValidation: configFlag(configText, "allow_self_validation"),
+        passThreshold: passThresholdOf(configText, claimState.validationColumns.length),
       })
     : { ok: false, reason: "malformed_claim" };
 
@@ -290,21 +309,9 @@ async function runClaim(
       }
     : null;
 
-  let verdict: Verdict & { lock?: LockRow } = {
-    ok: false,
-    reason: "malformed_claim",
-  };
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    try {
-      verdict = await attemptClaim(changedPaths, intent, envelope);
-      break;
-    } catch (e) {
-      if (i === MAX_ATTEMPTS - 1) throw e;
-      console.warn(
-        `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
-      );
-    }
-  }
+  const verdict = await withRetry(() =>
+    attemptClaim(changedPaths, intent, envelope),
+  );
 
   const target = verdict.lock
     ? `\`${verdict.lock.task_id}${verdict.lock.subtask_id && "/" + verdict.lock.subtask_id}\``
@@ -464,40 +471,42 @@ async function decideValidation(
   sha: string,
   state: ParsedState,
   locks: LockRow[],
+  prFiles: Awaited<ReturnType<typeof getPullRequestFiles>>,
   changedPaths: string[],
   now: string,
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
-  // Everything the decision might need is read in one parallel batch: the
-  // comment tables only when the PR touches them (a fail's mandatory comment),
-  // the config always (pass_threshold). A send-back over-reads two files.
-  const wantsComments = changedPaths.includes(COMMENT_PATH);
-  const readStart = Date.now();
-  const [headStateCsv, configText, baseCommentCsv, headCommentCsv] =
-    await Promise.all([
-      getRepoFile(token, headOwner, headRepo, STATE_PATH, headSha),
-      getRepoFile(token, owner, repo, CONFIG_PATH, sha),
-      wantsComments ? getRepoFile(token, owner, repo, COMMENT_PATH, sha) : null,
-      wantsComments
-        ? getRepoFile(token, headOwner, headRepo, COMMENT_PATH, headSha)
-        : null,
-    ]);
-  logPhase("read_pr_files", readStart);
-  const headState = headStateCsv == null ? null : parseStateCsv(headStateCsv);
-  const diff = headState == null ? null : singleCellDiff(state, headState);
-  if (!diff) {
+  // The intent is read from the PR's own patch — the diff against its merge
+  // base — so an unrelated commit landing after the PR was opened cannot make
+  // it look malformed. The check functions then re-apply that intent to the
+  // freshly read tables, and the coordinator commits its own serialization;
+  // the fork's file bytes never land.
+  const statePatch = prFiles.find((f) => f.filename === STATE_PATH)?.patch;
+  const diff = validationIntentFromPatch(statePatch, state.header);
+  if (!diff || !state.validationColumns.includes(diff.column)) {
     // Not a single-verdict PR — a whole-task reset is a send-back.
-    const reset = headState == null ? null : taskResetDiff(state, headState);
+    const reset = taskResetFromPatch(
+      statePatch,
+      state.header,
+      state.validationColumns,
+    );
     if (reset)
       return decideSendBack(reset.task_id, state, locks, changedPaths, now);
     return { ok: false, reason: "malformed_validation" };
   }
-  if (!state.validationColumns.includes(diff.column)) {
-    return { ok: false, reason: "malformed_validation" };
-  }
   const status = validationVerdict(diff.value);
   if (!status) return { ok: false, reason: "invalid_verdict" };
+
+  // The comment table only when the PR touches it (a fail's mandatory
+  // comment), the config always (pass_threshold).
+  const wantsComments = changedPaths.includes(COMMENT_PATH);
+  const readStart = Date.now();
+  const [configText, baseCommentCsv] = await Promise.all([
+    getRepoFile(token, owner, repo, CONFIG_PATH, sha),
+    wantsComments ? getRepoFile(token, owner, repo, COMMENT_PATH, sha) : null,
+  ]);
+  logPhase("read_pr_files", readStart);
 
   // A fail's mandatory comment rides the same PR as one appended comment row.
   // The automation re-authors it — id, author and timestamp are never the
@@ -506,10 +515,9 @@ async function decideValidation(
   let failComment: CommentRow | null = null;
   if (wantsComments) {
     baseComments = parseCommentCsv(baseCommentCsv ?? "");
-    const added =
-      headCommentCsv == null
-        ? null
-        : appendedComments(baseComments, parseCommentCsv(headCommentCsv));
+    const added = appendedCommentsFromPatch(
+      prFiles.find((f) => f.filename === COMMENT_PATH)?.patch,
+    );
     failComment = added?.length === 1 ? added[0] : null;
   }
 
@@ -607,9 +615,10 @@ async function decideSendBack(
 // the commit races (caller retries); returns the verdict otherwise.
 async function attemptSubmit(
   kind: "encoding" | "validation",
-  changedPaths: string[],
+  prFiles: Awaited<ReturnType<typeof getPullRequestFiles>>,
   envelope: CommandEnvelope | null,
 ): Promise<Verdict> {
+  const changedPaths = prFiles.map((f) => f.filename);
   const readStart = Date.now();
   const { branch, sha } = await getRepoHead(token, owner, repo);
   const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
@@ -627,7 +636,7 @@ async function attemptSubmit(
   const decideStart = Date.now();
   const outcome =
     kind === "validation"
-      ? await decideValidation(sha, state, locks, changedPaths, now)
+      ? await decideValidation(sha, state, locks, prFiles, changedPaths, now)
       : await decideEncoding(
           sha,
           tasks,
@@ -672,20 +681,7 @@ async function runSubmit(
   files: Awaited<ReturnType<typeof getPullRequestFiles>>,
   envelope: CommandEnvelope | null,
 ): Promise<void> {
-  const changedPaths = files.map((f) => f.filename);
-
-  let verdict: Verdict = { ok: false, reason: "no_changes" };
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    try {
-      verdict = await attemptSubmit(kind, changedPaths, envelope);
-      break;
-    } catch (e) {
-      if (i === MAX_ATTEMPTS - 1) throw e;
-      console.warn(
-        `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
-      );
-    }
-  }
+  const verdict = await withRetry(() => attemptSubmit(kind, files, envelope));
 
   const body = verdict.ok
     ? `✅ Submission accepted (${kind}).`
@@ -703,31 +699,32 @@ async function runSubmit(
 // Comment (a PR appending one discussion row to comment.csv, or resolving one)
 
 async function attemptComment(
-  changedPaths: string[],
+  prFiles: Awaited<ReturnType<typeof getPullRequestFiles>>,
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { action: string }> {
+  const changedPaths = prFiles.map((f) => f.filename);
   const readStart = Date.now();
   const { branch, sha } = await getRepoHead(token, owner, repo);
-  const [stateCsv, commentCsv, historyCsv, headCommentCsv] = await Promise.all([
+  const [stateCsv, commentCsv, historyCsv] = await Promise.all([
     getRepoFile(token, owner, repo, STATE_PATH, sha),
     getRepoFile(token, owner, repo, COMMENT_PATH, sha),
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-    getRepoFile(token, headOwner, headRepo, COMMENT_PATH, headSha),
   ]);
   logPhase("read_tables", readStart);
   const state = parseStateCsv(stateCsv ?? "");
   const comments = parseCommentCsv(commentCsv ?? "");
-  const headComments =
-    headCommentCsv == null ? null : parseCommentCsv(headCommentCsv);
   const now = new Date().toISOString();
 
-  const added = headComments && appendedComments(comments, headComments);
-  const resolved = headComments && resolvedCommentDiff(comments, headComments);
+  // The intent comes from the PR's own patch (merge-base relative), then is
+  // re-applied to the freshly read comment table — see decideValidation.
+  const commentPatch = prFiles.find((f) => f.filename === COMMENT_PATH)?.patch;
+  const added = appendedCommentsFromPatch(commentPatch);
+  const resolved = added ? null : resolvedCommentFromPatch(commentPatch);
   let action = "submit_comment";
-  let verdict: ReturnType<typeof checkComment>;
+  let verdict: { ok: true; row: CommentRow } | { ok: false; reason: string };
   let nextComments = comments;
   if (added) {
-    verdict = checkComment({
+    const check = checkComment({
       state,
       comments,
       added: added.length === 1 ? added[0] : null,
@@ -736,22 +733,19 @@ async function attemptComment(
       now,
       newId: newCommentId(),
     });
-    if (verdict.ok) nextComments = [...comments, verdict.row];
+    verdict = check;
+    if (check.ok) nextComments = [...comments, check.row];
   } else if (resolved) {
     action = "resolve_comment";
-    verdict = checkResolveComment({
+    const check = checkResolveComment({
       comments,
       comment_id: resolved.comment_id,
       author,
       changedPaths,
       isCollaborator: await authorCanPush(),
     });
-    if (verdict.ok) {
-      const resolvedRow = verdict.row;
-      nextComments = comments.map((c) =>
-        c.comment_id === resolved.comment_id ? resolvedRow : c,
-      );
-    }
+    verdict = check;
+    if (check.ok) nextComments = check.comments;
   } else {
     verdict = { ok: false, reason: "malformed_comment" };
   }
@@ -797,23 +791,7 @@ async function runComment(
   files: Awaited<ReturnType<typeof getPullRequestFiles>>,
   envelope: CommandEnvelope | null,
 ): Promise<void> {
-  const changedPaths = files.map((f) => f.filename);
-  let verdict: Verdict & { action: string } = {
-    ok: false,
-    reason: "malformed_comment",
-    action: "submit_comment",
-  };
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    try {
-      verdict = await attemptComment(changedPaths, envelope);
-      break;
-    } catch (e) {
-      if (i === MAX_ATTEMPTS - 1) throw e;
-      console.warn(
-        `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
-      );
-    }
-  }
+  const verdict = await withRetry(() => attemptComment(files, envelope));
   const body = verdict.ok
     ? verdict.action === "resolve_comment"
       ? "✅ Comment resolved."
@@ -843,7 +821,7 @@ async function attemptReap(): Promise<void> {
 
   const { kept, removed } = reapLocks({
     locks: parseLockCsv(lockCsv ?? ""),
-    staleAfterMinutes: numberFromConfig(
+    staleAfterMinutes: configNumber(
       configText,
       "stale_after_minutes",
       DEFAULT_STALE_MINUTES,
@@ -881,17 +859,7 @@ async function attemptReap(): Promise<void> {
 }
 
 async function runReap(): Promise<void> {
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    try {
-      await attemptReap();
-      return;
-    } catch (e) {
-      if (i === MAX_ATTEMPTS - 1) throw e;
-      console.warn(
-        `Reap raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
-      );
-    }
-  }
+  await withRetry(attemptReap);
 }
 
 // ---------------------------------------------------------------------------

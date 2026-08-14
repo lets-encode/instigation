@@ -211,6 +211,86 @@ test('a volunteer encoding submission cleans the encode branch in their fork', a
 	assert.deepEqual(deleted, ['volunteer', 'campaign', 'encode-T0001']);
 });
 
+test('a poll failure settles a background submission as timeout, not rejection', async () => {
+	const forge = fakeForge({
+		getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+		getRepoHead: async () => ({ branch: 'main', sha: 'base-sha', canPush: false }),
+		ensureFork: async () => ({ owner: 'volunteer', repo: 'campaign' }),
+		createPullRequest: async () => ({ number: 16, html_url: 'https://example.test/pr/16' }),
+		getPullRequestState: async () => {
+			throw new Error('network down');
+		}
+	});
+
+	const settled = captureVerdict();
+	const { result, verdict } = await withImmediateTimeouts(async () => {
+		const result = await invoke(commands.submitEncoding, { task_id: 'T0001' }, context(forge));
+		return { result, verdict: await settled };
+	});
+
+	assert.equal(result.ok, true);
+	assert.equal(verdict.state, 'timeout');
+	assert.match(verdict.message, /still being processed/);
+});
+
+test('a poll failure leaves a claim as still-processing, not rejected', async () => {
+	const forge = fakeForge({
+		getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+		getRepoFile: async () => lockHeader,
+		openChangePr: async () => ({
+			number: 17,
+			html_url: 'https://example.test/pr/17',
+			head: { owner: 'volunteer', repo: 'campaign', branch: 'claim-P0001-abcd' }
+		}),
+		getPullRequestState: async () => {
+			throw new Error('network down');
+		}
+	});
+
+	const result = await withImmediateTimeouts(() =>
+		invoke(commands.claimTask, { task_id: 'P0001' }, context(forge))
+	);
+
+	assert.equal(result.error, undefined);
+	assert.equal(result.ok, true);
+	assert.equal(result.warn, true);
+	assert.match(result.message ?? '', /still being processed/);
+});
+
+test('resolving a comment flips its replies in the PR payload too', async () => {
+	const commentCsv =
+		'comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n' +
+		'c1,T0001,,question,,,,9001,t1,,,Answered?\n' +
+		'c2,T0001,,reply,,,,7,t2,,c1,Yes\n' +
+		'c3,T0001,,question,,,,9001,t3,,,Other thread\n';
+	let serialized = '';
+	const forge = fakeForge({
+		getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+		getRepoFile: async () => commentCsv,
+		openChangePr: async (_owner, _repo, options) => {
+			serialized = options.files[0].content ?? '';
+			return {
+				number: 18,
+				html_url: 'https://example.test/pr/18',
+				head: { owner: 'campaign-owner', repo: 'campaign', branch: 'resolve-c1-abcd' }
+			};
+		},
+		getPullRequestState: async () => 'closed',
+		getLastIssueComment: async () => '✅ Comment resolved.'
+	});
+
+	const settled = captureVerdict();
+	const { result } = await withImmediateTimeouts(async () => {
+		const result = await invoke(commands.resolveComment, { comment_id: 'c1' }, context(forge));
+		return { result, verdict: await settled };
+	});
+
+	assert.equal(result.ok, true);
+	assert.match(serialized, /c1,T0001,,question,,,,9001,t1,true,,Answered\?/);
+	assert.match(serialized, /c2,T0001,,reply,,,,7,t2,true,c1,Yes/);
+	assert.match(serialized, /c3,T0001,,question,,,,9001,t3,,,Other thread/);
+});
+
 test('a rejected volunteer encoding keeps its fork branch for correction', async () => {
 	let deleted = false;
 	const forge = fakeForge({

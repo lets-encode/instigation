@@ -37,7 +37,8 @@ Route map (paths relative to the /registry mount):
     DELETE /claim/<name>     → { claim_token } → gives the name back.
     POST   /register         → { name, repo_id, forge, claim_token } → stores
                                the mapping. 201, 200 (idempotent repeat),
-                               409 on collision, 422 invalid.
+                               409 on collision, 422 invalid, 403 without push
+                               permission on the repo, 404 unknown repo.
     GET    /api/slug/<name>  → public resolver: { name, status, forge,
                                repo_id } (forge/repo_id only when active).
     GET    /admin/slugs          → list everything (JSON).
@@ -46,14 +47,16 @@ Route map (paths relative to the /registry mount):
 Admin routes are gated by the ADMIN_TOKEN bearer check — a dev/local fallback
 and defence in depth, not a production auth system. In production the reverse
 proxy must enforce institutional auth for /registry/admin/ before requests
-reach the broker (see deploy/apache.conf); with ADMIN_TOKEN unset, admin routes
-return 503 (fail closed).
+reach the broker (see deploy/apache.conf). The routes serve only when
+ADMIN_TOKEN and ADMIN_ROUTES_ENABLED=1 are both set; otherwise they return 503
+(fail closed).
 """
 
 import secrets
 import sqlite3
 from os import getenv, path
 
+import requests
 from flask import Blueprint, jsonify, request, session
 
 try:
@@ -70,6 +73,8 @@ except ImportError:  # run as top-level modules (flask --app app run, gunicorn a
 # as long as nobody else has taken the name; a setup that is given up releases
 # its name at once rather than waiting this out.
 CLAIM_TTL_MINUTES = 24 * 60
+
+GITHUB_API = "https://api.github.com"
 
 # The slug database sits next to the session files in the (gitignored, never
 # served) instance folder unless DB_PATH says otherwise. The entire registry
@@ -134,11 +139,56 @@ def release(name):
     return jsonify(name=name, status="free")
 
 
+def _push_permission_error(forge, repo_id):
+    """The repo-ownership gate for /register, as the error to return or None.
+    The session's token must see the repository at GitHub and hold push
+    permission on it, so a name cannot be registered against somebody else's
+    repo (or a repo id picked at random)."""
+    if forge != "github":
+        return (
+            jsonify(
+                error="repository ownership can only be verified on github"
+            ),
+            404,
+        )
+    try:
+        response = requests.get(
+            "{}/repositories/{}".format(GITHUB_API, repo_id),
+            headers={
+                "Authorization": "token " + session["githubToken"],
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=(10, 60),
+        )
+    except requests.RequestException:
+        return jsonify(error="could not verify the repository"), 502
+    if response.status_code == 404:
+        return (
+            jsonify(error="no repository with id {}".format(repo_id)),
+            404,
+        )
+    if not response.ok:
+        return jsonify(error="could not verify the repository"), 502
+    permissions = response.json().get("permissions") or {}
+    if not permissions.get("push"):
+        return (
+            jsonify(
+                error="push permission on repository {} is required".format(
+                    repo_id
+                )
+            ),
+            403,
+        )
+    return None
+
+
 @registry.post("/register")
 def register():
     """Register a name once the campaign exists, passing the chosen name, its
     repo's numeric id, the forge (which qualifies the id so different forges'
-    ids never collide) and the token the name was claimed under. Activating an
+    ids never collide) and the token the name was claimed under. The session's
+    GitHub token must show push permission on the repo (403 otherwise; an
+    unknown repo or a non-github forge is 404). Activating an
     own claim works even after the claim has run out, as long as nobody else
     has taken the name since. Idempotent: a repeat with the same
     (forge, repo_id) succeeds (200). A different repo on an occupied name is a
@@ -155,6 +205,9 @@ def register():
         return jsonify(error="repo_id must be an integer"), 422
     forge = str(body.get("forge") or "github")
     claim_token = body.get("claim_token") or None
+    denied = _push_permission_error(forge, repo_id)
+    if denied:
+        return denied
     active = {"name": name, "status": "active", "forge": forge, "repo_id": repo_id}
     if store.activate(name, forge, repo_id, claim_token):
         return jsonify(**active), 201
@@ -197,10 +250,12 @@ def api_slug(name):
 
 
 def _admin_error():
-    """The admin gate, as the error to return or None. Reads ADMIN_TOKEN per
-    request, and fails closed when it is unset."""
+    """The admin gate, as the error to return or None. Reads the environment
+    per request, and fails closed (503) unless ADMIN_TOKEN and
+    ADMIN_ROUTES_ENABLED=1 are BOTH set — a token set for CLI use alone must
+    not expose the routes."""
     admin_token = getenv("ADMIN_TOKEN")
-    if not admin_token:
+    if not admin_token or getenv("ADMIN_ROUTES_ENABLED") != "1":
         return jsonify(error="admin interface disabled"), 503
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not secrets.compare_digest(

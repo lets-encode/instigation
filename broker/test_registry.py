@@ -3,6 +3,8 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 _session_dir = tempfile.TemporaryDirectory()
 os.environ.setdefault("FLASK_ENV", "development")
@@ -20,6 +22,15 @@ ADMIN_TOKEN = "test-admin-token"
 AUTH = {"Authorization": "Bearer " + ADMIN_TOKEN}
 
 
+def github_repo_response(status=200, push=True):
+    """A GET /repositories/<id> response as /register's ownership check sees it."""
+    return SimpleNamespace(
+        ok=200 <= status < 300,
+        status_code=status,
+        json=lambda: {"permissions": {"push": push}},
+    )
+
+
 class RegistryTest(unittest.TestCase):
     def setUp(self):
         broker.app.config["TESTING"] = True
@@ -33,6 +44,15 @@ class RegistryTest(unittest.TestCase):
         # A fresh store per test; the routes read the module attribute.
         registry.store = Store(os.path.join(self._db_dir.name, "slugs.db"))
         os.environ["ADMIN_TOKEN"] = ADMIN_TOKEN
+        os.environ["ADMIN_ROUTES_ENABLED"] = "1"
+        # /register verifies push permission on the repo at GitHub; most tests
+        # here are about the name lifecycle, so answer as a repo the caller
+        # can push to. The ownership tests below change the return value.
+        patcher = patch.object(
+            registry.requests, "get", return_value=github_repo_response()
+        )
+        self.github_get = patcher.start()
+        self.addCleanup(patcher.stop)
         self.authenticate()
 
     def authenticate(self):
@@ -210,12 +230,32 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(self.lookup("admin").get_json()["status"], "reserved")
         self.assertEqual(self.lookup("Bad--Name").status_code, 400)
 
-    def test_register_same_id_different_forge_is_collision(self):
-        # The name is the identity; a second campaign can't take it even if only
-        # the forge differs. The forge qualifies repo_id so ids never mix.
-        self.assertEqual(self.register("shared-id", repo_id=7, forge="github").status_code, 201)
-        r = self.register("shared-id", repo_id=7, forge="gitlab")
-        self.assertEqual(r.status_code, 409)
+    # -------------------------------------------------------------- ownership
+
+    def test_register_verifies_push_permission_with_the_sessions_token(self):
+        self.assertEqual(self.register("owned-name", repo_id=555).status_code, 201)
+        url = self.github_get.call_args.args[0]
+        self.assertEqual(url, "https://api.github.com/repositories/555")
+        headers = self.github_get.call_args.kwargs["headers"]
+        self.assertEqual(headers["Authorization"], "token server-side-token")
+
+    def test_register_without_push_permission_is_403(self):
+        self.github_get.return_value = github_repo_response(push=False)
+        r = self.register("not-mine", repo_id=666)
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("push permission", r.get_json()["error"])
+        self.assertEqual(self.lookup("not-mine").get_json()["status"], "free")
+
+    def test_register_unknown_repo_is_404(self):
+        self.github_get.return_value = github_repo_response(status=404)
+        r = self.register("ghost-repo", repo_id=777)
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self.lookup("ghost-repo").get_json()["status"], "free")
+
+    def test_register_non_github_forge_is_404(self):
+        r = self.register("elsewhere", repo_id=7, forge="gitlab")
+        self.assertEqual(r.status_code, 404)
+        self.github_get.assert_not_called()
 
     # ----------------------------------------------------- validation at HTTP
 
@@ -292,6 +332,20 @@ class RegistryTest(unittest.TestCase):
             self.assertEqual(r.status_code, 503)
         finally:
             os.environ["ADMIN_TOKEN"] = ADMIN_TOKEN
+
+    def test_admin_disabled_without_the_enable_flag(self):
+        # ADMIN_TOKEN alone (e.g. set for CLI use) must not expose the routes.
+        del os.environ["ADMIN_ROUTES_ENABLED"]
+        try:
+            r = self.client.get("/registry/admin/slugs", headers=AUTH)
+            self.assertEqual(r.status_code, 503)
+        finally:
+            os.environ["ADMIN_ROUTES_ENABLED"] = "1"
+        # With both set, the valid token works again.
+        self.assertEqual(
+            self.client.get("/registry/admin/slugs", headers=AUTH).status_code,
+            200,
+        )
 
     def test_admin_list(self):
         self.register("one-name", repo_id=321)

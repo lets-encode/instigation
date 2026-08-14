@@ -51,4 +51,5 @@ export const LICENSES: LicenseOption[] = [
 export const DEFAULT_LICENSE = 'CC-BY-4.0';
 
 export const licenseById = (id: string): LicenseOption =>
-	LICENSES.find((license) => license.id === id) ?? LICENSES[1];
+	LICENSES.find((license) => license.id === id) ??
+	(LICENSES.find((license) => license.id === DEFAULT_LICENSE) as LicenseOption);

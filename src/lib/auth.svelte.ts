@@ -49,7 +49,16 @@ export async function initAuth(): Promise<void> {
 		replaceState(location.pathname + (query ? `?${query}` : ''), {});
 	}
 
-	const resolved = await createForge(SESSION).getAuthenticatedUser();
+	let resolved;
+	try {
+		resolved = await createForge(SESSION).getAuthenticatedUser();
+	} catch (e) {
+		// A failed session check must not leave the app stuck on "loading":
+		// continue anonymously and surface the error.
+		clear();
+		auth.error = (e as Error).message;
+		return;
+	}
 	if (!resolved) {
 		clear();
 		return;

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { orphanedFails } from '../campaign-board.ts';
-import { parseCommentCsv } from '../campaign-tables.ts';
+import { buildBoard, orphanedFails } from '../campaign-board.ts';
+import { parseCommentCsv, parseStateCsv, parseTaskCsv } from '../campaign-tables.ts';
 import type { NodeSlot } from '../campaign-graph.ts';
 
 const COMMENT_HEADER =
@@ -47,4 +47,36 @@ test('orphanedFails skips a fail comment its fail cell still matches', () => {
 		slots: [slot({ key: 'fail', user: '111', ts: '2026-08-12T10:21:03.348Z' })]
 	};
 	assert.deepEqual(orphanedFails(card, comments), []);
+});
+
+test('attention counts skip replies once their root comment is resolved', () => {
+	const d = {
+		taskDefs: parseTaskCsv(
+			'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+				'T0001,,sources/a.mei,,,,\n' +
+				'T0001,S0001,sources/a.mei,,,,\n'
+		),
+		rows: parseStateCsv(
+			'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+				'T0001,,validation_required,7,t,\n' +
+				'T0001,S0001,validation_required,,,\n'
+		).rows,
+		validationColumns: ['validate_status_1'],
+		locks: [],
+		passThreshold: 1
+	};
+	// c1 answered and resolved: its reply c2 stays unresolved (replies have no
+	// resolve control) but needs no attention. c3 is a live question with a
+	// reply c4 — both still count.
+	const comments = parseCommentCsv(
+		COMMENT_HEADER +
+			'c1,T0001,,question,,,,9,t1,true,,Answered?\n' +
+			'c2,T0001,,reply,,,,7,t2,,c1,Yes\n' +
+			'c3,T0001,,question,,,,9,t3,,,Still open?\n' +
+			'c4,T0001,,reply,,,,7,t4,,c3,Looking into it\n'
+	);
+	const board = buildBoard(d, comments, []);
+	const card = board.columns.find((c) => c.key === 'validation')!.cards[0];
+	assert.deepEqual(card.counts, { fails: 0, comments: 1, questions: 1 });
+	assert.equal(board.attention, 2);
 });

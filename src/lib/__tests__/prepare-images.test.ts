@@ -77,6 +77,13 @@ test('classifies uploads by MIME type, falling back to the extension', () => {
 	assert.equal(classifyUpload({ name: 'notes.txt' }), null);
 });
 
+test('a useful image MIME type wins over a misleading .pdf extension', () => {
+	assert.equal(classifyUpload({ name: 'scan.pdf', type: 'image/jpeg' }), 'image');
+	assert.equal(classifyUpload({ name: 'scan.pdf', type: 'image/png' }), 'image');
+	// An unhelpful type still falls back to the extension.
+	assert.equal(classifyUpload({ name: 'scan.pdf', type: 'application/octet-stream' }), 'pdf');
+});
+
 test('builds a capped IIIF Image API request', () => {
 	assert.equal(
 		iiifImageUrl('https://iiif.example/iiif/2/abc'),
@@ -477,6 +484,18 @@ test('keeps images within the cap byte-for-byte and re-encodes downscaled ones a
 
 	const untouched = await resolvePages(pages, undefined, stubs);
 	assert.equal(untouched[0].path, 'sources/img/01.png', 'an unchanged image keeps its type');
+});
+
+test('a serviceless canvas commits with the extension of the bytes fetched', async () => {
+	const canvas: IiifCanvas = { service: null, url: 'https://ex/plain.png' };
+	const fetchFn = async () =>
+		({
+			ok: true,
+			blob: async () => ({ marker: 'whole', type: 'image/png' })
+		}) as unknown as Response;
+	const pages = await candidatesOf([], [canvas], { fetchFn, brokerUrl: '/auth' });
+	const images = await resolvePages(pages, undefined, { ...stubs, fetchFn, brokerUrl: '/auth' });
+	assert.equal(images[0].path, 'sources/img/01.png');
 });
 
 test('fetches a manifest and returns its canvases', async () => {

@@ -229,8 +229,12 @@ async function githubFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 	const retryAfterHeader = res.headers.get('Retry-After');
 	const retryAfter = retryAfterHeader == null ? Number.NaN : Number(retryAfterHeader);
 	const message = await res.clone().text().catch(() => '');
+	// Only genuine rate-limit signals classify: HTTP 429, an exhausted quota
+	// header, a Retry-After header, or GitHub's rate-limit message. Other 403s
+	// (permissions, the broker's CSRF/origin/session rejections) surface
+	// through the normal error path with their own message.
 	const limited =
-		telemetry?.source === 'broker' ||
+		res.status === 429 ||
 		remaining === '0' ||
 		Number.isFinite(retryAfter) ||
 		/secondary rate limit|rate limit exceeded|abuse detection/i.test(message);
@@ -251,29 +255,33 @@ async function githubFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 // JSON GETs add entries; it grows with the number of distinct URLs read in a
 // session. Never used for responses whose bodies carry short-lived tokens (see
 // getRepoFileDownloadUrl / getDirDownloadUrls), which pass `cache: false`.
-const etagCache = new Map<string, { etag: string; body: string }>();
+const etagCache = new Map<string, { etag: string; body: string; link: string | null }>();
 
 /**
  * A GitHub JSON GET with ETag conditional-request caching and rate-limit
  * detection. On 304 the remembered body is returned (status normalised to 200);
  * on a fresh 200 the response ETag and body are stored. Throws RateLimitError
- * when the quota is exhausted. Returns the HTTP status and parsed JSON (null on
- * an empty or non-JSON body). Pass `cache: false` to skip the ETag store while
+ * when the quota is exhausted. Returns the HTTP status, parsed JSON (null on
+ * an empty or non-JSON body), and the pagination `Link` header (remembered
+ * alongside the ETag). Pass `cache: false` to skip the ETag store while
  * keeping the rate-limit guard.
  */
 async function ghGet<T>(
 	url: string,
 	token?: string,
 	{ cache = true }: { cache?: boolean } = {}
-): Promise<{ status: number; ok: boolean; data: T }> {
+): Promise<{ status: number; ok: boolean; data: T; link: string | null }> {
 	const cached = cache ? etagCache.get(url) : undefined;
 	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
 	if (cached) headers['If-None-Match'] = cached.etag;
 	const res = await githubFetch(url, { headers, cache: 'no-store' });
-	if (res.status === 304 && cached) return { status: 200, ok: true, data: JSON.parse(cached.body) as T };
+	if (res.status === 304 && cached) {
+		return { status: 200, ok: true, data: JSON.parse(cached.body) as T, link: cached.link };
+	}
 	const text = await res.text();
 	const etag = res.headers.get('ETag');
-	if (cache && res.ok && etag) etagCache.set(url, { etag, body: text });
+	const link = res.headers.get('Link');
+	if (cache && res.ok && etag) etagCache.set(url, { etag, body: text, link });
 	else if (res.status === 404) etagCache.delete(url);
 	let data: unknown = null;
 	try {
@@ -281,15 +289,29 @@ async function ghGet<T>(
 	} catch {
 		data = null;
 	}
-	return { status: res.status, ok: res.ok, data: data as T };
+	return { status: res.status, ok: res.ok, data: data as T, link };
 }
 
-// Throw the error a failed GitHub response carries: its JSON `message`, or
-// `failure`, optionally labelled with the status and the request that failed.
-// Reads the response body — only for responses whose body is not otherwise used.
-async function throwGitHubError(res: Response, failure: string, action?: string): Promise<never> {
-	const data: ErrorResponse = await res.json().catch(() => ({}));
-	throw new Error(action ? `${data.message || failure} (${res.status} ${action})` : data.message || failure);
+/**
+ * A GitHub JSON request without ETag caching — the write path, plus reads that
+ * treat any non-2xx as failure. `path` is API-root-relative (e.g.
+ * `/repos/o/r/pulls`); `body` is sent as JSON when given. Throws on a non-2xx
+ * response with the body's `message` (or the broker's `error`) suffixed
+ * `(status METHOD path)`. Returns the parsed JSON body ({} when empty).
+ */
+async function ghSend<T>(method: string, path: string, token?: string, body?: unknown): Promise<T> {
+	const res = await githubFetch(`${apiRoot(token)}${path}`, {
+		method,
+		headers: { ...baseHeaders, ...authHeaders(token) },
+		cache: 'no-store',
+		...(body === undefined ? {} : { body: JSON.stringify(body) })
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) {
+		const detail = data as { message?: string; error?: string };
+		throw new Error(`${detail.message || detail.error || 'GitHub API error'} (${res.status} ${method} ${path})`);
+	}
+	return data as T;
 }
 
 // Decode GitHub's base64 file content to a UTF-8 string without Node's Buffer, so
@@ -494,13 +516,18 @@ export async function getRepoFile(
 	ref?: string
 ): Promise<string | null> {
 	const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-	const { status, ok, data } = await ghGet<{ content?: string; message?: string }>(
-		`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`,
-		token
-	);
+	const { status, ok, data } = await ghGet<
+		{ content?: string; encoding?: string; message?: string } | Array<unknown>
+	>(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, token);
 	if (status === 404) return null;
+	if (Array.isArray(data)) throw new Error(`Failed to fetch ${path}: the path is a directory`);
 	if (!ok) throw new Error(data?.message || `Failed to fetch ${path}`);
-	return decodeBase64Utf8(data?.content ?? '');
+	if (data?.encoding === 'base64' && data.content != null) return decodeBase64Utf8(data.content);
+	// Files over the Contents API's 1 MB inline limit come back with
+	// `encoding: "none"` and no content; read the bytes via the raw media type.
+	const blob = await getRepoFileBytes(token, owner, repo, path, ref);
+	if (blob === null) throw new Error(`Failed to fetch ${path}: content unavailable`);
+	return await blob.text();
 }
 
 /**
@@ -657,26 +684,17 @@ export async function ensureFork(
 	const headers = { ...baseHeaders, ...authHeaders(token) };
 	const known = knownForks.get(`${owner}/${repo}`);
 	if (known) {
-		const sync = await githubFetch(`${apiRoot(token)}/repos/${known.owner}/${known.repo}/merge-upstream`, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify({ branch: known.branch })
-		});
-		if (!sync.ok) {
-			const error: ErrorResponse = await sync.json().catch(() => ({}));
-			throw new Error(`${error.message || 'Failed to sync fork'} (${sync.status} POST merge-upstream)`);
-		}
+		await ghSend('POST', `/repos/${known.owner}/${known.repo}/merge-upstream`, token, { branch: known.branch });
 		return { owner: known.owner, repo: known.repo };
 	}
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/forks`, {
-		method: 'POST',
-		headers,
-		// Only the default branch — the fork doesn't need copies of upstream's
-		// in-flight claim branches.
-		body: JSON.stringify({ default_branch_only: true })
-	});
-	const data: { full_name: string; default_branch: string; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(`${data.message || 'Failed to fork repository'} (${res.status} POST forks)`);
+	// Only the default branch — the fork doesn't need copies of upstream's
+	// in-flight claim branches.
+	const data = await ghSend<{ full_name: string; default_branch: string }>(
+		'POST',
+		`/repos/${owner}/${repo}/forks`,
+		token,
+		{ default_branch_only: true }
+	);
 	if (!data.full_name?.includes('/') || !data.default_branch) {
 		throw new Error('GitHub returned an invalid fork description.');
 	}
@@ -686,15 +704,9 @@ export async function ensureFork(
 	for (let i = 0; i < attempts; i++) {
 		const r = await githubFetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`, { headers, cache: 'no-store' });
 		if (r.ok) {
-			const sync = await githubFetch(`${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/merge-upstream`, {
-				method: 'POST',
-				headers,
-				body: JSON.stringify({ branch: data.default_branch })
+			await ghSend('POST', `/repos/${forkOwner}/${forkRepo}/merge-upstream`, token, {
+				branch: data.default_branch
 			});
-			if (!sync.ok) {
-				const error: ErrorResponse = await sync.json().catch(() => ({}));
-				throw new Error(`${error.message || 'Failed to sync fork'} (${sync.status} POST merge-upstream)`);
-			}
 			knownForks.set(`${owner}/${repo}`, { owner: forkOwner, repo: forkRepo, branch: data.default_branch });
 			return { owner: forkOwner, repo: forkRepo };
 		}
@@ -705,10 +717,9 @@ export async function ensureFork(
 
 /** Whether a repo named `repo` exists under `owner` (any visibility the token can see). */
 export async function repoExists(owner: string, repo: string, token?: string): Promise<boolean> {
-	const headers: Record<string, string> = { ...baseHeaders, ...authHeaders(token) };
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}`, { headers, cache: 'no-store' });
-	if (res.status === 404) return false;
-	if (!res.ok) await throwGitHubError(res, 'Failed to check repository name');
+	const { status, ok, data } = await ghGet<ErrorResponse>(`${apiRoot(token)}/repos/${owner}/${repo}`, token);
+	if (status === 404) return false;
+	if (!ok) throw new Error(data?.message || 'Failed to check repository name');
 	return true;
 }
 
@@ -761,12 +772,11 @@ export async function getPullRequestDetails(
 	repo: string,
 	number: number
 ): Promise<{ body: string | null; changedFiles: number }> {
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store'
-	});
-	const data: { body?: string | null; changed_files?: number; message?: string } = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data.message || 'Failed to read pull request');
+	const data = await ghSend<{ body?: string | null; changed_files?: number }>(
+		'GET',
+		`/repos/${owner}/${repo}/pulls/${number}`,
+		token
+	);
 	return { body: data.body ?? null, changedFiles: data.changed_files ?? 0 };
 }
 
@@ -792,12 +802,11 @@ export async function getPullRequestFiles(
 	const files: Array<{ filename: string; status: string; patch?: string }> = [];
 	const pages = Math.max(1, Math.ceil(expectedChangedFiles / 100));
 	for (let page = 1; page <= pages; page++) {
-		const res = await githubFetch(
-			`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
-			{ headers: { ...baseHeaders, ...authHeaders(token) }, cache: 'no-store' }
+		const data = await ghSend<unknown>(
+			'GET',
+			`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
+			token
 		);
-		const data = await res.json().catch(() => []);
-		if (!res.ok) throw new Error((data as ErrorResponse).message || 'Failed to list pull request files');
 		if (!Array.isArray(data)) throw new Error('GitHub returned an invalid pull-request file list.');
 		files.push(...(data as Array<{ filename: string; status: string; patch?: string }>));
 	}
@@ -833,10 +842,17 @@ export async function getLastIssueComment(
 	repo: string,
 	number: number
 ): Promise<string | null> {
-	const { ok, data } = await ghGet<Array<{ body?: string }>>(
-		`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1&sort=created&direction=desc`,
-		token
-	);
+	// The per-issue comments endpoint serves oldest-first and has no sort
+	// parameter, so with per_page=1 the newest comment is the single item on
+	// the last page: probe page 1, then follow the Link header's rel="last".
+	// No Link header means there are 0 or 1 comments and the probe already
+	// holds the answer.
+	const url = `${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1`;
+	const probe = await ghGet<Array<{ body?: string }>>(url, token);
+	if (!probe.ok) throw new Error((probe.data as unknown as ErrorResponse)?.message || 'Failed to read comments');
+	const lastPage = probe.link?.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/)?.[1];
+	if (!lastPage) return (Array.isArray(probe.data) ? probe.data : [])[0]?.body ?? null;
+	const { ok, data } = await ghGet<Array<{ body?: string }>>(`${url}&page=${lastPage}`, token);
 	if (!ok) throw new Error((data as unknown as ErrorResponse)?.message || 'Failed to read comments');
 	return (Array.isArray(data) ? data : [])[0]?.body ?? null;
 }
@@ -879,7 +895,9 @@ export async function listWorkflowRuns(
 	workflow: string,
 	filter: { event?: string; headSha?: string } = {}
 ): Promise<WorkflowRunInfo[]> {
-	const params = new URLSearchParams({ per_page: '5' });
+	// Wide enough that the run being searched for is on the first page even
+	// when other runs of the same workflow land in between.
+	const params = new URLSearchParams({ per_page: '30' });
 	if (filter.event) params.set('event', filter.event);
 	if (filter.headSha) params.set('head_sha', filter.headSha);
 	const { ok, data } = await ghGet<{ workflow_runs?: WorkflowRunInfo[]; message?: string }>(
@@ -937,22 +955,8 @@ export async function commentAndClosePr(
 	number: number,
 	body: string
 ): Promise<void> {
-	const headers = { ...baseHeaders, ...authHeaders(token) };
-	const commentRes = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments`, {
-		method: 'POST',
-		headers,
-		body: JSON.stringify({ body })
-	});
-	if (!commentRes.ok) {
-		const data: ErrorResponse = await commentRes.json().catch(() => ({}));
-		throw new Error(data.message || 'Failed to comment on pull request');
-	}
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/pulls/${number}`, {
-		method: 'PATCH',
-		headers,
-		body: JSON.stringify({ state: 'closed' })
-	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to close pull request');
+	await ghSend('POST', `/repos/${owner}/${repo}/issues/${number}/comments`, token, { body });
+	await ghSend('PATCH', `/repos/${owner}/${repo}/pulls/${number}`, token, { state: 'closed' });
 }
 
 /**
@@ -1028,25 +1032,18 @@ export async function commitFiles(
 		}
 	}
 
-	const headers = { ...baseHeaders, ...authHeaders(token) };
-	const api = `${apiRoot(token)}/repos/${owner}/${repo}`;
-
-	const gh = async <T>(path: string, init?: RequestInit): Promise<T> => {
-		const res = await githubFetch(`${api}${path}`, { headers, cache: 'no-store', ...init });
-		const data = await res.json().catch(() => ({}));
-		if (!res.ok) throw new Error(`${(data as ErrorResponse).message || 'GitHub API error'} (${res.status} ${init?.method ?? 'GET'} ${path})`);
-		return data as T;
-	};
+	const api = `/repos/${owner}/${repo}`;
 
 	// Resolve the target branch and the parent commit to build on. A new
 	// branch's parent is always the given baseSha; no ref exists to resolve.
-	const targetBranch = newBranch ?? branch ?? (await gh<{ default_branch: string }>('')).default_branch;
+	const targetBranch =
+		newBranch ?? branch ?? (await ghSend<{ default_branch: string }>('GET', api, token)).default_branch;
 	let headSha = baseSha;
 	if (!headSha) {
-		const ref = await gh<{ object: { sha: string } }>(`/git/ref/heads/${targetBranch}`);
+		const ref = await ghSend<{ object: { sha: string } }>('GET', `${api}/git/ref/heads/${targetBranch}`, token);
 		headSha = ref.object.sha;
 	}
-	const headCommit = await gh<{ tree: { sha: string } }>(`/git/commits/${headSha}`);
+	const headCommit = await ghSend<{ tree: { sha: string } }>('GET', `${api}/git/commits/${headSha}`, token);
 
 	// Text files go inline in the tree; binary files are uploaded as base64 blobs
 	// first (the tree API only accepts text inline) and referenced by SHA. An
@@ -1060,9 +1057,9 @@ export async function commitFiles(
 	for (const f of files) {
 			const base = { path: f.path, mode: '100644' as const, type: 'blob' as const };
 			if (f.contentBase64 != null) {
-				const blob = await gh<{ sha: string }>('/git/blobs', {
-					method: 'POST',
-					body: JSON.stringify({ content: f.contentBase64, encoding: 'base64' })
+				const blob = await ghSend<{ sha: string }>('POST', `${api}/git/blobs`, token, {
+					content: f.contentBase64,
+					encoding: 'base64'
 				});
 				treeEntries.push({ ...base, sha: blob.sha });
 				onUpload?.(++uploaded, binaryCount);
@@ -1075,26 +1072,21 @@ export async function commitFiles(
 	}
 
 	// Build a tree off the current one, with our files added.
-	const tree = await gh<{ sha: string }>('/git/trees', {
-		method: 'POST',
-		body: JSON.stringify({ base_tree: headCommit.tree.sha, tree: treeEntries })
+	const tree = await ghSend<{ sha: string }>('POST', `${api}/git/trees`, token, {
+		base_tree: headCommit.tree.sha,
+		tree: treeEntries
 	});
 
-	const commit = await gh<{ sha: string }>('/git/commits', {
-		method: 'POST',
-		body: JSON.stringify({ message, tree: tree.sha, parents: [headSha] })
+	const commit = await ghSend<{ sha: string }>('POST', `${api}/git/commits`, token, {
+		message,
+		tree: tree.sha,
+		parents: [headSha]
 	});
 
 	if (newBranch) {
-		await gh('/git/refs', {
-			method: 'POST',
-			body: JSON.stringify({ ref: `refs/heads/${newBranch}`, sha: commit.sha })
-		});
+		await ghSend('POST', `${api}/git/refs`, token, { ref: `refs/heads/${newBranch}`, sha: commit.sha });
 	} else {
-		await gh(`/git/refs/heads/${targetBranch}`, {
-			method: 'PATCH',
-			body: JSON.stringify({ sha: commit.sha })
-		});
+		await ghSend('PATCH', `${api}/git/refs/heads/${targetBranch}`, token, { sha: commit.sha });
 	}
 
 	return commit.sha;
@@ -1108,12 +1100,10 @@ export async function createBranch(
 	branch: string,
 	fromSha: string
 ): Promise<void> {
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/git/refs`, {
-		method: 'POST',
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha })
+	await ghSend('POST', `/repos/${owner}/${repo}/git/refs`, token, {
+		ref: `refs/heads/${branch}`,
+		sha: fromSha
 	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to create branch', 'POST git/refs');
 }
 
 /**
@@ -1242,12 +1232,7 @@ export async function dispatchWorkflow(
 	workflow: string,
 	ref: string
 ): Promise<void> {
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, {
-		method: 'POST',
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		body: JSON.stringify({ ref })
-	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to dispatch workflow');
+	await ghSend('POST', `/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, token, { ref });
 }
 
 /** Replace a repo's topics — used to tag repos created through this app. */
@@ -1257,13 +1242,7 @@ export async function setRepoTopics(
 	repo: string,
 	names: string[]
 ): Promise<unknown> {
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/topics`, {
-		method: 'PUT',
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		body: JSON.stringify({ names })
-	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to set topics');
-	return res.json();
+	return ghSend<unknown>('PUT', `/repos/${owner}/${repo}/topics`, token, { names });
 }
 
 /**
@@ -1272,12 +1251,9 @@ export async function setRepoTopics(
  * claim/submission PRs) have the access they need. Requires admin on the repo.
  */
 export async function setActionsWorkflowPermissions(token: string, owner: string, repo: string): Promise<void> {
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/actions/permissions/workflow`, {
-		method: 'PUT',
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		body: JSON.stringify({ default_workflow_permissions: 'write' })
+	await ghSend('PUT', `/repos/${owner}/${repo}/actions/permissions/workflow`, token, {
+		default_workflow_permissions: 'write'
 	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to set workflow permissions');
 }
 
 /**
@@ -1307,12 +1283,7 @@ export async function getRepoSubscription(
  * own user.
  */
 export async function ignoreRepoNotifications(token: string, owner: string, repo: string): Promise<void> {
-	const res = await githubFetch(`${apiRoot(token)}/repos/${owner}/${repo}/subscription`, {
-		method: 'PUT',
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		body: JSON.stringify({ subscribed: false, ignored: true })
-	});
-	if (!res.ok) await throwGitHubError(res, 'Failed to set repository subscription');
+	await ghSend('PUT', `/repos/${owner}/${repo}/subscription`, token, { subscribed: false, ignored: true });
 }
 
 /**
@@ -1322,21 +1293,29 @@ export async function ignoreRepoNotifications(token: string, owner: string, repo
  */
 export async function searchReposByTopic(topic: string, token?: string): Promise<RepoSummary[]> {
 	const q = encodeURIComponent(`topic:${topic}`);
-	const { ok, data } = await ghGet<{
-		items?: Array<{
-			id: number;
-			full_name: string;
-			name: string;
-			owner?: { login: string };
-			html_url: string;
-			private: boolean;
-			description: string | null;
-			updated_at: string;
-		}>;
-		message?: string;
-	}>(`${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100`, token);
-	if (!ok) throw new Error(data?.message || 'Repo search failed');
-	return (data?.items || []).map((r) => ({
+	type SearchItem = {
+		id: number;
+		full_name: string;
+		name: string;
+		owner?: { login: string };
+		html_url: string;
+		private: boolean;
+		description: string | null;
+		updated_at: string;
+	};
+	const items: SearchItem[] = [];
+	// The search API pages at 100 results and serves at most 1,000 (10 pages).
+	for (let page = 1; page <= 10; page++) {
+		const { ok, data } = await ghGet<{ items?: SearchItem[]; message?: string }>(
+			`${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100&page=${page}`,
+			token
+		);
+		if (!ok) throw new Error(data?.message || 'Repo search failed');
+		const batch = data?.items ?? [];
+		items.push(...batch);
+		if (batch.length < 100) break;
+	}
+	return items.map((r) => ({
 		id: r.id,
 		full_name: r.full_name,
 		name: r.name,

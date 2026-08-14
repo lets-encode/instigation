@@ -73,10 +73,23 @@ export interface TaskCounts {
 function taskCounts(d: GraphData, comments: CommentRow[], task: string): TaskCounts {
 	const cellTs = failCellTimestamps(d, task);
 	const fails = cellTs.size;
+	const byId = new Map(comments.map((c) => [c.comment_id, c]));
+	// A reply is closed with its thread: once the root it chains to (via
+	// parent_id) is resolved, the reply no longer needs attention.
+	const rootResolved = (reply: CommentRow): boolean => {
+		const seen = new Set<string>();
+		let c: CommentRow | undefined = reply;
+		while (c && c.parent_id && !seen.has(c.comment_id)) {
+			seen.add(c.comment_id);
+			c = byId.get(c.parent_id);
+		}
+		return c?.resolved === 'true';
+	};
 	let questions = 0;
 	let other = 0;
 	for (const c of comments) {
 		if (c.task_id !== task || c.resolved === 'true') continue;
+		if (c.kind === 'reply' && rootResolved(c)) continue;
 		if (c.kind === 'question') questions++;
 		else if (c.kind === 'fail') {
 			if (!cellTs.has(c.timestamp)) other++;

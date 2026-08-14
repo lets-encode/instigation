@@ -19,6 +19,8 @@
 // pure logic can be tested outside a browser. The broker's base URL is passed in
 // rather than read from config, keeping this module free of SvelteKit's env.
 
+import { pad2 } from './pieces.ts';
+
 /** A page image ready to commit: repo-relative path and its bytes. */
 export interface PageImage {
 	path: string;
@@ -107,10 +109,9 @@ export type UploadKind = 'image' | 'pdf' | 'encoding';
  */
 export function classifyUpload(file: { name: string; type?: string }): UploadKind | null {
 	const type = file.type ?? '';
+	if (type === 'image/jpeg' || type === 'image/png') return 'image';
 	if (type === 'application/pdf' || /\.pdf$/i.test(file.name)) return 'pdf';
-	if (type === 'image/jpeg' || type === 'image/png' || IMAGE_EXTENSIONS.test(file.name)) {
-		return 'image';
-	}
+	if (IMAGE_EXTENSIONS.test(file.name)) return 'image';
 	if (ENCODING_EXTENSIONS.test(file.name)) return 'encoding';
 	return null;
 }
@@ -121,8 +122,6 @@ function imageExtension(file: { name: string; type?: string }): 'jpg' | 'png' {
 	if (file.type === 'image/jpeg') return 'jpg';
 	return /\.png$/i.test(file.name) ? 'png' : 'jpg';
 }
-
-const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /**
  * A IIIF Image API request for a canvas, capped to `maxEdge` on its long side.
@@ -594,6 +593,10 @@ export async function resolvePages(
 				doFetch,
 				pacer
 			);
+			// A canvas with an Image API service is requested as default.jpg; one
+			// without is fetched whole, in whatever type the server holds — the
+			// fetched bytes decide the committed extension.
+			if (!page.source.canvas.service && raster.type === 'image/png') extension = 'png';
 		}
 		const scaled = await downscale(raster, maxEdge);
 		// A downscale re-encodes to JPEG, so the committed extension follows the

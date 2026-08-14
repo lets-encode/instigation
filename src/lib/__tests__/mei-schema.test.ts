@@ -144,3 +144,11 @@ test('preserved markup keeps the header valid, wherever it belongs', { skip }, a
 	});
 	await checkBothStages(head, 'source head with preserved markup');
 });
+
+test('a document carrying a DOCTYPE declaration is rejected outright', async () => {
+	// The rejection happens before the schema check, so it needs neither the
+	// downloaded schema nor xmllint — no skip.
+	const check = await validateMei('<?xml version="1.0"?>\n<!DOCTYPE mei [<!ENTITY x "y">]>\n<mei/>');
+	assert.equal(check.ok, false);
+	assert.match(check.error, /DOCTYPE/);
+});

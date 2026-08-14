@@ -101,6 +101,14 @@ export function isPreTask(locator: string): boolean {
 	return locator === 'measure-zones';
 }
 
+/**
+ * How many pass verdicts complete a task: the per-subtask threshold times its
+ * subtask count. A task without validation subtasks has a threshold of 0 — it
+ * completes on its accepted submission, with no validation record.
+ */
+export const taskThreshold = (passThreshold: number, subtaskCount: number): number =>
+	passThreshold * subtaskCount;
+
 /** The task's human type from its locator. */
 export function typeLabel(locator: string): string {
 	if (locator === 'measure-zones') return 'Measure correction';
@@ -309,7 +317,11 @@ export function buildGraph(d: GraphData, viewer = '', logins: Logins = {}): Task
 						(d.allowSelfValidation ||
 							(state?.encoder !== viewer && !hasVerdictBy(d, row, viewer))) &&
 						!validationLocks(d, row.task_id, row.subtask_id).some((l) => l.user_id === viewer) &&
-						slot === nextUnreservedSlot(d, row),
+						slot === nextUnreservedSlot(d, row) &&
+						// Claimable only while the verdict can still land: passes plus
+						// active locks below the pass threshold (mirrors checkClaim).
+						passesOf(d, row) + validationLocks(d, row.task_id, row.subtask_id).length <
+							d.passThreshold,
 					user: s.user,
 					ts: s.ts
 				};
@@ -330,7 +342,7 @@ export function buildGraph(d: GraphData, viewer = '', logins: Logins = {}): Task
 			statusKey,
 			slots,
 			passes: subRows.reduce((n, r) => n + passesOf(d, r), 0),
-			threshold: d.passThreshold * subRows.length,
+			threshold: taskThreshold(d.passThreshold, subRows.length),
 			nextUp
 		});
 	}

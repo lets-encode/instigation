@@ -15,6 +15,7 @@ import {
 	appendComments,
 	findRow,
 	isFinalValidation,
+	configNumber,
 	configPieces,
 	passThresholdOf
 } from '../campaign-tables.ts';
@@ -42,6 +43,19 @@ test('parseCsv: no trailing empty row when text ends in newline', () => {
 		['x', 'y'],
 		['1', '2']
 	]);
+});
+
+test('parseCsv: blank lines are not records', () => {
+	assert.deepEqual(parseCsv('x,y\n\n1,2\n\n'), [
+		['x', 'y'],
+		['1', '2']
+	]);
+});
+
+test('configNumber: reads a positive integer, falling back on 0 or absence', () => {
+	assert.equal(configNumber('locking:\n  stale_after_minutes: 90\n', 'stale_after_minutes', 120), 90);
+	assert.equal(configNumber('locking:\n  stale_after_minutes: 0\n', 'stale_after_minutes', 120), 120);
+	assert.equal(configNumber(null, 'stale_after_minutes', 120), 120);
 });
 
 test('parseTaskCsv: task and subtask rows become keyed objects', () => {

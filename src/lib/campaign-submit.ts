@@ -13,7 +13,7 @@
 
 import { boundaryCheck } from './campaign-claim.ts';
 import { findRow, isFinalValidation } from './campaign-tables.ts';
-import type { ParsedState, TaskRow, LockRow, CommentRow } from './campaign-tables.ts';
+import type { ParsedState, StateRow, TaskRow, LockRow, CommentRow } from './campaign-tables.ts';
 
 /** Encoding submission intent: just the task being encoded. */
 export interface EncodingIntent {
@@ -81,6 +81,27 @@ function cloneState(state: ParsedState): ParsedState {
 		validationColumns: [...state.validationColumns],
 		rows: state.rows.map((r) => ({ ...r }))
 	};
+}
+
+/**
+ * Reset a task's state rows to the encoding stage: the task row to
+ * encoding_required with attribution cleared, its subtasks to pending, every
+ * validation cell emptied. Mutates the given rows in place. Shared by the
+ * send-back writer (the console), its checker (checkSendBack) and the
+ * coordinator's PR-shape recognition, so all three agree on the reset shape.
+ */
+export function resetTaskRows(rows: StateRow[], validationColumns: string[], task_id: string): void {
+	for (const r of rows) {
+		if (r.task_id !== task_id) continue;
+		if (r.subtask_id === '') {
+			r.status = 'encoding_required';
+			r.encoder = '';
+			r.encoded_at = '';
+		} else {
+			r.status = 'pending';
+		}
+		for (const column of validationColumns) r[column] = '';
+	}
 }
 
 /**
@@ -220,17 +241,7 @@ export function checkSendBack({ state, locks, intent, author, changedPaths, isCo
 	if (!isCollaborator && !failAuthors.includes(author)) return reject('not_permitted');
 
 	const next = cloneState(state);
-	for (const r of next.rows) {
-		if (r.task_id !== intent.task_id) continue;
-		if (r.subtask_id === '') {
-			r.status = 'encoding_required';
-			r.encoder = '';
-			r.encoded_at = '';
-		} else {
-			r.status = 'pending';
-		}
-		for (const column of next.validationColumns) r[column] = '';
-	}
+	resetTaskRows(next.rows, next.validationColumns, intent.task_id);
 	return {
 		ok: true,
 		state: next,
@@ -270,7 +281,13 @@ export function checkComment({ state, comments, added, author, changedPaths, now
 	if (added.body.trim() === '') return { ok: false, reason: 'empty_comment' };
 	if (!findRow(state.rows, added.task_id, '')) return { ok: false, reason: 'unknown_task' };
 	if (added.kind === 'reply') {
-		if (!comments.some((c) => c.comment_id === added.parent_id)) return { ok: false, reason: 'unknown_parent' };
+		const parent = comments.find((c) => c.comment_id === added.parent_id);
+		if (!parent) return { ok: false, reason: 'unknown_parent' };
+		// Replies attach to the top-level discussion comments only — the ones
+		// the threads projection renders as roots.
+		if (parent.kind !== 'question' && parent.kind !== 'addition') {
+			return { ok: false, reason: 'invalid_parent' };
+		}
 	} else if (added.parent_id !== '') {
 		return { ok: false, reason: 'invalid_parent' };
 	}
@@ -291,14 +308,40 @@ export interface CheckResolveCommentArgs {
 }
 
 /**
+ * The comment table with `comment_id` and every reply chaining to it via
+ * parent_id marked resolved. Rows outside the thread are untouched.
+ */
+export function resolveCommentThread(comments: CommentRow[], comment_id: string): CommentRow[] {
+	const thread = new Set([comment_id]);
+	let grew = true;
+	while (grew) {
+		grew = false;
+		for (const c of comments) {
+			if (c.parent_id && thread.has(c.parent_id) && !thread.has(c.comment_id)) {
+				thread.add(c.comment_id);
+				grew = true;
+			}
+		}
+	}
+	return comments.map((c) => (thread.has(c.comment_id) && c.resolved !== 'true' ? { ...c, resolved: 'true' } : c));
+}
+
+export type ResolveCommentResult =
+	| { ok: true; row: CommentRow; comments: CommentRow[] }
+	| { ok: false; reason: string };
+
+/**
  * Resolving a comment (greying it out of the attention counts) is
  * owner/author-only: the comment's author or anyone with push access.
+ * Resolving a comment resolves its replies with it — replies carry no resolve
+ * control of their own. `comments` in the accepted result is the full updated
+ * table.
  */
-export function checkResolveComment({ comments, comment_id, author, changedPaths, isCollaborator }: CheckResolveCommentArgs): CommentResult {
+export function checkResolveComment({ comments, comment_id, author, changedPaths, isCollaborator }: CheckResolveCommentArgs): ResolveCommentResult {
 	if (!boundaryCheck(changedPaths, ['tracking/comment.csv'])) return { ok: false, reason: 'out_of_bounds' };
 	const row = comments.find((c) => c.comment_id === comment_id);
 	if (!row) return { ok: false, reason: 'unknown_comment' };
 	if (row.resolved === 'true') return { ok: false, reason: 'already_resolved' };
 	if (!isCollaborator && row.author_id !== author) return { ok: false, reason: 'not_permitted' };
-	return { ok: true, row: { ...row, resolved: 'true' } };
+	return { ok: true, row: { ...row, resolved: 'true' }, comments: resolveCommentThread(comments, comment_id) };
 }

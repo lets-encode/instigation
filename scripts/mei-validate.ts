@@ -69,6 +69,12 @@ function firstError(stderr: string): string {
  * — an unrunnable check is a broken environment, not invalid content.
  */
 export async function validateMei(content: string): Promise<MeiCheck> {
+	// A DOCTYPE declaration can define external or recursively expanding
+	// entities (XXE / billion laughs); no MEI score legitimately carries one,
+	// so any document containing it is rejected before parsing.
+	if (/<!DOCTYPE/i.test(content)) {
+		return { ok: false, error: 'the document contains a DOCTYPE declaration, which is not accepted' };
+	}
 	const path = await meiSchemaPath();
 	// --nonet: the document must not trigger network fetches (external DTDs or
 	// entities); the schema itself is already on disk and integrity-checked.

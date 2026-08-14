@@ -16,7 +16,9 @@ export interface TaskRow {
 	subtask_id: string;
 	fragment: string;
 	locator: string;
+	/** Reserved for a future per-task claim policy; written empty, not yet enforced. */
 	allowlist: string;
+	/** Reserved for a future per-task claim policy; written empty, not yet enforced. */
 	blocklist: string;
 	/** task_id that must be completed before this task can be claimed; empty = none. */
 	depends_on: string;
@@ -101,11 +103,11 @@ export interface ParsedState {
 	rows: StateRow[];
 }
 
-const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist', 'depends_on'];
-const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
-const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
-const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
-const COMMENT_COLUMNS = ['comment_id', 'task_id', 'subtask_id', 'kind', 'page', 'measure_start', 'measure_end', 'author_id', 'timestamp', 'resolved', 'parent_id', 'body'];
+export const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist', 'depends_on'];
+export const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
+export const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
+export const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
+export const COMMENT_COLUMNS = ['comment_id', 'task_id', 'subtask_id', 'kind', 'page', 'measure_start', 'measure_end', 'author_id', 'timestamp', 'resolved', 'parent_id', 'body'];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
 function csvField(value: unknown): string {
@@ -113,7 +115,8 @@ function csvField(value: unknown): string {
 	return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
-const csvRow = (fields: unknown[]): string => fields.map(csvField).join(',');
+/** Serialise one CSV record (RFC-4180 quoting, no trailing newline). */
+export const csvRow = (fields: unknown[]): string => fields.map(csvField).join(',');
 
 /** Parse CSV text into an array of rows (each an array of string fields). */
 export function parseCsv(text: string): string[][] {
@@ -139,7 +142,8 @@ export function parseCsv(text: string): string[][] {
 			field = '';
 		} else if (c === '\n') {
 			row.push(field);
-			rows.push(row);
+			// A blank line is not a record — skip it rather than yielding [''].
+			if (row.length > 1 || row[0] !== '') rows.push(row);
 			row = [];
 			field = '';
 		} else if (c !== '\r') {

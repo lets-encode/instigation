@@ -16,6 +16,7 @@
 // handling, no DOM, filesystem or network access.
 
 import { addXmlIds } from './mei-ids.ts';
+import { indent, textOf, xmlEscape, xmlUnescape } from './mei-xml.ts';
 
 /** One named agent in the statement of responsibility. */
 export interface SourcePerson {
@@ -78,33 +79,6 @@ export function emptySourceMetadata(): SourceMetadata {
 	};
 }
 
-// Escape the minimum needed to keep substituted values well-formed XML, in text
-// and double-quoted attribute contexts.
-function xmlEscape(value: unknown): string {
-	return String(value ?? '')
-		.replaceAll('&', '&amp;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;')
-		.replaceAll('"', '&quot;');
-}
-
-const unescapeXml = (value: string) =>
-	value
-		.replaceAll('&lt;', '<')
-		.replaceAll('&gt;', '>')
-		.replaceAll('&quot;', '"')
-		.replaceAll('&apos;', "'")
-		.replaceAll('&amp;', '&');
-
-/** An element's readable text: nested tags stripped, whitespace collapsed. */
-const textOf = (inner: string) =>
-	unescapeXml(
-		inner
-			.replace(/<[^>]*>/g, ' ')
-			.replace(/\s+/g, ' ')
-			.trim()
-	);
-
 /** The first match of `tag`'s inner text, or '' when the tag is absent. */
 function tagText(xml: string, tag: string): string {
 	const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`).exec(xml);
@@ -117,11 +91,25 @@ function tagInner(xml: string, tag: string): string {
 	return match ? match[1] : '';
 }
 
-const indent = (depth: number) => ' '.repeat(depth * 3);
-
 /** Emit `<tag>text</tag>` at `depth`, or nothing when the value is empty. */
 function optional(tag: string, value: string, depth: number): string {
 	return value.trim() ? `${indent(depth)}<${tag}>${xmlEscape(value.trim())}</${tag}>\n` : '';
+}
+
+/** A <respStmt> naming `people` at `depth`, or nothing when there is no one to name. */
+function respStmtBlock(people: SourcePerson[], depth: number): string {
+	if (!people.length) return '';
+	return (
+		`${indent(depth)}<respStmt>\n` +
+		people
+			.map(
+				(person) =>
+					`${indent(depth + 1)}<persName role="${xmlEscape(person.role.trim())}">` +
+					`${xmlEscape(person.name.trim())}</persName>\n`
+			)
+			.join('') +
+		`${indent(depth)}</respStmt>\n`
+	);
 }
 
 // The manifestation both headers describe: MEI's <source> carries only
@@ -228,17 +216,7 @@ export function buildSourceHead(meta: SourceMetadata): string {
 		...(meta.lyricist.trim() ? [{ name: meta.lyricist, role: 'lyricist' }] : []),
 		...meta.contributors.filter((person) => person.name.trim())
 	];
-	const respStmt = people.length
-		? `${indent(4)}<respStmt>\n` +
-			people
-				.map(
-					(person) =>
-						`${indent(5)}<persName role="${xmlEscape(person.role.trim())}">` +
-						`${xmlEscape(person.name.trim())}</persName>\n`
-				)
-				.join('') +
-			`${indent(4)}</respStmt>\n`
-		: '';
+	const respStmt = respStmtBlock(people, 4);
 
 	// Publication details describe the source, so they go in the manifestation's
 	// own <pubStmt>, not the file's.
@@ -306,17 +284,7 @@ export function buildPieceHead(
 		...(piece.lyricist?.trim() ? [{ name: piece.lyricist, role: 'lyricist' }] : []),
 		...(piece.contributors ?? []).filter((person) => person.name.trim())
 	];
-	const respStmt = piecePeople.length
-		? `${indent(4)}<respStmt>\n` +
-			piecePeople
-				.map(
-					(person) =>
-						`${indent(5)}<persName role="${xmlEscape(person.role.trim())}">` +
-						`${xmlEscape(person.name.trim())}</persName>\n`
-				)
-				.join('') +
-			`${indent(4)}</respStmt>\n`
-		: '';
+	const respStmt = respStmtBlock(piecePeople, 4);
 	const notesStmt = piece.note?.trim()
 		? `${indent(3)}<notesStmt>\n` + optional('annot', piece.note, 4) + `${indent(3)}</notesStmt>\n`
 		: '';
@@ -333,17 +301,7 @@ export function buildPieceHead(
 		...(source.lyricist.trim() ? [{ name: source.lyricist, role: 'lyricist' }] : []),
 		...source.contributors.filter((person) => person.name.trim())
 	];
-	const sourceResp = sourcePeople.length
-		? `${indent(5)}<respStmt>\n` +
-			sourcePeople
-				.map(
-					(person) =>
-						`${indent(6)}<persName role="${xmlEscape(person.role.trim())}">` +
-						`${xmlEscape(person.name.trim())}</persName>\n`
-				)
-				.join('') +
-			`${indent(5)}</respStmt>\n`
-		: '';
+	const sourceResp = respStmtBlock(sourcePeople, 5);
 	const sourceTitle = source.title.trim()
 		? `${indent(5)}<title>${xmlEscape(source.title.trim())}</title>\n`
 		: '';
@@ -414,7 +372,7 @@ export function parseSourceHead(xml: string): SourceMetadata {
 	for (const match of tagInner(titleStmt, 'respStmt').matchAll(
 		/<(persName|corpName)\b([^>]*)>([\s\S]*?)<\/\1>/g
 	)) {
-		const role = unescapeXml(/\brole="([^"]*)"/.exec(match[2])?.[1] ?? '');
+		const role = xmlUnescape(/\brole="([^"]*)"/.exec(match[2])?.[1] ?? '');
 		const name = textOf(match[3]);
 		if (!name) continue;
 		if (role === 'composer' && !meta.composer) {

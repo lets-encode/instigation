@@ -133,6 +133,18 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
 	assert.equal(myTasksIn(stats, '').length, 0);
 });
 
+test('myTasksIn includes held validation claims with the reaper-derived expiry', () => {
+	const reviewing = {
+		...stats,
+		locks: parseLockCsv(LOCK_HEADER + 'T0003,S0001,9,2026-08-01T10:00:00Z,validation\n')
+	};
+	const mine = myTasksIn(reviewing, '9');
+	const validating = mine.find((t) => t.group === 'validating');
+	assert.equal(validating?.task, 'T0003');
+	assert.equal(validating?.claimedAt, '2026-08-01T10:00:00Z');
+	assert.equal(validating?.expiresAt, '2026-08-01T12:00:00.000Z');
+});
+
 // A minimal forge for the listing loader: a topic search result plus a
 // per-repo file reader. Repo ids must be unique per test — loadCampaignStats
 // caches by id for the session.
@@ -186,6 +198,23 @@ test('loadAllCampaignStats: every repository failing throws instead of listing n
 		throw rateLimit();
 	});
 	await assert.rejects(loadAllCampaignStats(f, 'topic'), RateLimitError);
+});
+
+test('the campaign slug comes from config campaign.name, not the repo name', async () => {
+	const files: Record<string, string> = {
+		'tracking/task.csv': TASK_HEADER,
+		'tracking/state.csv': STATE_HEADER,
+		'tracking/lock.csv': LOCK_HEADER,
+		'tracking/history.csv': '',
+		'tracking/comment.csv': COMMENT_HEADER,
+		'config.yaml': 'campaign:\n  name: "stable-slug"\n  title: "A Title"\n'
+	};
+	const f = fakeForge([summary(9301, 'renamed-repo')], async (_o, _r, path) => files[path] ?? null);
+	const listing = await loadAllCampaignStats(f, 'topic');
+	assert.equal(listing.stats[0].name, 'stable-slug');
+	// Without a config, the repo name is the fallback.
+	const bare = fakeForge([summary(9302, 'bare-repo')], async () => null);
+	assert.equal((await loadAllCampaignStats(bare, 'topic')).stats[0].name, 'bare-repo');
 });
 
 test('loadAllCampaignStats: an empty search result is not an error', async () => {

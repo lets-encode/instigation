@@ -318,7 +318,7 @@
         }
         // Stage A: facsimile and labelled zones only. The measure body is
         // generated once this piece's measure-correction pre-task validates.
-        const model = initialFacsimileModel(split[i].pages, {});
+        const model = initialFacsimileModel(split[i].pages);
         log.detail(
           `${split[i].pages.length} page(s), ${split[i].measuredSurfaces.length} with measures`,
         );

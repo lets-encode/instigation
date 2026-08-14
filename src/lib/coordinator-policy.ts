@@ -1,12 +1,9 @@
-import type { CommentRow, LockRow, ParsedState, TaskRow } from './campaign-tables.ts';
+import { COMMENT_COLUMNS, parseCsv } from './campaign-tables.ts';
+import type { CommentRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
+import { resetTaskRows } from './campaign-submit.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
 
 export type PullRequestKind = 'claim' | 'validation' | 'comment' | 'encoding';
-
-export function numberFromConfig(configText: string | null, key: string, fallback: number): number {
-	const match = new RegExp(`^\\s*${key}:\\s*(\\d+)`, 'm').exec(configText ?? '');
-	return match ? Number(match[1]) : fallback;
-}
 
 /**
  * The kind of the config.yaml piece whose path is `path`, or null when no
@@ -38,34 +35,45 @@ export function addedRowFromPatch(patch: string | undefined): string | null {
 	return removed === 0 && added.length === 1 ? added[0] : null;
 }
 
-/** Return the sole changed cell when the state table structure is unchanged. */
-export function singleCellDiff(
-	base: ParsedState,
-	head: ParsedState
-): { task_id: string; subtask_id: string; column: string; value: string } | null {
-	if (base.header.join('\0') !== head.header.join('\0') || base.rows.length !== head.rows.length) {
-		return null;
+// The CSV records a unified-diff patch removes and adds, parsed with full CSV
+// quoting (a quoted field may span several patch lines; the physical lines of
+// one record are contiguous within their +/- group). Null when there is no
+// patch at all.
+function csvRowsFromPatch(patch: string | undefined): { added: string[][]; removed: string[][] } | null {
+	if (!patch) return null;
+	const added: string[] = [];
+	const removed: string[] = [];
+	for (const line of patch.split('\n')) {
+		if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('\\')) continue;
+		if (line.startsWith('+')) added.push(line.slice(1));
+		else if (line.startsWith('-')) removed.push(line.slice(1));
 	}
+	return { added: parseCsv(added.join('\n')), removed: parseCsv(removed.join('\n')) };
+}
 
-	const diffs: Array<{ task_id: string; subtask_id: string; column: string; value: string }> = [];
-	for (let i = 0; i < head.rows.length; i++) {
-		const baseRow = base.rows[i];
-		const headRow = head.rows[i];
-		if (baseRow.task_id !== headRow.task_id || baseRow.subtask_id !== headRow.subtask_id) {
-			return null;
-		}
-		for (const column of head.header) {
-			if ((headRow[column] ?? '') !== (baseRow[column] ?? '')) {
-				diffs.push({
-					task_id: headRow.task_id,
-					subtask_id: headRow.subtask_id,
-					column,
-					value: headRow[column] ?? ''
-				});
-			}
-		}
+/**
+ * The sole changed cell a state.csv patch carries — the shape a verdict PR
+ * has, relative to the PR's own merge base — or null for any other diff.
+ * The cell index is mapped to a column name via `header` (the current state
+ * header; the base columns and validation slots are positionally stable).
+ */
+export function validationIntentFromPatch(
+	patch: string | undefined,
+	header: string[]
+): { task_id: string; subtask_id: string; column: string; value: string } | null {
+	const rows = csvRowsFromPatch(patch);
+	if (!rows || rows.added.length !== 1 || rows.removed.length !== 1) return null;
+	const [base] = rows.removed;
+	const [head] = rows.added;
+	if ((head[0] ?? '') === '' || base[0] !== head[0] || (base[1] ?? '') !== (head[1] ?? '')) return null;
+	const width = Math.max(base.length, head.length, header.length);
+	let diff: { column: string; value: string } | null = null;
+	for (let i = 0; i < width; i++) {
+		if ((base[i] ?? '') === (head[i] ?? '')) continue;
+		if (diff || i >= header.length) return null;
+		diff = { column: header[i], value: head[i] ?? '' };
 	}
-	return diffs.length === 1 ? diffs[0] : null;
+	return diff ? { task_id: head[0], subtask_id: head[1] ?? '', ...diff } : null;
 }
 
 export function validationVerdict(value: string): 'pass' | 'fail' | null {
@@ -73,69 +81,80 @@ export function validationVerdict(value: string): 'pass' | 'fail' | null {
 }
 
 /**
- * Return the task whose rows the head state resets to encoding — the shape a
- * send-back PR carries — or null for any other diff. A reset flips the task
- * row to encoding_required with attribution cleared, its subtasks to pending,
- * and empties every validation cell; nothing else may change.
+ * The task whose rows a state.csv patch resets to encoding — the shape a
+ * send-back PR carries, relative to the PR's own merge base — or null for any
+ * other diff. Every changed row must belong to one task and carry exactly the
+ * reset resetTaskRows writes; nothing else may change.
  */
-export function taskResetDiff(base: ParsedState, head: ParsedState): { task_id: string } | null {
-	if (base.header.join('\0') !== head.header.join('\0') || base.rows.length !== head.rows.length) {
-		return null;
+export function taskResetFromPatch(
+	patch: string | undefined,
+	header: string[],
+	validationColumns: string[]
+): { task_id: string } | null {
+	const rows = csvRowsFromPatch(patch);
+	if (!rows || rows.added.length === 0 || rows.added.length !== rows.removed.length) return null;
+	const toRow = (cells: string[]): StateRow =>
+		Object.fromEntries(header.map((column, i) => [column, cells[i] ?? ''])) as StateRow;
+	const base = rows.removed.map(toRow);
+	const head = rows.added.map(toRow);
+	const task_id = head[0].task_id;
+	if (task_id === '') return null;
+	for (let i = 0; i < head.length; i++) {
+		if (head[i].task_id !== task_id || base[i].task_id !== task_id) return null;
+		if (base[i].subtask_id !== head[i].subtask_id) return null;
 	}
-	const changed = new Set<string>();
-	for (let i = 0; i < head.rows.length; i++) {
-		const baseRow = base.rows[i];
-		const headRow = head.rows[i];
-		if (baseRow.task_id !== headRow.task_id || baseRow.subtask_id !== headRow.subtask_id) return null;
-		for (const column of head.header) {
-			if ((headRow[column] ?? '') !== (baseRow[column] ?? '')) changed.add(headRow.task_id);
-		}
-	}
-	if (changed.size !== 1) return null;
-	const [task_id] = changed;
-	// Every row of the task — changed or already there — must sit at the reset.
-	for (const row of head.rows) {
-		if (row.task_id !== task_id) continue;
-		const expectedStatus = row.subtask_id === '' ? 'encoding_required' : 'pending';
-		if (row.status !== expectedStatus) return null;
-		if (row.subtask_id === '' && (row.encoder !== '' || row.encoded_at !== '')) return null;
-		for (const column of head.validationColumns) {
-			if ((row[column] ?? '') !== '') return null;
+	const expected = base.map((r) => ({ ...r }));
+	resetTaskRows(expected, validationColumns, task_id);
+	for (let i = 0; i < head.length; i++) {
+		for (const column of header) {
+			if ((expected[i][column] ?? '') !== (head[i][column] ?? '')) return null;
 		}
 	}
 	return { task_id };
 }
 
-const commentRowsEqual = (a: CommentRow, b: CommentRow): boolean =>
-	(Object.keys(a) as Array<keyof CommentRow>).every((k) => a[k] === b[k]);
-
 /**
- * Return the rows the head comment table appends to the base — the shape a
- * comment PR carries — or null when the base rows are not kept verbatim.
+ * The rows a comment.csv patch appends — the shape a comment PR carries,
+ * relative to the PR's own merge base — or null when it removes or edits
+ * anything.
  */
-export function appendedComments(base: CommentRow[], head: CommentRow[]): CommentRow[] | null {
-	if (head.length <= base.length) return null;
-	for (let i = 0; i < base.length; i++) {
-		if (!commentRowsEqual(base[i], head[i])) return null;
-	}
-	return head.slice(base.length);
+export function appendedCommentsFromPatch(patch: string | undefined): CommentRow[] | null {
+	const rows = csvRowsFromPatch(patch);
+	if (!rows || rows.removed.length !== 0 || rows.added.length === 0) return null;
+	return rows.added.map(
+		(cells) =>
+			Object.fromEntries(COMMENT_COLUMNS.map((column, i) => [column, cells[i] ?? ''])) as unknown as CommentRow
+	);
 }
 
+const RESOLVED_CELL = COMMENT_COLUMNS.indexOf('resolved');
+const PARENT_CELL = COMMENT_COLUMNS.indexOf('parent_id');
+
 /**
- * Return the comment the head table resolves — exactly one row differing from
- * the base, only in `resolved` flipping '' → 'true' — or null otherwise.
+ * The top-level comment a comment.csv patch resolves — every changed row only
+ * flips `resolved` '' → 'true', and exactly one of them is top-level (empty
+ * parent_id) — or null for any other diff. Flipped replies ride along; the
+ * coordinator resolves the root's whole thread authoritatively.
  */
-export function resolvedCommentDiff(base: CommentRow[], head: CommentRow[]): { comment_id: string } | null {
-	if (base.length !== head.length) return null;
-	let resolved: string | null = null;
-	for (let i = 0; i < base.length; i++) {
-		if (commentRowsEqual(base[i], head[i])) continue;
-		const flipped = { ...base[i], resolved: 'true' };
-		if (base[i].resolved !== '' || !commentRowsEqual(flipped, head[i])) return null;
-		if (resolved !== null) return null;
-		resolved = head[i].comment_id;
+export function resolvedCommentFromPatch(patch: string | undefined): { comment_id: string } | null {
+	const rows = csvRowsFromPatch(patch);
+	if (!rows || rows.added.length === 0 || rows.added.length !== rows.removed.length) return null;
+	let root: string | null = null;
+	for (let i = 0; i < rows.added.length; i++) {
+		const base = rows.removed[i];
+		const head = rows.added[i];
+		if ((head[0] ?? '') === '' || (base[0] ?? '') !== (head[0] ?? '')) return null;
+		const width = Math.max(base.length, head.length);
+		for (let j = 0; j < width; j++) {
+			if ((base[j] ?? '') === (head[j] ?? '')) continue;
+			if (j !== RESOLVED_CELL || (base[j] ?? '') !== '' || (head[j] ?? '') !== 'true') return null;
+		}
+		if ((head[PARENT_CELL] ?? '') === '') {
+			if (root !== null) return null;
+			root = head[0];
+		}
 	}
-	return resolved === null ? null : { comment_id: resolved };
+	return root === null ? null : { comment_id: root };
 }
 
 export function resolveEncodingTask(options: {

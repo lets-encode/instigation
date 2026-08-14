@@ -33,10 +33,24 @@ obvious attacks don't work, and they must not regress.
   MEI-CMN 5.0 schema with a **SHA-256 integrity check** on the fetched schema.
 - **Broker keeps the token server-side.** `__Host-` cookie prefix in production,
   `HttpOnly`, `SameSite=Lax`, `Secure`; session-ID regeneration after auth
-  (fixation defense); authlib `state` + PKCE `S256`; token revoked at GitHub on
-  logout; `return_to` validated same-origin; proxy is login-gated, allowlisted to
-  `api.github.com`, strips client-supplied `Authorization`/`Cookie`/`Host`, and
-  disables upstream redirects (`allow_redirects=False`).
+  (fixation defense); authlib `state` is the load-bearing CSRF protection on
+  the code exchange (a PKCE `S256` code_challenge is also sent, though GitHub's
+  classic OAuth App token endpoint is not documented to enforce it); token
+  revoked at GitHub on logout; `return_to` validated same-origin; proxy is
+  login-gated, allowlisted to `api.github.com`, strips client-supplied
+  `Authorization`/`Cookie`/`Host`, and disables upstream redirects
+  (`allow_redirects=False`).
+- **Registry writes are ownership-checked and admin routes are double-gated.**
+  `/registry/register` verifies with the session's token that the caller holds
+  push permission on the repository a name is bound to; the `/registry/admin/`
+  routes serve only when `ADMIN_TOKEN` and `ADMIN_ROUTES_ENABLED=1` are both
+  set (503 otherwise), behind institutional auth at the reverse proxy.
+- **Rate limits key on the real client.** flask-limiter defaults plus stricter
+  per-user limits on `/proxy` and `/iiif`. Two deployment caveats: behind a
+  proxy `PROXY_FIX_X_FOR` must be set or all clients share one bucket, and the
+  default `memory://` counter storage is per gunicorn worker, so the effective
+  limits scale with the worker count and reset on restart (set
+  `RATELIMIT_STORAGE_URI` to a shared store for exact limits).
 
 The exposures below are not in the PR mechanics — they are in the crowd logic,
 resource limits, one render sink, and blast-radius / defense-in-depth choices.

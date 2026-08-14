@@ -144,6 +144,15 @@
   background: var(--line);
 }
 
+/* A low-emphasis bordered button: the card surface with a quiet outline. */
+.btn-ghost {
+  background: var(--card);
+}
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* A button that reads as a link, for actions inside a sentence. */
 .linkish {
   font: inherit;

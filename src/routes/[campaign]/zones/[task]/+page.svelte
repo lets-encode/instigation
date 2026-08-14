@@ -11,7 +11,6 @@
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
-  import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
@@ -51,6 +50,9 @@
   };
 
   let loading = $state(false);
+  // Whether a load has been attempted for the current params; a failed load
+  // stays on its error banner instead of retrying.
+  let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let data = $state<FacsimileTaskData | null>(null);
   let pages = $state<EditPage[]>([]);
@@ -183,19 +185,25 @@
   async function load() {
     const f = forge();
     if (!f) return;
+    // Results for a task the page has since navigated away from are dropped.
+    const task = taskId;
+    const name = campaign;
+    const stale = () => task !== taskId || name !== campaign;
     loading = true;
     loadError = null;
     selected = null;
     hovered = null;
     firstVisible = 0;
     try {
-      data = await invoke(commands.readFacsimile, { task_id: taskId }, ctx(f));
-      pages = data.model.pages.map((pg, i) => ({
+      const d = await invoke(commands.readFacsimile, { task_id: task }, ctx(f));
+      if (stale()) return;
+      data = d;
+      pages = d.model.pages.map((pg, i) => ({
         image: pg.image,
         width: pg.width,
         height: pg.height,
-        url: data!.imageUrls[i],
-        failed: !data!.imageUrls[i],
+        url: d.imageUrls[i],
+        failed: !d.imageUrls[i],
         zones: pg.zones.map((z) => ({
           box: { ...z.box },
           override: null,
@@ -215,25 +223,54 @@
       }
       resetHistory();
     } catch (e) {
-      loadError = `Could not load ${taskId}: ${(e as Error).message}`;
+      if (!stale()) loadError = `Could not load ${task}: ${(e as Error).message}`;
     } finally {
-      loading = false;
+      if (!stale()) loading = false;
     }
   }
+
+  // A same-route navigation to another campaign or task starts over: the
+  // resolved repo and the loaded task belong to the previous params.
+  $effect(() => {
+    void campaign;
+    resolved = null;
+    notFound = false;
+  });
+  $effect(() => {
+    void campaign;
+    void taskId;
+    data = null;
+    pages = [];
+    loadError = null;
+    loaded = false;
+  });
 
   // Resolve the campaign name to its repo first; the load effect is gated on
   // `owner`/`repo` so it waits for this.
   $effect(() => {
     if (auth.status === "loading" || resolved || notFound || resolving) return;
     resolving = true;
-    resolveCampaign(readForge(), campaign)
-      .then((r) => (r ? (resolved = r) : (notFound = true)))
-      .catch(() => (notFound = true))
+    // A result for a name the page has since navigated away from is dropped.
+    const name = campaign;
+    resolveCampaign(readForge(), name)
+      .then((r) => {
+        if (name !== campaign) return;
+        if (r) resolved = r;
+        else notFound = true;
+      })
+      .catch(() => {
+        if (name === campaign) notFound = true;
+      })
       .finally(() => (resolving = false));
   });
 
+  // One load per param set: a failed attempt renders the error banner (with
+  // its manual retry) instead of looping.
   $effect(() => {
-    if (auth.status === "authenticated" && owner && repo && taskId && !data && !loading) load();
+    if (auth.status === "authenticated" && owner && repo && taskId && !loaded) {
+      loaded = true;
+      load();
+    }
   });
 
   async function run(
@@ -382,8 +419,11 @@
         ),
       { overviewOnSuccess: true },
     ).then(() => {
-      failOpen = false;
-      failText = "";
+      // A failed submission keeps the typed comment for the retry.
+      if (runner.result?.ok) {
+        failOpen = false;
+        failText = "";
+      }
     });
 
   function toPageModels(): PageModel[] {
@@ -805,8 +845,6 @@
   />
 {/if}
 
-<PendingVerdicts />
-
 <div class="corrector">
   {#if notFound}
     <div class="deskwrap">
@@ -827,7 +865,12 @@
   {:else if loading}
     <div class="deskwrap"><p class="muted">Loading the facsimile…</p></div>
   {:else if loadError}
-    <div class="deskwrap"><div class="banner err">{loadError}</div></div>
+    <div class="deskwrap">
+      <div class="banner err">
+        {loadError}
+        <button type="button" class="linkish" onclick={() => load()}>Try again</button>
+      </div>
+    </div>
   {:else if data}
     <div class="main">
     {#if runner.result && runner.result.error}

@@ -26,7 +26,6 @@
   import { readDockLayout } from "$lib/preview-dock.ts";
   import DockPanel from "$lib/components/DockPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
-  import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import PreviewDock from "$lib/components/PreviewDock.svelte";
@@ -209,10 +208,13 @@
   // first read shows the loading state; refreshes update the tables in place.
   async function load() {
     const f = readForge();
+    // Tables for a name the page has since navigated away from are dropped.
+    const name = campaign;
     if (!loaded) loading = true;
     loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
+      if (name !== campaign) return;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
       canPush = tables.canPush;
@@ -244,11 +246,23 @@
       }
       loaded = true;
     } catch (e) {
-      loadError = `Could not read ${owner}/${repo}: ${(e as Error).message}`;
+      if (name === campaign)
+        loadError = `Could not read ${owner}/${repo}: ${(e as Error).message}`;
     } finally {
-      loading = false;
+      if (name === campaign) loading = false;
     }
   }
+
+  // A same-route navigation to another campaign starts over: the resolved
+  // repo and the loaded tables belong to the previous name.
+  $effect(() => {
+    void campaign;
+    resolved = null;
+    notFound = false;
+    slugState = null;
+    loaded = false;
+    loadError = null;
+  });
 
   // Resolve the campaign name to its repo before anything reads the tables. The
   // load effect below is gated on `owner`/`repo`, so it waits for this.
@@ -264,9 +278,12 @@
   });
 
   async function resolve() {
-    const info = await lookupSlug(campaign);
+    // Results for a name the page has since navigated away from are dropped.
+    const name = campaign;
+    const info = await lookupSlug(name);
+    if (name !== campaign) return;
     if (info?.status === "free") {
-      await goto(`/new?slug=${encodeURIComponent(campaign)}`, { replaceState: true });
+      await goto(`/new?slug=${encodeURIComponent(name)}`, { replaceState: true });
       return;
     }
     if (
@@ -280,7 +297,8 @@
     // Active — or the registry was unreachable / the name malformed, which
     // resolveCampaign reports as null (notFound). The lookup above is passed
     // through so the name is not fetched from the registry twice.
-    const r = await resolveCampaign(readForge(), campaign, info).catch(() => null);
+    const r = await resolveCampaign(readForge(), name, info).catch(() => null);
+    if (name !== campaign) return;
     if (r) resolved = r;
     else notFound = true;
   }
@@ -292,14 +310,11 @@
   // Background verdicts refresh the tables when they land — unless a command
   // overlay is up, whose own after-refresh will catch the change, or the
   // campaign isn't resolved (nothing to refresh).
-  $effect(() => {
-    pendingVerdicts.onSettled = () => {
+  $effect(() =>
+    pendingVerdicts.onSettled(() => {
       if (!runner.busy && owner && repo) load();
-    };
-    return () => {
-      pendingVerdicts.onSettled = null;
-    };
-  });
+    }),
+  );
 
   // Run a command: show the busy overlay, capture its result banner, then
   // refresh the tables.
@@ -492,8 +507,6 @@
     onContinue={() => runner.dismiss()}
   />
 {/if}
-
-<PendingVerdicts />
 
 {#snippet resultBanner()}
   {#if runner.result && runner.result.error}
@@ -847,14 +860,25 @@
                   </div>
                 {:else}
                   {#each expanded[col.key] || col.key === "done" ? col.cards : col.cards.slice(0, CARD_CAP) as card (card.task)}
-                    <button
-                      type="button"
+                    <!-- A focusable div, not a <button>: the inline actions
+                         inside it are real buttons, which HTML does not allow
+                         nested in another button. -->
+                    <div
                       class="card col-{card.column}"
                       class:nextup={card.nextUp}
                       class:pre={card.pre}
                       class:failtint={card.counts.fails > 0 &&
                         card.column !== "done"}
+                      role="button"
+                      tabindex="0"
                       onclick={() => openTask(card.task)}
+                      onkeydown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openTask(card.task);
+                        }
+                      }}
                       title="Open this task"
                     >
                       {#if card.nextUp}
@@ -873,38 +897,24 @@
                         </div>
                       {:else if card.pre && card.column === "ready"}
                         <div class="card-pre">
-                          <span
+                          <button
+                            type="button"
                             class="claimlink"
-                            role="button"
-                            tabindex="-1"
                             onclick={(e) => {
                               e.stopPropagation();
                               claimCard(card);
-                            }}
-                            onkeydown={(e) => {
-                              if (e.key === "Enter") {
-                                e.stopPropagation();
-                                claimCard(card);
-                              }
-                            }}>Open measure corrector →</span
+                            }}>Open measure corrector →</button
                           >
                         </div>
                       {:else if card.column === "ready" && card.claimable}
                         <div class="card-claim">
-                          <span
+                          <button
+                            type="button"
                             class="claimlink"
-                            role="button"
-                            tabindex="-1"
                             onclick={(e) => {
                               e.stopPropagation();
                               claimCard(card);
-                            }}
-                            onkeydown={(e) => {
-                              if (e.key === "Enter") {
-                                e.stopPropagation();
-                                claimCard(card);
-                              }
-                            }}>Claim →</span
+                            }}>Claim →</button
                           >
                         </div>
                       {:else if card.column === "encoding" && card.worker}
@@ -917,40 +927,26 @@
                               .elapsed}</span
                           >
                           {#if card.worker.mine && card.pre}
-                            <span
+                            <button
+                              type="button"
                               class="claimlink"
-                              role="button"
-                              tabindex="-1"
                               onclick={(e) => {
                                 e.stopPropagation();
                                 claimCard(card);
                               }}
-                              onkeydown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.stopPropagation();
-                                  claimCard(card);
-                                }
-                              }}
                               title="Continue correcting the measures in the zone editor."
-                              >Continue →</span
+                              >Continue →</button
                             >
                           {:else if card.worker.mine}
-                            <span
+                            <button
+                              type="button"
                               class="claimlink"
-                              role="button"
-                              tabindex="-1"
                               onclick={(e) => {
                                 e.stopPropagation();
                                 submitpr(card.task);
                               }}
-                              onkeydown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.stopPropagation();
-                                  submitpr(card.task);
-                                }
-                              }}
                               title="After committing in mei-friend, submit the encoding for validation."
-                              >Submit →</span
+                              >Submit →</button
                             >
                           {/if}
                         </div>
@@ -991,7 +987,7 @@
                       {:else if card.column === "done"}
                         <div class="card-done">{card.doneLine}</div>
                       {/if}
-                    </button>
+                    </div>
                   {/each}
                   {#if col.key === "done" && showAllDone && col.cards.length > 1}
                     <button
@@ -1657,9 +1653,13 @@
     margin-top: 8px;
   }
   .claimlink {
+    font-family: inherit;
     font-size: 11.5px;
     font-weight: 600;
     color: var(--accent);
+    background: none;
+    border: 0;
+    padding: 0;
     cursor: pointer;
   }
   .claimlink:hover {

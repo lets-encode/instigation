@@ -31,6 +31,8 @@ export interface CheckClaimArgs {
 	now: string;
 	/** config.yaml allow_self_validation: the encoder may validate their own work. */
 	allowSelfValidation?: boolean;
+	/** Pass verdicts that complete a subtask; defaults to the slot count. */
+	passThreshold?: number;
 }
 
 export type ClaimResult = { ok: true; lock: LockRow } | { ok: false; reason: string };
@@ -54,7 +56,8 @@ export function checkClaim({
 	author,
 	changedPaths,
 	now,
-	allowSelfValidation
+	allowSelfValidation,
+	passThreshold
 }: CheckClaimArgs): ClaimResult {
 	// A claim may only touch the lock table.
 	if (!boundaryCheck(changedPaths, ['tracking/lock.csv'])) return reject('out_of_bounds');
@@ -101,6 +104,16 @@ export function checkClaim({
 		if (finals + activeSameKind.length >= state.validationColumns.length) {
 			return reject('no_open_validation_slot');
 		}
+		// A verdict can only land while the subtask needs more passes: once
+		// recorded passes plus active locks reach the pass threshold, a further
+		// claim's verdict would arrive after completion and be rejected.
+		const slots = state.validationColumns.length;
+		const needed = Math.min(passThreshold ?? slots, slots);
+		const passes = state.validationColumns.filter((c) => {
+			const cell = row[c] ?? '';
+			return isFinalValidation(cell) && cell.startsWith('pass|');
+		}).length;
+		if (passes + activeSameKind.length >= needed) return reject('no_open_validation_slot');
 		if (activeSameKind.some((l) => l.user_id === author)) return reject('already_locked');
 	}
 

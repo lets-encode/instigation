@@ -4,7 +4,6 @@ import { SyntaxValidator } from 'fast-xml-validator';
 import {
 	buildBlankScoreMei,
 	buildFacsimileMei,
-	buildMeiHead,
 	initialFacsimileModel,
 	parseFacsimileMei,
 	relinkFacsimileImages,
@@ -13,6 +12,10 @@ import {
 	type FacsimilePage,
 	type FacsimileModel
 } from '../mei-facsimile.ts';
+
+// A minimal header for the generated scores; production headers come from
+// buildPieceHead (source-metadata.ts).
+const HEAD = '   <meiHead xml:id="head-1">\n      <fileDesc xml:id="fileDesc-1"/>\n   </meiHead>';
 
 const twoPages: FacsimilePage[] = [
 	{
@@ -32,7 +35,7 @@ const twoPages: FacsimilePage[] = [
 	}
 ];
 
-const model = () => initialFacsimileModel(twoPages, { title: 'T', composer: 'C', license: 'L' });
+const model = () => ({ ...initialFacsimileModel(twoPages), headXml: HEAD });
 
 test('stage A: surfaces, graphics and labelled zones — no measures, no breaks', () => {
 	const mei = buildFacsimileMei(model());
@@ -161,11 +164,34 @@ test('movements: the first zone never opens a second <mdiv>', () => {
 	assert.equal((mei.match(/<mdiv /g) ?? []).length, 1);
 });
 
-test('fills and escapes the header metadata', () => {
-	const mei = buildFacsimileMei(initialFacsimileModel(twoPages, { title: 'A & B', composer: '<X>', license: 'CC-BY-4.0' }));
-	assert.match(mei, /<title[^>]*>A &amp; B<\/title>/);
-	assert.match(mei, /<persName[^>]*role="composer"[^>]*>&lt;X&gt;<\/persName>/);
-	assert.match(mei, /<useRestrict[^>]*>CC-BY-4\.0<\/useRestrict>/);
+test('escapes markup-significant characters in labels and targets', () => {
+	const m = model();
+	m.pages[0].image = 'img/d\'un & "co".jpg';
+	m.pages[0].zones[0].label = '1 & <2>';
+	const mei = buildFacsimileMei(m, { withBreaks: true });
+	assert.match(mei, /target="img\/d'un &amp; &quot;co&quot;\.jpg"/);
+	assert.match(mei, /n="1 &amp; &lt;2&gt;"/);
+	// The values round-trip through the parser.
+	const parsed = parseFacsimileMei(mei);
+	assert.equal(parsed.pages[0].image, 'img/d\'un & "co".jpg');
+	assert.equal(parsed.pages[0].zones[0].label, '1 & <2>');
+});
+
+test('an attribute carrying &apos; round-trips without double escaping', () => {
+	// An externally authored file may escape the apostrophe; a rebuild must
+	// emit it plainly, not re-escape the entity to &amp;apos;.
+	const withApos = buildFacsimileMei(model(), { withBreaks: true }).replace(
+		'type="measure" n="1"',
+		'type="measure" n="l&apos;istesso"'
+	);
+	const parsed = parseFacsimileMei(withApos);
+	assert.equal(parsed.pages[0].zones[0].label, "l'istesso");
+	const rebuilt = buildFacsimileMei(
+		{ headXml: parsed.headXml, pages: parsed.pages },
+		{ withBreaks: true }
+	);
+	assert.ok(rebuilt.includes(`n="l'istesso"`));
+	assert.ok(!rebuilt.includes('&amp;apos;'));
 });
 
 test('sortReadingOrder groups systems top-to-bottom and orders each left-to-right', () => {
@@ -192,7 +218,7 @@ test('sortReadingOrder groups systems top-to-bottom and orders each left-to-righ
 
 test('a page with no detected measures still emits its surface', () => {
 	const mei = buildFacsimileMei(
-		initialFacsimileModel([{ image: 'img/01.jpg', width: 800, height: 600, measures: [] }], {})
+		initialFacsimileModel([{ image: 'img/01.jpg', width: 800, height: 600, measures: [] }])
 	);
 	assert.equal((mei.match(/<surface /g) ?? []).length, 1);
 	assert.equal((mei.match(/<zone /g) ?? []).length, 0);
@@ -232,6 +258,34 @@ test('relinkFacsimileImages retargets each surface and scales it to the image', 
 	assert.match(relinked, /<graphic xml:id="g2" target="img\/02\.jpg" width="2000" height="2581"\/>/);
 });
 
+test('a self-closing surface is complete: the surface after it still parses', () => {
+	const mei =
+		`<mei><meiHead><fileDesc/></meiHead><music/>` +
+		`<facsimile><surface xml:id="s1" n="1"/>` +
+		`<surface xml:id="s2" n="2">` +
+		`<graphic target="img/02.jpg" width="800" height="600"/>` +
+		`<zone xml:id="z1" type="measure" ulx="10" uly="20" lrx="110" lry="120"/>` +
+		`</surface></facsimile></mei>`;
+	const parsed = parseFacsimileMei(mei);
+	// The self-closing surface has no graphic and yields no page; the one
+	// following it must not be swallowed by its match.
+	assert.equal(parsed.pages.length, 1);
+	assert.equal(parsed.pages[0].image, 'img/02.jpg');
+	assert.equal(parsed.pages[0].zones.length, 1);
+});
+
+test('relinkFacsimileImages leaves a self-closing surface as it is', () => {
+	const mei =
+		`<facsimile><surface xml:id="s1"/>` +
+		`<surface xml:id="s2"><graphic target="img/02.jpg" width="100" height="100"/></surface></facsimile>`;
+	const relinked = relinkFacsimileImages(mei, [
+		{ target: '../img/01.jpg', width: 50, height: 50 },
+		{ target: '../img/02.jpg', width: 50, height: 50 }
+	]);
+	assert.ok(relinked.includes('<surface xml:id="s1"/>'));
+	assert.match(relinked, /<graphic target="\.\.\/img\/02\.jpg" width="50" height="50"\/>/);
+});
+
 test('relinkFacsimileImages leaves a surface whose graphic declares no size', () => {
 	const mei = `<facsimile><surface><graphic target="img/01.jpg"/><zone ulx="10" uly="20" lrx="30" lry="40"/></surface></facsimile>`;
 	const relinked = relinkFacsimileImages(mei, [{ target: '../img/01.jpg', width: 800, height: 600 }]);
@@ -241,7 +295,7 @@ test('relinkFacsimileImages leaves a surface whose graphic declares no size', ()
 });
 
 test('buildBlankScoreMei: one pb and one seed measure per page, no facsimile', () => {
-	const mei = buildBlankScoreMei(buildMeiHead({ title: 'Blank' }), 3);
+	const mei = buildBlankScoreMei(HEAD, 3);
 	assert.equal(SyntaxValidator.validate(mei), true);
 	assert.ok(!mei.includes('<facsimile>'));
 	assert.equal((mei.match(/<pb /g) ?? []).length, 3);
@@ -256,7 +310,7 @@ test('buildBlankScoreMei: one pb and one seed measure per page, no facsimile', (
 });
 
 test('buildBlankScoreMei without a page count seeds a single unpaged measure', () => {
-	const mei = buildBlankScoreMei(buildMeiHead({ title: 'Blank' }), 0);
+	const mei = buildBlankScoreMei(HEAD, 0);
 	assert.equal(SyntaxValidator.validate(mei), true);
 	assert.ok(!mei.includes('<pb '));
 	assert.equal((mei.match(/<measure /g) ?? []).length, 1);

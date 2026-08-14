@@ -114,6 +114,33 @@ test('cancel stops pages that have not started; in-flight ones finish', async (t
 	assert.equal(fetchMock.mock.callCount(), 2);
 });
 
+test('a detector failure (HTTP 500) is not cached; a genuine empty page is', async (t) => {
+	let call = 0;
+	const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+		if (call++ === 0) return Response.json({ message: 'boom' }, { status: 500 });
+		return Response.json({ measures: [] });
+	});
+	const images = [page('sources/img/01.jpg', 'flaky-detector-bytes')];
+	const session = startDetection(images, 'https://d.example', options);
+
+	// The failure surfaces as an empty result, flagged, without throwing.
+	const failed = await session.page(0);
+	assert.deepEqual(failed.boxes, []);
+	assert.equal(failed.detectorFailed, true);
+
+	// Awaiting the page again re-attempts; the genuine empty result then sticks.
+	const retried = await session.page(0);
+	assert.deepEqual(retried.boxes, []);
+	assert.equal(retried.detectorFailed, undefined);
+	assert.equal(fetchMock.mock.callCount(), 2);
+
+	const again = startDetection(images, 'https://d.example', options);
+	assert.deepEqual(await again.page(0), retried);
+	assert.equal(fetchMock.mock.callCount(), 2, 'the empty detection is served from the cache');
+	session.cancel();
+	again.cancel();
+});
+
 test('a failed page is retried when awaited again, a successful one is not', async (t) => {
 	let call = 0;
 	const fetchMock = t.mock.method(globalThis, 'fetch', async () => {

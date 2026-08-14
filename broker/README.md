@@ -3,9 +3,11 @@
 The server-side piece of the SPA's GitHub auth. The OAuth token **never reaches
 the browser**: the whole flow runs here, the token is kept in a server-side
 session, and the browser holds only an opaque httpOnly session cookie.
-The authorization-code exchange also uses PKCE (S256) and requests the
-`public_repo` and `notifications` scopes used by repository mutations and
-notification muting.
+The authorization-code exchange sends a PKCE (S256) `code_challenge`, but
+GitHub's classic OAuth App token endpoint is not documented to enforce it —
+the OAuth `state` parameter is the load-bearing CSRF protection. The exchange
+requests the `public_repo` and `notifications` scopes used by repository
+mutations and notification muting.
 
 - `GET /login?return_to=/path` — starts the OAuth flow (redirects to GitHub).
 - `GET /authorize` — GitHub's callback: exchanges the code, stores the token in
@@ -31,7 +33,10 @@ retired name that stays occupied). A name is taken in two steps because a
 campaign's setup takes a while and the name must be safe for the whole of it:
 `POST /registry/claim` holds it against a claim token from the moment the
 organiser picks it, and `POST /registry/register` presents that token when the
-setup is finished. Registration happens at the *end* of setup, not when the
+setup is finished. Registering verifies the repo at GitHub with the session's
+token: the caller must hold push permission on the repository the name is
+bound to (403 otherwise; an unknown repo or a non-github forge is 404).
+Registration happens at the *end* of setup, not when the
 repository is created — a repository is not yet a campaign, and an abandoned
 setup must never be published as one. A claim is a short lease: one that
 nobody promotes occupies nothing once it has run out (reads report the name
@@ -45,7 +50,10 @@ so the name stays occupied).
 proxy** before requests reach the broker (see `deploy/apache.conf`). The
 built-in `ADMIN_TOKEN` bearer check is defence in depth and a dev/local
 fallback, not the primary control: one shared secret, no rotation, no audit
-trail. With `ADMIN_TOKEN` unset, admin routes answer 503 (fail closed).
+trail. The routes serve only when `ADMIN_TOKEN` and `ADMIN_ROUTES_ENABLED=1`
+are both set; otherwise they answer 503 (fail closed), so a token set for CLI
+use alone exposes nothing. Setting the token without the flag logs a warning
+at startup.
 
 Sessions are files under `instance/sessions` (gitignored, `0700`), shared
 between gunicorn workers on the same host; set `SESSION_DIR` to override. The
@@ -79,7 +87,10 @@ Environment variables:
 | `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
 | `SESSION_DIR` | optional: session file directory |
 | `DB_PATH` | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it |
-| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `deploy/apache.conf`). Unset ⇒ admin routes answer 503 |
+| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `deploy/apache.conf`) |
+| `ADMIN_ROUTES_ENABLED` | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503 |
+| `PROXY_FIX_X_FOR` | optional: the number of reverse proxies in front (1 behind the `deploy/` Apache vhosts); when set, X-Forwarded-For supplies the client address the rate limits key on. Leave unset without a trusted proxy — the header would be spoofable |
+| `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes) |
 
 The broker loads these from its process environment. The simplest way locally is a
 `broker/.env` file (auto-loaded via python-dotenv, and gitignored):
@@ -140,10 +151,16 @@ they are reported separately from GitHub primary or secondary limits.
   front is fine.
 - **Trust the forwarded client IP** — behind a proxy every request appears to
   come from that proxy, which would turn the rate limits into one bucket shared
-  by all users. `ProxyFix` is **not wired in the code**: wrapping the app in it
-  (`x_for` set to the number of proxies in front) is a deployer TODO, and until
-  it is done the per-client rate limits collapse into that single shared
-  bucket. Confirm `request.remote_addr` resolves to a real client.
+  by all users. Set `PROXY_FIX_X_FOR` to the number of proxies in front (1 for
+  the `deploy/` Apache vhosts) and the app wraps itself in werkzeug's
+  `ProxyFix`; left unset, X-Forwarded-For is not trusted and the per-client
+  limits collapse into that single shared bucket. Confirm
+  `request.remote_addr` resolves to a real client.
+- **Rate-limit counters are per worker by default** — the limiter's `memory://`
+  storage is in-process, so with gunicorn's 2 workers the effective limits are
+  twice the stated ones, and counters reset on restart. Set
+  `RATELIMIT_STORAGE_URI` to a shared store (redis/memcached) for exact,
+  restart-surviving limits.
 - **Nothing may rewrite the session cookie** — the production cookie name uses
   the `__Host-` prefix, which browsers reject outright unless the cookie is
   `Secure`, scoped to `Path=/`, and carries no `Domain` attribute. A proxy that
@@ -157,5 +174,7 @@ they are reported separately from GitHub primary or secondary limits.
 ## Provider note
 
 This broker exists because holding the token server-side keeps it out of reach
-of any script running in the page. PKCE protects the authorization-code exchange
-as well. Auth remains a provider trait (see `src/lib/forge/config.ts`).
+of any script running in the page. The authorization-code exchange is protected
+by the OAuth `state` parameter; a PKCE `code_challenge` is sent alongside it,
+though GitHub's OAuth App token endpoint is not documented to enforce it. Auth
+remains a provider trait (see `src/lib/forge/config.ts`).

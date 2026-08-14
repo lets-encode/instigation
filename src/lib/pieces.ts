@@ -54,7 +54,8 @@ export function pieceColour(index: number): string {
 	return `var(--zone-${(index % PIECE_COLOURS) + 1})`;
 }
 
-const pad2 = (n: number): string => String(n).padStart(2, '0');
+/** A number as two digits ("1" → "01"), for stable, sortable file and id names. */
+export const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /** An id not already taken by `pieces`, numbered from the count upwards. */
 export function nextPieceId(pieces: Piece[]): string {

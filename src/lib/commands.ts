@@ -35,6 +35,7 @@ import {
 	resolveLogins
 } from './campaign-tables.ts';
 import { checkPlan } from './campaign-plan.ts';
+import { resetTaskRows, resolveCommentThread } from './campaign-submit.ts';
 import { isPreTask } from './campaign-graph.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow, PieceRef } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
@@ -166,10 +167,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // against it. GitHub auto-subscribes a PR's author, so the automation's
 // comment-and-close on each claim/submission PR would otherwise email them
 // ("you authored the thread"). Skipped when this browser already muted the repo
-// or when it is already ignored server-side. Non-fatal — a token can only mute
-// its own user, and only when granted the OAuth 'notifications' scope.
-async function muteOnce(f: ForgeClient, repoId: number, owner: string, repo: string): Promise<void> {
-	const key = `lets-encode:muted:${repoId}`;
+// for this user (the key carries the user's account id, so switching accounts
+// in the same browser re-mutes) or when it is already ignored server-side.
+// Non-fatal — a token can only mute its own user, and only when granted the
+// OAuth 'notifications' scope.
+async function muteOnce(ctx: CommandContext): Promise<void> {
+	const { forge: f, repoId, owner, repo, viewer } = ctx;
+	const key = `lets-encode:muted:${viewer}:${repoId}`;
 	const storage = typeof localStorage === 'undefined' ? null : localStorage;
 	if (storage?.getItem(key)) return;
 	try {
@@ -356,7 +360,10 @@ function finishInBackground(
 			const outcome = await waitForPrProcessed(background, pr);
 			res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
 		} catch (e) {
-			res = { error: `${label}: ${(e as Error).message}` };
+			// The poll failed, not necessarily the submission — an indeterminate
+			// outcome settles as "still being processed", never as a rejection.
+			console.warn('[pending-verdict]', label, 'poll failed:', (e as Error).message);
+			res = verdictResult({ state: 'timeout' }, pr.number, pr.html_url, `${label} processed.`);
 		}
 		const state = res.error ? 'rejected' : res.warn ? 'timeout' : 'accepted';
 		console.log('[pending-verdict]', label, 'PR', pr.number, state);
@@ -379,8 +386,8 @@ async function openClaimPr(
 	kind: string,
 	envelope: CommandEnvelope | null
 ) {
-	const { forge: f, repoId, owner, repo, viewer, viewerLogin } = ctx;
-	await muteOnce(f, repoId, owner, repo);
+	const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
+	await muteOnce(ctx);
 	const lockRows = parseLockCsv((await f.getRepoFile(owner, repo, LOCK_PATH)) ?? '');
 	lockRows.push({
 		task_id,
@@ -399,6 +406,34 @@ async function openClaimPr(
 		title: `Claim ${target} (${kind})`,
 		body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 	});
+}
+
+// Open a claim PR and wait for its verdict synchronously — the claim gates the
+// user's next step. A poll failure after the PR opened is indeterminate: it
+// resolves as the "still being processed" warning, never as a rejection.
+async function claimAndWait(
+	ctx: CommandContext,
+	task_id: string,
+	subtask_id: string,
+	kind: string,
+	envelope: CommandEnvelope | null
+): Promise<Result> {
+	try {
+		ctx.progress({ step: 'Opening claim PR…' });
+		const pr = await openClaimPr(ctx, task_id, subtask_id, kind, envelope);
+		console.log('[claim] claim PR opened', pr.number, pr.html_url);
+		let verdict: PrProcessingResult;
+		try {
+			verdict = await waitForPrProcessed(ctx, pr);
+		} catch (e) {
+			console.warn('[claim] verdict poll failed:', (e as Error).message);
+			verdict = { state: 'timeout' };
+		}
+		const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
+		return verdictResult(verdict, pr.number, pr.html_url, `Opened claim PR #${pr.number} for ${target} (${kind}).`);
+	} catch (e) {
+		return { error: `Claim failed: ${(e as Error).message}` };
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -505,22 +540,7 @@ const claimValidation: CommandDef<{ task_id: string; subtask_id: string }, Resul
 	id: 'campaign.claimValidation',
 	version: 1,
 	log: 'pr',
-	async run({ task_id, subtask_id }, ctx, envelope) {
-		try {
-			ctx.progress({ step: 'Opening claim PR…' });
-			const pr = await openClaimPr(ctx, task_id, subtask_id, 'validation', envelope);
-			console.log('[claim] claim PR opened', pr.number, pr.html_url);
-			const verdict = await waitForPrProcessed(ctx, pr);
-			return verdictResult(
-				verdict,
-				pr.number,
-				pr.html_url,
-				`Opened claim PR #${pr.number} for ${task_id}/${subtask_id} (validation).`
-			);
-		} catch (e) {
-			return { error: `Claim failed: ${(e as Error).message}` };
-		}
-	}
+	run: ({ task_id, subtask_id }, ctx, envelope) => claimAndWait(ctx, task_id, subtask_id, 'validation', envelope)
 };
 
 // Prepare the task's score for mei-friend and return the hand-off URL; opening
@@ -619,9 +639,9 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 	version: 1,
 	log: 'pr',
 	async run({ task_id }, ctx, envelope) {
-		const { forge: f, repoId, owner, repo, viewerLogin } = ctx;
+		const { forge: f, owner, repo, viewerLogin } = ctx;
 		try {
-			await muteOnce(f, repoId, owner, repo);
+			await muteOnce(ctx);
 			ctx.progress({ step: 'Opening the submission PR…' });
 			const { branch: base, canPush } = await f.getRepoHead(owner, repo);
 			// The claim/editor flow put the encoding on `encode-<task_id>` — in the
@@ -674,7 +694,7 @@ const submitValidation: CommandDef<
 	log: 'pr',
 	envelopeInput: ({ task_id, subtask_id, verdict }) => ({ task_id, subtask_id, verdict }),
 	async run({ task_id, subtask_id, verdict, comment }, ctx, envelope) {
-		const { forge: f, repoId, owner, repo } = ctx;
+		const { forge: f, owner, repo } = ctx;
 		try {
 			if (verdict !== 'pass' && verdict !== 'fail') {
 				return { error: `Invalid validation verdict: ${verdict}.` };
@@ -682,7 +702,7 @@ const submitValidation: CommandDef<
 			if (verdict === 'fail' && !comment?.body.trim()) {
 				return { error: 'A fail needs a comment saying why — nothing was submitted.' };
 			}
-			await muteOnce(f, repoId, owner, repo);
+			await muteOnce(ctx);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
 			const row = findRow(state.rows, task_id, subtask_id);
 			if (!row) return { error: `Unknown subtask ${task_id}/${subtask_id}.` };
@@ -753,10 +773,10 @@ const submitComment: CommandDef<
 	log: 'pr',
 	envelopeInput: ({ task_id, subtask_id, kind, parent_id }) => ({ task_id, subtask_id, kind, parent_id }),
 	async run(input, ctx, envelope) {
-		const { forge: f, repoId, owner, repo } = ctx;
+		const { forge: f, owner, repo } = ctx;
 		try {
 			if (!input.body.trim()) return { error: 'The comment is empty — nothing was sent.' };
-			await muteOnce(f, repoId, owner, repo);
+			await muteOnce(ctx);
 			const commentCsv = (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '';
 			const content = appendComments(commentCsv, [
 				{
@@ -798,19 +818,21 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 	version: 1,
 	log: 'pr',
 	async run({ comment_id }, ctx, envelope) {
-		const { forge: f, repoId, owner, repo } = ctx;
+		const { forge: f, owner, repo } = ctx;
 		try {
-			await muteOnce(f, repoId, owner, repo);
+			await muteOnce(ctx);
 			const comments = parseCommentCsv((await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '');
 			const row = comments.find((c) => c.comment_id === comment_id);
 			if (!row) return { error: `Unknown comment ${comment_id}.` };
 			if (row.resolved === 'true') return { ok: true, warn: true, message: 'Already resolved.' };
-			row.resolved = 'true';
+			// A resolved comment takes its replies with it (the automation enforces
+			// the same on its side).
+			const resolved = resolveCommentThread(comments, comment_id);
 			ctx.progress({ step: 'Resolving the comment…' });
 			const body = `Resolves comment ${comment_id} on ${row.task_id}. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
 				branch: `resolve-${comment_id}-${rand()}`,
-				files: [{ path: COMMENT_PATH, content: serializeCommentCsv(comments) }],
+				files: [{ path: COMMENT_PATH, content: serializeCommentCsv(resolved) }],
 				message: `Resolve comment ${comment_id}`,
 				title: `Resolve comment ${comment_id}`,
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
@@ -832,9 +854,9 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 	version: 1,
 	log: 'pr',
 	async run({ task_id }, ctx, envelope) {
-		const { forge: f, repoId, owner, repo } = ctx;
+		const { forge: f, owner, repo } = ctx;
 		try {
-			await muteOnce(f, repoId, owner, repo);
+			await muteOnce(ctx);
 			const [stateCsv, taskCsv] = await Promise.all([
 				f.getRepoFile(owner, repo, STATE_PATH),
 				f.getRepoFile(owner, repo, TASK_PATH)
@@ -844,17 +866,7 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 			if (!row) return { error: `Unknown task ${task_id}.` };
 			const locator = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.locator ?? '';
 			const stage = isPreTask(locator) ? 'measure correction' : 'encoding';
-			for (const r of state.rows) {
-				if (r.task_id !== task_id) continue;
-				if (r.subtask_id === '') {
-					r.status = 'encoding_required';
-					r.encoder = '';
-					r.encoded_at = '';
-				} else {
-					r.status = 'pending';
-				}
-				for (const column of state.validationColumns) r[column] = '';
-			}
+			resetTaskRows(state.rows, state.validationColumns, task_id);
 			ctx.progress({ step: 'Opening the send-back PR…' });
 			const body = `Sends ${task_id} back for ${stage} after a failed validation. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
@@ -1120,17 +1132,7 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 	id: 'campaign.claimTask',
 	version: 1,
 	log: 'pr',
-	async run({ task_id }, ctx, envelope) {
-		try {
-			ctx.progress({ step: 'Opening claim PR…' });
-			const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
-			console.log('[claim] claim PR opened', pr.number, pr.html_url);
-			const verdict = await waitForPrProcessed(ctx, pr);
-			return verdictResult(verdict, pr.number, pr.html_url, `Opened claim PR #${pr.number} for ${task_id} (encoding).`);
-		} catch (e) {
-			return { error: `Claim failed: ${(e as Error).message}` };
-		}
-	}
+	run: ({ task_id }, ctx, envelope) => claimAndWait(ctx, task_id, '', 'encoding', envelope)
 };
 
 // Open the PR carrying a rewritten score, wait for the automation's verdict.
@@ -1148,9 +1150,9 @@ async function submitFacsimile(
 	pages: PageModel[],
 	envelope: CommandEnvelope | null
 ): Promise<Result> {
-	const { forge: f, repoId, owner, repo } = ctx;
+	const { forge: f, owner, repo } = ctx;
 	try {
-		await muteOnce(f, repoId, owner, repo);
+		await muteOnce(ctx);
 		const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
 		const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
 		if (!fragment) return { error: `Unknown task ${task_id}.` };

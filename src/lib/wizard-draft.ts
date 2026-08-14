@@ -63,6 +63,17 @@ export interface WizardDraft {
 
 const draftKey = (handle: string) => `${KEY_PREFIX}${handle}`;
 
+// The wizard's step ids, mirroring WIZARD_STEPS in wizard.svelte.ts (that
+// module imports this one, so the list cannot be read from there).
+const STEP_IDS: readonly WizardStepId[] = [
+	'name',
+	'license',
+	'upload',
+	'pages',
+	'source',
+	'pieces'
+];
+
 // Storage is read through this so the module can be used where there is none.
 const store = () => (typeof localStorage === 'undefined' ? null : localStorage);
 
@@ -85,6 +96,10 @@ export function parseDraft(text: string | null): WizardDraft | null {
 	if (typeof draft.owner !== 'string') return null;
 	const entries = draft.entries;
 	if (!entries || typeof entries !== 'object') return null;
+	if (!STEP_IDS.includes(entries.step)) return null;
+	if (typeof entries.title !== 'string') return null;
+	if (typeof entries.description !== 'string') return null;
+	if (typeof entries.license !== 'string') return null;
 	if (!Array.isArray(entries.imagePaths)) return null;
 	if (!Array.isArray(entries.encodings)) return null;
 	if (!Array.isArray(entries.pieces)) return null;
