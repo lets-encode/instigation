@@ -13,6 +13,7 @@
   import type { LockRow, CommentRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
   import { handle, sendBackTarget, statusPill } from "$lib/campaign-graph.ts";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import {
     buildRecord,
     buildThreads,
@@ -74,6 +75,13 @@
   } = $props();
 
   const record = $derived(buildRecord(card, comments, viewer, logins));
+  // A verdict already submitted for a subtask and still being processed: its
+  // controls hold until it lands — a repeat would only be rejected.
+  const verdictPending = (sub: string) =>
+    pendingVerdicts.isProcessing(`validate:${card.task}/${sub}`);
+  // Same hold for the task's own one-shot submissions.
+  const encodePending = $derived(pendingVerdicts.isProcessing(`encode:${card.task}`));
+  const sendBackPending = $derived(pendingVerdicts.isProcessing(`sendback:${card.task}`));
   const orphanFails = $derived(orphanedFails(card, comments));
   const threads = $derived(buildThreads(comments, card.task));
   const mineEncoding = $derived(
@@ -208,7 +216,7 @@
           type="button"
           class="mbtn primary"
           onclick={() => onsubmitencoding(card.task)}
-          disabled={runner.busy}
+          disabled={runner.busy || encodePending}
           title="After committing your encoding in mei-friend, submit it for validation."
           >Submit for validation</button
         >
@@ -263,7 +271,7 @@
                   type="button"
                   class="dangerbtn"
                   onclick={() => onsendback(card.task)}
-                  disabled={runner.busy}
+                  disabled={runner.busy || sendBackPending}
                   title={`Return the task to ${sendBackTarget(card.locator)}: attribution and validations reset.`}
                   >{`Send back ${card.pre ? "to" : "for"} ${sendBackTarget(card.locator)}`}</button
                 >
@@ -289,7 +297,7 @@
                 type="button"
                 class="claimbtn"
                 onclick={() => onclaim(card.task, r.sub)}
-                disabled={runner.busy}
+                disabled={runner.busy || verdictPending(r.sub)}
                 title="Reserve this validation slot for review."
                 >Claim to review</button
               >
@@ -300,7 +308,7 @@
                 type="button"
                 class="passbtn"
                 onclick={() => onvalidate(card.task, r.sub, "pass")}
-                disabled={runner.busy}
+                disabled={runner.busy || verdictPending(r.sub)}
                 title="Record a passing verdict.">Pass</button
               >
               <button
@@ -318,7 +326,7 @@
                           m1: "",
                           m2: "",
                         })}
-                disabled={runner.busy}
+                disabled={runner.busy || verdictPending(r.sub)}
                 title="Record a failing verdict — a fail carries a comment saying why."
                 >Fail</button
               >
@@ -354,7 +362,9 @@
                   type="button"
                   class="dangerbtn"
                   onclick={submitFail}
-                  disabled={runner.busy || !failForm.body.trim()}
+                  disabled={runner.busy ||
+                    !failForm.body.trim() ||
+                    verdictPending(failForm.sub)}
                   >Submit fail</button
                 >
               </div>

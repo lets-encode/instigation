@@ -318,7 +318,7 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
  * directly — it uses Svelte runes, which only exist under the Svelte compiler.
  */
 export interface PendingVerdictSink {
-	begin(entry: { label: string; prNumber: number; prUrl: string }): string;
+	begin(entry: { label: string; prNumber: number; prUrl: string; key?: string }): string;
 	settle(id: string, state: 'accepted' | 'rejected' | 'timeout', message: string): void;
 }
 
@@ -351,9 +351,11 @@ function finishInBackground(
 		head?: { owner: string; repo: string; branch: string };
 		cleanup?: 'always' | 'accepted';
 	},
-	label: string
+	label: string,
+	/** Structured id of the acted-on target, so UIs can hold its controls while the verdict is pending. */
+	key?: string
 ): Result {
-	const id = verdictSink.begin({ label, prNumber: pr.number, prUrl: pr.html_url });
+	const id = verdictSink.begin({ label, prNumber: pr.number, prUrl: pr.html_url, key });
 	const background: CommandContext = { ...ctx, progress: () => {} };
 	void (async () => {
 		let res: Result;
@@ -667,7 +669,12 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[submitpr] submission PR opened', pr.number, pr.html_url);
-			return finishInBackground(ctx, { ...pr, head: forkHead, cleanup: 'accepted' }, `Encoding of ${task_id}`);
+			return finishInBackground(
+				ctx,
+				{ ...pr, head: forkHead, cleanup: 'accepted' },
+				`Encoding of ${task_id}`,
+				`encode:${task_id}`
+			);
 		} catch (e) {
 			return { error: `Submission PR failed: ${(e as Error).message}` };
 		}
@@ -747,7 +754,12 @@ const submitValidation: CommandDef<
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[validate] validation PR opened', pr.number, pr.html_url);
-			return finishInBackground(ctx, pr, `Validation of ${task_id}/${subtask_id} (${verdict})`);
+			return finishInBackground(
+				ctx,
+				pr,
+				`Validation of ${task_id}/${subtask_id} (${verdict})`,
+				`validate:${task_id}/${subtask_id}`
+			);
 		} catch (e) {
 			return { error: `Validate failed: ${(e as Error).message}` };
 		}
@@ -878,7 +890,7 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[sendback] PR opened', pr.number, pr.html_url);
-			return finishInBackground(ctx, pr, `Send-back of ${task_id}`);
+			return finishInBackground(ctx, pr, `Send-back of ${task_id}`, `sendback:${task_id}`);
 		} catch (e) {
 			return { error: `Send back failed: ${(e as Error).message}` };
 		}

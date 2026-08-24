@@ -13,6 +13,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
 
@@ -258,6 +259,23 @@
   // The review happens here too: the same claim/pass/fail the console offers,
   // against the task's validation subtask.
   const validation = $derived(data?.validation ?? null);
+  // A verdict already submitted here and still being processed: the verdict
+  // controls hold until it lands — a repeat would only be rejected.
+  const verdictPending = $derived(
+    !!validation &&
+      pendingVerdicts.isProcessing(`validate:${taskId}/${validation.subtask_id}`),
+  );
+  // A settled background verdict changed the tables; reload the read-only
+  // view so it shows the recorded state. An edit session is never reloaded —
+  // that would discard the volunteer's unsubmitted work.
+  $effect(() =>
+    pendingVerdicts.onSettled(() => {
+      if (!canEdit && !runner.busy) {
+        data = null;
+        loaded = false;
+      }
+    }),
+  );
   const submitted = $derived(
     data?.status === "validation_required" || data?.status === "completed",
   );
@@ -280,7 +298,8 @@
       validation.openSlots > 0 &&
       !validation.lockUser &&
       !selfValidation &&
-      !alreadyValidated,
+      !alreadyValidated &&
+      !verdictPending,
   );
   const failComments = $derived(data?.failComments ?? []);
   const failedVerdicts = $derived(
@@ -296,6 +315,10 @@
   );
   const sendBack = () =>
     run((c) => invoke(commands.sendBack, { task_id: taskId }, c));
+  // Same hold for a send-back already on its way.
+  const sendBackPending = $derived(
+    pendingVerdicts.isProcessing(`sendback:${taskId}`),
+  );
 
   // Logins for verdict authors, fail-comment authors and the encoding lock
   // holder (id → login, display).
@@ -838,6 +861,8 @@
           <span class="vstatus">
             {#if validation.status === "completed"}
               Validation complete
+            {:else if verdictPending}
+              Your verdict is being processed…
             {:else if validation.lockUser}
               {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
             {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
@@ -864,9 +889,9 @@
                 title={data?.allowSelfValidation
                   ? "Reserve this subtask for validation."
                   : "Reserve this subtask for validation. Encoders cannot validate their own work."}>Claim</button>
-              <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation}
+              <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation || verdictPending}
                 title="Record a passing verdict.">Pass</button>
-              <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation}
+              <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation || verdictPending}
                 title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
             </div>
           {/if}
@@ -884,7 +909,7 @@
                 type="button"
                 class="vfail"
                 onclick={() => validate("fail")}
-                disabled={runner.busy || !failText.trim()}
+                disabled={runner.busy || !failText.trim() || verdictPending}
                 title="Submit the failing verdict with this comment."
                 >Submit fail</button
               >
@@ -895,7 +920,7 @@
               type="button"
               class="sendbackbtn"
               onclick={() => sendBack()}
-              disabled={runner.busy}
+              disabled={runner.busy || sendBackPending}
               title="Return the task to score setup: attribution and validations reset."
               >Send back to score setup</button
             >

@@ -16,6 +16,8 @@ export interface PendingVerdict {
 	label: string;
 	prNumber: number;
 	prUrl: string;
+	/** Structured id of the acted-on target (e.g. "validate:T0002/S0001"); '' when untyped. */
+	key: string;
 	state: PendingState;
 	/** The verdict or error text once settled; '' while processing. */
 	message: string;
@@ -37,10 +39,16 @@ class PendingVerdictStore {
 		};
 	}
 
-	begin(entry: { label: string; prNumber: number; prUrl: string }): string {
+	begin(entry: { label: string; prNumber: number; prUrl: string; key?: string }): string {
 		const id = crypto.randomUUID().slice(0, 8);
-		this.entries = [...this.entries, { id, ...entry, state: 'processing', message: '' }];
+		this.entries = [...this.entries, { ...entry, key: entry.key ?? '', id, state: 'processing', message: '' }];
 		return id;
+	}
+
+	/** Whether a submission for `key` is still being processed — its controls
+	 * should hold until the verdict lands (a repeat would only be rejected). */
+	isProcessing(key: string): boolean {
+		return this.entries.some((e) => e.key === key && e.state === 'processing');
 	}
 
 	settle(id: string, state: Exclude<PendingState, 'processing'>, message: string): void {

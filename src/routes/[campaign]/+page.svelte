@@ -949,6 +949,9 @@
                                 e.stopPropagation();
                                 submitpr(card.task);
                               }}
+                              disabled={pendingVerdicts.isProcessing(
+                                `encode:${card.task}`,
+                              )}
                               title="After committing in mei-friend, submit the encoding for validation."
                               >Submit →</button
                             >
@@ -1666,7 +1669,11 @@
     padding: 0;
     cursor: pointer;
   }
-  .claimlink:hover {
+  .claimlink:disabled {
+    color: var(--ink-faint);
+    cursor: default;
+  }
+  .claimlink:hover:not(:disabled) {
     text-decoration: underline;
   }
   .card-worker {
