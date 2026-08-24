@@ -4,7 +4,14 @@
 // threads. Builds on the task projection in campaign-graph.ts (statuses,
 // slots, next-up) — no authoritative state lives here. No Svelte, no GitHub.
 
-import { buildGraph, blockedBy, handle, isPreTask } from './campaign-graph.ts';
+import {
+	buildGraph,
+	blockedBy,
+	handle,
+	isPreTask,
+	sendBackTarget,
+	typeLabel
+} from './campaign-graph.ts';
 import type { GraphData, Logins, NodeSlot, StatusKey } from './campaign-graph.ts';
 import { findRow, isFinalValidation } from './campaign-tables.ts';
 import type { CommentRow, HistoryRow } from './campaign-tables.ts';
@@ -37,6 +44,7 @@ const pieceLabel = (fragment: string): string => {
 export function cardTitle(fragment: string, locator: string): string {
 	const page = /^surface-(\d+)$/.exec(locator);
 	if (page) return `${pieceLabel(fragment)} · p. ${page[1]}`;
+	if (locator === 'score-setup') return `${pieceLabel(fragment)} · setup`;
 	if (isPreTask(locator)) return `${pieceLabel(fragment)} · measures`;
 	return pieceLabel(fragment);
 }
@@ -125,9 +133,11 @@ export interface BoardCard {
 	task: string;
 	column: ColumnKey;
 	title: string;
-	/** The type line under the title ("Encoding", "Measure correction"). */
+	/** The type line under the title ("Encoding", "Measure correction", "Score setup"). */
 	typeLine: string;
 	pre: boolean;
+	/** The task's locator, for routing a pre-task to its own editor. */
+	locator: string;
 	statusKey: StatusKey;
 	/** Blocked column: the title of the task this one waits for. */
 	waitsFor: string;
@@ -187,7 +197,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
 };
 
 // The human line behind a history action, or null for rows the ticker skips.
-function tickerText(h: HistoryRow, title: string, pre = false): string | null {
+function tickerText(h: HistoryRow, title: string, locator = ''): string | null {
 	if (h.outcome !== 'accepted' && h.outcome !== 'released') return null;
 	switch (h.action) {
 		case 'claim_encoding':
@@ -199,7 +209,7 @@ function tickerText(h: HistoryRow, title: string, pre = false): string | null {
 		case 'submit_validation':
 			return h.detail === 'fail' ? `failed a validation on ${title}` : `passed a validation on ${title}`;
 		case 'send_back':
-			return `sent ${title} back for ${pre ? 'measure correction' : 'encoding'}`;
+			return `sent ${title} back for ${sendBackTarget(locator)}`;
 		case 'submit_comment':
 			return `commented on ${title}`;
 		case 'resolve_comment':
@@ -226,7 +236,7 @@ function buildTicker(
 		const text = tickerText(
 			h,
 			def ? cardTitle(def.fragment, def.locator) : h.task_id,
-			def ? isPreTask(def.locator) : false
+			def?.locator ?? ''
 		);
 		if (text) entries.push({ login: handle(logins, h.user_id), text, elapsed: elapsed(h.timestamp, now) });
 	}
@@ -263,8 +273,9 @@ export function buildBoard(
 			task: n.task,
 			column,
 			title: cardTitle(def.fragment, def.locator),
-			typeLine: n.kind === 'pre' ? 'Measure correction' : 'Encoding',
+			typeLine: n.kind === 'pre' ? typeLabel(def.locator) : 'Encoding',
 			pre: n.kind === 'pre',
+			locator: def.locator,
 			statusKey: n.statusKey,
 			waitsFor: depDef ? cardTitle(depDef.fragment, depDef.locator) : dep,
 			claimable: viewer !== '' && column === 'ready' && !lock,

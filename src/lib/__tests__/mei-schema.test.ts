@@ -8,8 +8,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildFacsimileMei, initialFacsimileModel } from '../mei-facsimile.ts';
-import type { FacsimilePage } from '../mei-facsimile.ts';
+import { buildBlankScoreMei, buildFacsimileMei, initialFacsimileModel } from '../mei-facsimile.ts';
+import type { FacsimilePage, ScoreDefModel } from '../mei-facsimile.ts';
 import { buildPieceHead, buildSourceHead, emptySourceMetadata } from '../source-metadata.ts';
 import type { SourceMetadata } from '../source-metadata.ts';
 import { recordContribution } from '../mei-provenance.ts';
@@ -143,6 +143,59 @@ test('preserved markup keeps the header valid, wherever it belongs', { skip }, a
 			'   <revisionDesc><change n="1"><changeDesc><p>Created.</p></changeDesc></change></revisionDesc>'
 	});
 	await checkBothStages(head, 'source head with preserved markup');
+});
+
+test('a score rebuilt around a submitted score definition validates', { skip }, async () => {
+	// Both builders, as the score-setup submission rebuilds them: multiple
+	// staves with labels and clefs, a key signature and a meter.
+	const plain = { clefDis: '', clefDisPlace: '', lines: 5, notationType: '' };
+	const scoreDef: ScoreDefModel = {
+		staves: [
+			{ clefShape: 'G', clefLine: 2, ...plain, label: 'Violino' },
+			{ clefShape: 'C', clefLine: 3, ...plain, label: 'Viola' },
+			{ clefShape: 'F', clefLine: 4, ...plain, label: 'Violoncello & Basso' }
+		],
+		groups: [],
+		keysig: '3f',
+		meterCount: '3',
+		meterUnit: '8',
+		meterSym: ''
+	};
+	const head = buildPieceHead(
+		{ title: 'Sonata No. 1', composer: 'L. van Beethoven', license: 'CC BY 4.0' },
+		source()
+	);
+	const model = { ...initialFacsimileModel(PAGES), headXml: head, scoreDef };
+	for (const withBreaks of [false, true]) {
+		const check = await validateMei(buildFacsimileMei(model, { withBreaks }));
+		assert.ok(check.ok, `set-up facsimile score at stage ${withBreaks ? 'C' : 'A'}: ${check.error}`);
+	}
+	for (const pages of [0, 2]) {
+		const check = await validateMei(buildBlankScoreMei(head, pages, scoreDef));
+		assert.ok(check.ok, `set-up blank score with ${pages} pages: ${check.error}`);
+	}
+	// A symbol signature validates too.
+	const cut = { ...scoreDef, meterCount: '2', meterUnit: '2', meterSym: 'cut' };
+	const check = await validateMei(buildBlankScoreMei(head, 0, cut));
+	assert.ok(check.ok, `set-up blank score with cut time: ${check.error}`);
+	// Grouped, displaced, percussion and tablature staves validate.
+	const rich: ScoreDefModel = {
+		...scoreDef,
+		staves: [
+			{ ...plain, clefShape: 'G', clefLine: 2, label: 'Piano' },
+			{ ...plain, clefShape: 'F', clefLine: 4, label: '' },
+			{ ...plain, clefShape: 'G', clefLine: 2, clefDis: '8', clefDisPlace: 'below', label: 'Tenore' },
+			{ ...plain, clefShape: 'perc', clefLine: 3, lines: 1, label: 'Drums' },
+			{ ...plain, clefShape: 'TAB', clefLine: 3, lines: 6, notationType: 'tab.guitar', label: 'Guitar' },
+			{ ...plain, clefShape: 'TAB', clefLine: 3, lines: 6, notationType: 'tab.lute.french', label: '' }
+		],
+		groups: [
+			{ start: 1, end: 2, symbol: 'brace', label: 'Piano' },
+			{ start: 4, end: 6, symbol: 'bracket', label: '' }
+		]
+	};
+	const richCheck = await validateMei(buildBlankScoreMei(head, 0, rich));
+	assert.ok(richCheck.ok, `set-up blank score with groups and unpitched staves: ${richCheck.error}`);
 });
 
 test('a document carrying a DOCTYPE declaration is rejected outright', async () => {

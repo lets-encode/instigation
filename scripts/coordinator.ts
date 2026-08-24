@@ -406,15 +406,21 @@ async function decideEncoding(
   // Record the contribution in the assembled score's header — the revision,
   // the contributor, and the editing application — before the machine check,
   // so the updated header is validated with the rest of the file. Encodings
-  // are edited in mei-friend; a zones submission comes from the console
-  // itself, whose <application> entry every generated score already carries.
+  // are edited in mei-friend; a zones or score-setup submission comes from the
+  // console itself, whose <application> entry every generated score already
+  // carries.
+  const consoleCommands = [
+    "campaign.submitZones",
+    "campaign.submitScoreSetup",
+  ];
   if (mei != null) {
     mei = recordContribution(mei, {
       name: authorLabel,
       message: commitMessage ?? `Encoding of ${task.task_id} accepted.`,
       isodate: now.slice(0, 10),
-      application:
-        envelope?.command === "campaign.submitZones" ? undefined : "mei-friend",
+      application: consoleCommands.includes(envelope?.command ?? "")
+        ? undefined
+        : "mei-friend",
     });
   }
 

@@ -10,12 +10,13 @@
 // Produces, from a filled config:
 //   - config.yaml            (configToYaml)
 //   - sources/<piece>/score.mei  (one per piece; built by mei-facsimile.ts)
-//   - tracking/task.csv      (buildTaskCsv: per piece, a measure-correction
-//                             pre-task plus one encoding task per covered page
-//                             for a facsimile piece; one whole-file task for an
-//                             encoded piece; per-page or whole-file tasks —
-//                             never a pre-task — for a physical piece; each
-//                             with a validation subtask)
+//   - tracking/task.csv      (buildTaskCsv: per piece, a score-setup pre-task,
+//                             a measure-correction pre-task and one encoding
+//                             task per covered page for a facsimile piece; one
+//                             whole-file task for an encoded piece; a
+//                             score-setup pre-task plus per-page or whole-file
+//                             tasks for a physical piece; each with a
+//                             validation subtask)
 //   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
@@ -302,24 +303,32 @@ export interface PlannedTask {
 /**
  * The campaign's tasks, in table order.
  *
- * Each facsimile piece opens with its own measure-correction pre-task
- * (DESIGN.md §7a, locator `measure-zones`) covering measure boxes and numbers,
- * page/system breaks and movement boundaries; its encoding is then split into
- * one task per page carrying measures (locator `surface-N`, matching that
- * page's `<pb>`), each depending on that piece's pre-task. A facsimile piece
- * with no measured pages falls back to a single whole-file encoding task.
+ * Each facsimile and physical piece opens with its own score-setup pre-task
+ * (DESIGN.md §7a, locator `score-setup`), whose deliverable is the piece's
+ * initial score definition — staves with their clefs and instrument labels,
+ * key signature and meter.
+ *
+ * A facsimile piece follows with its measure-correction pre-task (locator
+ * `measure-zones`, depending on the setup task) covering measure boxes and
+ * numbers, page/system breaks and movement boundaries; its encoding is then
+ * split into one task per page carrying measures (locator `surface-N`,
+ * matching that page's `<pb>`), each depending on that piece's
+ * measure-correction pre-task. A facsimile piece with no measured pages falls
+ * back to a single whole-file encoding task.
  *
  * An encoded piece is already notated, so it gets one whole-file task and no
- * pre-task.
+ * pre-tasks.
  *
- * A physical piece is transcribed from the source itself: there is no facsimile
- * to correct measures on, so it gets no pre-task. A known page count splits its
- * encoding into one task per page (locator `surface-N`, matching the blank
- * score's `<pb>` markers); without one it gets a single whole-file task.
+ * A physical piece is transcribed from the source itself: there is no
+ * facsimile to correct measures on, so no measure-correction pre-task. A known
+ * page count splits its encoding into one task per page (locator `surface-N`,
+ * matching the blank score's `<pb>` markers); without one it gets a single
+ * whole-file task. Either way its encoding depends on the setup task.
  *
- * Task numbers run continuously across pieces while pre-task numbers run across
- * facsimile pieces only, so every id is unique campaign-wide. Both tables are
- * rendered from this one plan so they cannot fall out of step.
+ * Task numbers run continuously across pieces while pre-task numbers run
+ * across facsimile and physical pieces only, so every id is unique
+ * campaign-wide. Both tables are rendered from this one plan so they cannot
+ * fall out of step.
  */
 export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): PlannedTask[] {
 	const planned: PlannedTask[] = [];
@@ -327,16 +336,18 @@ export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): Pla
 	let preTasks = 0;
 	for (const piece of config.pieces) {
 		if (piece.kind === 'physical-only') {
+			const setup = preTaskId(++preTasks);
+			planned.push({ id: setup, fragment: piece.path, locator: 'score-setup', dependsOn: '' });
 			const count = piece.pages ?? 0;
 			if (count < 1) {
-				planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: '' });
+				planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: setup });
 			} else {
 				for (let page = 1; page <= count; page++) {
 					planned.push({
 						id: taskId(++tasks),
 						fragment: piece.path,
 						locator: `surface-${page}`,
-						dependsOn: ''
+						dependsOn: setup
 					});
 				}
 			}
@@ -346,8 +357,10 @@ export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): Pla
 			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: '' });
 			continue;
 		}
+		const setup = preTaskId(++preTasks);
+		planned.push({ id: setup, fragment: piece.path, locator: 'score-setup', dependsOn: '' });
 		const pre = preTaskId(++preTasks);
-		planned.push({ id: pre, fragment: piece.path, locator: 'measure-zones', dependsOn: '' });
+		planned.push({ id: pre, fragment: piece.path, locator: 'measure-zones', dependsOn: setup });
 		const pages = surfacesFor(piece, surfaces);
 		if (pages.length === 0) {
 			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: pre });

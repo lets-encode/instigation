@@ -6,11 +6,14 @@ import {
 	buildFacsimileMei,
 	initialFacsimileModel,
 	parseFacsimileMei,
+	parseScoreDef,
 	relinkFacsimileImages,
 	sortReadingOrder,
 	nextLabel,
+	DEFAULT_SCORE_DEF,
 	type FacsimilePage,
-	type FacsimileModel
+	type FacsimileModel,
+	type ScoreDefModel
 } from '../mei-facsimile.ts';
 
 // A minimal header for the generated scores; production headers come from
@@ -314,4 +317,164 @@ test('buildBlankScoreMei without a page count seeds a single unpaged measure', (
 	assert.equal(SyntaxValidator.validate(mei), true);
 	assert.ok(!mei.includes('<pb '));
 	assert.equal((mei.match(/<measure /g) ?? []).length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Score definition (score-setup pre-task)
+
+const PLAIN = { clefDis: '', clefDisPlace: '', lines: 5, notationType: '' };
+
+const THREE_STAVES: ScoreDefModel = {
+	staves: [
+		{ clefShape: 'G', clefLine: 2, ...PLAIN, label: 'Violino' },
+		{ clefShape: 'C', clefLine: 3, ...PLAIN, label: '' },
+		{ clefShape: 'F', clefLine: 4, ...PLAIN, label: 'Violoncello & Basso' }
+	],
+	groups: [],
+	keysig: '2f',
+	meterCount: '3',
+	meterUnit: '8',
+	meterSym: ''
+};
+
+test('a model without a scoreDef emits the default score definition verbatim', () => {
+	for (const mei of [buildFacsimileMei(model(), { withBreaks: true }), buildBlankScoreMei(HEAD, 2)]) {
+		assert.match(
+			mei,
+			/<scoreDef xml:id="scoreDef-1">\n\s*<staffGrp xml:id="staffGrp-1">\n\s*<staffDef xml:id="staffDef-1" n="1" lines="5" clef\.shape="G" clef\.line="2" meter\.count="4" meter\.unit="4"\/>\n\s*<\/staffGrp>\n\s*<\/scoreDef>/
+		);
+	}
+});
+
+test('the score definition round-trips through both builders', () => {
+	const facsimile = buildFacsimileMei(
+		{ ...model(), scoreDef: THREE_STAVES },
+		{ withBreaks: true }
+	);
+	const blank = buildBlankScoreMei(HEAD, 2, THREE_STAVES);
+	for (const mei of [facsimile, blank]) {
+		assert.equal(SyntaxValidator.validate(mei), true);
+		assert.deepEqual(parseScoreDef(mei), THREE_STAVES);
+	}
+	// The label with markup-significant characters is escaped in the emission.
+	assert.ok(facsimile.includes('>Violoncello &amp; Basso</label>'));
+});
+
+test('keysig 0 means no accidentals and emits no attribute', () => {
+	const mei = buildFacsimileMei({
+		...model(),
+		scoreDef: { ...DEFAULT_SCORE_DEF, staves: [{ clefShape: 'F', clefLine: 4, ...PLAIN, label: '' }] }
+	});
+	assert.ok(!mei.includes('keysig'));
+	assert.equal(parseScoreDef(mei).keysig, '0');
+});
+
+test('a symbol signature emits meter.sym instead of the numeric meter', () => {
+	const cut: ScoreDefModel = {
+		...DEFAULT_SCORE_DEF,
+		staves: [{ clefShape: 'G', clefLine: 2, ...PLAIN, label: '' }],
+		meterCount: '2',
+		meterUnit: '2',
+		meterSym: 'cut'
+	};
+	const mei = buildFacsimileMei({ ...model(), scoreDef: cut }, { withBreaks: true });
+	assert.ok(mei.includes('meter.sym="cut"'));
+	assert.ok(!mei.includes('meter.count'));
+	assert.deepEqual(parseScoreDef(mei), cut);
+	// Common time implies 4/4 on the parse.
+	const common = parseScoreDef('<scoreDef meter.sym="common"><staffGrp><staffDef n="1"/></staffGrp></scoreDef>');
+	assert.equal(common.meterSym, 'common');
+	assert.equal(common.meterCount, '4');
+	assert.equal(common.meterUnit, '4');
+});
+
+test('parseScoreDef falls back to the first staffDef for the meter', () => {
+	// Older generated files carried the meter on the staffDef, not the scoreDef.
+	const legacy =
+		'<scoreDef><staffGrp>' +
+		'<staffDef n="1" lines="5" clef.shape="G" clef.line="2" meter.count="6" meter.unit="8"/>' +
+		'</staffGrp></scoreDef>';
+	const parsed = parseScoreDef(legacy);
+	assert.equal(parsed.meterCount, '6');
+	assert.equal(parsed.meterUnit, '8');
+	assert.deepEqual(parsed.staves, [{ clefShape: 'G', clefLine: 2, ...PLAIN, label: '' }]);
+});
+
+test('parseScoreDef yields the default without a scoreDef or without staffDefs', () => {
+	assert.deepEqual(parseScoreDef('<mei/>'), DEFAULT_SCORE_DEF);
+	assert.deepEqual(parseScoreDef('<scoreDef><staffGrp/></scoreDef>'), DEFAULT_SCORE_DEF);
+	// The yielded model is a copy — editing it must not corrupt the default.
+	const parsed = parseScoreDef('<mei/>');
+	parsed.staves.push({ clefShape: 'F', clefLine: 4, ...PLAIN, label: '' });
+	assert.equal(DEFAULT_SCORE_DEF.staves.length, 1);
+});
+
+test('staff groups nest their staves in a symbol-carrying staffGrp and round-trip', () => {
+	const piano: ScoreDefModel = {
+		...DEFAULT_SCORE_DEF,
+		staves: [
+			{ clefShape: 'G', clefLine: 2, ...PLAIN, label: 'Piano' },
+			{ clefShape: 'F', clefLine: 4, ...PLAIN, label: '' },
+			{ clefShape: 'G', clefLine: 2, ...PLAIN, label: 'Violino' }
+		],
+		groups: [{ start: 1, end: 2, symbol: 'brace', label: 'Piano & Co.' }]
+	};
+	const mei = buildFacsimileMei({ ...model(), scoreDef: piano });
+	// The group label sits directly inside the staffGrp, escaped.
+	assert.match(mei, /<staffGrp[^>]*symbol="brace"[^>]*>\n\s*<label[^>]*>Piano &amp; Co\.<\/label>/);
+	// The braced pair sits in its own staffGrp with barlines through; the
+	// third staff stays outside it.
+	assert.match(
+		mei,
+		/<staffGrp xml:id="staffGrp-2" symbol="brace" bar\.thru="true">[\s\S]*?n="2"[\s\S]*?<\/staffGrp>\n\s*<staffDef[^>]*n="3"/
+	);
+	assert.deepEqual(parseScoreDef(mei), piano);
+	// A bracket groups without running the barlines through.
+	const bracketed = { ...piano, groups: [{ start: 2, end: 3, symbol: 'bracket', label: '' }] };
+	const bracketMei = buildFacsimileMei({ ...model(), scoreDef: bracketed });
+	assert.ok(bracketMei.includes('symbol="bracket"'));
+	assert.ok(!bracketMei.includes('bar.thru'));
+	assert.deepEqual(parseScoreDef(bracketMei), bracketed);
+});
+
+test('percussion, tablature and octave-displaced staves round-trip', () => {
+	const mixed: ScoreDefModel = {
+		...DEFAULT_SCORE_DEF,
+		staves: [
+			{ ...PLAIN, clefShape: 'G', clefLine: 2, clefDis: '8', clefDisPlace: 'below', label: 'Tenore' },
+			{ ...PLAIN, clefShape: 'perc', clefLine: 3, lines: 1, label: 'Snare' },
+			{ ...PLAIN, clefShape: 'TAB', clefLine: 3, lines: 6, notationType: 'tab.guitar', label: '' },
+			{ ...PLAIN, clefShape: 'TAB', clefLine: 3, lines: 7, notationType: 'tab.lute.german', label: 'Laute' }
+		]
+	};
+	const mei = buildFacsimileMei({ ...model(), scoreDef: mixed });
+	assert.ok(mei.includes('clef.dis="8" clef.dis.place="below"'));
+	assert.ok(mei.includes('lines="1" clef.shape="perc"'));
+	// A modern tablature staff carries its notation type and the TAB clef; a
+	// lute tablature staff carries no clef at all.
+	assert.ok(mei.includes('lines="6" notationtype="tab.guitar" clef.shape="TAB"'));
+	assert.ok(mei.includes('lines="7" notationtype="tab.lute.german" meter.count'));
+	assert.deepEqual(parseScoreDef(mei), mixed);
+});
+
+test('parseFacsimileMei carries the scoreDef alongside the header', () => {
+	const mei = buildFacsimileMei({ ...model(), scoreDef: THREE_STAVES }, { withBreaks: true });
+	assert.deepEqual(parseFacsimileMei(mei).scoreDef, THREE_STAVES);
+});
+
+test('seed measures hold one resting staff per staffDef in both builders', () => {
+	const facsimile = buildFacsimileMei(
+		{ ...model(), scoreDef: THREE_STAVES },
+		{ withBreaks: true }
+	);
+	const blank = buildBlankScoreMei(HEAD, 2, THREE_STAVES);
+	for (const mei of [facsimile, blank]) {
+		const measures = mei.match(/<measure[\s\S]*?<\/measure>/g) ?? [];
+		assert.ok(measures.length > 0);
+		for (const measure of measures) {
+			assert.equal((measure.match(/<staff /g) ?? []).length, 3);
+			assert.equal((measure.match(/<mRest\b/g) ?? []).length, 3);
+			assert.ok(measure.includes('n="3"'));
+		}
+	}
 });

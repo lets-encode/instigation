@@ -12,9 +12,9 @@ work) and the **mei-friend volunteer client** (contributors encode/validate).
 > **schema v3** (five tables keyed by `(task_id, subtask_id)` plus the command log, §5): a campaign
 > describes one physical source holding N **pieces** (`by-piece` strategy), each piece one MEI at
 > `sources/<piece-id>/score.mei` and one group of tasks. A `facsimile` piece opens with a
-> measure-correction pre-task and splits encoding into one task per page, joined back into the
-> piece's score by page on accept (§6, §7a); an `encoded` piece gets one whole-file task; a
-> `physical-only` piece gets per-page or whole-file tasks (§5). Coding guidelines to honour are in
+> score-setup and a measure-correction pre-task and splits encoding into one task per page, joined
+> back into the piece's score by page on accept (§6, §7a); an `encoded` piece gets one whole-file
+> task; a `physical-only` piece gets a score-setup pre-task plus per-page or whole-file tasks (§5). Coding guidelines to honour are in
 > `CLAUDE.md` (simplicity, surgical changes, goal-driven).
 
 ## 1. Architecture at a glance
@@ -231,28 +231,30 @@ one subtask spanning the same range.
 - `fragment`: the source file the row addresses — its piece's MEI (e.g.
   `sources/<piece-id>/score.mei`).
 - `locator`: address *within* the fragment — a page's surface id (`surface-N`) for a per-page
-  encoding task, a controlled-vocab term for pre-tasks (`measure-zones`; §7a), or empty = the whole
-  file. This is what realises per-page fragmentation; a finer split (by measure, by section) would
+  encoding task, a controlled-vocab term for pre-tasks (`score-setup`, `measure-zones`; §7a), or
+  empty = the whole file. This is what realises per-page fragmentation; a finer split (by measure, by section) would
   reuse the same column.
 - `allowlist`/`blocklist`: per-row claim gates — present in the schema but **not yet enforced**
   (default open, §10).
 - `depends_on`: a task_id that must be `completed` before this task can be claimed; empty = none.
-  Enforced in the claim accept rules (`dependency_incomplete`). Chains a facsimile piece's page
-  tasks behind its pre-task (§7a).
+  Enforced in the claim accept rules (`dependency_incomplete`). Chains a piece's tasks behind its
+  pre-tasks (§7a).
 
 The table is rendered from one plan (`planTasks`, `src/lib/campaign-init.ts`), which emits per
 piece, in table order:
 
-- **facsimile** → a measure-correction pre-task (`P000n`, locator `measure-zones`) plus one
-  encoding task per page carrying measures (locator `surface-N`, matching that page's `<pb>`), each
-  depending on the pre-task; a facsimile piece with no measured pages falls back to a single
+- **facsimile** → a score-setup pre-task (locator `score-setup`), a measure-correction pre-task
+  (locator `measure-zones`, depending on the setup task) plus one encoding task per page carrying
+  measures (locator `surface-N`, matching that page's `<pb>`), each depending on the
+  measure-correction pre-task; a facsimile piece with no measured pages falls back to a single
   whole-file task.
-- **physical-only** → no pre-task (there is no facsimile to correct measures on): one task per page
-  when the piece's page count is known, else a single whole-file task.
-- **encoded** → one whole-file task.
+- **physical-only** → a score-setup pre-task but no measure-correction pre-task (there is no
+  facsimile to correct measures on): one task per page when the piece's page count is known, else a
+  single whole-file task — either way depending on the setup task.
+- **encoded** → one whole-file task, no pre-tasks.
 
-Task numbers run continuously across pieces, pre-task numbers across facsimile pieces, so every id
-is unique campaign-wide. Every planned task gets a task row plus one validation subtask `S0001`;
+Task numbers run continuously across pieces, pre-task numbers (`P000n`) across facsimile and
+physical pieces, so every id is unique campaign-wide. Every planned task gets a task row plus one validation subtask `S0001`;
 `task.csv` and `state.csv` are both rendered from the same plan so they cannot fall out of step.
 
 **state.csv — live status, Action-authored**
@@ -396,8 +398,8 @@ re-decide (now sees the new lock) → reject cleanly. First valid claim wins. Cl
 **closed, not merged** (the authoritative change is the Action's own commit); encoding PRs contribute
 their MEI content.
 
-**MEI machine-check.** `xmllint --relaxng` against the **pinned MEI-CMN 5.0 RelaxNG schema**
-(`https://music-encoding.org/schema/5.0/mei-CMN.rng` — the schema the template's `<?xml-model?>`
+**MEI machine-check.** `xmllint --relaxng` against the **pinned MEI-CMN 5.1 RelaxNG schema**
+(`https://music-encoding.org/schema/5.1/mei-CMN.rng` — the schema the template's `<?xml-model?>`
 declares), which covers well-formedness too. The coordinator fetches the schema once per run; a
 fetch failure fails the run loudly rather than letting content through unchecked. Musical
 correctness is *not* machine-checked — that is the human `vN` validation.
@@ -458,10 +460,23 @@ so a setup interrupted by a reload, a closed tab or a failed step can be continu
 page; the record is removed once the last step has committed. Runs client-side because the
 organiser is in the loop; everything after creation runs in the campaign repo's caller.
 
-## 7a. Facsimile pre-tasks
+## 7a. Pre-tasks
 
-A facsimile piece does not start at encoding: the detector's measure boxes are provisional, so its
-score is built in stages (`src/lib/mei-facsimile.ts`, one model — `buildFacsimileMei` /
+A piece that is not already encoded does not start at encoding. Its **score-setup pre-task**
+(locator `score-setup`) fixes the score's skeleton first: the staves — clef shape and line,
+instrument label — the key signature and the meter, entered in the **setup editor**
+(`/[campaign]/setup/[task]`), a plain form with a rendered preview, driven by commands
+(`readFacsimile`, `claimTask`, `submitScoreSetup`). The submission rebuilds the piece's score
+around the entered definition at whatever stage the file is at — a facsimile score keeps its
+header, pages and breaks; a physical piece's blank score is rebuilt with its page count re-read
+from the `<pb>` markers — and opens an ordinary encoding-type PR. Every encoding task of the piece
+depends (directly or through the measure-correction pre-task) on the setup task, so no note is
+entered before the skeleton is agreed and reviewed. The definition model lives in
+`mei-facsimile.ts` (`ScoreDefModel`, `parseScoreDef`; `DEFAULT_SCORE_DEF` is what a piece carries
+until its setup task replaces it), and seed measures hold one resting staff per defined staff.
+
+A facsimile piece additionally does not start at measure encoding: the detector's measure boxes
+are provisional, so its score is built in stages (`src/lib/mei-facsimile.ts`, one model — `buildFacsimileMei` /
 `parseFacsimileMei`):
 
 | Stage | Content of the piece's `score.mei` | Written by |
@@ -470,7 +485,7 @@ score is built in stages (`src/lib/mei-facsimile.ts`, one model — `buildFacsim
 | B | + one `<measure n="…" facs="#zone">` (holding an `<mRest/>`) per zone | (intermediate form; still parsed) |
 | C | + a `<pb/>` before each page's first measure, an `<sb/>` before each flagged measure, and one `<mdiv>` per movement/section/piece | the pre-task's submission (`submitZones`) |
 
-All stages validate against the pinned MEI-CMN 5.0 schema, so the ordinary machine-check
+All stages validate against the pinned MEI-CMN 5.1 schema, so the ordinary machine-check
 applies to every submission.
 
 The pre-task submission advances the score from stage A to stage C, so its content always differs
@@ -479,18 +494,19 @@ adds elements (measures, breaks, movements) stage A lacked. That guaranteed diff
 caller's `pull_request_target` is `paths`-filtered (§4), so an identical file would open an empty
 PR that never triggers the automation and leaves the console polling forever.
 
-The task table chains the work via `depends_on` (§5): per facsimile piece, one pre-task
-(`locator: measure-zones`, one validation subtask) → **one encoding task per page** that carries
-measures (`locator: surface-N`, one validation subtask each), all depending on that piece's
-pre-task. The pre-task establishes the `<pb>` boundaries and continuous measure numbering the
-per-page split and join rely on. Each is an ordinary crowd task: claimed (encoding-kind lock),
-submitted as an encoding-type PR (joined into the piece's score by page, §6), validated through
-the normal machinery. Pages with no detected measures get no encoding task. An `encoded` piece
-keeps its single whole-file task and no pre-task.
+The task table chains the work via `depends_on` (§5): per facsimile piece, the score-setup
+pre-task → the measure-correction pre-task (`locator: measure-zones`, one validation subtask) →
+**one encoding task per page** that carries measures (`locator: surface-N`, one validation subtask
+each), all depending on that piece's measure-correction pre-task. The measure-correction pre-task
+establishes the `<pb>` boundaries and continuous measure numbering the per-page split and join
+rely on. Each is an ordinary crowd task: claimed (encoding-kind lock), submitted as an
+encoding-type PR (joined into the piece's score by page, §6), validated through the normal
+machinery. Pages with no detected measures get no encoding task. An `encoded` piece keeps its
+single whole-file task and no pre-tasks.
 
 The **zone editor** (`/[campaign]/zones/[task]`) is the volunteer interface for the
-pre-task, driven entirely by commands (`readFacsimile`, `claimTask`, `submitZones`). It has two
-steps within the one task, submitted together:
+measure-correction pre-task, driven entirely by commands (`readFacsimile`, `claimTask`,
+`submitZones`). It has two steps within the one task, submitted together:
 
 - *Step 1 — Measures*: add (drag on the page), delete, move and resize boxes over the page
   image. Numbering follows reading order automatically; a per-measure label override (e.g.
@@ -534,6 +550,7 @@ tracking tables and the comment log:
 | `/new` | The onboarding wizard (§7). |
 | `/dashboard` | The personal dashboard (`src/routes/dashboard/+page.svelte`): the viewer's work across every campaign, grouped by what needs doing — *fix requested → encoding → awaiting validation → recently completed* — with every comment on their work as a feed. Actions run the same commands as the console; anything richer deep-links into the campaign's console. |
 | `/[campaign]` | The campaign console (§7b). The URL carries only the campaign name; the repo is resolved name → stable repo id (registry, §8a) → current owner/name (`src/lib/campaign-resolve.ts`). |
+| `/[campaign]/setup/[task]` | The score-setup editor (§7a). |
 | `/[campaign]/zones/[task]` | The measure-zone editor (§7a). |
 
 Because a campaign lives at `/<name>` on the app's own origin, every top-level path the origin
@@ -679,4 +696,4 @@ Known limitations:
 - [ ] **Actions write permissions** — the create flow sets the repo's default workflow token to write;
   confirm for any org-owned repos.
 - [x] **MEI schema validator** — the machine-check runs `xmllint --relaxng` against the pinned
-  MEI-CMN 5.0 schema (§6), not just well-formedness.
+  MEI-CMN 5.1 schema (§6), not just well-formedness.

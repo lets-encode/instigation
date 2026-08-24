@@ -24,6 +24,8 @@
     fragment,
     startPage = 0,
     anchor = null,
+    initialPane = null,
+    initialZones = true,
   }: {
     owner: string;
     repo: string;
@@ -33,6 +35,10 @@
     startPage?: number;
     /** A measure range to highlight in both panes. */
     anchor?: { page: number; m1: number; m2: number } | null;
+    /** The pane the preview opens with; null uses the stored per-browser choice. */
+    initialPane?: PreviewPane | null;
+    /** Whether the measure-zone overlay starts visible. */
+    initialZones?: boolean;
   } = $props();
 
   /** One facsimile page in the preview: image plus its measure zones. */
@@ -57,12 +63,14 @@
 
   // Display state: which panes show, book-style paging and zoom shared by them,
   // and the zone overlay toggle.
-  let pvPane = $state<PreviewPane>(readPreviewPane());
+  // svelte-ignore state_referenced_locally -- an initial value by contract
+  let pvPane = $state<PreviewPane>(initialPane ?? readPreviewPane());
   let pvView = $state<"single" | "double">("single");
   let pvFirstOnRight = $state(true);
   let pvFirstVisible = $state(0);
   let pvZoom = $state(1);
-  let showZones = $state(true);
+  // svelte-ignore state_referenced_locally -- an initial value by contract
+  let showZones = $state(initialZones);
 
   // Scores without a facsimile only have the render to show.
   const pane = $derived(preview?.facs?.length ? pvPane : "enc");

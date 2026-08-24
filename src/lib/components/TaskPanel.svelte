@@ -12,7 +12,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { LockRow, CommentRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, statusPill } from "$lib/campaign-graph.ts";
+  import { handle, sendBackTarget, statusPill } from "$lib/campaign-graph.ts";
   import {
     buildRecord,
     buildThreads,
@@ -174,7 +174,14 @@
         title="Copy a direct link to the score file to paste into mei-friend manually."
         >Copy raw link</button
       >
-      {#if card.pre}
+      {#if card.locator === "score-setup"}
+        <a
+          class="mbtn blue"
+          href={`/${campaign}/setup/${card.task}`}
+          title="Open the score setup form: staves, clefs, key signature and meter."
+          >Open setup editor</a
+        >
+      {:else if card.pre}
         <a
           class="mbtn blue"
           href={`/${campaign}/zones/${card.task}`}
@@ -196,7 +203,7 @@
         >
       {/if}
       {#if mineEncoding && !card.pre}
-        <!-- A pre-task's correction is submitted from the zone editor. -->
+        <!-- A pre-task is submitted from its own editor. -->
         <button
           type="button"
           class="mbtn primary"
@@ -257,10 +264,8 @@
                   class="dangerbtn"
                   onclick={() => onsendback(card.task)}
                   disabled={runner.busy}
-                  title={`Return the task to ${card.pre ? "measure correction" : "encoding"}: attribution and validations reset.`}
-                  >{card.pre
-                    ? "Send back to measure correction"
-                    : "Send back for encoding"}</button
+                  title={`Return the task to ${sendBackTarget(card.locator)}: attribution and validations reset.`}
+                  >{`Send back ${card.pre ? "to" : "for"} ${sendBackTarget(card.locator)}`}</button
                 >
               {/if}
             </div>

@@ -93,13 +93,27 @@ export interface TaskNode {
 }
 
 /**
- * Whether a task is a facsimile pre-task (measure correction, reviewed in the
- * zone editor). Encoding tasks — whole-file (empty locator) and per-page
- * (`surface-N`) — are not pre-tasks and use mei-friend.
+ * Whether a task is a pre-task: score setup (the score's staves, clefs, key
+ * signature and meter, filled in the setup editor) or measure correction
+ * (reviewed in the zone editor). Encoding tasks — whole-file (empty locator)
+ * and per-page (`surface-N`) — are not pre-tasks and use mei-friend.
  */
 export function isPreTask(locator: string): boolean {
-	return locator === 'measure-zones';
+	return locator === 'score-setup' || locator === 'measure-zones';
 }
+
+/** The console route segment a pre-task's own editor lives under. */
+export function preTaskRoute(locator: string): string {
+	return locator === 'score-setup' ? 'setup' : 'zones';
+}
+
+/** What a send-back returns a task to (its work stage), from its locator. */
+export const sendBackTarget = (locator: string): string =>
+	locator === 'score-setup'
+		? 'score setup'
+		: locator === 'measure-zones'
+			? 'measure correction'
+			: 'encoding';
 
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
@@ -111,6 +125,7 @@ export const taskThreshold = (passThreshold: number, subtaskCount: number): numb
 
 /** The task's human type from its locator. */
 export function typeLabel(locator: string): string {
+	if (locator === 'score-setup') return 'Score setup';
 	if (locator === 'measure-zones') return 'Measure correction';
 	const page = /^surface-(\d+)$/.exec(locator);
 	return page ? `Encoding · page ${page[1]}` : 'Encoding';
@@ -259,7 +274,7 @@ function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', login
 	}
 	const taskStatus = taskState(d, row.task_id);
 	const waiting = !isEncoded(taskStatus?.status ?? '');
-	const pre = isPreTask(taskDef(d, row.task_id)?.locator ?? '');
+	const locator = taskDef(d, row.task_id)?.locator ?? '';
 	// The slot needs someone else: the viewer encoded the task or already
 	// recorded a verdict on this subtask (unless self-validation is allowed).
 	const needsAnother =
@@ -269,9 +284,7 @@ function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', login
 	return {
 		key: 'open',
 		sub: waiting
-			? pre
-				? 'waiting for measure correction'
-				: 'waiting for encoding'
+			? `waiting for ${sendBackTarget(locator)}`
 			: needsAnother
 				? 'open — needs another volunteer'
 				: 'open — claim to review',

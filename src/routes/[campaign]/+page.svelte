@@ -18,7 +18,7 @@
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { isPreTask } from "$lib/campaign-graph.ts";
+  import { isPreTask, preTaskRoute } from "$lib/campaign-graph.ts";
   import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
@@ -338,17 +338,17 @@
   const claim = (task_id: string, subtask_id: string) =>
     run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
 
-  // Measure-correction pre-tasks are validated in the zone editor, so claiming
-  // one opens it — but only on a clean claim, so a rejected claim leaves you on
-  // the console rather than in a read-only editor. Encoding tasks (whole-file
-  // and per-page) review in the preview and just claim in place.
+  // Pre-tasks are validated in their own editor, so claiming one opens it —
+  // but only on a clean claim, so a rejected claim leaves you on the console
+  // rather than in a read-only editor. Encoding tasks (whole-file and
+  // per-page) review in the preview and just claim in place.
   const claimValidate = async (task_id: string, subtask_id: string) => {
     await claim(task_id, subtask_id);
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
     if (isPreTask(locator ?? "") && runner.result?.ok && !runner.result.warn) {
-      await goto(`/${campaign}/zones/${task_id}`);
+      await goto(`/${campaign}/${preTaskRoute(locator ?? "")}/${task_id}`);
     }
   };
 
@@ -435,7 +435,7 @@
   // claim when it is open, otherwise its detail (their claimed or reviewable
   // work lives there).
   function claimCard(card: BoardCard) {
-    if (card.pre) goto(`/${campaign}/zones/${card.task}`);
+    if (card.pre) goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`);
     else editor(card.task);
   }
   function actOnNext() {
@@ -903,7 +903,9 @@
                             onclick={(e) => {
                               e.stopPropagation();
                               claimCard(card);
-                            }}>Open measure corrector →</button
+                            }}>{card.locator === "score-setup"
+                              ? "Open score setup →"
+                              : "Open measure corrector →"}</button
                           >
                         </div>
                       {:else if card.column === "ready" && card.claimable}
@@ -934,7 +936,9 @@
                                 e.stopPropagation();
                                 claimCard(card);
                               }}
-                              title="Continue correcting the measures in the zone editor."
+                              title={card.locator === "score-setup"
+                                ? "Continue the score setup in the setup editor."
+                                : "Continue correcting the measures in the zone editor."}
                               >Continue →</button
                             >
                           {:else if card.worker.mine}

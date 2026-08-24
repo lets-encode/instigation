@@ -17,7 +17,9 @@
 //      <pb/>. A <pb/> @n is its page number; an <sb/> @n counts system breaks in
 //      document order. Written by the measure-correction pre-task's submission.
 // parseFacsimileMei reads any stage back into the model; the <meiHead> block
-// is carried verbatim across rebuilds.
+// is carried verbatim across rebuilds, and the <scoreDef> — staves, clefs, key
+// signature, meter and instrument labels, written by the score-setup task and
+// defaulting to DEFAULT_SCORE_DEF — is parsed and re-emitted alongside it.
 
 import { addXmlIds } from './mei-ids.ts';
 import { xmlEscape, xmlUnescape } from './mei-xml.ts';
@@ -60,10 +62,80 @@ export interface PageModel {
 	zones: ZoneModel[];
 }
 
+/** One staff of the score definition. */
+export interface StaffModel {
+	/** MEI clef.shape: 'G', 'F', 'C', 'perc' (percussion) or 'TAB' (tablature). */
+	clefShape: string;
+	/** MEI clef.line: the staff line the clef sits on, counted from the bottom. */
+	clefLine: number;
+	/** MEI clef.dis: octave displacement ('8', '15'); '' emits none. */
+	clefDis: string;
+	/** MEI clef.dis.place: 'below' or 'above'; written with clefDis. */
+	clefDisPlace: string;
+	/** MEI staffDef @lines: how many lines the staff has. */
+	lines: number;
+	/**
+	 * MEI staffDef @notationtype, for tablature staves: 'tab.guitar' (modern),
+	 * 'tab.lute.french', 'tab.lute.italian' or 'tab.lute.german'. '' emits
+	 * none (common notation).
+	 */
+	notationType: string;
+	/** Instrument label, written as a <label> child; '' emits none. */
+	label: string;
+}
+
+/** A run of staves joined by one symbol: a brace (one instrument, like a
+ * piano — its barlines run through) or a bracket (a section, like the
+ * strings). Staff numbers are 1-based and inclusive. */
+export interface StaffGroupModel {
+	start: number;
+	end: number;
+	/** MEI staffGrp @symbol: 'brace' or 'bracket'. */
+	symbol: string;
+	/** Group label, written as a <label> child; '' emits none. */
+	label: string;
+}
+
+/** The initial score definition: staves with clefs, key signature and meter. */
+export interface ScoreDefModel {
+	staves: StaffModel[];
+	/** Non-overlapping staff groups, each wrapping its staves in a <staffGrp>. */
+	groups: StaffGroupModel[];
+	/** MEI @keysig: '0' (no accidentals), '1s'…'7s' or '1f'…'7f'. */
+	keysig: string;
+	/** MEI @meter.count. Unused when meterSym is set. */
+	meterCount: string;
+	/** MEI @meter.unit. Unused when meterSym is set. */
+	meterUnit: string;
+	/** MEI @meter.sym: 'common' (C) or 'cut' (¢); '' writes the numeric meter. */
+	meterSym: string;
+}
+
+/** The score definition a piece carries until its setup task replaces it. */
+export const DEFAULT_SCORE_DEF: ScoreDefModel = {
+	staves: [
+		{ clefShape: 'G', clefLine: 2, clefDis: '', clefDisPlace: '', lines: 5, notationType: '', label: '' }
+	],
+	groups: [],
+	keysig: '0',
+	meterCount: '4',
+	meterUnit: '4',
+	meterSym: ''
+};
+
+/** A copy of DEFAULT_SCORE_DEF, safe for a caller to edit. */
+const defaultScoreDef = (): ScoreDefModel => ({
+	...DEFAULT_SCORE_DEF,
+	staves: DEFAULT_SCORE_DEF.staves.map((staff) => ({ ...staff })),
+	groups: []
+});
+
 /** The whole facsimile model — everything buildFacsimileMei needs. */
 export interface FacsimileModel {
 	/** The `<meiHead>…</meiHead>` block, carried verbatim. */
 	headXml: string;
+	/** The score definition; absent falls back to DEFAULT_SCORE_DEF. */
+	scoreDef?: ScoreDefModel;
 	pages: PageModel[];
 }
 
@@ -144,6 +216,79 @@ export function initialFacsimileModel(pages: FacsimilePage[]): FacsimileModel {
 	};
 }
 
+// The <scoreDef> block at its fixed indentation inside <score>: the key
+// signature on the scoreDef, one staffDef per staff carrying its clef, the
+// meter and an optional <label>. keysig '0' means no accidentals and emits no
+// attribute. Grouped staves nest in their own <staffGrp>; a brace joins the
+// staves of one instrument, so its barlines run through (bar.thru).
+function buildScoreDefXml(scoreDef: ScoreDefModel): string {
+	const keysig = scoreDef.keysig === '0' ? '' : ` keysig="${xmlEscape(scoreDef.keysig)}"`;
+	const meter = scoreDef.meterSym
+		? `meter.sym="${xmlEscape(scoreDef.meterSym)}"`
+		: `meter.count="${xmlEscape(scoreDef.meterCount)}" meter.unit="${xmlEscape(scoreDef.meterUnit)}"`;
+	const staffDefXml = (staff: StaffModel, n: number, indent: string): string => {
+		const dis = staff.clefDis
+			? ` clef.dis="${xmlEscape(staff.clefDis)}" clef.dis.place="${xmlEscape(staff.clefDisPlace)}"`
+			: '';
+		const notation = staff.notationType
+			? ` notationtype="${xmlEscape(staff.notationType)}"`
+			: '';
+		// A lute tablature staff carries no clef; the TAB lettering belongs to
+		// the modern (guitar) kind only.
+		const clef = staff.notationType.startsWith('tab.lute.')
+			? ''
+			: ` clef.shape="${xmlEscape(staff.clefShape)}" clef.line="${staff.clefLine}"${dis}`;
+		const open = `${indent}<staffDef n="${n}" lines="${staff.lines}"${notation}${clef} ` + meter;
+		if (!staff.label) return `${open}/>`;
+		return (
+			`${open}>\n` +
+			`${indent}   <label>${xmlEscape(staff.label)}</label>\n` +
+			`${indent}</staffDef>`
+		);
+	};
+	const groups = [...scoreDef.groups].sort((a, b) => a.start - b.start);
+	const base = '                     ';
+	const rows: string[] = [];
+	let n = 1;
+	while (n <= scoreDef.staves.length) {
+		const group = groups.find((g) => g.start === n);
+		if (!group) {
+			rows.push(staffDefXml(scoreDef.staves[n - 1], n, base));
+			n++;
+			continue;
+		}
+		const end = Math.min(group.end, scoreDef.staves.length);
+		const thru = group.symbol === 'brace' ? ' bar.thru="true"' : '';
+		rows.push(`${base}<staffGrp symbol="${xmlEscape(group.symbol)}"${thru}>`);
+		if (group.label) rows.push(`${base}   <label>${xmlEscape(group.label)}</label>`);
+		while (n <= end) {
+			rows.push(staffDefXml(scoreDef.staves[n - 1], n, `${base}   `));
+			n++;
+		}
+		rows.push(`${base}</staffGrp>`);
+	}
+	return (
+		`               <scoreDef${keysig}>\n` +
+		`                  <staffGrp>\n` +
+		rows.join('\n') +
+		`\n                  </staffGrp>\n` +
+		`               </scoreDef>`
+	);
+}
+
+// A seed measure's body: one staff per staffDef, each holding a resting layer.
+function seedStaves(staffCount: number): string {
+	return Array.from(
+		{ length: Math.max(1, staffCount) },
+		(_, i) =>
+			`                  <staff n="${i + 1}">\n` +
+			`                     <layer n="1">\n` +
+			`                        <mRest/>\n` +
+			`                     </layer>\n` +
+			`                  </staff>\n`
+	).join('');
+}
+
 /**
  * Emit the model as MEI. Stage A (`{}`) contains facsimile zones only; stage C
  * (`{ withBreaks: true }`) adds measures, page/system breaks and movements.
@@ -156,6 +301,7 @@ export function buildFacsimileMei(
 ): string {
 	const withBreaks = Boolean(opts.withBreaks);
 	const withMeasures = withBreaks;
+	const scoreDef = model.scoreDef ?? DEFAULT_SCORE_DEF;
 	const surfaces: string[] = [];
 	// Section content grouped per movement: mdivParts[k] holds <mdiv> k+1's lines.
 	const mdivParts: string[][] = [[]];
@@ -193,11 +339,7 @@ export function buildFacsimileMei(
 			}
 			parts.push(
 				`               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}" facs="#${zoneId}">\n` +
-					`                  <staff n="1">\n` +
-					`                     <layer n="1">\n` +
-					`                        <mRest/>\n` +
-					`                     </layer>\n` +
-					`                  </staff>\n` +
+					seedStaves(scoreDef.staves.length) +
 					`               </measure>`
 			);
 		});
@@ -216,12 +358,8 @@ export function buildFacsimileMei(
 		(parts, i) =>
 			`         <mdiv xml:id="mdiv-${i + 1}" n="${i + 1}">\n` +
 			`            <score>\n` +
-			`               <scoreDef>\n` +
-			`                  <staffGrp>\n` +
-			`                     <staffDef n="1" lines="5" clef.shape="G" clef.line="2" meter.count="4" meter.unit="4"/>\n` +
-			`                  </staffGrp>\n` +
-			`               </scoreDef>\n` +
-			`               <section>\n` +
+			buildScoreDefXml(scoreDef) +
+			`\n               <section>\n` +
 			(parts.length ? parts.join('\n') + '\n' : '') +
 			`               </section>\n` +
 			`            </score>\n` +
@@ -230,8 +368,8 @@ export function buildFacsimileMei(
 
 	return addXmlIds(
 		`<?xml version="1.0" encoding="UTF-8"?>\n` +
-		`<?xml-model href="https://music-encoding.org/schema/5.0/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
-		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0">\n` +
+		`<?xml-model href="https://music-encoding.org/schema/5.1/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
+		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">\n` +
 		model.headXml +
 		`\n   <music>\n` +
 		`      <facsimile>\n` +
@@ -255,7 +393,11 @@ export function buildFacsimileMei(
  * from. Every element carries a deterministic xml:id so rebuilds are stable
  * and diffable.
  */
-export function buildBlankScoreMei(headXml: string, pages = 0): string {
+export function buildBlankScoreMei(
+	headXml: string,
+	pages = 0,
+	scoreDef: ScoreDefModel = DEFAULT_SCORE_DEF
+): string {
 	const parts: string[] = [];
 	for (let p = 1; p <= Math.max(1, pages); p++) {
 		if (pages > 0) {
@@ -263,29 +405,21 @@ export function buildBlankScoreMei(headXml: string, pages = 0): string {
 		}
 		parts.push(
 			`               <measure xml:id="measure-${p}" n="${p}">\n` +
-				`                  <staff n="1">\n` +
-				`                     <layer n="1">\n` +
-				`                        <mRest/>\n` +
-				`                     </layer>\n` +
-				`                  </staff>\n` +
+				seedStaves(scoreDef.staves.length) +
 				`               </measure>`
 		);
 	}
 	return addXmlIds(
 		`<?xml version="1.0" encoding="UTF-8"?>\n` +
-		`<?xml-model href="https://music-encoding.org/schema/5.0/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
-		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0">\n` +
+		`<?xml-model href="https://music-encoding.org/schema/5.1/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
+		`<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">\n` +
 		headXml +
 		`\n   <music>\n` +
 		`      <body>\n` +
 		`         <mdiv xml:id="mdiv-1" n="1">\n` +
 		`            <score>\n` +
-		`               <scoreDef>\n` +
-		`                  <staffGrp>\n` +
-		`                     <staffDef n="1" lines="5" clef.shape="G" clef.line="2" meter.count="4" meter.unit="4"/>\n` +
-		`                  </staffGrp>\n` +
-		`               </scoreDef>\n` +
-		`               <section>\n` +
+		buildScoreDefXml(scoreDef) +
+		`\n               <section>\n` +
 		parts.join('\n') +
 		`\n               </section>\n` +
 		`            </score>\n` +
@@ -302,8 +436,97 @@ function attr(tag: string, name: string): string | null {
 	return m ? xmlUnescape(m[1]) : null;
 }
 
+/**
+ * Parse the first `<scoreDef>` of an MEI document back into the model. The key
+ * signature is read from the scoreDef; the meter (symbol, or count and unit)
+ * from the scoreDef where it carries one, else from the first staffDef (where
+ * buildScoreDefXml writes it). A document without a scoreDef, or one whose
+ * scoreDef has no staffDef, yields the default.
+ */
+export function parseScoreDef(text: string): ScoreDefModel {
+	const block = /<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/.exec(text)?.[0];
+	if (!block) return defaultScoreDef();
+	const open = /<scoreDef\b[^>]*>/.exec(block)![0];
+	const staves: StaffModel[] = [];
+	for (const match of block.matchAll(/<staffDef\b[^>]*\/>|<staffDef\b[^>]*>([\s\S]*?)<\/staffDef>/g)) {
+		const tag = /<staffDef\b[^>]*>/.exec(match[0])![0];
+		const label = /<label\b[^>]*>([\s\S]*?)<\/label>/.exec(match[1] ?? '')?.[1];
+		// A tablature staffDef may carry no clef attributes; its shape is the
+		// TAB convention, so the model stays complete.
+		const notationType = attr(tag, 'notationtype') ?? '';
+		const tab = notationType.startsWith('tab');
+		staves.push({
+			clefShape: attr(tag, 'clef\\.shape') ?? (tab ? 'TAB' : 'G'),
+			clefLine: Number(attr(tag, 'clef\\.line') ?? (tab ? 3 : 2)),
+			clefDis: attr(tag, 'clef\\.dis') ?? '',
+			clefDisPlace: attr(tag, 'clef\\.dis\\.place') ?? '',
+			lines: Number(attr(tag, 'lines') ?? 5),
+			notationType,
+			label: label ? xmlUnescape(label.trim()) : ''
+		});
+	}
+	if (!staves.length) return defaultScoreDef();
+	// Nested <staffGrp> elements (below the root one) are the staff groups,
+	// each spanning the staffDefs it wraps, in document order.
+	const groups: StaffGroupModel[] = [];
+	let staffNo = 0;
+	let depth = 0;
+	let inner: { start: number; symbol: string; label: string } | null = null;
+	const tokenRe = /<staffGrp\b[^>]*>|<\/staffGrp>|<staffDef\b/g;
+	let token: RegExpExecArray | null;
+	while ((token = tokenRe.exec(block))) {
+		if (token[0] === '<staffDef') {
+			staffNo++;
+		} else if (token[0].startsWith('</')) {
+			if (depth === 2 && inner && staffNo >= inner.start) {
+				groups.push({ start: inner.start, end: staffNo, symbol: inner.symbol, label: inner.label });
+			}
+			if (depth === 2) inner = null;
+			depth--;
+		} else {
+			depth++;
+			if (depth === 2) {
+				// A label directly after the open tag names the group (a staff's
+				// own label sits inside its staffDef instead).
+				const label = /^\s*<label\b[^>]*>([\s\S]*?)<\/label>/.exec(
+					block.slice(tokenRe.lastIndex)
+				)?.[1];
+				inner = {
+					start: staffNo + 1,
+					symbol: attr(token[0], 'symbol') ?? 'bracket',
+					label: label ? xmlUnescape(label.trim()) : ''
+				};
+			}
+		}
+	}
+	const firstStaff = /<staffDef\b[^>]*>/.exec(block)?.[0] ?? '';
+	// A symbol signature implies its numeric meter — common time is 4/4, cut
+	// time 2/2 — so the model stays complete either way.
+	const meterSym = attr(open, 'meter\\.sym') ?? attr(firstStaff, 'meter\\.sym') ?? '';
+	if (meterSym !== '') {
+		return {
+			staves,
+			groups,
+			keysig: attr(open, 'keysig') ?? '0',
+			meterCount: meterSym === 'cut' ? '2' : '4',
+			meterUnit: meterSym === 'cut' ? '2' : '4',
+			meterSym
+		};
+	}
+	return {
+		staves,
+		groups,
+		keysig: attr(open, 'keysig') ?? '0',
+		meterCount: attr(open, 'meter\\.count') ?? attr(firstStaff, 'meter\\.count') ?? '4',
+		meterUnit: attr(open, 'meter\\.unit') ?? attr(firstStaff, 'meter\\.unit') ?? '4',
+		meterSym: ''
+	};
+}
+
 /** What stage the parsed file was at, alongside the model. */
 export interface ParsedFacsimile extends FacsimileModel {
+	/** Always present on a parse; the default when the document carries none. */
+	scoreDef: ScoreDefModel;
 	hasMeasures: boolean;
 	hasBreaks: boolean;
 }
@@ -397,7 +620,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 		});
 	}
 
-	return { headXml, pages, hasMeasures, hasBreaks };
+	return { headXml, scoreDef: parseScoreDef(text), pages, hasMeasures, hasBreaks };
 }
 
 /** A committed page image a surface can be relinked to. */

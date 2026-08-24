@@ -36,12 +36,13 @@ import {
 } from './campaign-tables.ts';
 import { checkPlan } from './campaign-plan.ts';
 import { resetTaskRows, resolveCommentThread } from './campaign-submit.ts';
-import { isPreTask } from './campaign-graph.ts';
+import { sendBackTarget } from './campaign-graph.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow, PieceRef } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
-import { parseFacsimileMei, buildFacsimileMei } from './mei-facsimile.ts';
-import type { PageModel, ParsedFacsimile } from './mei-facsimile.ts';
+import { parseFacsimileMei, buildFacsimileMei, buildBlankScoreMei } from './mei-facsimile.ts';
+import type { PageModel, ParsedFacsimile, ScoreDefModel } from './mei-facsimile.ts';
+import { pieceKindForPath } from './coordinator-policy.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 import { WorkflowRunWatch } from './run-watch.ts';
 import type { ProgressUpdate } from './run-watch.ts';
@@ -846,7 +847,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 };
 
 // Open a PR that sends a failed task back to its work stage (encoding, or
-// measure correction for a pre-task): the task resets to encoding_required,
+// score setup / measure correction for a pre-task): the task resets to encoding_required,
 // its subtasks to pending, and every validation cell clears. Allowed for a
 // failing validator or anyone with push access — the automation enforces it.
 const sendBack: CommandDef<{ task_id: string }, Result> = {
@@ -865,7 +866,7 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 			const row = findRow(state.rows, task_id, '');
 			if (!row) return { error: `Unknown task ${task_id}.` };
 			const locator = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.locator ?? '';
-			const stage = isPreTask(locator) ? 'measure correction' : 'encoding';
+			const stage = sendBackTarget(locator);
 			resetTaskRows(state.rows, state.validationColumns, task_id);
 			ctx.progress({ step: 'Opening the send-back PR…' });
 			const body = `Sends ${task_id} back for ${stage} after a failed validation. Opened from the campaign console.`;
@@ -1136,7 +1137,8 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 };
 
 // Open the PR carrying a rewritten score, wait for the automation's verdict.
-// The current file's <meiHead> is carried over verbatim.
+// The current file's <meiHead> is carried over verbatim, its score definition
+// through the parse.
 //
 // The submission advances the score to stage C (generated measures, breaks and
 // movements), so the submitted content always differs from the file in the
@@ -1158,8 +1160,9 @@ async function submitFacsimile(
 		if (!fragment) return { error: `Unknown task ${task_id}.` };
 		const current = await f.getRepoFile(owner, repo, fragment);
 		if (current == null) return { error: `Could not read ${fragment}.` };
+		const parsed = parseFacsimileMei(current);
 		const content = buildFacsimileMei(
-			{ headXml: parseFacsimileMei(current).headXml, pages },
+			{ headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
 			{ withBreaks: true }
 		);
 		// A no-op would open an empty PR the path-filtered caller never runs;
@@ -1206,6 +1209,75 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 		submitFacsimile(ctx, task_id, pages, envelope)
 };
 
+// Score setup: submit the piece's initial score definition — staves with their
+// clefs and instrument labels, key signature and meter — by rebuilding the
+// score around it. A facsimile piece is rebuilt at the stage it is already at,
+// with its header, pages and breaks carried over; a physical piece's blank
+// score is rebuilt with its page count read from the file's <pb> markers. The
+// validation subtask reviews the entered values.
+const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel }, Result> = {
+	id: 'campaign.submitScoreSetup',
+	version: 1,
+	log: 'pr',
+	envelopeInput: ({ task_id, scoreDef }) => ({
+		task_id,
+		staves: scoreDef.staves.length,
+		groups: scoreDef.groups.length,
+		keysig: scoreDef.keysig,
+		meter: scoreDef.meterSym || `${scoreDef.meterCount}/${scoreDef.meterUnit}`
+	}),
+	async run({ task_id, scoreDef }, ctx, envelope) {
+		const { forge: f, owner, repo } = ctx;
+		try {
+			await muteOnce(ctx);
+			const [taskCsv, configYaml] = await Promise.all([
+				f.getRepoFile(owner, repo, TASK_PATH),
+				f.getRepoFile(owner, repo, 'config.yaml')
+			]);
+			const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
+			if (!fragment) return { error: `Unknown task ${task_id}.` };
+			const current = await f.getRepoFile(owner, repo, fragment);
+			if (current == null) return { error: `Could not read ${fragment}.` };
+			const parsed = parseFacsimileMei(current);
+			const content =
+				pieceKindForPath(configYaml, fragment) === 'physical-only'
+					? buildBlankScoreMei(parsed.headXml, (current.match(/<pb\b/g) ?? []).length, scoreDef)
+					: buildFacsimileMei(
+							{ headXml: parsed.headXml, scoreDef, pages: parsed.pages },
+							{ withBreaks: parsed.hasBreaks }
+						);
+			// A no-op would open an empty PR the path-filtered caller never runs;
+			// guard against that rather than leaving the console polling forever.
+			if (content === current) {
+				return {
+					ok: true,
+					warn: true,
+					message: 'Nothing to submit — the score already matches this setup.'
+				};
+			}
+			ctx.progress({ step: 'Opening the setup PR…' });
+			const title = `Set up the score (${task_id})`;
+			const body = `${title}. Opened from the score setup editor.`;
+			console.log('[setup] opening PR', { task_id });
+			const pr = await f.openChangePr(owner, repo, {
+				branch: `setup-${task_id}-${rand()}`,
+				files: [{ path: fragment, content }],
+				message: title,
+				title,
+				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+			});
+			console.log('[setup] PR opened', pr.number, pr.html_url);
+			// The verdict is awaited here, not in the background: the setup editor
+			// navigates away on acceptance, so a rejection must land while the
+			// entered values are still on screen to retry from.
+			const verdict = await waitForPrProcessed(ctx, { ...pr, cleanup: 'accepted' });
+			return verdictResult(verdict, pr.number, pr.html_url, `Score setup of ${task_id} submitted.`);
+		} catch (e) {
+			return { error: `Submission failed: ${(e as Error).message}` };
+		}
+	}
+};
+
 /** The console command registry. */
 export const commands = {
 	readTables,
@@ -1221,5 +1293,6 @@ export const commands = {
 	runReaper,
 	readFacsimile,
 	claimTask,
-	submitZones
+	submitZones,
+	submitScoreSetup
 };
