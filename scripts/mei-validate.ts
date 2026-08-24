@@ -14,8 +14,8 @@ import { join } from 'node:path';
 // The schema version the campaign template declares in its <?xml-model?>
 // processing instruction. Downloaded on first use and cached in the temp
 // directory; the digest pins the bytes it must contain.
-export const MEI_SCHEMA_URL = 'https://music-encoding.org/schema/5.0/mei-CMN.rng';
-export const MEI_SCHEMA_SHA256 = 'fa2081b4e0c858e1dcde339b1b733b8e6350212a46c0db50b94cc71bbe68ca4c';
+export const MEI_SCHEMA_URL = 'https://music-encoding.org/schema/5.1/mei-CMN.rng';
+export const MEI_SCHEMA_SHA256 = 'f6440d5eb59c3e903f2a7a64ea26518646186f8449b86096106846a269eb354b';
 
 function sha256(bytes: Buffer): string {
 	return createHash('sha256').update(bytes).digest('hex');
