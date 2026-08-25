@@ -26,6 +26,7 @@
     anchor = null,
     initialPane = null,
     initialZones = true,
+    onmeasureselect,
   }: {
     owner: string;
     repo: string;
@@ -39,6 +40,8 @@
     initialPane?: PreviewPane | null;
     /** Whether the measure-zone overlay starts visible. */
     initialZones?: boolean;
+    /** Reports the selected measure's label; null when deselected. */
+    onmeasureselect?: (label: string | null) => void;
   } = $props();
 
   /** One facsimile page in the preview: image plus its measure zones. */
@@ -113,6 +116,46 @@
       : `Page ${(pvSpread.pages[0] ?? 0) + 1} of ${pvPageTotal}`,
   );
 
+  // The selected measure, linking the panes: clicking a zone on the facsimile
+  // or a measure on the rendered encoding highlights it on both. Zone labels
+  // and Verovio's data-n both carry the measure's number (@n), so the label is
+  // the shared key.
+  let selected = $state<string | null>(null);
+  function selectMeasure(label: string | null) {
+    selected = selected === label ? null : label;
+    onmeasureselect?.(selected);
+    if (selected) {
+      const p = pageOfMeasure(selected);
+      if (p >= 0 && !pvSpread.pages.includes(p)) showPage(p);
+    }
+  }
+  // A click on the rendered encoding, resolved to the measure it landed in.
+  // SVG only hit-tests painted strokes, so a click between the staff lines
+  // reaches no measure element — those fall back to the measures' bounding
+  // boxes, making the whole measure rectangle the hit area.
+  function encClick(e: MouseEvent) {
+    let n = (e.target as Element)
+      .closest?.("g.measure")
+      ?.getAttribute("data-n");
+    if (!n) {
+      for (const g of (e.currentTarget as Element).querySelectorAll(
+        "g.measure[data-n]",
+      )) {
+        const r = g.getBoundingClientRect();
+        if (
+          e.clientX >= r.left &&
+          e.clientX <= r.right &&
+          e.clientY >= r.top &&
+          e.clientY <= r.bottom
+        ) {
+          n = g.getAttribute("data-n");
+          break;
+        }
+      }
+    }
+    if (n) selectMeasure(n);
+  }
+
   // Whether a facsimile zone falls in the anchored measure range (zone labels
   // carry the measure numbers).
   function zoneFlagged(label: string): boolean {
@@ -123,20 +166,23 @@
       return n >= a.m1 && n <= a.m2;
     });
   }
-  // Mark the anchored measures on a rendered encoding page — Verovio writes
-  // each measure's number as data-n.
+  // Mark the anchored and the selected measures on a rendered encoding page —
+  // Verovio writes each measure's number as data-n.
   function flagSvg(svg: string): string {
     const a = anchor;
-    if (!svg || !a) return svg;
+    const sel = selected;
+    if (!svg || (!a && sel === null)) return svg;
     try {
       const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
       // A failed parse yields a parsererror document, not an exception — the
       // page then shows unflagged rather than serialised error text.
       if (doc.querySelector("parsererror")) return svg;
       for (const g of doc.querySelectorAll("g.measure")) {
-        const n = Number(g.getAttribute("data-n") ?? "");
-        if (Number.isFinite(n) && n >= a.m1 && n <= a.m2)
+        const label = g.getAttribute("data-n") ?? "";
+        const n = Number(label);
+        if (a && Number.isFinite(n) && n >= a.m1 && n <= a.m2)
           g.classList.add("m-flag");
+        if (sel !== null && label === sel) g.classList.add("m-sel");
       }
       return new XMLSerializer().serializeToString(doc);
     } catch {
@@ -144,7 +190,8 @@
     }
   }
   // Marked-up pages, derived so the DOMParser round trip re-runs only when the
-  // rendered pages or the anchor move — not on every overlay re-render.
+  // rendered pages, the anchor or the selection move — not on every overlay
+  // re-render.
   const flaggedSvgs = $derived.by(() => {
     const out: Record<number, string> = {};
     if (!preview) return out;
@@ -223,6 +270,11 @@
       svgs: {},
     };
     pvFirstVisible = 0;
+    // A selection belongs to the score it was made on.
+    if (selected !== null) {
+      selected = null;
+      onmeasureselect?.(null);
+    }
     try {
       const mei = await f.getRepoFile(owner, repo, path);
       if (mei == null) throw new Error(`Could not read ${path}.`);
@@ -355,6 +407,14 @@
         >Measure zones · {showZones ? "on" : "off"}</button
       >
     {/if}
+    {#if selected !== null}
+      <button
+        type="button"
+        class="tchip on"
+        onclick={() => selectMeasure(selected)}
+        title="Clear the measure selection">m. {selected} ✕</button
+      >
+    {/if}
     <button
       type="button"
       class="tchip"
@@ -426,16 +486,28 @@
                             class:flagged={anchor &&
                               p + 1 === anchor.page &&
                               zoneFlagged(z.label)}
+                            class:sel={selected === z.label}
+                            role="button"
+                            tabindex={0}
+                            aria-label={`Measure ${z.label}: highlight in both panes`}
                             x={z.box.ulx}
                             y={z.box.uly}
                             width={z.box.lrx - z.box.ulx}
                             height={z.box.lry - z.box.uly}
+                            onclick={() => selectMeasure(z.label)}
+                            onkeydown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                selectMeasure(z.label);
+                              }
+                            }}
                           />
                           <text
                             class="pv-zonelabel"
                             class:flagged={anchor &&
                               p + 1 === anchor.page &&
                               zoneFlagged(z.label)}
+                            class:sel={selected === z.label}
                             x={z.box.ulx + 6}
                             y={z.box.uly + 30}>{z.label}</text
                           >
@@ -462,7 +534,10 @@
             >
               {#if pvSpread.lonelySide === "right"}<div class="pv-spacer"></div>{/if}
               {#each pvSpread.pages as p (p)}
-                <div class="pv-page enc">
+                <!-- The click lands on whichever rendered measure it hit; the
+                     keyboard path to selection is the facsimile zones. -->
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <div class="pv-page enc" onclick={encClick}>
                   {#if p < preview.pageCount}
                     {@html flaggedSvgs[p + 1] ?? ""}
                   {/if}
@@ -728,10 +803,16 @@
     fill: rgba(109, 195, 255, 0.12);
     stroke: rgba(37, 99, 201, 0.55);
     stroke-width: 2;
+    cursor: pointer;
   }
   .pv-zone.flagged {
     fill: rgba(180, 35, 24, 0.1);
     stroke: #b42318;
+    stroke-width: 3;
+  }
+  .pv-zone.sel {
+    fill: rgba(37, 99, 201, 0.18);
+    stroke: #2563c9;
     stroke-width: 3;
   }
   .pv-zonelabel {
@@ -747,8 +828,22 @@
     fill: #b42318;
     font-weight: 700;
   }
+  .pv-zonelabel.sel {
+    fill: #2563c9;
+    font-weight: 700;
+  }
+  /* The whole page is clickable (clicks resolve to a measure's bounding
+     box), so the cursor says so everywhere on it. */
+  .pv-page.enc :global(svg) {
+    cursor: pointer;
+  }
   .pv-page.enc :global(g.measure.m-flag *) {
     fill: #b42318;
     stroke: #b42318;
+  }
+  /* The selection wins over a fail flag where both mark the same measure. */
+  .pv-page.enc :global(g.measure.m-sel *) {
+    fill: #2563c9;
+    stroke: #2563c9;
   }
 </style>

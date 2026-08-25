@@ -338,18 +338,20 @@
   const claim = (task_id: string, subtask_id: string) =>
     run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
 
-  // Pre-tasks are validated in their own editor, so claiming one opens it —
-  // but only on a clean claim, so a rejected claim leaves you on the console
-  // rather than in a read-only editor. Encoding tasks (whole-file and
-  // per-page) review in the preview and just claim in place.
+  // Claiming a validation slot opens the place the review happens — a
+  // pre-task's own editor, or the review view for encoding tasks — but only
+  // on a clean claim, so a rejected claim leaves you on the console.
   const claimValidate = async (task_id: string, subtask_id: string) => {
     await claim(task_id, subtask_id);
+    if (!runner.result?.ok || runner.result.warn) return;
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
-    if (isPreTask(locator ?? "") && runner.result?.ok && !runner.result.warn) {
-      await goto(`/${campaign}/${preTaskRoute(locator ?? "")}/${task_id}`);
-    }
+    await goto(
+      isPreTask(locator ?? "")
+        ? `/${campaign}/${preTaskRoute(locator ?? "")}/${task_id}`
+        : `/${campaign}/review/${task_id}`,
+    );
   };
 
   // Open the task's score in mei-friend (claiming it if needed). The tab opens
@@ -1075,7 +1077,6 @@
           {canPush}
           {runner}
           {resultBanner}
-          {slotDot}
           currentPage={() => previewDock?.currentPage() ?? 0}
           onshowanchor={showAnchorFor}
           onclaim={claimValidate}
