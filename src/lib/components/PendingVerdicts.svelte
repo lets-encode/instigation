@@ -65,7 +65,7 @@
       {/each}
       <button
         type="button"
-        class="btn btn-primary"
+        class="btn btn-lg btn-primary"
         onclick={() => rejected.forEach((e) => pendingVerdicts.dismiss(e.id))}
       >
         Continue
@@ -129,7 +129,7 @@
   }
   .mark {
     flex: none;
-    font-weight: 700;
+    font-weight: 600;
   }
   .ok-mark {
     color: var(--ok);
@@ -182,7 +182,7 @@
     border: 3px solid var(--danger);
     border-radius: 50%;
     color: var(--danger);
-    font-weight: 700;
+    font-weight: 600;
   }
   .overlay-title {
     margin: 0;

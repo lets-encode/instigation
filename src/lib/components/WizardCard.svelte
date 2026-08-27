@@ -192,7 +192,11 @@
                 {done ? "✓" : i + 1}
               </span>
               {#if i < WIZARD_STEPS.length - 1}
-                <span class="connector"></span>
+                <span
+                  class="connector"
+                  class:done
+                  class:tolive={i === current - 1}
+                ></span>
               {/if}
             </span>
             <span class="step-text">
@@ -297,7 +301,7 @@
         {#if onBack}
           <button
             type="button"
-            class="btn btn-secondary"
+            class="btn btn-lg btn-secondary"
             onclick={onBack}
             disabled={backDisabled}
           >
@@ -307,7 +311,7 @@
         {#if onNext}
           <button
             type="button"
-            class="btn btn-primary"
+            class="btn btn-lg btn-primary"
             class:btn-finish={finish}
             onclick={onNext}
             disabled={nextDisabled}
@@ -326,9 +330,8 @@
     min-height: 0;
     display: flex;
     background:
-      radial-gradient(60% 90% at 15% 0%, rgba(109, 195, 255, 0.12), transparent 60%),
-      radial-gradient(60% 90% at 85% 10%, rgba(118, 222, 118, 0.12), transparent 60%),
-      radial-gradient(50% 80% at 50% 100%, rgba(255, 167, 109, 0.1), transparent 60%),
+      radial-gradient(60% 90% at 15% 0%, var(--glow-blue), transparent 60%),
+      radial-gradient(60% 90% at 85% 10%, var(--glow-green), transparent 60%),
       var(--bg-alt);
   }
 
@@ -406,9 +409,9 @@
   }
   .bubble.done {
     font-size: 13px;
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
+    background: var(--ok-btn);
+    border: none;
+    color: #fff;
   }
   .bubble.active {
     font-weight: 600;
@@ -418,23 +421,33 @@
     box-shadow: 0 0 0 4px rgba(37, 99, 201, 0.15);
   }
   .connector {
-    width: 1px;
-    height: 18px;
-    background: var(--line);
+    width: 2px;
+    height: 30px;
+    border-radius: 1px;
+    background: var(--line-strong);
+  }
+  /* The chain colours in as the steps complete: green along the completed
+     stretch, blending into blue where it reaches the active step. */
+  .connector.done {
+    background: var(--ok-btn);
+  }
+  .connector.tolive {
+    background: linear-gradient(var(--ok-btn), var(--accent-btn));
   }
   .step-text {
     display: block;
-    padding-top: 3px;
+    padding-top: 5px;
     min-width: 0;
   }
   .step-label {
     display: block;
     font-size: 13.5px;
     font-weight: 600;
+    line-height: 16px;
     color: var(--ink-soft);
   }
   .step-label.active {
-    font-weight: 700;
+    font-weight: 600;
     color: var(--ink);
   }
   .step-label.upcoming {

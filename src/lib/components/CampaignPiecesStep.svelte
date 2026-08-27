@@ -513,7 +513,7 @@
             {#if confirmingRemove === p.id}
               <button
                 type="button"
-                class="delete confirming"
+                class="btn btn-danger delete"
                 onclick={() => removePiece(i)}
                 disabled={busy}
               >
@@ -522,7 +522,7 @@
             {:else}
               <button
                 type="button"
-                class="delete"
+                class="btn btn-icon btn-danger delete"
                 onclick={() => removePiece(i)}
                 disabled={busy}
                 aria-label="Remove {labelOf(p)}"
@@ -732,29 +732,7 @@
   }
   .delete {
     flex: none;
-    cursor: pointer;
-    width: 22px;
-    height: 22px;
     margin-right: 8px;
-    font-size: 12px;
-    color: var(--ink-faint);
-    background: none;
-    border: none;
-  }
-  .delete:hover {
-    color: var(--danger);
-  }
-  .delete.confirming {
-    width: auto;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
-    padding: 3px 10px;
-    color: var(--danger);
-    border: 1px solid var(--danger-line);
-    border-radius: 999px;
-    background: var(--danger-bg);
   }
   .piece-actions {
     display: flex;

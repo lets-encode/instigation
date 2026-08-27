@@ -131,6 +131,7 @@
     border-radius: 8px;
     overflow: hidden;
     background: var(--bg-inset);
+    box-shadow: var(--shadow-inset);
   }
   .editor.fill {
     flex: 1;

@@ -1,9 +1,9 @@
 <!--
   The campaign's page images, filling the material pane beside the metadata
   step so the organiser can read the source while describing it. The pages are
-  committed by this point, so the toolbar says so: this view is for reference,
-  nothing here edits them. How many pages a row holds is the zoom: one per row
-  fills the pane with a single page.
+  committed by this point: this view is for reference, nothing here edits
+  them. How many pages a row holds is the zoom: one per row fills the pane
+  with a single page.
 
   The images are the pages the pages step committed, as object URLs —
   the committed copies are in the repository, but reading them back would cost
@@ -16,12 +16,13 @@
   tinting it to match a dark UI would misrepresent the source.
 -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, type Snippet } from "svelte";
   import type { PageImage } from "$lib/prepare-images.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
   import ZoomLevel from "./ZoomLevel.svelte";
 
-  let { pages }: { pages: PageImage[] } = $props();
+  // `toolbar` renders extra controls at the end of the toolbar.
+  let { pages, toolbar }: { pages: PageImage[]; toolbar?: Snippet } = $props();
 
   // One page per row: the imprint has to be readable while it is copied into
   // the form beside it.
@@ -52,11 +53,15 @@
 {#if pages.length}
   <div class="material-card">
     <div class="material-toolbar">
-      <span class="toolbar-name">{pages.length} page{pages.length === 1 ? "" : "s"} · committed</span>
-      <span class="chip">Pages are set — for reference</span>
+      <span
+        class="toolbar-name"
+        title="The pages kept in the Pages step, shown here to read from while filling the form."
+        >{pages.length} page{pages.length === 1 ? "" : "s"}</span
+      >
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
       <ZoomLevel bind:value={zoom} />
+      {#if toolbar}{@render toolbar()}{/if}
     </div>
     <div class="material-body">
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">

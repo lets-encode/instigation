@@ -229,7 +229,7 @@
             Continue that setup from the campaign list
           </a>
         {:else}
-          <button type="button" class="btn btn-ghost btn-inline" onclick={adoptClaim}>
+          <button type="button" class="btn btn-inline" onclick={adoptClaim}>
             Use the name here — replaces that setup
           </button>
         {/if}
@@ -250,7 +250,7 @@
           longer be changed.
         </span>
       {:else if wizard.claim}
-        <button type="button" class="btn btn-ghost btn-inline" onclick={changeName}>
+        <button type="button" class="btn btn-inline" onclick={changeName}>
           Use a different name
         </button>
       {/if}
@@ -293,7 +293,7 @@
 
     <!-- Continue submits the form, so this step draws its own footer. -->
     {#snippet footer()}
-      <button type="submit" class="btn btn-primary" disabled={!canAdvance || claiming}>
+      <button type="submit" class="btn btn-lg btn-primary" disabled={!canAdvance || claiming}>
         {claiming ? "Reserving the name…" : "Continue →"}
       </button>
     {/snippet}

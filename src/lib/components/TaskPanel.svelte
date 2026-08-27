@@ -111,7 +111,7 @@
     <div class="tacts">
       <button
         type="button"
-        class="mbtn"
+        class="btn"
         onclick={() => onrawlink(card.task)}
         disabled={runner.busy}
         title="Copy a direct link to the score file to paste into mei-friend manually."
@@ -119,14 +119,14 @@
       >
       {#if card.locator === "score-setup"}
         <a
-          class="mbtn blue"
+          class="btn btn-soft"
           href={`/${campaign}/setup/${card.task}`}
           title="Open the score setup form: staves, clefs, key signature and meter."
           >Open setup editor</a
         >
       {:else if card.pre}
         <a
-          class="mbtn blue"
+          class="btn btn-soft"
           href={`/${campaign}/zones/${card.task}`}
           title="Open the measure zones on the facsimile."
           >Open zone editor</a
@@ -136,7 +136,7 @@
              cannot accept a submission, so no editor hand-off is offered. -->
         <button
           type="button"
-          class="mbtn blue"
+          class="btn btn-soft"
           onclick={() => oneditor(card.task)}
           disabled={runner.busy || !auth.user}
           title={editorLabel === "Open editor ↗"
@@ -146,7 +146,7 @@
         >
       {:else if card.column === "validation"}
         <a
-          class="mbtn blue"
+          class="btn btn-soft"
           href={`/${campaign}/review/${card.task}`}
           title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
           >Open review view</a
@@ -156,7 +156,7 @@
         <!-- A pre-task is submitted from its own editor. -->
         <button
           type="button"
-          class="mbtn primary"
+          class="btn btn-primary"
           onclick={() => onsubmitencoding(card.task)}
           disabled={runner.busy || encodePending}
           title="After committing your encoding in mei-friend, submit it for validation."
@@ -227,40 +227,6 @@
     gap: 8px;
     flex-wrap: wrap;
   }
-  .mbtn {
-    font-size: 12.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 7px 15px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-    text-decoration: none;
-    flex: none;
-  }
-  .mbtn:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .mbtn.blue {
-    border-color: var(--info-line);
-    color: var(--info);
-  }
-  .mbtn.primary {
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-  }
-  .mbtn.primary:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-    color: #fff;
-  }
-  .mbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .rail-scroll {
     flex: 1;
     min-height: 0;
@@ -272,7 +238,7 @@
   }
   .chip {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;

@@ -16,6 +16,7 @@
 <span class="stepper">
   <button
     type="button"
+    class="btn btn-icon"
     aria-label="Fewer pages per row"
     disabled={value <= 1}
     onclick={() => value--}
@@ -25,6 +26,7 @@
   <span class="per-row">{value} per row</span>
   <button
     type="button"
+    class="btn btn-icon"
     aria-label="More pages per row"
     disabled={value >= most}
     onclick={() => value++}
@@ -37,33 +39,11 @@
   .stepper {
     display: flex;
     align-items: center;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--card);
-  }
-  button {
-    cursor: pointer;
-    width: 30px;
-    height: 30px;
-    font: 15px var(--font);
-    color: var(--ink-soft);
-    background: var(--card);
-    border: none;
-  }
-  button:hover:not(:disabled) {
-    background: var(--bg-alt);
-  }
-  button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+    gap: 4px;
   }
   .per-row {
     font-size: 12px;
-    line-height: 30px;
-    padding: 0 8px;
-    border-left: 1px solid var(--line);
-    border-right: 1px solid var(--line);
+    padding: 0 2px;
     font-variant-numeric: tabular-nums;
     color: var(--ink-soft);
     white-space: nowrap;

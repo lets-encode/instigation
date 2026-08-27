@@ -295,7 +295,9 @@
 
   {#if auth.user && (fix.length > 0 || openComments.length > 0)}
     <section class="block">
-      <div class="slabel danger">Needs your attention</div>
+      <div class="slabel danger">
+        <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your attention
+      </div>
       <div class="rows">
         {#each fix as t (t.campaignSlug + t.task)}
           <a class="row attention" href={taskHref(t.campaignSlug, t.task)}>
@@ -366,13 +368,13 @@
             <span class="spacer"></span>
             <button
               type="button"
-              class="rbtn"
+              class="btn"
               disabled={runner.busy}
               onclick={() => openEditor(t)}>Open editor ↗</button
             >
             <button
               type="button"
-              class="rbtn primary"
+              class="btn btn-soft"
               disabled={runner.busy}
               onclick={() => submit(t)}>Submit</button
             >
@@ -458,10 +460,10 @@
       </div>
       <button
         type="button"
-        class="fchip"
+        class="chip-switch"
         class:on={openOnly}
         onclick={() => (openOnly = !openOnly)}
-        >{openOnly ? "✓ " : ""}Has open tasks</button
+        ><span class="sw"></span> Has open tasks</button
       >
       <span class="pager">
         {#if filtered.length === 0}
@@ -474,14 +476,14 @@
         {/if}
         <button
           type="button"
-          class="pbtn"
+          class="btn btn-icon"
           disabled={current === 1}
           onclick={() => (pageNo = current - 1)}
           aria-label="Previous page">‹</button
         >
         <button
           type="button"
-          class="pbtn"
+          class="btn btn-icon"
           disabled={current === pages}
           onclick={() => (pageNo = current + 1)}
           aria-label="Next page">›</button
@@ -539,8 +541,8 @@
     padding-inline: max(32px, calc((100% - var(--page-max)) / 2 + 32px));
     box-sizing: border-box;
     background:
-      radial-gradient(60% 90% at 15% 0%, rgba(109, 195, 255, 0.12), transparent 60%),
-      radial-gradient(60% 90% at 85% 10%, rgba(118, 222, 118, 0.12), transparent 60%),
+      radial-gradient(60% 90% at 15% 0%, var(--glow-blue), transparent 60%),
+      radial-gradient(60% 90% at 85% 10%, var(--glow-green), transparent 60%),
       var(--bg-alt);
   }
   .note {
@@ -567,13 +569,21 @@
   }
   .slabel {
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--ink-faint);
     letter-spacing: 0.05em;
     text-transform: uppercase;
   }
   .slabel.danger {
     color: var(--danger);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* The orange finger-up hand leads the attention section. */
+  .hand-attn {
+    height: 24px;
+    flex: none;
   }
   .smeta {
     font-size: 12px;
@@ -645,7 +655,7 @@
   .pill {
     flex: none;
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 9px;
     white-space: nowrap;
@@ -680,31 +690,6 @@
   .golink.red {
     color: var(--danger);
   }
-  .rbtn {
-    flex: none;
-    font: 600 12.5px var(--font);
-    padding: 6px 13px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-  }
-  .rbtn:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .rbtn.primary {
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-  }
-  .rbtn.primary:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-  }
-  .rbtn:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
   .donerow {
     color: var(--ink-faint);
   }
@@ -714,7 +699,7 @@
   }
   .check {
     color: var(--ok);
-    font-weight: 700;
+    font-weight: 600;
   }
   .searchbox {
     display: flex;
@@ -747,68 +732,12 @@
   .searchbox input::placeholder {
     color: var(--ink-faint);
   }
-  .seg {
-    display: flex;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 3px;
-  }
-  .seg button {
-    font: 600 12px var(--font);
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 0;
-    background: none;
-    color: var(--ink-faint);
-    cursor: pointer;
-  }
-  .seg button.on {
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-  }
-  .fchip {
-    font: 600 12px var(--font);
-    color: var(--ink-soft);
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 5px 12px;
-    cursor: pointer;
-  }
-  .fchip:hover {
-    border-color: var(--info-line);
-    color: var(--accent);
-  }
-  .fchip.on {
-    color: var(--info);
-    background: var(--info-bg);
-    border-color: var(--info-line);
-  }
   .pager {
     display: flex;
     align-items: center;
     gap: 6px;
     font-size: 12px;
     color: var(--ink-faint);
-  }
-  .pbtn {
-    font: 600 12.5px var(--font);
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-  .pbtn:hover:not(:disabled) {
-    border-color: var(--info-line);
-    color: var(--accent);
-  }
-  .pbtn:disabled {
-    color: var(--ink-faint);
-    cursor: default;
   }
   .tiles {
     display: grid;

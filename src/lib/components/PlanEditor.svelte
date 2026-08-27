@@ -169,13 +169,13 @@
     <span class="pmode">● Editing the plan</span>
     <span class="pnote">Changes only touch tasks nobody has worked on yet.</span>
     <span class="pspacer"></span>
-    <button type="button" class="pbtn" onclick={addTask} disabled={busy}
+    <button type="button" class="btn" onclick={addTask} disabled={busy}
       >+ Add task</button
     >
-    <button type="button" class="pbtn" onclick={oncancel} disabled={busy}
+    <button type="button" class="btn" onclick={oncancel} disabled={busy}
       >Cancel</button
     >
-    <button type="button" class="pbtn save" onclick={save} disabled={busy}
+    <button type="button" class="btn btn-primary" onclick={save} disabled={busy}
       >Save the plan</button
     >
   </div>
@@ -283,9 +283,10 @@
           {#if g.editable}
             <button
               type="button"
-              class="premove"
+              class="btn btn-icon"
+              aria-label="Remove task"
               onclick={() => removeTask(i)}
-              disabled={busy}>Remove</button
+              disabled={busy}>✕</button
             >
           {/if}
         </span>
@@ -343,28 +344,6 @@
   .pspacer {
     flex: 1;
   }
-  .pbtn {
-    font: 600 11.5px var(--font);
-    padding: 5px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--info-line);
-    background: var(--card);
-    color: var(--accent);
-    cursor: pointer;
-  }
-  .pbtn:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-  .pbtn.save {
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-    padding: 5px 14px;
-  }
-  .pbtn.save:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-  }
   .prow {
     display: grid;
     grid-template-columns: 28px minmax(200px, 1fr) 150px 110px 250px 130px 80px;
@@ -378,7 +357,7 @@
     border-bottom: 1px solid var(--line);
     padding: 8px 16px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--ink-faint);
@@ -444,7 +423,7 @@
   }
   .pchip {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 1px 7px;
     margin-left: 4px;
@@ -484,17 +463,6 @@
   }
   .pact {
     text-align: right;
-  }
-  .premove {
-    font: 600 11px var(--font);
-    color: var(--ink-faint);
-    background: none;
-    border: 0;
-    cursor: pointer;
-    text-decoration: underline;
-  }
-  .premove:hover:not(:disabled) {
-    color: var(--danger);
   }
   .pfoot {
     padding: 10px 16px;

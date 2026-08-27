@@ -487,7 +487,7 @@
   }
   .rtitle {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
   }
   .taskchip {
     font-size: 12px;

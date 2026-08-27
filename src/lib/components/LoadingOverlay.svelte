@@ -43,7 +43,7 @@
     {/if}
     <ProgressSteps {log} />
     {#if finished}
-      <button type="button" class="btn btn-primary" onclick={onContinue}>
+      <button type="button" class="btn btn-lg btn-primary" onclick={onContinue}>
         Continue
       </button>
     {/if}
@@ -116,7 +116,7 @@
     border: 3px solid var(--danger);
     border-radius: 50%;
     color: var(--danger);
-    font-weight: 700;
+    font-weight: 600;
   }
   .overlay-error {
     margin: 0;

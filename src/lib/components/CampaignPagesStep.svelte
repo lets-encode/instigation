@@ -367,7 +367,7 @@
   }
   .count {
     font-size: 34px;
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
   .count-of {

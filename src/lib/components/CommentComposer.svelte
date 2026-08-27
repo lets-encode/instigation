@@ -51,17 +51,15 @@
         >
       </div>
     {:else}
-      <div class="kindpick">
+      <div class="seg">
         <button
           type="button"
-          class="tchip"
           class:on={composerKind === "question"}
           onclick={() => (composerKind = "question")}
           title="Ask the campaign a question">question</button
         >
         <button
           type="button"
-          class="tchip"
           class:on={composerKind === "addition"}
           onclick={() => (composerKind = "addition")}
           title="Leave a note">note</button
@@ -78,7 +76,7 @@
       />
       <button
         type="button"
-        class="sendbtn"
+        class="btn btn-soft"
         onclick={postComment}
         disabled={runner.busy || !composerText.trim()}>Send</button
       >
@@ -112,28 +110,6 @@
     gap: 8px;
     align-items: center;
   }
-  .kindpick {
-    display: flex;
-    gap: 6px;
-  }
-  .tchip {
-    font-size: 11.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 4px 11px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-    flex: none;
-    white-space: nowrap;
-  }
-  .tchip.on {
-    border-color: var(--info-line);
-    background: var(--info-bg);
-    color: var(--info);
-  }
   .composer-row {
     display: flex;
     gap: 8px;
@@ -148,24 +124,5 @@
     border-radius: 8px;
     background: var(--card);
     color: var(--ink);
-  }
-  .sendbtn {
-    font-size: 12.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 8px 16px;
-    border-radius: 999px;
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-    cursor: pointer;
-    flex: none;
-  }
-  .sendbtn:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-  }
-  .sendbtn:disabled {
-    opacity: 0.55;
-    cursor: default;
   }
 </style>

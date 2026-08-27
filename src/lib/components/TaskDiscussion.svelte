@@ -134,7 +134,7 @@
   }
   .chip {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;

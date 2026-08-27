@@ -351,7 +351,7 @@
     {#if preview?.facs?.length}
       <!-- Where the toolbar is too narrow for the labels, the buttons carry
            their icon alone; the label stays for screen readers. -->
-      <div class="paneseg">
+      <div class="seg paneseg">
         <button
           type="button"
           class:on={pane === "facs"}
@@ -383,7 +383,7 @@
     {/if}
     <button
       type="button"
-      class="tbtn-sq"
+      class="btn btn-icon"
       onclick={() => pvGo(-1)}
       disabled={pvSpreadIndex <= 0}
       aria-label="Previous page">‹</button
@@ -391,37 +391,23 @@
     <span class="pglabel">{pvSpreadLabel}</span>
     <button
       type="button"
-      class="tbtn-sq"
+      class="btn btn-icon"
       onclick={() => pvGo(1)}
       disabled={pvSpreadIndex >= pvSpreads.length - 1}
       aria-label="Next page">›</button
     >
-    <span class="mspacer"></span>
-    {#if facsVisible}
+    <div class="seg" title="How many pages the viewer shows at once">
       <button
         type="button"
-        class="tchip"
-        class:on={showZones}
-        onclick={() => (showZones = !showZones)}
-        title="Show or hide the measure zones on the facsimile"
-        >Measure zones · {showZones ? "on" : "off"}</button
+        class:on={pvView === "single"}
+        onclick={() => pvSetView("single")}>1 page</button
       >
-    {/if}
-    {#if selected !== null}
       <button
         type="button"
-        class="tchip on"
-        onclick={() => selectMeasure(selected)}
-        title="Clear the measure selection">m. {selected} ✕</button
+        class:on={pvView === "double"}
+        onclick={() => pvSetView("double")}>2 pages</button
       >
-    {/if}
-    <button
-      type="button"
-      class="tchip"
-      class:on={pvView === "double"}
-      onclick={() => pvSetView(pvView === "double" ? "single" : "double")}
-      title="Show a two-page spread">Double page</button
-    >
+    </div>
     {#if pvView === "double"}
       <label
         class="pcheck"
@@ -436,6 +422,25 @@
         Page 1 right
       </label>
     {/if}
+    <span class="mspacer"></span>
+    {#if facsVisible}
+      <button
+        type="button"
+        class="chip-switch"
+        class:on={showZones}
+        onclick={() => (showZones = !showZones)}
+        title="Show or hide the measure zones on the facsimile"
+        ><span class="sw"></span>Measure zones</button
+      >
+    {/if}
+    {#if selected !== null}
+      <button
+        type="button"
+        class="tchip on"
+        onclick={() => selectMeasure(selected)}
+        title="Clear the measure selection">m. {selected} ✕</button
+      >
+    {/if}
     <span class="vline"></span>
     <input
       class="zoomslider"
@@ -449,6 +454,12 @@
       oninput={(e) => setPvZoomPos(Number((e.target as HTMLInputElement).value))}
     />
     <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
+    <button
+      type="button"
+      class="tbtn"
+      onclick={() => (pvZoom = 1)}
+      title="Reset the zoom so a page fits the pane">Fit</button
+    >
   </div>
   <div class="pbody-panes">
     {#if !preview || preview.loading}
@@ -483,6 +494,7 @@
                         {#each pg.zones as z, zi (zi)}
                           <rect
                             class="pv-zone"
+                            vector-effect="non-scaling-stroke"
                             class:flagged={anchor &&
                               p + 1 === anchor.page &&
                               zoneFlagged(z.label)}
@@ -594,26 +606,7 @@
     overflow-x: auto;
   }
   .paneseg {
-    display: flex;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 3px;
     flex: none;
-  }
-  .paneseg button {
-    font: 600 12px var(--font);
-    padding: 4px 14px;
-    border-radius: 999px;
-    border: 0;
-    background: none;
-    color: var(--ink-faint);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .paneseg button.on {
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
   }
   .paneseg .ico {
     display: none;
@@ -638,45 +631,6 @@
       white-space: nowrap;
     }
   }
-  .tbtn-sq {
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-    flex: none;
-    font-family: inherit;
-  }
-  .tbtn-sq:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .pglabel {
-    font-size: 12.5px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .tchip {
-    font-size: 11.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 4px 11px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-    flex: none;
-    white-space: nowrap;
-  }
-  .tchip.on {
-    border-color: var(--info-line);
-    background: var(--info-bg);
-    color: var(--info);
-  }
   .pcheck {
     display: flex;
     align-items: center;
@@ -685,30 +639,12 @@
     color: var(--ink-soft);
     white-space: nowrap;
   }
-  .vline {
-    width: 1px;
-    height: 18px;
-    background: var(--line);
-    flex: none;
-  }
-  .zoomslider {
-    width: 110px;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .zval {
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    color: var(--ink-soft);
-    min-width: 38px;
-    text-align: center;
-  }
-
   /* ---------------------------------------------------------------- panes */
   .pbody-panes {
     flex: 1;
     min-height: 0;
     background: var(--bg-inset);
+    box-shadow: var(--shadow-inset);
     display: flex;
     gap: 10px;
     padding: 10px 10px 4px;
@@ -799,21 +735,23 @@
     color: var(--ink-faint);
     text-align: center;
   }
+  /* Strokes are screen pixels — the markup sets
+     vector-effect="non-scaling-stroke" — so they stay even at every zoom. */
   .pv-zone {
     fill: rgba(109, 195, 255, 0.12);
     stroke: rgba(37, 99, 201, 0.55);
-    stroke-width: 2;
+    stroke-width: 1.5;
     cursor: pointer;
   }
   .pv-zone.flagged {
     fill: rgba(180, 35, 24, 0.1);
     stroke: #b42318;
-    stroke-width: 3;
+    stroke-width: 2.5;
   }
   .pv-zone.sel {
     fill: rgba(37, 99, 201, 0.18);
     stroke: #2563c9;
-    stroke-width: 3;
+    stroke-width: 2.5;
   }
   .pv-zonelabel {
     font:
@@ -826,11 +764,11 @@
   }
   .pv-zonelabel.flagged {
     fill: #b42318;
-    font-weight: 700;
+    font-weight: 600;
   }
   .pv-zonelabel.sel {
     fill: #2563c9;
-    font-weight: 700;
+    font-weight: 600;
   }
   /* The whole page is clickable (clicks resolve to a measure's bounding
      box), so the cursor says so everywhere on it. */

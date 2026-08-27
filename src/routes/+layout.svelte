@@ -63,7 +63,7 @@
   {/if}
   <div class="topbar-right">
     {#if onHome}
-      <a class="newbtn" href="/new">+ New campaign</a>
+      <a class="btn" href="/new">+ New campaign</a>
     {/if}
     {#if auth.user}
       <div class="user">
@@ -190,19 +190,6 @@
     font-size: 13px;
     color: var(--link);
     margin-left: 4px;
-  }
-  .newbtn {
-    font: 600 13px var(--font);
-    padding: 7px 14px;
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 999px;
-    color: var(--accent);
-    text-decoration: none;
-  }
-  .newbtn:hover {
-    border-color: var(--info-line);
-    background: var(--accent-tint);
   }
   .user {
     display: flex;

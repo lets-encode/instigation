@@ -673,7 +673,7 @@
           </span>
           <button
             type="button"
-            class="reapbtn"
+            class="btn"
             onclick={() => reaper()}
             disabled={runner.busy}
             title="Release claims that have gone stale">Run reaper now</button
@@ -713,7 +713,7 @@
             <span class="cspacer"></span>
             <button
               type="button"
-              class="pillbtn"
+              class="btn btn-lg"
               onclick={openScore}
               disabled={previewPieces.length === 0}
               title="Show every page of the score, without opening a task."
@@ -730,7 +730,7 @@
             {/if}
             <button
               type="button"
-              class="pillbtn primary"
+              class="btn btn-lg btn-primary"
               disabled={runner.busy || !auth.user || !nextCard}
               title={!auth.user
                 ? "Log in to claim a task."
@@ -914,11 +914,11 @@
                         <div class="card-claim">
                           <button
                             type="button"
-                            class="claimlink"
+                            class="claimlink withhand"
                             onclick={(e) => {
                               e.stopPropagation();
                               claimCard(card);
-                            }}>Claim →</button
+                            }}><img class="hand-claim" src="/blue-hand.svg" alt="" />Claim</button
                           >
                         </div>
                       {:else if card.column === "encoding" && card.worker}
@@ -1104,28 +1104,18 @@
     background-image:
       radial-gradient(
         60% 90% at 15% 0%,
-        rgba(109, 195, 255, 0.12),
+        var(--glow-blue),
         transparent 60%
       ),
       radial-gradient(
         60% 90% at 85% 10%,
-        rgba(118, 222, 118, 0.12),
-        transparent 60%
-      ),
-      radial-gradient(
-        50% 80% at 50% 100%,
-        rgba(255, 167, 109, 0.1),
+        var(--glow-green),
         transparent 60%
       );
-    /* Board-only surfaces without a global token. */
-    --well: rgba(255, 255, 255, 0.65);
-    --track: #eef2f8;
-    --hairline: #f0f1f5;
-  }
-  :global([data-theme="dark"]) .console {
-    --well: rgba(28, 31, 43, 0.55);
+    /* Board-only aliases onto the global recessed-surface tokens. */
+    --well: var(--bg-inset);
     --track: var(--bg-tint);
-    --hairline: #232736;
+    --hairline: var(--line);
   }
   .mono {
     font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -1250,7 +1240,7 @@
   /* The task panel's header line, rendered into its dock panel. */
   .dtitle {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
   }
   .dsub {
@@ -1346,7 +1336,7 @@
     margin: 0;
     font-size: 26px;
     line-height: 1.2;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1438,37 +1428,6 @@
     font-size: 12.5px;
     color: var(--ink-faint);
   }
-  .pillbtn {
-    font-size: 13.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 9px 20px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-    flex: none;
-  }
-  .pillbtn:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .pillbtn.primary {
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-    box-shadow: 0 1px 3px rgba(37, 99, 201, 0.35);
-  }
-  .pillbtn.primary:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-    color: #fff;
-  }
-  .pillbtn:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
-
   /* --------------------------------------------------------------- board */
   .board {
     flex: 1;
@@ -1495,13 +1454,13 @@
   }
   .bcol-name {
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
   .bcol-count {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     background: var(--track);
     border-radius: 999px;
     padding: 1px 7px;
@@ -1532,7 +1491,7 @@
   }
   .bcol-flag {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     color: #fff;
     background: var(--warn-solid);
     border-radius: 999px;
@@ -1541,6 +1500,7 @@
   }
   .well {
     background: var(--well);
+    box-shadow: var(--shadow-inset);
     border: 1px dashed var(--line-strong);
     border-radius: 14px;
     padding: 10px;
@@ -1677,6 +1637,16 @@
   .claimlink:hover:not(:disabled) {
     text-decoration: underline;
   }
+  /* The blue point hand marks claimable work; it replaces the arrow. */
+  .claimlink.withhand {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .hand-claim {
+    height: 16px;
+    flex: none;
+  }
   .card-worker {
     display: flex;
     align-items: center;
@@ -1746,7 +1716,7 @@
   }
   .chip {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;
@@ -1803,7 +1773,7 @@
   }
   .ticker-label {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--ink-faint);
@@ -1847,7 +1817,7 @@
   }
   .crumbtitle {
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1860,7 +1830,7 @@
   .ownerpill {
     flex: none;
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--owner);
     background: var(--owner-bg);
     border: 1px solid var(--owner-line);
@@ -1874,24 +1844,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .reapbtn {
-    flex: none;
-    font: 600 12.5px var(--font);
-    padding: 7px 14px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-  }
-  .reapbtn:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .reapbtn:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
-
   /* --------------------------------------------------------- responsive */
   /* Container-based, so the board also stacks when a side panel narrows it,
      not only when the window itself is narrow. Stacked, the board scrolls

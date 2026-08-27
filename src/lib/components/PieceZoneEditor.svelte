@@ -41,10 +41,14 @@
   // One entry per page, filled by bind:this. Reactive because binding writes
   // into it after the element is created.
   let svgEls = $state<SVGSVGElement[]>([]);
+  // Rendered width per page, for converting screen pixels to page units so
+  // labels and corner radii keep the same on-screen size at every zoom.
+  let svgWidths = $state<number[]>([]);
   let failed = $state<Record<number, boolean>>({});
 
   // The region being drawn, moved or resized, addressed by page, piece and
   // index within that piece so the reference survives a re-render.
+  type Corner = "nw" | "ne" | "sw" | "se";
   type Drag = {
     kind: "draw" | "move" | "resize";
     page: number;
@@ -53,6 +57,11 @@
     sx: number;
     sy: number;
     origin: PieceZone;
+    /** Which corner a resize grabbed. */
+    corner?: Corner;
+    /** A draw creates its zone only once the pointer has moved a few screen
+        pixels, so a plain click leaves nothing behind. */
+    started?: boolean;
   };
   let drag: Drag | null = null;
   let selectedZone = $state<{ piece: number; zone: number } | null>(null);
@@ -87,17 +96,15 @@
     const piece = pieces[selectedPiece];
     if (!piece || piece.kind !== "facsimile") return;
     const { x, y } = svgXY(e, surface);
-    piece.zones.push({ surface, ulx: x, uly: y, lrx: x, lry: y });
-    const zone = piece.zones.length - 1;
-    selectedZone = { piece: selectedPiece, zone };
     drag = {
       kind: "draw",
       page: surface,
       piece: selectedPiece,
-      zone,
+      zone: -1,
       sx: x,
       sy: y,
-      origin: { ...piece.zones[zone] },
+      origin: { surface, ulx: x, uly: y, lrx: x, lry: y },
+      started: false,
     };
   }
 
@@ -116,7 +123,13 @@
     };
   }
 
-  function handlePointerDown(e: PointerEvent, surface: number, p: number, z: number) {
+  function handlePointerDown(
+    e: PointerEvent,
+    surface: number,
+    p: number,
+    z: number,
+    corner: Corner,
+  ) {
     e.stopPropagation();
     selectedZone = { piece: p, zone: z };
     const { x, y } = svgXY(e, surface);
@@ -128,6 +141,7 @@
       sx: x,
       sy: y,
       origin: { ...pieces[p].zones[z] },
+      corner,
     };
   }
 
@@ -136,6 +150,16 @@
     const page = pages[drag.page];
     if (!page) return;
     const { x, y } = svgXY(e, drag.page);
+    if (drag.kind === "draw" && !drag.started) {
+      // No zone until the pointer has dragged ~4 screen pixels.
+      const threshold = 4 * (page.width / (svgWidths[drag.page] || 400));
+      if (Math.hypot(x - drag.sx, y - drag.sy) < threshold) return;
+      const piece = pieces[drag.piece];
+      piece.zones.push({ ...drag.origin });
+      drag.zone = piece.zones.length - 1;
+      drag.started = true;
+      selectedZone = { piece: drag.piece, zone: drag.zone };
+    }
     const zone = pieces[drag.piece].zones[drag.zone];
     const minSize = minSizeOn(drag.page);
     if (drag.kind === "move") {
@@ -145,17 +169,27 @@
       zone.uly = Math.max(0, Math.min(page.height - h, drag.origin.uly + (y - drag.sy)));
       zone.lrx = zone.ulx + w;
       zone.lry = zone.uly + h;
-    } else {
-      // draw and resize both pull the lower-right corner.
+    } else if (drag.kind === "draw") {
+      // Drawing pulls the lower-right corner from where it started.
       zone.lrx = Math.max(zone.ulx + minSize, x);
       zone.lry = Math.max(zone.uly + minSize, y);
+    } else {
+      // Resizing moves the grabbed corner's two edges, never past the
+      // opposite ones.
+      const c = drag.corner ?? "se";
+      if (c.includes("w")) zone.ulx = Math.min(drag.origin.lrx - minSize, x);
+      else zone.lrx = Math.max(drag.origin.ulx + minSize, x);
+      if (c.includes("n")) zone.uly = Math.min(drag.origin.lry - minSize, y);
+      else zone.lry = Math.max(drag.origin.uly + minSize, y);
     }
   }
 
   function pointerUp() {
     if (!drag) return;
-    const { kind, page, piece, zone: z, origin } = drag;
+    const { kind, page, piece, zone: z, origin, started } = drag;
     drag = null;
+    // A draw that never crossed the drag threshold was a plain click.
+    if (kind === "draw" && !started) return;
     notice = null;
     const zone = pieces[piece].zones[z];
     const minSize = minSizeOn(page);
@@ -231,15 +265,6 @@
       {/if}
     </span>
     <div class="toolbar-gap"></div>
-    {#if selectedZone}
-      <button
-        type="button"
-        class="tbtn"
-        onclick={() => removeZone(selectedZone!.piece, selectedZone!.zone)}
-      >
-        Remove region
-      </button>
-    {/if}
     <PagesPerRow bind:value={perRow} />
     <ZoomLevel bind:value={zoom} />
   </div>
@@ -251,12 +276,15 @@
   <div class="material-body">
     <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
     {#each pages as page, i (page.url)}
+      {@const scale = (svgWidths[i] || 400) / page.width}
+      {@const rx = 6 / scale}
       <figure>
         {#if failed[i]}
           <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
         {/if}
         <svg
           bind:this={svgEls[i]}
+          bind:clientWidth={svgWidths[i]}
           viewBox={`0 0 ${page.width} ${page.height}`}
           style="aspect-ratio: {page.width} / {page.height}"
           role="application"
@@ -267,15 +295,28 @@
             href={page.url}
             width={page.width}
             height={page.height}
+            style="clip-path: inset(0 round {rx}px)"
             onerror={() => (failed[i] = true)}
           />
           {#each zonesOn(i) as { zone, p, z } (`${p}:${z}`)}
-            {@const fs = Math.max(page.width / 40, 12)}
+            {@const fs =
+              Math.min(13, Math.max(9, (svgWidths[i] || 400) / 30)) / scale}
             {@const label = labelFor(p)}
+            {@const zw = Math.max(0, zone.lrx - zone.ulx)}
+            {@const pillW = Math.min(
+              label.length * fs * 0.6 + fs,
+              Math.max(0, zw - 2 * rx),
+            )}
+            {@const btnX = Math.max(zone.ulx + 4 / scale, zone.lrx - 27 / scale)}
+            {@const btnBelowLabel = btnX < zone.ulx + rx + pillW + 6 / scale}
+            {@const btnY = btnBelowLabel
+              ? zone.uly + rx + fs * 1.5 + 6 / scale
+              : zone.uly + 7 / scale}
             <rect
               class="zone"
               class:selected={selectedZone?.piece === p && selectedZone?.zone === z}
               style="--piece: {pieceColour(p)}"
+              vector-effect="non-scaling-stroke"
               role="button"
               tabindex={0}
               aria-label={`${label}: region on page ${i + 1}`}
@@ -283,33 +324,80 @@
               y={zone.uly}
               width={Math.max(0, zone.lrx - zone.ulx)}
               height={Math.max(0, zone.lry - zone.uly)}
+              rx={rx}
               onpointerdown={(e) => zonePointerDown(e, i, p, z)}
               onkeydown={(e) => zoneKeydown(e, i, p, z)}
             />
+            <clipPath id={`pillclip-${i}-${p}-${z}`}>
+              <rect
+                x={zone.ulx + rx}
+                y={zone.uly + rx}
+                width={pillW}
+                height={fs * 1.5}
+                rx={fs * 0.75}
+              />
+            </clipPath>
             <rect
               class="labelbg"
               style="--piece: {pieceColour(p)}"
-              x={zone.ulx + 4}
-              y={zone.uly + 4}
-              width={label.length * fs * 0.6 + fs}
+              x={zone.ulx + rx}
+              y={zone.uly + rx}
+              width={pillW}
               height={fs * 1.5}
               rx={fs * 0.75}
             />
-            <text class="label" x={zone.ulx + 4 + fs * 0.5} y={zone.uly + 4 + fs * 1.1} font-size={fs}>
+            <text
+              class="label"
+              clip-path={`url(#pillclip-${i}-${p}-${z})`}
+              x={zone.ulx + rx + fs * 0.5}
+              y={zone.uly + rx + fs * 1.1}
+              font-size={fs}
+            >
               {label}
             </text>
             {#if selectedZone?.piece === p && selectedZone?.zone === z}
-              <circle
-                class="handle"
-                style="--piece: {pieceColour(p)}"
+              <!-- A delete button pinned inside the region's top-right corner,
+                   drawn in screen pixels via the inverse-scale transform. -->
+              <g
+                class="delbtn"
                 role="button"
                 tabindex={0}
-                aria-label={`${label}: resize region`}
-                cx={zone.lrx}
-                cy={zone.lry}
-                r={Math.max(10, page.width / 90)}
-                onpointerdown={(e) => handlePointerDown(e, i, p, z)}
-              />
+                aria-label={`${label}: remove region`}
+                transform={`translate(${btnX}, ${btnY}) scale(${1 / scale})`}
+                onpointerdown={(e) => e.stopPropagation()}
+                onclick={() => removeZone(p, z)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    removeZone(p, z);
+                  }
+                }}
+              >
+                <rect width="20" height="20" rx="6" />
+                <path
+                  d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
+                />
+              </g>
+              {#each [
+                { corner: "nw", name: "top-left", cx: zone.ulx, cy: zone.uly },
+                { corner: "ne", name: "top-right", cx: zone.lrx, cy: zone.uly },
+                { corner: "sw", name: "bottom-left", cx: zone.ulx, cy: zone.lry },
+                { corner: "se", name: "bottom-right", cx: zone.lrx, cy: zone.lry },
+              ] as const as h (h.corner)}
+                <circle
+                  class="handle"
+                  class:nesw={h.corner === "ne" || h.corner === "sw"}
+                  style="--piece: {pieceColour(p)}"
+                  vector-effect="non-scaling-stroke"
+                  role="button"
+                  tabindex={0}
+                  aria-label={`${label}: resize region (${h.name} corner)`}
+                  cx={h.cx}
+                  cy={h.cy}
+                  r={5 / scale}
+                  onpointerdown={(e) => handlePointerDown(e, i, p, z, h.corner)}
+                />
+              {/each}
             {/if}
           {/each}
         </svg>
@@ -350,18 +438,25 @@
     border-radius: 6px;
     box-shadow: var(--shadow-sm);
     touch-action: none;
+    /* Strokes are centred on their edge, so a region flush with the page
+       boundary paints half its outline outside the viewBox; without this it
+       is clipped and corners go missing. */
+    overflow: visible;
   }
   .zone {
     fill: var(--piece);
     fill-opacity: var(--zone-fill-alpha);
     stroke: var(--piece);
-    stroke-width: 3;
+    /* The markup sets vector-effect="non-scaling-stroke" (as an attribute —
+       CSS support for it is inconsistent), so this width is screen pixels:
+       the outline stays crisp at every zoom level. */
+    stroke-width: 2;
     cursor: move;
   }
   .zone:hover,
   .zone.selected {
     fill-opacity: calc(var(--zone-fill-alpha) * 1.6);
-    stroke-width: 5;
+    stroke-width: 3.5;
   }
   .zone:focus-visible {
     outline: none;
@@ -379,7 +474,29 @@
   .handle {
     fill: var(--card);
     stroke: var(--piece);
-    stroke-width: 3;
+    stroke-width: 2;
     cursor: nwse-resize;
+  }
+  .handle.nesw {
+    cursor: nesw-resize;
+  }
+  .delbtn {
+    cursor: pointer;
+  }
+  .delbtn rect {
+    fill: var(--card);
+    stroke: var(--line-input);
+  }
+  .delbtn:hover rect,
+  .delbtn:focus-visible rect {
+    stroke: var(--danger);
+  }
+  .delbtn path {
+    fill: none;
+    stroke: var(--danger);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
   }
 </style>

@@ -896,6 +896,55 @@
     </div>
   {:else if data}
     <div class="main">
+    <div class="ctoolbar">
+      <button
+        type="button"
+        class="btn btn-icon"
+        onclick={() => go(-1)}
+        disabled={spreadIndex <= 0}
+        aria-label="Previous page"
+        title="Previous page">‹</button
+      >
+      <span class="pglabel">{spreadLabel}</span>
+      <button
+        type="button"
+        class="btn btn-icon"
+        onclick={() => go(1)}
+        disabled={spreadIndex >= spreads.length - 1}
+        aria-label="Next page"
+        title="Next page">›</button
+      >
+      <div class="seg" title="How many pages the desk shows at once">
+        <button type="button" class:on={view === "single"} onclick={() => (view = "single")}>1 page</button>
+        <button type="button" class:on={view === "double"} onclick={() => (view = "double")}>2 pages</button>
+      </div>
+      {#if view === "double"}
+        <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
+          <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
+        </label>
+      {/if}
+      <span class="tspacer"></span>
+      <span class="vline"></span>
+      <input
+        class="zoomslider"
+        type="range"
+        aria-label="Zoom"
+        aria-valuetext={`${Math.round(zoom * 100)}%`}
+        min={0}
+        max={ZOOM_STOPS}
+        step={1}
+        value={zoomPos}
+        oninput={(e) => setZoomPos(Number((e.target as HTMLInputElement).value))}
+      />
+      <span class="zval">{Math.round(zoom * 100)}%</span>
+      <button
+        type="button"
+        class="tbtn"
+        onclick={() => (zoom = fitZoom())}
+        disabled={zoom === fitZoom()}
+        title="Fit the whole page in the view">Fit</button
+      >
+    </div>
     {#if runner.result && runner.result.error}
       <div class="banner err bar">
         {runner.result.error}
@@ -942,6 +991,7 @@
                     class="zone"
                     class:selected={selected?.p === p && selected?.z === z}
                     class:mdivstart={startsMovement(p, z)}
+                    vector-effect="non-scaling-stroke"
                     role="button"
                     tabindex={0}
                     aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
@@ -1000,6 +1050,7 @@
                     ] as c (c.edges)}
                       <circle
                         class="handle {resizeCursor(c.edges)}"
+                        vector-effect="non-scaling-stroke"
                         role="button"
                         tabindex={0}
                         aria-label={`Measure ${zone.label}: resize (${c.name})`}
@@ -1101,11 +1152,11 @@
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+          <button type="button" class="btn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
         {/if}
         <button
           type="button"
-          class="submitbtn"
+          class="btn btn-primary submitbtn"
           onclick={() => submit()}
           disabled={runner.busy || !canEdit}
           title="Submit the corrected measures, breaks and movements for validation"
@@ -1135,48 +1186,11 @@
         <div class="sb-section">
           <span class="sb-label">Edit</span>
           <div class="sb-row two">
-            <button type="button" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
-            <button type="button" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
+            <button type="button" class="btn" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
+            <button type="button" class="btn" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
           </div>
         </div>
       {/if}
-
-      <div class="sb-section">
-        <span class="sb-label">Zoom</span>
-        <div class="sb-row">
-          <input
-            class="zoomslider"
-            type="range"
-            aria-label="Zoom"
-            aria-valuetext={`${Math.round(zoom * 100)}%`}
-            min={0}
-            max={ZOOM_STOPS}
-            step={1}
-            value={zoomPos}
-            oninput={(e) => setZoomPos(Number((e.target as HTMLInputElement).value))}
-          />
-          <span class="zoom-val">{Math.round(zoom * 100)}%</span>
-          <button type="button" onclick={() => (zoom = fitZoom())} disabled={zoom === fitZoom()} title="Fit the whole page in the view">Fit</button>
-        </div>
-      </div>
-
-      <div class="sb-section">
-        <span class="sb-label">Pages</span>
-        <div class="sb-row">
-          <button type="button" class="round" onclick={() => go(-1)} disabled={spreadIndex <= 0} aria-label="Previous page" title="Previous page">‹</button>
-          <span class="nav-label">{spreadLabel}</span>
-          <button type="button" class="round" onclick={() => go(1)} disabled={spreadIndex >= spreads.length - 1} aria-label="Next page" title="Next page">›</button>
-        </div>
-        <div class="viewseg">
-          <button type="button" class:on={view === "single"} onclick={() => (view = "single")} title="Show one page">1 page</button>
-          <button type="button" class:on={view === "double"} onclick={() => (view = "double")} title="Show a two-page spread">2 pages</button>
-        </div>
-        {#if view === "double"}
-          <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
-            <input type="checkbox" bind:checked={firstOnRight} /> P1 right
-          </label>
-        {/if}
-      </div>
 
       {#if validation && submitted}
         <div class="sb-section sb-validation">
@@ -1199,22 +1213,25 @@
             {/if}
           </span>
           {#each validation.verdicts as v, i (i)}
-            <span class="vline {v.verdict}"
-              >{v.verdict === "pass" ? "✓ pass" : "✗ fail"} · @{handle(
-                logins,
-                v.user,
-              )} · {elapsed(v.ts)}</span
+            <span class="vrow {v.verdict}"
+              >{#if v.verdict === "pass"}<img
+                  class="hand-pass"
+                  src="/green-hand.svg"
+                  alt=""
+                /> pass{:else}✗ fail{/if} · @{handle(logins, v.user)} · {elapsed(
+                v.ts,
+              )}</span
             >
           {/each}
           {#if validation.status !== "completed" && validation.openSlots > 0}
             <div class="sb-row three">
-              <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
+              <button type="button" class="btn" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
                 title={data?.allowSelfValidation
                   ? "Reserve this subtask for validation."
                   : "Reserve this subtask for validation. Encoders cannot validate their own work."}>Claim</button>
-              <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation || verdictPending}
+              <button type="button" class="btn btn-primary btn-finish" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation || verdictPending}
                 title="Record a passing verdict.">Pass</button>
-              <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation || verdictPending}
+              <button type="button" class="btn btn-danger vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation || verdictPending}
                 title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
             </div>
           {/if}
@@ -1230,7 +1247,7 @@
             <div class="sb-row one">
               <button
                 type="button"
-                class="vfail"
+                class="btn btn-danger"
                 onclick={() => validate("fail")}
                 disabled={runner.busy || !failText.trim() || verdictPending}
                 title="Submit the failing verdict with this comment."
@@ -1241,7 +1258,7 @@
           {#if canSendBack}
             <button
               type="button"
-              class="sendbackbtn"
+              class="btn btn-danger sendbackbtn"
               onclick={() => sendBack()}
               disabled={runner.busy || sendBackPending}
               title="Return the task to measure correction: attribution and validations reset."
@@ -1288,6 +1305,7 @@
     min-height: 0;
     display: flex;
     background: var(--desk);
+    box-shadow: var(--shadow-inset);
   }
 
   /* ---------------------------------------------------------------- sidebar
@@ -1318,7 +1336,7 @@
   }
   .sb-label {
     font-size: 10.5px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-faint);
@@ -1331,7 +1349,7 @@
   }
   .abtitle {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
   }
   .taskchip {
@@ -1349,23 +1367,6 @@
   }
   .submitbtn {
     align-self: stretch;
-    font: 600 13.5px var(--font);
-    padding: 8px 18px;
-    border-radius: 999px;
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-    cursor: pointer;
-    box-shadow: 0 3px 10px rgba(37, 99, 201, 0.3);
-    white-space: nowrap;
-  }
-  .submitbtn:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-  }
-  .submitbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
-    box-shadow: none;
   }
 
   /* A control row filling the sidebar's width; .one/.two/.three divide it
@@ -1391,77 +1392,6 @@
   .sb-row.three {
     --cells: 3;
   }
-  .sb-row button {
-    font: 600 12.5px var(--font);
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .sb-row button:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .sb-row button:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .sb-row button.round {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    color: var(--ink-soft);
-  }
-  .zoomslider {
-    flex: 1;
-    min-width: 0;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .zoom-val {
-    flex: none;
-    min-width: 38px;
-    text-align: right;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
-  }
-  .nav-label {
-    flex: 1;
-    text-align: center;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    padding: 0 2px;
-  }
-  .viewseg {
-    align-self: stretch;
-    display: flex;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 3px;
-  }
-  .viewseg button {
-    flex: 1;
-    font: 600 12.5px var(--font);
-    border: 0;
-    background: none;
-    color: var(--ink-faint);
-    padding: 4px 12px;
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  .viewseg button.on {
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-  }
   .checkline {
     display: flex;
     align-items: center;
@@ -1475,41 +1405,32 @@
     font-size: 12.5px;
     color: var(--ink-soft);
   }
-  .sb-validation .vpass {
-    color: var(--ok);
-  }
-  .sb-validation .vfail {
-    color: var(--danger);
-  }
+  /* The armed Fail button: still an outline, tinted while its comment box
+     is open. */
   .sb-validation .vfail.on {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
-    color: #fff;
+    background: var(--danger-bg);
   }
-  .sb-validation .vline {
+  .sb-validation .vrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
-  .sb-validation .vline.pass {
+  /* The green thumbs-up hand marks a passed verdict. */
+  .sb-validation .hand-pass {
+    height: 14px;
+    flex: none;
+  }
+  .sb-validation .vrow.pass {
     color: var(--ok);
   }
-  .sb-validation .vline.fail {
+  .sb-validation .vrow.fail {
     color: var(--danger);
   }
   .sendbackbtn {
     align-self: stretch;
-    font: 600 12.5px var(--font);
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 0;
-    background: var(--danger-solid);
-    color: #fff;
-    cursor: pointer;
-  }
-  .sendbackbtn:disabled {
-    opacity: 0.55;
-    cursor: default;
   }
   .failnote {
     align-self: stretch;
@@ -1593,12 +1514,28 @@
     padding: 1.25rem 2rem;
     box-sizing: border-box;
   }
-  /* The desk column beside the sidebar: result banners over the desk. */
+  /* The desk column beside the sidebar: the paging and zoom toolbar on top,
+     result banners over the desk. */
   .main {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+  .ctoolbar {
+    flex: none;
+    min-height: 44px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+    overflow-x: auto;
+  }
+  .tspacer {
+    flex: 1;
   }
   .desk {
     flex: 1;
@@ -1669,20 +1606,22 @@
   }
   /* Teal for measures, purple for movement starts: both hues sit outside the
      piece-region palette (--zone-1…8), so a colour never carries two meanings. */
+  /* Strokes are screen pixels — the markup sets
+     vector-effect="non-scaling-stroke" — so they stay even at every zoom. */
   .zone {
     fill: rgba(14, 129, 149, 0.12);
     stroke: rgba(14, 129, 149, 0.85);
-    stroke-width: 2;
+    stroke-width: 1.5;
     cursor: pointer;
   }
   .zone.selected {
     fill-opacity: 1;
-    stroke-width: 3.5;
+    stroke-width: 2.5;
   }
   .zone.mdivstart {
     stroke: rgba(139, 95, 191, 0.9);
     fill: rgba(139, 95, 191, 0.14);
-    stroke-width: 5;
+    stroke-width: 3.5;
   }
   .labelbg {
     fill: rgba(255, 255, 255, 0.88);
@@ -1697,7 +1636,7 @@
   .handle {
     fill: #fff;
     stroke: rgba(14, 129, 149, 0.85);
-    stroke-width: 2;
+    stroke-width: 1.5;
   }
   /* The side strips are invisible grab areas along the box edges; a
      transparent fill still catches pointer events. */
@@ -1785,7 +1724,7 @@
   .lockpill {
     flex: none;
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 10px;
   }
@@ -1808,23 +1747,6 @@
     color: var(--danger);
     background: var(--danger-bg);
     border: 1px solid var(--danger-line);
-  }
-  .claimbtn {
-    flex: none;
-    font: 600 12px var(--font);
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-  }
-  .claimbtn:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .claimbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
   .legend-mdiv {
     color: var(--pre);

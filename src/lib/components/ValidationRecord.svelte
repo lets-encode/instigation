@@ -101,7 +101,11 @@
 </script>
 
 {#snippet slotDot(key: string)}
-  <span class="dot {key}" aria-label={key} title={key}></span>
+  {#if key === "pass"}
+    <img class="hand-pass" src="/green-hand.svg" alt="pass" title="pass" />
+  {:else}
+    <span class="dot {key}" aria-label={key} title={key}></span>
+  {/if}
 {/snippet}
 
 <div class="rsec">
@@ -149,7 +153,7 @@
           {#if viewer !== "" && (canPush || r.userId === viewer)}
             <button
               type="button"
-              class="dangerbtn"
+              class="btn btn-danger"
               onclick={() => onsendback(card.task)}
               disabled={runner.busy || sendBackPending}
               title={`Return the task to ${sendBackTarget(card.locator)}: attribution and validations reset.`}
@@ -175,7 +179,7 @@
         {:else if r.key === "open" && r.claimable}
           <button
             type="button"
-            class="claimbtn"
+            class="btn"
             onclick={() => onclaim(card.task, r.sub)}
             disabled={runner.busy || verdictPending(r.sub)}
             title="Reserve this validation slot for review."
@@ -186,14 +190,14 @@
         {:else if r.mine}
           <button
             type="button"
-            class="passbtn"
+            class="btn btn-primary btn-finish"
             onclick={() => onvalidate(card.task, r.sub, "pass")}
             disabled={runner.busy || verdictPending(r.sub)}
             title="Record a passing verdict.">Pass</button
           >
           <button
             type="button"
-            class="failbtn"
+            class="btn btn-danger failbtn"
             class:on={failForm?.sub === r.sub}
             onclick={() =>
               (failForm =
@@ -234,7 +238,7 @@
             <span class="mspacer"></span>
             <button
               type="button"
-              class="dangerbtn"
+              class="btn btn-danger"
               onclick={submitFail}
               disabled={runner.busy ||
                 !failForm.body.trim() ||
@@ -308,7 +312,7 @@
   }
   .chip {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;
@@ -327,13 +331,10 @@
     flex: none;
     display: inline-block;
   }
-  .dot.pass {
-    background: var(--green);
-    border-color: var(--ok);
-  }
-  :global([data-theme="dark"]) .dot.pass {
-    background: var(--ok);
-    border-color: var(--ok-line);
+  /* The green thumbs-up hand marks a passed slot. */
+  .hand-pass {
+    height: 14px;
+    flex: none;
   }
   .dot.fail {
     background: var(--danger-solid);
@@ -373,48 +374,10 @@
     font-size: 11.5px;
     white-space: nowrap;
   }
-  .claimbtn {
-    font-size: 11.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--info-line);
-    background: var(--card);
-    color: var(--info);
-    cursor: pointer;
-    flex: none;
-  }
-  .claimbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .passbtn,
-  .failbtn {
-    font-size: 11.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--ok-line);
-    background: var(--card);
-    color: var(--ok);
-    cursor: pointer;
-    flex: none;
-  }
-  .failbtn {
-    border-color: var(--danger-line);
-    color: var(--danger);
-  }
+  /* The open fail form keeps its trigger tinted, still an outline. */
   .failbtn.on {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
-    color: #fff;
-  }
-  .passbtn:disabled,
-  .failbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
+    background: var(--danger-bg);
+    border-color: var(--danger);
   }
   .failbox {
     margin: 10px 0;
@@ -430,7 +393,7 @@
   }
   .failtitle {
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--danger);
   }
   .failbody {
@@ -456,22 +419,6 @@
     gap: 12px;
     margin-top: 10px;
     align-items: center;
-  }
-  .dangerbtn {
-    font-size: 11.5px;
-    font-weight: 600;
-    font-family: inherit;
-    padding: 5px 12px;
-    border-radius: 999px;
-    border: 0;
-    background: var(--danger-solid);
-    color: #fff;
-    cursor: pointer;
-    flex: none;
-  }
-  .dangerbtn:disabled {
-    opacity: 0.55;
-    cursor: default;
   }
   .failform {
     border: 1px solid var(--danger-line);

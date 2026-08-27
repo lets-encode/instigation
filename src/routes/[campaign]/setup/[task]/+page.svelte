@@ -606,7 +606,7 @@
                   <div class="rowbtns">
                     <button
                       type="button"
-                      class="round"
+                      class="btn btn-icon"
                       onclick={() => moveStaff(i, -1)}
                       disabled={i === 0}
                       aria-label={`Move staff ${i + 1} up`}
@@ -614,7 +614,7 @@
                     >
                     <button
                       type="button"
-                      class="round"
+                      class="btn btn-icon"
                       onclick={() => moveStaff(i, 1)}
                       disabled={i === staves.length - 1}
                       aria-label={`Move staff ${i + 1} down`}
@@ -622,7 +622,7 @@
                     >
                     <button
                       type="button"
-                      class="round"
+                      class="btn btn-icon"
                       onclick={() => removeStaff(i)}
                       disabled={staves.length <= 1}
                       aria-label={`Remove staff ${i + 1}`}
@@ -634,7 +634,7 @@
             </ol>
             <button
               type="button"
-              class="addbtn"
+              class="btn addbtn"
               onclick={() => addStaff()}
               disabled={staves.length >= MAX_STAVES}
               title="Add a staff below the last one."
@@ -683,7 +683,7 @@
                   <div class="rowbtns">
                     <button
                       type="button"
-                      class="round"
+                      class="btn btn-icon"
                       onclick={() => removeGroup(i)}
                       aria-label={`Remove group ${i + 1}`}
                       title="Remove this group">✕</button
@@ -693,7 +693,7 @@
               {/each}
               <button
                 type="button"
-                class="addbtn"
+                class="btn addbtn"
                 onclick={() => addGroup()}
                 title="Join a run of staves with a brace or bracket."
                 >Add group</button
@@ -825,11 +825,11 @@
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="claimbtn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+          <button type="button" class="btn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
         {/if}
         <button
           type="button"
-          class="submitbtn"
+          class="btn btn-primary submitbtn"
           onclick={() => submit()}
           disabled={runner.busy || !canEdit || !meterValid || !groupsValid}
           title="Submit the staves, clefs, key signature and meter for validation"
@@ -876,22 +876,25 @@
             {/if}
           </span>
           {#each validation.verdicts as v, i (i)}
-            <span class="vline {v.verdict}"
-              >{v.verdict === "pass" ? "✓ pass" : "✗ fail"} · @{handle(
-                logins,
-                v.user,
-              )} · {elapsed(v.ts)}</span
+            <span class="vrow {v.verdict}"
+              >{#if v.verdict === "pass"}<img
+                  class="hand-pass"
+                  src="/green-hand.svg"
+                  alt=""
+                /> pass{:else}✗ fail{/if} · @{handle(logins, v.user)} · {elapsed(
+                v.ts,
+              )}</span
             >
           {/each}
           {#if validation.status !== "completed" && validation.openSlots > 0}
             <div class="sb-row three">
-              <button type="button" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
+              <button type="button" class="btn" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
                 title={data?.allowSelfValidation
                   ? "Reserve this subtask for validation."
                   : "Reserve this subtask for validation. Encoders cannot validate their own work."}>Claim</button>
-              <button type="button" class="vpass" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation || verdictPending}
+              <button type="button" class="btn btn-primary btn-finish" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation || verdictPending}
                 title="Record a passing verdict.">Pass</button>
-              <button type="button" class="vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation || verdictPending}
+              <button type="button" class="btn btn-danger vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation || verdictPending}
                 title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
             </div>
           {/if}
@@ -907,7 +910,7 @@
             <div class="sb-row one">
               <button
                 type="button"
-                class="vfail"
+                class="btn btn-danger"
                 onclick={() => validate("fail")}
                 disabled={runner.busy || !failText.trim() || verdictPending}
                 title="Submit the failing verdict with this comment."
@@ -918,7 +921,7 @@
           {#if canSendBack}
             <button
               type="button"
-              class="sendbackbtn"
+              class="btn btn-danger sendbackbtn"
               onclick={() => sendBack()}
               disabled={runner.busy || sendBackPending}
               title="Return the task to score setup: attribution and validations reset."
@@ -961,6 +964,7 @@
     min-height: 0;
     display: flex;
     background: var(--desk);
+    box-shadow: var(--shadow-inset);
   }
   .deskwrap {
     flex: 1;
@@ -1095,7 +1099,7 @@
     width: 22px;
     padding-bottom: 7px;
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
   }
@@ -1159,39 +1163,8 @@
     display: flex;
     gap: 4px;
   }
-  .rowbtns .round {
-    width: 28px;
-    height: 30px;
-    padding: 0;
-    font: 600 12.5px var(--font);
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-  .rowbtns .round:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .rowbtns .round:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
   .addbtn {
-    font: 600 12.5px var(--font);
-    padding: 6px 14px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-  }
-  .addbtn:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .addbtn:disabled {
-    opacity: 0.45;
-    cursor: default;
+    align-self: flex-start;
   }
   .previewbox {
     display: flex;
@@ -1239,7 +1212,7 @@
   }
   .sb-label {
     font-size: 10.5px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-faint);
@@ -1252,7 +1225,7 @@
   }
   .abtitle {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
   }
   .taskchip {
@@ -1271,7 +1244,7 @@
   .lockpill {
     flex: none;
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 10px;
   }
@@ -1295,42 +1268,8 @@
     background: var(--danger-bg);
     border: 1px solid var(--danger-line);
   }
-  .claimbtn {
-    flex: none;
-    font: 600 12px var(--font);
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-  }
-  .claimbtn:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .claimbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .submitbtn {
     align-self: stretch;
-    font: 600 13.5px var(--font);
-    padding: 8px 18px;
-    border-radius: 999px;
-    border: 0;
-    background: var(--accent-btn);
-    color: #fff;
-    cursor: pointer;
-    box-shadow: 0 3px 10px rgba(37, 99, 201, 0.3);
-    white-space: nowrap;
-  }
-  .submitbtn:hover:not(:disabled) {
-    background: var(--accent-btn-hover);
-  }
-  .submitbtn:disabled {
-    opacity: 0.5;
-    cursor: default;
-    box-shadow: none;
   }
 
   /* A control row filling the sidebar's width; .one/.three divide it into
@@ -1351,23 +1290,6 @@
   }
   .sb-row.three {
     --cells: 3;
-  }
-  .sb-row button {
-    font: 600 12.5px var(--font);
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .sb-row button:hover:not(:disabled) {
-    border-color: var(--info-line);
-  }
-  .sb-row button:disabled {
-    opacity: 0.45;
-    cursor: default;
   }
   .failnote {
     align-self: stretch;
@@ -1395,26 +1317,28 @@
     font-size: 12.5px;
     color: var(--ink-soft);
   }
-  .sb-validation .vpass {
-    color: var(--ok);
-  }
-  .sb-validation .vfail {
-    color: var(--danger);
-  }
+  /* The armed Fail button: still an outline, tinted while its comment box
+     is open. */
   .sb-validation .vfail.on {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
-    color: #fff;
+    background: var(--danger-bg);
   }
-  .sb-validation .vline {
+  .sb-validation .vrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
-  .sb-validation .vline.pass {
+  /* The green thumbs-up hand marks a passed verdict. */
+  .sb-validation .hand-pass {
+    height: 14px;
+    flex: none;
+  }
+  .sb-validation .vrow.pass {
     color: var(--ok);
   }
-  .sb-validation .vline.fail {
+  .sb-validation .vrow.fail {
     color: var(--danger);
   }
   .sb-validation .fail-note {
@@ -1430,17 +1354,6 @@
   }
   .sendbackbtn {
     align-self: stretch;
-    font: 600 12.5px var(--font);
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 0;
-    background: var(--danger-solid);
-    color: #fff;
-    cursor: pointer;
-  }
-  .sendbackbtn:disabled {
-    opacity: 0.55;
-    cursor: default;
   }
   .sb-foot {
     margin-top: auto;

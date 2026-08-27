@@ -26,6 +26,7 @@
 
 <span class="zoomctl">
   <input
+    class="zoomslider"
     type="range"
     aria-label="Zoom"
     aria-valuetext={`${value}%`}
@@ -35,7 +36,7 @@
     value={pos}
     oninput={(e) => setPos(Number((e.target as HTMLInputElement).value))}
   />
-  <span class="level">{value}%</span>
+  <span class="zval">{value}%</span>
   <button
     type="button"
     class="tbtn"
@@ -52,18 +53,5 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  input[type="range"] {
-    width: 120px;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .level {
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    min-width: 38px;
-    text-align: right;
   }
 </style>

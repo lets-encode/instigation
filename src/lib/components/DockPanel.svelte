@@ -133,7 +133,7 @@
   <div class="dhead">
     {@render header()}
     <span class="dspacer"></span>
-    <div class="dockseg" role="group" aria-label="Panel position">
+    <div class="seg" role="group" aria-label="Panel position">
       <button
         type="button"
         class:on={side === "left"}
@@ -285,29 +285,6 @@
   }
   .dspacer {
     flex: 1;
-  }
-  .dockseg {
-    display: flex;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 3px;
-    gap: 2px;
-    flex: none;
-  }
-  .dockseg button {
-    font: 600 13px var(--font);
-    line-height: 1;
-    padding: 4px 10px;
-    border-radius: 999px;
-    border: 0;
-    background: none;
-    color: var(--ink-faint);
-    cursor: pointer;
-  }
-  .dockseg button.on {
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
   }
   .closebtn {
     font: 600 14px var(--font);

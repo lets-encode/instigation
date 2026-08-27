@@ -168,7 +168,7 @@
   }
   .dlabel {
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--ink-faint);
     letter-spacing: 0.05em;
     text-transform: uppercase;

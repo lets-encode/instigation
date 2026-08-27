@@ -211,7 +211,7 @@
     {/if}
     <button
       type="button"
-      class="btn btn-secondary"
+      class="btn btn-lg btn-secondary"
       onclick={previousStep}
       disabled={busy}
     >
@@ -219,7 +219,7 @@
     </button>
     <button
       type="button"
-      class="btn btn-primary"
+      class="btn btn-lg btn-primary"
       onclick={continueToNextStep}
       disabled={!canContinue}
     >

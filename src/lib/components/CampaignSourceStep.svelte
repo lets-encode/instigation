@@ -82,12 +82,13 @@
       <XmlEditor bind:value={xml} {wrap} fill />
     </div>
   {:else if view === "xml"}
-    <div class="pages-over-editor">
-      <FacsimilePages pages={wizard.images} />
-      <button type="button" class="tbtn back-to-editor" onclick={() => (showPages = false)}>
-        Show the editor
-      </button>
-    </div>
+    <FacsimilePages pages={wizard.images}>
+      {#snippet toolbar()}
+        <button type="button" class="tbtn" onclick={() => (showPages = false)}>
+          Show the editor
+        </button>
+      {/snippet}
+    </FacsimilePages>
   {:else}
     <FacsimilePages pages={wizard.images} />
   {/if}
@@ -108,20 +109,5 @@
 <style>
   .head-name {
     color: var(--ink);
-  }
-  /* The pages shown from inside the XML view, with the way back floating over
-     them. */
-  .pages-over-editor {
-    position: relative;
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .back-to-editor {
-    position: absolute;
-    right: 16px;
-    bottom: 16px;
-    box-shadow: var(--shadow-md);
   }
 </style>

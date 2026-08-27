@@ -92,7 +92,7 @@
     {:else}
       <span class="dsub">· score</span>
       {#if pieces.length > 1}
-        <div class="pieceseg">
+        <div class="seg pieceseg">
           {#each pieces as p, i (p.path)}
             <button
               type="button"
@@ -127,7 +127,7 @@
 <style>
   .dtitle {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
   }
   .dsub {
@@ -138,28 +138,8 @@
     text-overflow: ellipsis;
   }
   .pieceseg {
-    display: flex;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 3px;
-    gap: 2px;
     flex: none;
     overflow-x: auto;
-  }
-  .pieceseg button {
-    font: 600 12px var(--font);
-    padding: 4px 14px;
-    border-radius: 999px;
-    border: 0;
-    background: none;
-    color: var(--ink-faint);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .pieceseg button.on {
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
   }
   .perr {
     margin: 0;

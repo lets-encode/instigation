@@ -1,46 +1,55 @@
 /* =========================================================================
    Let's Encode! — shared theme tokens for the instigation app.
    :root holds the light theme; [data-theme="dark"] overrides it.
-   Palette derived from the logo's three hands:
-     orange #ffa76d   blue #6dc3ff   green #76de76
+   Direction 3b "Farbenspiel": the logo hands verbatim
+     (#6dc3ff / #76de76 / #ffa76d) carry meaning; text and buttons use
+   darkened mixes of the same hues. Ultramarine-slate surfaces; real depth
+   via --shadow (raised) and --shadow-inset (recessed).
    ========================================================================= */
 
 :root {
   --blue: #6dc3ff;
   --green: #76de76;
 
-  --ink: #1f2433;
-  --ink-soft: #4a5167;
-  --ink-faint: #79809a;
-  --line: #e6e8f0;
+  --ink: #232838;
+  --ink-soft: #4d5468;
+  --ink-faint: #767d92;
+  --line: #cdd3e1;
   --bg: #ffffff;
-  --bg-alt: #f7f8fb;
-  --bg-tint: #eef6ff;
+  --bg-alt: #d9dfee;
+  --bg-tint: #cfd7eb;
   --card: #ffffff;
-  --topbar-bg: rgba(255, 255, 255, .9);
+  --topbar-bg: rgba(249, 250, 254, .94);
 
-  --accent: #2563c9;
-  --link: #2f68c4;
+  --accent: #1e6fd6;
+  --link: #1e6fd6;
 
   /* Filled action buttons carry their own pair: the fill can differ from the
      accent used for text and borders, which needs more contrast on dark. */
-  --accent-btn: #2563c9;
-  --accent-btn-hover: #1b49a0;
-  --ok-btn: #1a7f4b;
-  --ok-btn-hover: #146239;
+  --accent-btn: #1e6fd6;
+  --accent-btn-hover: #14539f;
+  --ok-btn: #279b57;
+  --ok-btn-hover: #1e7a44;
 
   /* Form control outlines, a step heavier than --line. */
-  --line-input: #d0d5e2;
+  --line-input: #aeb6cc;
   /* Functional orange: XML attribute names, piece highlights. */
-  --orange-deep: #e07b39;
-  /* Recessed surfaces inside a card: page grids, the XML editor. */
-  --bg-inset: #f7f8fb;
+  --orange-deep: #d0742a;
+  /* Recessed work surfaces: page grids, the XML editor, the corrector desk.
+     Always paired with --shadow-inset. */
+  --bg-inset: #c9d1e1;
 
   /* Widest a full-bleed screen lets its content grow (the design canvas
      width). Beyond it the content centres and the viewport gains side
      margins; narrower viewports use their full width. */
   --page-max: 1600px;
-  --shadow: 0 1px 2px rgba(31, 36, 51, .06), 0 8px 28px rgba(31, 36, 51, .07);
+  /* The page-glow pair: radial washes of the blue and green hands, painted
+     over --bg-alt on full-bleed canvases. */
+  --glow-blue: rgba(109, 195, 255, .42);
+  --glow-green: rgba(118, 222, 118, .32);
+  --shadow: 0 1px 2px rgba(31, 36, 51, .06), 0 12px 30px rgba(31, 36, 51, .13);
+  /* Recessed surfaces sink; pairs with --bg-inset / --desk. */
+  --shadow-inset: inset 0 1px 4px rgba(31, 36, 51, .11);
 
   --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
 
@@ -51,55 +60,57 @@
   /* Status colours for validation and result messages: one semantic set
      (success / warning / error / info), used everywhere a state is signalled —
      pills, chips, fail boxes, attention badges, validation dots, banners.
-     Each has a fill and a border to go with the text colour. */
-  --ok: #1a7f4b;
-  --ok-bg: #e8f7ec;
-  --ok-line: #b6e2c1;
-  --warn: #e07b39;
-  --warn-bg: #fff7f0;
-  --warn-line: #e8d5c4;
+     Each has a fill and a border to go with the text colour.
+     Tints are pulled straight from the hand pastels. */
+  --ok: #279b57;
+  --ok-bg: #cef3ce;
+  --ok-line: #85dd8f;
+  --warn: #d0742a;
+  --warn-bg: #ffe6d0;
+  --warn-line: #f2c69a;
   /* Solid fill for the attention badge; white text on it. */
-  --warn-solid: #e07b39;
-  --danger: #b42318;
-  --danger-bg: #fdecea;
-  --danger-line: #f2c4be;
-  /* Solid fill for the fail pin and danger button; white text on it. */
-  --danger-solid: #b42318;
+  --warn-solid: #d0742a;
+  --danger: #c03b28;
+  --danger-bg: #fbe2db;
+  --danger-line: #efb7a8;
+  /* Solid fill for the fail pin; white text on it. */
+  --danger-solid: #c03b28;
   /* A fainter red wash than --danger-bg, for boxes that hold readable text. */
-  --danger-wash: #fdf6f5;
+  --danger-wash: #fdf1ee;
   /* Blue: work awaiting review, and anything else stated rather than warned. */
-  --info: #2563c9;
-  --info-bg: #eaf4ff;
-  --info-line: #bcd4f3;
+  --info: #1e6fd6;
+  --info-bg: #cfe8ff;
+  --info-line: #8cc9f5;
   /* Purple, marking preparation steps apart from encoding ones. */
-  --pre: #8b5fbf;
+  --pre: #7f5ba6;
   /* Amber, marking the viewer's own campaigns and owner-only controls. */
-  --owner: #e07b39;
-  --owner-bg: #fff7f0;
-  --owner-line: #e8d5c4;
+  --owner: #d0742a;
+  --owner-bg: #fdeede;
+  --owner-line: #f0d2ab;
   /* Progress-bar track on the owner-amber card surface. */
-  --owner-track: #f2e4d5;
-  /* The measure corrector's desk: the surface the page sheets float on. */
-  --desk: #e4e7ee;
+  --owner-track: #f6ddbd;
+  /* The measure corrector's desk: the surface the page sheets float on.
+     Same value as --bg-inset; pairs with --shadow-inset. */
+  --desk: #c9d1e1;
 
   /* Accent surfaces: a faint wash for rows and icons, a stronger one for the
      selected row, and the borders that go with them. */
-  --accent-tint: #f4f7fe;
-  --accent-tint-strong: #e8f1fd;
-  --accent-line: #cfe0f6;
-  --accent-line-strong: #9db9e8;
+  --accent-tint: #eef3fc;
+  --accent-tint-strong: #dce9fb;
+  --accent-line: #bcd4f0;
+  --accent-line-strong: #8cb2e4;
 
   /* A heavier border than --line, for control outlines rather than hairlines. */
-  --line-strong: #d0d0d0;
+  --line-strong: #aeb6cc;
   /* Text on a filled accent surface. */
   --invert-ink: #ffffff;
   /* Covers the page while a modal action runs. */
-  --scrim: rgba(255, 255, 255, .72);
+  --scrim: rgba(249, 250, 254, .72);
 
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .06);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, .12);
+  --shadow-sm: 0 1px 3px rgba(31, 36, 51, .08);
+  --shadow-md: 0 2px 8px rgba(31, 36, 51, .14);
   /* For a shadow whose geometry is the rule's own. */
-  --shade: rgba(0, 0, 0, .14);
+  --shade: rgba(31, 36, 51, .16);
 
   /* Piece / zone colours for the region editors. Each piece is drawn in a
      distinct hue; --zone-N is the stroke/label colour and --zone-N-fill the
@@ -118,73 +129,75 @@
 /* Dark theme. Applied via [data-theme="dark"] on <html>, which an inline head
    script sets before first paint (no flash) and the nav bulb toggle flips for
    the current visit. Only an explicit pick is persisted (localStorage "theme").
-   Near-black blue base, cards one step lighter, brand accents brightened for
-   contrast. */
+   Near-black blue base, cards one step lighter. Semantic text colours are the
+   hand originals; fills stay translucent tints. */
 [data-theme="dark"] {
-  --ink: #e8eaf2;
-  --ink-soft: #b6bccf;
-  --ink-faint: #8f96ad;
-  --line: #2a2e3d;
-  --bg: #161a26;
-  --bg-alt: #0f1118;
-  --bg-tint: #232736;
-  --card: #1c1f2b;
-  --topbar-bg: rgba(20, 23, 32, .85);
+  --ink: #e6e9f2;
+  --ink-soft: #b4bad0;
+  --ink-faint: #8b93ad;
+  --line: #2a3044;
+  --bg: #151927;
+  --bg-alt: #0c0e17;
+  --bg-tint: #212739;
+  --card: #1b1f2f;
+  --topbar-bg: rgba(16, 19, 30, .9);
 
-  --accent: #6ea3f5;
-  --link: #6ea3f5;
+  --accent: #7ecafd;
+  --link: #7ecafd;
 
-  --accent-btn: #3b76e0;
-  --accent-btn-hover: #2f68c4;
-  --ok-btn: #22995c;
-  --ok-btn-hover: #1d7f4d;
+  /* Fills stay deeper on dark so white text keeps contrast. */
+  --accent-btn: #2a72c8;
+  --accent-btn-hover: #1e5ea8;
+  --ok-btn: #2b8a52;
+  --ok-btn-hover: #236f43;
 
-  --line-input: #3a4054;
-  --orange-deep: #f0924f;
-  --bg-inset: #12141d;
+  --line-input: #3c455e;
+  --orange-deep: #ffa76d;
+  --bg-inset: #0e101b;
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 28px rgba(0, 0, 0, .45);
+  --glow-blue: rgba(109, 195, 255, .16);
+  --glow-green: rgba(118, 222, 118, .13);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 12px 32px rgba(0, 0, 0, .5);
+  --shadow-inset: inset 0 1px 5px rgba(0, 0, 0, .55);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, .45);
   --shade: rgba(0, 0, 0, .5);
 
-  /* Lifted so they stay legible against the dark surfaces. Their fills are
-     translucent so they tint whatever surface they sit on rather than
-     punching a light patch into it. */
-  --ok: #5fd08a;
-  --ok-bg: rgba(46, 160, 92, .15);
-  --ok-line: #2e5c42;
-  --warn: #f0924f;
-  --warn-bg: rgba(240, 146, 79, .12);
-  --warn-line: #5e4530;
-  /* Solid badges keep their light-mode saturation. */
-  --warn-solid: #e07b39;
-  --danger: #e5533f;
-  --danger-bg: rgba(229, 83, 63, .14);
-  --danger-line: rgba(229, 83, 63, .35);
-  --danger-solid: #e5533f;
-  --danger-wash: rgba(229, 83, 63, .08);
-  --info: #6ea3f5;
-  --info-bg: rgba(110, 163, 245, .15);
-  --info-line: #3d5578;
-  --pre: #c39ce8;
-  --owner: #f0924f;
-  --owner-bg: rgba(240, 146, 79, .1);
-  --owner-line: #5e4530;
-  --owner-track: rgba(240, 146, 79, .18);
-  --desk: #0c0e15;
+  --ok: #76de76;
+  --ok-bg: rgba(118, 222, 118, .16);
+  --ok-line: #3a7350;
+  --warn: #ffa76d;
+  --warn-bg: rgba(255, 167, 109, .17);
+  --warn-line: #6e5530;
+  /* Solid badges darken on dark — a bright fill under white text glares. */
+  --warn-solid: #a8672e;
+  --danger: #f2765e;
+  --danger-bg: rgba(242, 118, 94, .2);
+  --danger-line: rgba(242, 118, 94, .45);
+  --danger-solid: #d95540;
+  --danger-wash: rgba(242, 118, 94, .08);
+  --info: #7ecafd;
+  --info-bg: rgba(126, 202, 253, .18);
+  --info-line: #46689a;
+  --pre: #b899dd;
+  --owner: #ffa76d;
+  --owner-bg: rgba(255, 167, 109, .15);
+  --owner-line: #6e5530;
+  --owner-track: rgba(255, 167, 109, .26);
+  --desk: #0e101b;
 
-  --accent-tint: rgba(110, 163, 245, .07);
-  --accent-tint-strong: rgba(110, 163, 245, .16);
-  --accent-line: rgba(110, 163, 245, .3);
-  --accent-line-strong: rgba(110, 163, 245, .55);
+  --accent-tint: rgba(126, 202, 253, .07);
+  --accent-tint-strong: rgba(126, 202, 253, .16);
+  --accent-line: rgba(126, 202, 253, .3);
+  --accent-line-strong: rgba(126, 202, 253, .55);
 
-  --line-strong: #3a4054;
+  --line-strong: #3c455e;
   /* Page scans stay light — they are paper — but warmed a step so they do not
      glare against the dark surfaces. */
   --facsimile-paper: #f2f0ea;
-  --invert-ink: #1b2030;
-  --scrim: rgba(15, 18, 28, .66);
+  --invert-ink: #131828;
+  --scrim: rgba(12, 14, 23, .66);
 
   /* Muted piece hues so the coloured regions don't glare on the dark canvas. */
   --zone-1: #6da2ec;

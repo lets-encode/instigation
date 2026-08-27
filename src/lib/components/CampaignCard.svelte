@@ -120,7 +120,7 @@
   }
   .title {
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -128,7 +128,7 @@
   .yours {
     flex: none;
     font-size: 10.5px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--owner);
     background: var(--card);
     border: 1px solid var(--owner-line);
@@ -138,7 +138,7 @@
   .newbadge {
     flex: none;
     font-size: 10.5px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--ok);
     background: var(--ok-bg);
     border: 1px solid var(--ok-line);
@@ -187,7 +187,7 @@
   .pill {
     flex: none;
     font-size: 11.5px;
-    font-weight: 700;
+    font-weight: 600;
     border-radius: 999px;
     padding: 2px 9px;
     white-space: nowrap;
