@@ -755,7 +755,7 @@
             {#if auth.user && canPush}
               <button
                 type="button"
-                class="managechip"
+                class="btn btn-lg managechip"
                 onclick={() => (manage = true)}
                 disabled={runner.busy}
                 title="Owner only — plan editor and reaper">⚙ Manage</button
@@ -1362,22 +1362,15 @@
   .cspacer {
     flex: 1;
   }
+  /* Sizing comes from .btn.btn-lg; only the owner-amber tint is local. */
   .managechip {
-    font: 600 12.5px var(--font);
     color: var(--owner);
     background: var(--owner-bg);
-    border: 1px solid var(--owner-line);
-    border-radius: 999px;
-    padding: 6px 14px;
-    cursor: pointer;
-    flex: none;
+    border-color: var(--owner-line);
   }
   .managechip:hover:not(:disabled) {
+    color: var(--owner);
     border-color: var(--owner);
-  }
-  .managechip:disabled {
-    opacity: 0.55;
-    cursor: default;
   }
   .hero-stats {
     display: flex;
