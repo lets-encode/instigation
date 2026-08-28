@@ -5,8 +5,10 @@ parentheses.
 
 ## 0.22.2
 
+- Redesigned the GitHub-interaction status messages. (`05ca5cb`)
 - Added this changelog, reconstructed from the full git history.
 - Synced the package version with the changelog.
+- Moved the design and spec docs (DESIGN.md, SECURITY-HARDENING.md, mei-friend-connect spec, scholarly-metadata plan, meeting notes) to the private lets-encode-meta repo; the README points there.
 
 ## 0.22.1
 

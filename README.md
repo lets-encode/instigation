@@ -7,7 +7,7 @@ It is a **static SPA** (SvelteKit); the only server-side piece is the **OAuth
 session broker** (`broker/`, Flask), which keeps the user's GitHub token out of
 the browser, relays the SPA's authenticated API calls, and carries the
 **campaign name registry** (`broker/registry.py`) — the name → repo id map
-behind every campaign address. Full architecture: `DESIGN.md`.
+behind every campaign address.
 
 ## How it works
 
@@ -46,7 +46,7 @@ GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**:
 - **Authorization callback URL:** `http://localhost:5173/auth/authorize`
 
 Register, then **Generate a new client secret**. Both the **Client ID** and the
-**Client secret** go *only* in the broker; the SPA needs neither.
+**Client secret** go _only_ in the broker; the SPA needs neither.
 
 Login requests the `public_repo` scope (plus `notifications` for muting campaign
 repos) — enough to create and administer public campaign repos and forks (e.g. to
@@ -139,11 +139,11 @@ Three instances run side by side, each deployed from its own branch and fully
 isolated from the others (own origin, own broker, own OAuth App, own campaign
 repos via `PUBLIC_REPO_TOPIC`):
 
-| Instance   | Branch    | Origin                            | Broker port | Build mode |
-|------------|-----------|-----------------------------------|-------------|------------|
-| production | `main`    | `lets-encode.mdw.ac.at`           | 7777        | production |
-| staging    | `staging` | `staging.lets-encode.mdw.ac.at`   | 7778        | staging    |
-| testing    | `testing` | `testing.lets-encode.mdw.ac.at`   | 7779        | testing    |
+| Instance   | Branch    | Origin                          | Broker port | Build mode |
+| ---------- | --------- | ------------------------------- | ----------- | ---------- |
+| production | `main`    | `lets-encode.mdw.ac.at`         | 7777        | production |
+| staging    | `staging` | `staging.lets-encode.mdw.ac.at` | 7778        | staging    |
+| testing    | `testing` | `testing.lets-encode.mdw.ac.at` | 7779        | testing    |
 
 Local development is the fourth world: the Vite dev server + a local Flask
 broker (section 4), with its own OAuth App whose callback is
@@ -159,7 +159,7 @@ broker (section 4), with its own OAuth App whose callback is
   forward all three hostnames.
 - **Server layout:** one git checkout per instance, kept on that instance's
   branch. Each checkout runs its own broker (`PORT=<port> gunicorn -c
-  gunicorn_config.py wsgi:app` in `broker/`), so sessions and the slug DB
+gunicorn_config.py wsgi:app` in `broker/`), so sessions and the slug DB
   (`broker/instance/`) are naturally separate.
 - **Deploying the SPA:** from the instance's checkout, on its branch:
 
@@ -175,6 +175,7 @@ broker (section 4), with its own OAuth App whose callback is
   value — and the CSP in `svelte.config.js` — is baked in at build time, so a
   config change needs a rebuild, not just a re-copy. The broker is not
   touched: restart it separately when `broker/` changed.
+
 - **Broker env, per instance:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
   `FLASK_SECRET`, `PORT`, and
   `REDIRECT_URL=https://<instance-origin>/auth/authorize` (see
