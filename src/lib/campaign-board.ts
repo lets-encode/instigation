@@ -188,8 +188,6 @@ export interface BoardColumn {
 	key: ColumnKey;
 	label: string;
 	cards: BoardCard[];
-	/** Unresolved-attention badge (validation column only; 0 elsewhere). */
-	attention: number;
 }
 
 /** One activity-ticker entry: "login text · elapsed". */
@@ -216,11 +214,40 @@ export interface Board {
 
 const COLUMN_LABELS: Record<ColumnKey, string> = {
 	blocked: 'Blocked',
-	ready: 'Ready to claim',
+	ready: 'Open',
 	encoding: 'Encoding',
 	validation: 'Validation',
 	done: 'Done'
 };
+
+/**
+ * The one-line status pill of a card: the current stage, a pre-task's kind as
+ * prefix, the worker on a claimed task, and numeric pass progress (n/m) in
+ * validation and done.
+ */
+export function cardPill(card: BoardCard, viewer = ''): string {
+	const kind =
+		card.locator === 'score-setup' ? 'setup' : card.pre ? 'measures' : '';
+	const prefix = kind ? `${kind} · ` : '';
+	switch (card.column) {
+		case 'blocked':
+			return `${prefix}blocked`;
+		case 'ready':
+			return `${prefix}open`;
+		case 'encoding': {
+			const w = card.worker;
+			const who = w ? (w.mine ? 'you' : w.login) : '';
+			return `${kind || 'encoding'}${who ? ` · ${who}` : ''}${w?.elapsed ? ` · ${w.elapsed}` : ''}`;
+		}
+		case 'validation': {
+			const reviewing =
+				viewer !== '' && card.slots.some((s) => s.key === 'review' && s.user === viewer);
+			return `validation · ${card.passes}/${card.threshold}${reviewing ? ' · reviewing' : ''}`;
+		}
+		case 'done':
+			return card.threshold > 0 ? `done · ${card.passes}/${card.threshold}` : 'done';
+	}
+}
 
 // The human line behind a history action, or null for rows the ticker skips.
 function tickerText(h: HistoryRow, title: string, locator = ''): string | null {
@@ -284,8 +311,7 @@ export function buildBoard(
 	const columns: BoardColumn[] = (Object.keys(COLUMN_LABELS) as ColumnKey[]).map((key) => ({
 		key,
 		label: COLUMN_LABELS[key],
-		cards: [],
-		attention: 0
+		cards: []
 	}));
 	const columnByKey = new Map(columns.map((c) => [c.key, c]));
 
@@ -335,13 +361,12 @@ export function buildBoard(
 		.get('done')!
 		.cards.sort((a, b) => (a.finishedAt < b.finishedAt ? 1 : a.finishedAt > b.finishedAt ? -1 : 0));
 
-	// The campaign's attention count (hero counter and the validation column's
-	// badge): unresolved comments plus recorded fails, on non-completed tasks —
-	// summed from the card counts computed above.
+	// The campaign's attention count (the hero counter): unresolved comments
+	// plus recorded fails, on non-completed tasks — summed from the card counts
+	// computed above.
 	const attention = columns
 		.filter((column) => column.key !== 'done')
 		.reduce((n, column) => n + column.cards.reduce((m, card) => m + countsTotal(card.counts), 0), 0);
-	columnByKey.get('validation')!.attention = attention;
 
 	const reviewTasks = new Set(
 		d.locks.filter((l) => l.kind === 'validation').map((l) => l.task_id)

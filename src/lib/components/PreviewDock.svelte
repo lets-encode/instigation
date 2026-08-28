@@ -23,6 +23,7 @@
     repo,
     taskDefs,
     pieces,
+    selected = $bindable(0),
     anchor = null,
     onclose,
   }: {
@@ -35,12 +36,12 @@
     taskDefs: TaskRow[];
     /** The pieces to offer when no task is open; may be empty. */
     pieces: PieceRef[];
+    /** Index into `pieces` of the piece shown when no task is open. */
+    selected?: number;
     /** A measure range to highlight in both preview panes. */
     anchor?: { page: number; m1: number; m2: number } | null;
     onclose: () => void;
   } = $props();
-
-  let selected = $state(0);
   const piece = $derived(pieces[selected] ?? pieces[0]);
   const pieceLabel = (p: PieceRef) => p.title || p.id;
 

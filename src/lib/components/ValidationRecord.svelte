@@ -21,6 +21,7 @@
     logins,
     canPush,
     runner,
+    variant = "full",
     prefill,
     onshowanchor,
     onclaim,
@@ -34,6 +35,12 @@
     viewer: string;
     canPush: boolean;
     runner: CommandRunner;
+    /**
+     * "full" renders every slot row including the claim control (the review
+     * view); "panel" renders only fail boxes and the viewer's own slots — the
+     * task panel's header carries the status and the claim.
+     */
+    variant?: "full" | "panel";
     /** The anchor a fresh fail form opens with (page and measure range). */
     prefill: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the preview. */
@@ -50,6 +57,11 @@
   } = $props();
 
   const record = $derived(buildRecord(card, comments, viewer, logins));
+  const rows = $derived(
+    variant === "panel"
+      ? record.filter((r) => r.key === "fail" || r.mine)
+      : record,
+  );
   // A verdict already submitted for a subtask and still being processed: its
   // controls hold until it lands — a repeat would only be rejected.
   const verdictPending = (sub: string) =>
@@ -108,9 +120,10 @@
   {/if}
 {/snippet}
 
+{#if rows.length > 0 || orphanFails.length > 0}
 <div class="rsec">
   <div class="rlabel">Validation record</div>
-  {#each record as r (r.sub + "/" + r.slot)}
+  {#each rows as r (r.sub + "/" + r.slot)}
     {#if r.key === "fail"}
       <div class="failbox">
         <div class="failhead">
@@ -288,6 +301,7 @@
     </div>
   {/each}
 </div>
+{/if}
 
 <style>
   .muted {

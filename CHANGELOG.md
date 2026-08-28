@@ -3,6 +3,15 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.23.0 – 2026-08-28
+
+- Task-first volunteer view instead of the board (next task, open tasks grouped and tinted per piece, piece progress); the board stays for instigators.
+- Task panel: one status pill plus the one available action; claim-to-review moved into the header.
+- Board cards are navigation-only; the hero claim button covers reviews too.
+- "Needs attention" unfolds its tasks; the column flag is gone.
+- The piece tiles' "View score" replaces "Preview the score"; "ready" is now "open".
+- Removed "Copy raw link".
+
 ## 0.22.2 – 2026-08-28
 
 - The board tints each task an accepted submission (encoding, validation, send-back) of the viewer's just moved, with a "just submitted" badge, for one minute.

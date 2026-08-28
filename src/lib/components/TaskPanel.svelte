@@ -1,6 +1,6 @@
 <!--
-  The task panel's body: the task's status and controls (claim, open in the
-  editor, copy raw link, submit), the validation record and the discussion
+  The task panel's body: the task's status pill, the one action the viewer can
+  take on it right now, the fails and own verdict controls, and the discussion
   thread. Commands run through callbacks the campaign page passes in; the
   shared CommandRunner carries the busy state and result. The score itself
   renders in the separate score panel (PreviewDock), which turns to a page
@@ -12,8 +12,9 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { LockRow, CommentRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { statusPill } from "$lib/campaign-graph.ts";
+  import { preTaskRoute } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { buildRecord, cardPill } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import CommentComposer from "./CommentComposer.svelte";
   import TaskRunState from "./TaskRunState.svelte";
@@ -39,7 +40,6 @@
     oncomment,
     onresolve,
     onsendback,
-    onrawlink,
   }: {
     card: BoardCard;
     campaign: string;
@@ -66,7 +66,6 @@
     oncomment: (kind: string, body: string, parent_id: string) => Promise<void>;
     onresolve: (comment_id: string) => Promise<void>;
     onsendback: (task_id: string) => Promise<void>;
-    onrawlink: (task_id: string) => Promise<void>;
   } = $props();
 
   // The task's own one-shot submission, held while it is still processing.
@@ -81,12 +80,22 @@
           l.user_id === viewer,
       ),
   );
-  // Opening the editor claims the task first when it is open to claim — the
-  // button says so.
-  const editorLabel = $derived(
-    mineEncoding || card.column !== "ready"
-      ? "Open editor ↗"
-      : "Claim & open editor ↗",
+  const record = $derived(buildRecord(card, comments, viewer, logins));
+  /** The validation slot the viewer may claim right now, if any. */
+  const claimableSub = $derived(
+    record.find((r) => r.key === "open" && r.claimable)?.sub,
+  );
+  /** The viewer holds a review lock on this task. */
+  const myReview = $derived(record.some((r) => r.mine));
+  const claimPending = $derived(
+    claimableSub !== undefined &&
+      pendingVerdicts.isProcessing(`validate:${card.task}/${claimableSub}`),
+  );
+  const editorRoute = $derived(
+    `/${campaign}/${preTaskRoute(card.locator)}/${card.task}`,
+  );
+  const editorName = $derived(
+    card.locator === "score-setup" ? "setup editor" : "zone editor",
   );
 
   // The comment a discussion reply targets, shared by the thread list and the
@@ -99,73 +108,110 @@
   <TaskRunState task={card.task} bar />
   <div class="thead">
     <div class="tline">
-      <span class="pill s-{card.statusKey}">
-        {card.statusKey === "validation_required"
-          ? `validation · ${card.passes} of ${card.threshold} passes`
-          : statusPill(card.statusKey, card.pre)}
-      </span>
-      {#if card.counts.fails > 0}
-        <span class="chip chip-fail"
-          >{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span
-        >
-      {/if}
-    </div>
-    <div class="tacts">
-      <button
-        type="button"
-        class="btn"
-        onclick={() => onrawlink(card.task)}
-        disabled={runner.busy}
-        title="Copy a direct link to the score file to paste into mei-friend manually."
-        >Copy raw link</button
+      <span
+        class="pill c-{card.column}"
+        title={card.column === "blocked"
+          ? `Waits for ${card.waitsFor}.`
+          : card.column === "done"
+            ? card.doneLine
+            : undefined}>{cardPill(card, viewer)}</span
       >
-      {#if card.locator === "score-setup"}
-        <a
-          class="btn btn-soft"
-          href={`/${campaign}/setup/${card.task}`}
-          title="Open the score setup form: staves, clefs, key signature and meter."
-          >Open setup editor</a
-        >
-      {:else if card.pre}
-        <a
-          class="btn btn-soft"
-          href={`/${campaign}/zones/${card.task}`}
-          title="Open the measure zones on the facsimile."
-          >Open zone editor</a
-        >
-      {:else if card.column === "ready" || card.column === "encoding"}
-        <!-- Only while an encoding can land: a task in validation or done
-             cannot accept a submission, so no editor hand-off is offered. -->
-        <button
-          type="button"
-          class="btn btn-soft"
-          onclick={() => oneditor(card.task)}
-          disabled={runner.busy || !auth.user}
-          title={editorLabel === "Open editor ↗"
-            ? "Opens the score in mei-friend."
-            : "Claims the task for you, then opens the score in mei-friend."}
-          >{editorLabel}</button
-        >
-      {:else if card.column === "validation"}
-        <a
-          class="btn btn-soft"
-          href={`/${campaign}/review/${card.task}`}
-          title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
-          >Open review view</a
-        >
-      {/if}
-      {#if mineEncoding && !card.pre}
-        <!-- A pre-task is submitted from its own editor. -->
-        <button
-          type="button"
-          class="btn btn-primary"
-          onclick={() => onsubmitencoding(card.task)}
-          disabled={runner.busy || encodePending}
-          title="After committing your encoding in mei-friend, submit it for validation."
-          >Submit for validation</button
-        >
-      {/if}
     </div>
+    <!-- The one action the viewer can take on this task in its current state;
+         a task the viewer cannot work on gets no buttons — the score preview
+         is the way to look at it. -->
+    {#if card.column === "ready"}
+      <div class="tacts">
+        {#if card.pre}
+          <a
+            class="btn btn-primary"
+            href={editorRoute}
+            title={`Claims the task for you and opens the ${editorName}.`}
+            >Claim &amp; open {editorName}</a
+          >
+        {:else}
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={() => oneditor(card.task)}
+            disabled={runner.busy || !auth.user}
+            title={auth.user
+              ? "Claims the task for you, then opens the score in mei-friend."
+              : "Log in to claim a task."}
+            >Claim &amp; open editor ↗</button
+          >
+        {/if}
+      </div>
+    {:else if card.column === "encoding"}
+      {#if card.pre && card.worker?.mine}
+        <div class="tacts">
+          <a
+            class="btn btn-primary"
+            href={editorRoute}
+            title={`Continue your work in the ${editorName}.`}
+            >Continue in {editorName}</a
+          >
+        </div>
+      {:else if mineEncoding}
+        <div class="tacts">
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={() => onsubmitencoding(card.task)}
+            disabled={runner.busy || encodePending}
+            title="After committing your encoding in mei-friend, submit it for validation."
+            >Submit for validation</button
+          >
+          <button
+            type="button"
+            class="btn btn-soft"
+            onclick={() => oneditor(card.task)}
+            disabled={runner.busy}
+            title="Opens the score in mei-friend."
+            >Open editor ↗</button
+          >
+        </div>
+      {/if}
+    {:else if card.column === "validation"}
+      {#if claimableSub !== undefined}
+        <div class="tacts">
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={() => onclaim(card.task, claimableSub)}
+            disabled={runner.busy || claimPending}
+            title="Reserve this validation slot for review."
+            >Claim to review</button
+          >
+          {#if !card.pre}
+            <a
+              class="btn btn-soft"
+              href={`/${campaign}/review/${card.task}`}
+              title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
+              >Open review view</a
+            >
+          {/if}
+        </div>
+      {:else if myReview}
+        <div class="tacts">
+          {#if card.pre}
+            <a
+              class="btn btn-primary"
+              href={editorRoute}
+              title={`Review the submitted work in the ${editorName}.`}
+              >Open {editorName}</a
+            >
+          {:else}
+            <a
+              class="btn btn-primary"
+              href={`/${campaign}/review/${card.task}`}
+              title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
+              >Open review view</a
+            >
+          {/if}
+        </div>
+      {/if}
+    {/if}
   </div>
   <div class="rail-scroll">
     <ValidationRecord
@@ -175,6 +221,7 @@
       {logins}
       {canPush}
       {runner}
+      variant="panel"
       prefill={() => ({ page: String(currentPage() + 1), m1: "", m2: "" })}
       {onshowanchor}
       {onclaim}
@@ -239,18 +286,6 @@
     flex-direction: column;
     gap: 14px;
   }
-  .chip {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    padding: 2px 8px;
-    white-space: nowrap;
-  }
-  .chip-fail {
-    color: var(--danger);
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
-  }
 
   /* ---------------------------------------------------------------- pills */
   .pill {
@@ -266,28 +301,19 @@
     border: 1px solid var(--line);
     color: var(--ink-faint);
   }
-  .pill.s-completed,
-  .pill.s-pass {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
-  }
-  .pill.s-encoding_required,
-  .pill.s-encoding,
-  .pill.s-claimed {
+  .pill.c-encoding {
     background: var(--info-bg);
     border-color: var(--info-line);
     color: var(--info);
   }
-  .pill.s-validation_required,
-  .pill.s-review {
+  .pill.c-validation {
     background: var(--warn-bg);
     border-color: var(--warn-line);
     color: var(--warn);
   }
-  .pill.s-fail {
-    background: var(--danger-bg);
-    border-color: var(--danger-line);
-    color: var(--danger);
+  .pill.c-done {
+    background: var(--ok-bg);
+    border-color: var(--ok-line);
+    color: var(--ok);
   }
 </style>

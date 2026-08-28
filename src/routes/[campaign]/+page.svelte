@@ -27,10 +27,12 @@
   import DockPanel from "$lib/components/DockPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import PieceCards from "$lib/components/PieceCards.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import PreviewDock from "$lib/components/PreviewDock.svelte";
   import TaskPanel from "$lib/components/TaskPanel.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
+  import VolunteerView from "$lib/components/VolunteerView.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
   // from it (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -143,6 +145,37 @@
     buildBoard(graphData, comments, history, viewer, logins, pieceNames),
   );
   const allCards = $derived(board.columns.flatMap((c) => c.cards));
+  // Per-piece task progress, for the piece tiles.
+  const pieceProgress = $derived.by(() => {
+    const by = new Map<string, { done: number; total: number }>();
+    for (const card of allCards) {
+      const fragment = findRow(taskDefs, card.task, "")?.fragment ?? "";
+      if (!fragment) continue;
+      const p = by.get(fragment) ?? { done: 0, total: 0 };
+      p.total++;
+      if (card.column === "done") p.done++;
+      by.set(fragment, p);
+    }
+    return by;
+  });
+  // Task id → index into previewPieces, for grouping and tinting by piece.
+  const pieceIndexByTask = $derived.by(() => {
+    const index = new Map(previewPieces.map((p, i) => [p.path, i]));
+    const by = new Map<string, number>();
+    for (const t of taskDefs)
+      if (t.subtask_id === "") by.set(t.task_id, index.get(t.fragment) ?? 0);
+    return by;
+  });
+  // Tasks with unresolved fails or open comments/questions, behind the hero's
+  // attention count.
+  const attentionCards = $derived(
+    allCards.filter(
+      (c) =>
+        c.column !== "done" &&
+        c.counts.fails + c.counts.comments + c.counts.questions > 0,
+    ),
+  );
+  let showAttention = $state(false);
   // Tasks the viewer's accepted submissions just moved on this campaign's
   // board, highlighted in their new column for a short while.
   const recentlyFinished = $derived(
@@ -181,6 +214,12 @@
     showDock = true;
     anchor = null;
     goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
+  // The piece the whole-score preview shows, set by the piece tiles.
+  let scorePiece = $state(0);
+  function viewScorePiece(index: number) {
+    scorePiece = index;
+    openScore();
   }
   // Close the task panel; the score preview stays open.
   function closeTask() {
@@ -438,12 +477,6 @@
   const resolveCommentRow = (comment_id: string) =>
     run((c) => invoke(commands.resolveComment, { comment_id }, c));
 
-  // The tokenised raw URL of the score — copied to the clipboard.
-  const rawlink = async (task_id: string) => {
-    await run((c) => invoke(commands.rawLink, { task_id }, c), false);
-    if (runner.result?.rawUrl) copy(runner.result.rawUrl);
-  };
-
   const reaper = () => run((c) => invoke(commands.runReaper, {}, c));
 
   // Save the edited plan; a clean save leaves the manage takeover (run() has
@@ -466,21 +499,29 @@
     }
   });
 
-  // "Claim the next task": act on the first card the viewer can work on — a
-  // claim when it is open, otherwise its detail (their claimed or reviewable
-  // work lives there).
   function claimCard(card: BoardCard) {
     if (card.pre) goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`);
     else editor(card.task);
   }
+  // Act on a card the viewer can work on: claim it when it is open, claim its
+  // free validation slot when it awaits review, otherwise open its detail
+  // (their claimed work lives there).
+  function actOnCard(card: BoardCard) {
+    if (card.column === "ready") {
+      claimCard(card);
+      return;
+    }
+    const sub = card.slots.find((s) => s.claimable)?.sub;
+    if (card.column === "validation" && sub !== undefined)
+      claimValidate(card.task, sub);
+    else openTask(card.task);
+  }
   function actOnNext() {
-    if (!nextCard) return;
-    if (nextCard.column === "ready") claimCard(nextCard);
-    else openTask(nextCard.task);
+    if (nextCard) actOnCard(nextCard);
   }
 
   // The board rendered as four columns: queued-but-blocked tasks share the
-  // Ready column (dimmed, with what they wait for) instead of a fifth column.
+  // Open column (dimmed, with what they wait for) instead of a fifth column.
   const displayColumns = $derived.by(() => {
     const by = new Map(board.columns.map((c) => [c.key, c]));
     const ready = by.get("ready");
@@ -491,27 +532,23 @@
     return [
       {
         key: "ready" as ColumnKey,
-        label: "Ready",
+        label: "Open",
         cards: [...(ready?.cards ?? []), ...(blocked?.cards ?? [])],
-        attention: 0,
       },
       {
         key: "encoding" as ColumnKey,
         label: "Encoding",
         cards: encoding?.cards ?? [],
-        attention: encoding?.attention ?? 0,
       },
       {
         key: "validation" as ColumnKey,
         label: "Awaiting validation",
         cards: validation?.cards ?? [],
-        attention: validation?.attention ?? 0,
       },
       {
         key: "done" as ColumnKey,
         label: "Done",
         cards: done?.cards ?? [],
-        attention: 0,
       },
     ];
   });
@@ -585,24 +622,6 @@
               Opening mei-friend shares a short-lived, read-capable GitHub URL
               with that external service.
             </span>
-          {/if}
-        {/if}
-        {#if runner.result.rawUrl}
-          <div class="rawlink">
-            <input
-              readonly
-              value={runner.result.rawUrl}
-              onfocus={(e) => (e.target as HTMLInputElement).select()}
-            />
-            <button type="button" onclick={() => copy(runner.result!.rawUrl!)}
-              >Copy</button
-            >
-          </div>
-          {#if isPrivate}
-            <span class="muted"
-              >The token in this link expires within minutes — use it
-              promptly.</span
-            >
           {/if}
         {/if}
       </div>
@@ -757,14 +776,6 @@
               >ⓘ Info {showInfo ? "▾" : "▸"}</button
             >
             <span class="cspacer"></span>
-            <button
-              type="button"
-              class="btn btn-lg"
-              onclick={openScore}
-              disabled={previewPieces.length === 0}
-              title="Show every page of the score, without opening a task."
-              >Preview the score</button
-            >
             {#if auth.user && canPush}
               <button
                 type="button"
@@ -791,11 +802,19 @@
             <span class="sep">·</span>
             <span class="stat"><b class="c-info">{board.inFlight}</b> in flight</span>
             <span class="sep">·</span>
-            <span class="stat"
-              ><b class="c-danger">{board.attention}</b> need{board.attention === 1
-                ? "s"
-                : ""} attention</span
-            >
+            {#if board.attention > 0}
+              <button
+                type="button"
+                class="stat statbtn"
+                onclick={() => (showAttention = !showAttention)}
+                title="Show the tasks with unresolved fails, comments or questions."
+                ><b>{board.attention}</b> need{board.attention === 1
+                  ? "s"
+                  : ""} attention {showAttention ? "▾" : "▸"}</button
+              >
+            {:else}
+              <span class="stat"><b>0</b> need attention</span>
+            {/if}
             <span class="sep">·</span>
             <span class="stat"
               ><b>{board.contributorsWeek}</b> contributor{board.contributorsWeek ===
@@ -810,6 +829,45 @@
             </div>
             <span class="hbarlabel">{board.done}/{board.total} tasks done</span>
           </div>
+          {#if showAttention && attentionCards.length > 0}
+            <div class="attnbox">
+              {#each attentionCards as card (card.task)}
+                <button
+                  type="button"
+                  class="attnrow"
+                  onclick={() => openTask(card.task)}
+                  title="Open this task"
+                >
+                  <span class="attntitle">{card.title}</span>
+                  <span class="mono card-id">{card.task}</span>
+                  <span class="attnspacer"></span>
+                  {#if card.counts.fails > 0}
+                    <span class="chip chip-fail"
+                      >{card.counts.fails} fail{card.counts.fails === 1
+                        ? ""
+                        : "s"}</span
+                    >
+                  {/if}
+                  {#if card.counts.comments > 0}
+                    <span class="chip chip-note"
+                      >{card.counts.comments} comment{card.counts.comments === 1
+                        ? ""
+                        : "s"}</span
+                    >
+                  {/if}
+                  {#if card.counts.questions > 0}
+                    <span class="chip chip-question"
+                      >{card.counts.questions} question{card.counts.questions ===
+                      1
+                        ? ""
+                        : "s"}</span
+                    >
+                  {/if}
+                  <span class="attnchev">›</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
 
         {#if showInfo}
@@ -883,15 +941,36 @@
           </div>
         {/if}
 
+        {#if !canPush}
+          <VolunteerView
+            cards={allCards}
+            {nextCard}
+            {locks}
+            {viewer}
+            pieces={previewPieces}
+            progress={pieceProgress}
+            pieceIndex={pieceIndexByTask}
+            busy={runner.busy}
+            onact={actOnCard}
+            onopen={openTask}
+            onviewscore={viewScorePiece}
+          />
+        {:else}
+        {#if previewPieces.length > 0}
+          <div class="piecesrow">
+            <PieceCards
+              pieces={previewPieces}
+              progress={pieceProgress}
+              onview={viewScorePiece}
+            />
+          </div>
+        {/if}
         <div class="board">
           {#each displayColumns as col (col.key)}
             <div class="bcol">
               <div class="bcol-head c-{col.key}">
                 <span class="bcol-name">{col.label}</span>
                 <span class="bcol-count">{col.cards.length}</span>
-                {#if col.key === "validation" && col.attention > 0}
-                  <span class="bcol-flag">{col.attention} ⚑</span>
-                {/if}
               </div>
               <div class="well">
                   {#each col.key === "done"
@@ -901,9 +980,9 @@
                     : expanded[col.key]
                       ? col.cards
                       : col.cards.slice(0, CARD_CAP) as card (card.task)}
-                    <!-- A focusable div, not a <button>: the inline actions
-                         inside it are real buttons, which HTML does not allow
-                         nested in another button. -->
+                    <!-- A focusable div, not a <button>: the run state inside
+                         it can render a PR link, which HTML does not allow
+                         nested in a button. -->
                     <div
                       class="card col-{card.column}"
                       class:nextup={card.nextUp}
@@ -941,30 +1020,6 @@
                         <div class="card-foot">
                           waits for <strong>{card.waitsFor}</strong>
                         </div>
-                      {:else if card.pre && card.column === "ready"}
-                        <div class="card-pre">
-                          <button
-                            type="button"
-                            class="claimlink"
-                            onclick={(e) => {
-                              e.stopPropagation();
-                              claimCard(card);
-                            }}>{card.locator === "score-setup"
-                              ? "Open score setup →"
-                              : "Open measure corrector →"}</button
-                          >
-                        </div>
-                      {:else if card.column === "ready" && card.claimable}
-                        <div class="card-claim">
-                          <button
-                            type="button"
-                            class="claimlink withhand"
-                            onclick={(e) => {
-                              e.stopPropagation();
-                              claimCard(card);
-                            }}><img class="hand-claim" src="/blue-hand.svg" alt="" />Claim</button
-                          >
-                        </div>
                       {:else if card.column === "encoding" && card.worker}
                         <div class="card-worker">
                           <span class="avatar"
@@ -974,34 +1029,6 @@
                             >{card.worker.login} · {card.worker
                               .elapsed}</span
                           >
-                          {#if card.worker.mine && card.pre}
-                            <button
-                              type="button"
-                              class="claimlink"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                claimCard(card);
-                              }}
-                              title={card.locator === "score-setup"
-                                ? "Continue the score setup in the setup editor."
-                                : "Continue correcting the measures in the zone editor."}
-                              >Continue →</button
-                            >
-                          {:else if card.worker.mine}
-                            <button
-                              type="button"
-                              class="claimlink"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                submitpr(card.task);
-                              }}
-                              disabled={pendingVerdicts.isProcessing(
-                                `encode:${card.task}`,
-                              )}
-                              title="After committing in mei-friend, submit the encoding for validation."
-                              >Submit →</button
-                            >
-                          {/if}
                         </div>
                       {:else if card.column === "validation"}
                         <div class="card-dots">
@@ -1083,6 +1110,7 @@
             </div>
           {/each}
         </div>
+        {/if}
 
         <div class="ticker">
           <span class="ticker-label">Activity</span>
@@ -1110,6 +1138,7 @@
         {repo}
         {taskDefs}
         pieces={previewPieces}
+        bind:selected={scorePiece}
         {anchor}
         onclose={closeDock}
       />
@@ -1145,7 +1174,6 @@
           oncomment={postComment}
           onresolve={resolveCommentRow}
           onsendback={sendBackTask}
-          onrawlink={rawlink}
         />
       </DockPanel>
     {/if}
@@ -1434,12 +1462,60 @@
   .stat b.c-info {
     color: var(--info);
   }
-  .stat b.c-danger {
-    color: var(--danger);
-  }
   .sep {
     font-size: 12.5px;
     color: var(--ink-faint);
+  }
+  .statbtn {
+    font: inherit;
+    font-size: 13px;
+    color: var(--danger);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  /* The tasks behind the attention count, unfolded from the stat. */
+  .attnbox {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--danger-wash);
+    border: 1px solid var(--danger-line);
+    border-radius: 12px;
+    padding: 10px 14px;
+  }
+  .attnrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+  }
+  .attnrow:hover {
+    border-color: var(--accent);
+  }
+  .attntitle {
+    font-weight: 600;
+  }
+  .attnspacer {
+    flex: 1;
+  }
+  .attnchev {
+    font-size: 15px;
+    color: var(--ink-faint);
+  }
+  /* -------------------------------------------------------------- pieces */
+  .piecesrow {
+    flex: none;
+    margin: 0 32px 16px;
   }
   /* --------------------------------------------------------------- board */
   .board {
@@ -1502,15 +1578,6 @@
   .bcol-head.c-done .bcol-count {
     background: var(--ok-bg);
   }
-  .bcol-flag {
-    font-size: 11px;
-    font-weight: 600;
-    color: #fff;
-    background: var(--warn-solid);
-    border-radius: 999px;
-    padding: 1px 7px;
-    margin-left: auto;
-  }
   .well {
     background: var(--well);
     box-shadow: var(--shadow-inset);
@@ -1530,7 +1597,7 @@
   }
   .card {
     position: relative;
-    /* A flex column, so each column's footer row (claim, waits-for, worker,
+    /* A flex column, so each column's footer row (waits-for, worker,
        completion line) pins to the card's bottom edge via margin-top: auto
        instead of leaving the uniform height unused. */
     display: flex;
@@ -1575,14 +1642,6 @@
   .card.failtint {
     background: var(--danger-bg);
     border-color: var(--danger-line);
-  }
-  .card-pre {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--pre);
-    margin-top: auto;
-    padding-top: 6px;
-    display: flex;
   }
   .donesum {
     background: color-mix(in srgb, var(--card) 60%, transparent);
@@ -1656,39 +1715,6 @@
     margin-top: auto;
     border-top: 1px solid var(--hairline);
     padding-top: 8px;
-  }
-  .card-claim {
-    margin-top: auto;
-    padding-top: 6px;
-    /* Flex, so the button defines the row height without a line-box below it. */
-    display: flex;
-  }
-  .claimlink {
-    font-family: inherit;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--accent);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-  .claimlink:disabled {
-    color: var(--ink-faint);
-    cursor: default;
-  }
-  .claimlink:hover:not(:disabled) {
-    text-decoration: underline;
-  }
-  /* The blue point hand marks claimable work; it replaces the arrow. */
-  .claimlink.withhand {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-  }
-  .hand-claim {
-    height: 16px;
-    flex: none;
   }
   .card-worker {
     display: flex;

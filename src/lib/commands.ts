@@ -88,7 +88,6 @@ export type Result = {
 	message?: string;
 	prUrl?: string;
 	meiFriendUrl?: string;
-	rawUrl?: string;
 };
 
 interface CommandDef<I, O> {
@@ -907,28 +906,6 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 	}
 };
 
-// Just the tokenised raw URL of the score (no claim).
-const rawLink: CommandDef<{ task_id: string }, Result> = {
-	id: 'campaign.rawLink',
-	version: 1,
-	log: 'none',
-	async run({ task_id }, ctx) {
-		const { forge: f, owner, repo } = ctx;
-		try {
-			const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
-			const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
-			if (!fragment) return { error: `Unknown task ${task_id}.` };
-			ctx.progress({ step: 'Fetching the raw link…' });
-			console.log('[rawlink] fetching raw link for', task_id, 'fragment', fragment);
-			const rawUrl = await f.getRepoFileDownloadUrl(owner, repo, fragment);
-			if (!rawUrl) return { error: `Could not get a raw link for ${fragment}.` };
-			return { ok: true, rawUrl, message: `Raw link for ${fragment}:` };
-		} catch (e) {
-			return { error: `Raw link failed: ${(e as Error).message}` };
-		}
-	}
-};
-
 // Rewrite the task plan (task.csv + the matching state.csv rows) from the
 // console's plan editor. Owner-only: the rewrite is committed directly, so it
 // requires push access; checkPlan re-validates against fresh tables so a claim
@@ -1310,7 +1287,6 @@ export const commands = {
 	submitComment,
 	resolveComment,
 	sendBack,
-	rawLink,
 	savePlan,
 	runReaper,
 	readFacsimile,
