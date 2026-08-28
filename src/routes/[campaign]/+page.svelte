@@ -7,7 +7,7 @@
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { lookupSlug, resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
-  import { findRow } from "$lib/campaign-tables.ts";
+  import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
     StateRow,
@@ -136,8 +136,9 @@
     passThreshold,
     allowSelfValidation,
   });
+  const pieceNames = $derived(pieceNamesOf(pieces));
   const board = $derived(
-    buildBoard(graphData, comments, history, viewer, logins),
+    buildBoard(graphData, comments, history, viewer, logins, pieceNames),
   );
   const allCards = $derived(board.columns.flatMap((c) => c.cards));
   const nextCard = $derived(
@@ -718,6 +719,7 @@
           {validationColumns}
           {locks}
           {logins}
+          {pieceNames}
           busy={runner.busy}
           onsave={savePlan}
           oncancel={() => (manage = false)}

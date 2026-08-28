@@ -14,7 +14,7 @@ import {
 } from './campaign-graph.ts';
 import type { GraphData, Logins, NodeSlot, StatusKey } from './campaign-graph.ts';
 import { findRow, isFinalValidation } from './campaign-tables.ts';
-import type { CommentRow, HistoryRow } from './campaign-tables.ts';
+import type { CommentRow, HistoryRow, PieceNames } from './campaign-tables.ts';
 
 // ---------------------------------------------------------------------------
 // Shared display helpers
@@ -34,19 +34,27 @@ export function elapsed(iso: string, now = Date.now()): string {
 /** The avatar initial for a display handle. */
 export const initialOf = (name: string): string => name[0]?.toUpperCase() ?? '?';
 
-/** The piece behind a fragment path, for card titles: basename without extension. */
-const pieceLabel = (fragment: string): string => {
-	const base = fragment.split('/').pop() ?? fragment;
-	return base.replace(/\.mei$/i, '');
+/**
+ * The piece behind a fragment path, for card titles: its configured name, else
+ * the piece directory of the standard sources/<piece>/score.mei layout, else
+ * the basename without extension.
+ */
+const pieceLabel = (fragment: string, names: PieceNames): string => {
+	const named = names[fragment];
+	if (named) return named;
+	const parts = fragment.split('/');
+	const base = (parts.pop() ?? fragment).replace(/\.mei$/i, '');
+	const dir = parts.pop();
+	return base === 'score' && dir && dir !== 'sources' ? dir : base;
 };
 
 /** The card title: the piece plus the part of it the task addresses. */
-export function cardTitle(fragment: string, locator: string): string {
+export function cardTitle(fragment: string, locator: string, names: PieceNames = {}): string {
 	const page = /^surface-(\d+)$/.exec(locator);
-	if (page) return `${pieceLabel(fragment)} · p. ${page[1]}`;
-	if (locator === 'score-setup') return `${pieceLabel(fragment)} · setup`;
-	if (isPreTask(locator)) return `${pieceLabel(fragment)} · measures`;
-	return pieceLabel(fragment);
+	if (page) return `${pieceLabel(fragment, names)} · p. ${page[1]}`;
+	if (locator === 'score-setup') return `${pieceLabel(fragment, names)} · setup`;
+	if (isPreTask(locator)) return `${pieceLabel(fragment, names)} · measures`;
+	return pieceLabel(fragment, names);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +234,7 @@ function buildTicker(
 	d: GraphData,
 	history: HistoryRow[],
 	logins: Logins = {},
+	names: PieceNames = {},
 	limit = 4,
 	now = Date.now()
 ): TickerEntry[] {
@@ -235,7 +244,7 @@ function buildTicker(
 		const def = findRow(d.taskDefs, h.task_id, '');
 		const text = tickerText(
 			h,
-			def ? cardTitle(def.fragment, def.locator) : h.task_id,
+			def ? cardTitle(def.fragment, def.locator, names) : h.task_id,
 			def?.locator ?? ''
 		);
 		if (text) entries.push({ login: handle(logins, h.user_id), text, elapsed: elapsed(h.timestamp, now) });
@@ -250,6 +259,7 @@ export function buildBoard(
 	history: HistoryRow[],
 	viewer = '',
 	logins: Logins = {},
+	names: PieceNames = {},
 	now = Date.now()
 ): Board {
 	const nodes = buildGraph(d, viewer, logins);
@@ -272,12 +282,12 @@ export function buildBoard(
 		columnByKey.get(column)!.cards.push({
 			task: n.task,
 			column,
-			title: cardTitle(def.fragment, def.locator),
+			title: cardTitle(def.fragment, def.locator, names),
 			typeLine: n.kind === 'pre' ? typeLabel(def.locator) : 'Encoding',
 			pre: n.kind === 'pre',
 			locator: def.locator,
 			statusKey: n.statusKey,
-			waitsFor: depDef ? cardTitle(depDef.fragment, depDef.locator) : dep,
+			waitsFor: depDef ? cardTitle(depDef.fragment, depDef.locator, names) : dep,
 			claimable: viewer !== '' && column === 'ready' && !lock,
 			worker:
 				column === 'encoding' && lock
@@ -325,7 +335,7 @@ export function buildBoard(
 		attention,
 		inFlight,
 		contributorsWeek,
-		ticker: buildTicker(d, history, logins, 4, now),
+		ticker: buildTicker(d, history, logins, names, 4, now),
 		nextUp: nodes.find((n) => n.nextUp)?.task ?? null
 	};
 }

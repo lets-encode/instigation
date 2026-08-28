@@ -294,6 +294,19 @@ export function configPieces(yaml: string | null): PieceRef[] {
 	return pieces;
 }
 
+/** Fragment path → piece display name, for task titles. */
+export type PieceNames = Record<string, string>;
+
+/** The display name of each piece (header title, else id), keyed by its path. */
+export function pieceNamesOf(pieces: PieceRef[]): PieceNames {
+	const names: PieceNames = {};
+	for (const p of pieces) {
+		const name = p.title || p.id;
+		if (name) names[p.path] = name;
+	}
+	return names;
+}
+
 /** A positive-integer scalar from config.yaml by key, or `fallback`. */
 export function configNumber(yaml: string | null, key: string, fallback: number): number {
 	const n = Number(new RegExp(`^\\s*${key}:\\s*(\\d+)`, 'm').exec(yaml ?? '')?.[1]);

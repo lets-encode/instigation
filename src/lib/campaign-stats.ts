@@ -9,6 +9,7 @@ import type { GraphData } from './campaign-graph.ts';
 import { cardTitle } from './campaign-board.ts';
 import {
 	configNumber,
+	configPieces,
 	passThresholdOf,
 	configString,
 	findRow,
@@ -18,9 +19,10 @@ import {
 	parseLockCsv,
 	parseStateCsv,
 	parseTaskCsv,
+	pieceNamesOf,
 	resolveLogins
 } from './campaign-tables.ts';
-import type { CommentRow, HistoryRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
+import type { CommentRow, HistoryRow, LockRow, PieceNames, StateRow, TaskRow } from './campaign-tables.ts';
 import { parseMeiHeader } from './mei-header.ts';
 import { parseFacsimileMei } from './mei-facsimile.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
@@ -60,6 +62,8 @@ export interface CampaignStats {
 	staleAfterMinutes: number;
 	/** A facsimile page image for the tile preview, or null. */
 	preview: { url: string; page: number } | null;
+	/** Fragment path → piece display name, from the config's pieces list. */
+	pieceNames: PieceNames;
 	// The raw tables, for the my-work projections.
 	taskDefs: TaskRow[];
 	rows: StateRow[];
@@ -269,6 +273,7 @@ async function fetchStats(
 		createdAt: history[0]?.timestamp ?? '',
 		staleAfterMinutes,
 		preview: null,
+		pieceNames: pieceNamesOf(configPieces(yaml)),
 		taskDefs,
 		rows: state.rows,
 		validationColumns: state.validationColumns,
@@ -383,7 +388,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
 			campaignSlug: stats.name,
 			repoPath: `${stats.owner}/${stats.repo}`,
 			task,
-			title: def ? cardTitle(def.fragment, def.locator) : task,
+			title: def ? cardTitle(def.fragment, def.locator, stats.pieceNames) : task,
 			claimedAt: '',
 			expiresAt: '',
 			passes: dots.filter((d) => d === 'pass').length,
@@ -451,7 +456,7 @@ export function commentsOnMyWork(stats: CampaignStats, viewer: string): FeedComm
 				comment: c,
 				campaignSlug: stats.name,
 				task: c.task_id,
-				taskTitle: def ? cardTitle(def.fragment, def.locator) : c.task_id,
+				taskTitle: def ? cardTitle(def.fragment, def.locator, stats.pieceNames) : c.task_id,
 				logins: stats.logins
 			};
 		});

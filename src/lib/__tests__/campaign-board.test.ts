@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildBoard, orphanedFails } from '../campaign-board.ts';
+import { buildBoard, cardTitle, orphanedFails } from '../campaign-board.ts';
 import { parseCommentCsv, parseStateCsv, parseTaskCsv } from '../campaign-tables.ts';
 import type { NodeSlot } from '../campaign-graph.ts';
 
@@ -19,6 +19,17 @@ const slot = (over: Partial<NodeSlot>): NodeSlot => ({
 	user: '',
 	ts: '',
 	...over
+});
+
+test('cardTitle names the piece: config name, else piece directory, else basename', () => {
+	const names = { 'sources/piece-1/score.mei': 'Sonata in C' };
+	assert.equal(cardTitle('sources/piece-1/score.mei', 'surface-3', names), 'Sonata in C · p. 3');
+	assert.equal(cardTitle('sources/piece-1/score.mei', 'score-setup', names), 'Sonata in C · setup');
+	// Unnamed pieces fall back to the path's piece directory…
+	assert.equal(cardTitle('sources/piece-2/score.mei', '', names), 'piece-2');
+	// …and paths outside the sources/<piece>/score.mei layout to the basename.
+	assert.equal(cardTitle('sources/score.mei', '', names), 'score');
+	assert.equal(cardTitle('sources/anthem.mei', 'surface-1', {}), 'anthem · p. 1');
 });
 
 test('orphanedFails returns unresolved fail comments without a matching fail cell', () => {

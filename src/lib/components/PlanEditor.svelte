@@ -15,6 +15,7 @@
     StateRow,
     TaskRow,
     ParsedState,
+    PieceNames,
   } from "$lib/campaign-tables.ts";
 
   let {
@@ -23,6 +24,7 @@
     validationColumns,
     locks,
     logins,
+    pieceNames,
     busy,
     onsave,
     oncancel,
@@ -32,6 +34,7 @@
     validationColumns: string[];
     locks: LockRow[];
     logins: Logins;
+    pieceNames: PieceNames;
     busy: boolean;
     onsave: (tasks: TaskRow[]) => void;
     oncancel: () => void;
@@ -89,7 +92,9 @@
         : "";
   };
   const titleOf = (g: Group) =>
-    g.task.fragment ? cardTitle(g.task.fragment, g.task.locator) : g.task.task_id;
+    g.task.fragment
+      ? cardTitle(g.task.fragment, g.task.locator, pieceNames)
+      : g.task.task_id;
   const sizeOf = (g: Group): string => {
     if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
     if (g.task.locator === "measure-zones") return "all pages";
@@ -213,7 +218,9 @@
                 aria-label="Score file"
               >
                 {#each fragments as fr (fr)}
-                  <option value={fr}>{fr}</option>
+                  <option value={fr}
+                    >{pieceNames[fr] ? `${pieceNames[fr]} — ${fr}` : fr}</option
+                  >
                 {/each}
                 {#if !fragments.includes(g.task.fragment)}
                   <option value={g.task.fragment}>{g.task.fragment}</option>

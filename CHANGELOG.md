@@ -5,6 +5,7 @@ parentheses.
 
 ## 0.22.2 – 2026-08-28
 
+- Task titles now name the piece (config title, else its id) everywhere — board cards, task panel, review view, ticker, plan editor and dashboard — instead of the score file's basename.
 - The Manage button now matches the size of the other hero buttons.
 - Restyled the banners to match the app design (wash background, coloured left edge, ink text) and unified their styles and placement across all pages.
 - A rate-limited campaign page now reports the failed lookup with a retry instead of claiming the campaign does not exist.

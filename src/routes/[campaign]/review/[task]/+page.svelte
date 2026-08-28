@@ -16,13 +16,14 @@
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
   import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
-  import { findRow } from "$lib/campaign-tables.ts";
+  import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
     StateRow,
     LockRow,
     HistoryRow,
     CommentRow,
+    PieceRef,
   } from "$lib/campaign-tables.ts";
   import { preTaskRoute, statusPill } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
@@ -62,6 +63,7 @@
   let locks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
   let comments = $state<CommentRow[]>([]);
+  let pieces = $state<PieceRef[]>([]);
   let logins = $state<Record<string, string>>({});
   let passThreshold = $state(1);
   let allowSelfValidation = $state(false);
@@ -75,6 +77,7 @@
       history,
       viewer,
       logins,
+      pieceNamesOf(pieces),
     ),
   );
   const card = $derived(
@@ -162,6 +165,7 @@
       locks = tables.locks;
       history = tables.history;
       comments = tables.comments;
+      pieces = tables.pieces;
       logins = tables.logins;
       passThreshold = tables.passThreshold;
       allowSelfValidation = tables.allowSelfValidation;
