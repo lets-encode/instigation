@@ -101,7 +101,9 @@
   // Columns the viewer expanded past the card cap.
   let expanded = $state<Partial<Record<ColumnKey, boolean>>>({});
   const CARD_CAP = 5;
-  // The Done column collapses to a summary card until expanded.
+  // The Done column shows the tasks finished last; the rest collapse into a
+  // summary card until expanded.
+  const DONE_VISIBLE = 5;
   let showAllDone = $state(false);
 
   // The score's <meiHead> fields, fetched on first open of the info panel.
@@ -141,6 +143,15 @@
     buildBoard(graphData, comments, history, viewer, logins, pieceNames),
   );
   const allCards = $derived(board.columns.flatMap((c) => c.cards));
+  // Tasks the viewer's accepted submissions just moved on this campaign's
+  // board, highlighted in their new column for a short while.
+  const recentlyFinished = $derived(
+    new Set(
+      pendingVerdicts.recentlyFinished
+        .filter((m) => m.repoId === repoId)
+        .map((m) => m.task),
+    ),
+  );
   const nextCard = $derived(
     board.nextUp
       ? (allCards.find((c) => c.task === board.nextUp) ?? null)
@@ -883,26 +894,20 @@
                 {/if}
               </div>
               <div class="well">
-                {#if col.key === "done" && !showAllDone && col.cards.length > 1}
-                  <div class="donesum">
-                    <span
-                      >{col.cards.length} completed tasks · merged into the
-                      piece scores</span
-                    >
-                    <button
-                      type="button"
-                      class="linkish"
-                      onclick={() => (showAllDone = true)}>Show all ▸</button
-                    >
-                  </div>
-                {:else}
-                  {#each expanded[col.key] || col.key === "done" ? col.cards : col.cards.slice(0, CARD_CAP) as card (card.task)}
+                  {#each col.key === "done"
+                    ? showAllDone
+                      ? col.cards
+                      : col.cards.slice(0, DONE_VISIBLE)
+                    : expanded[col.key]
+                      ? col.cards
+                      : col.cards.slice(0, CARD_CAP) as card (card.task)}
                     <!-- A focusable div, not a <button>: the inline actions
                          inside it are real buttons, which HTML does not allow
                          nested in another button. -->
                     <div
                       class="card col-{card.column}"
                       class:nextup={card.nextUp}
+                      class:justmoved={recentlyFinished.has(card.task)}
                       class:pre={card.pre}
                       class:failtint={card.counts.fails > 0 &&
                         card.column !== "done"}
@@ -920,6 +925,9 @@
                     >
                       {#if card.nextUp}
                         <span class="nextup-badge">next step</span>
+                      {/if}
+                      {#if recentlyFinished.has(card.task)}
+                        <span class="justmoved-badge">just submitted</span>
                       {/if}
                       <div class="card-title">{card.title}</div>
                       <div class="card-type">
@@ -1030,16 +1038,32 @@
                           </div>
                         {/if}
                       {:else if card.column === "done"}
-                        <div class="card-done">{card.doneLine}</div>
+                        <div class="card-done">
+                          <img class="hand-done" src="/green-hand.svg" alt="" />
+                          {card.doneLine}
+                        </div>
                       {/if}
                     </div>
                   {/each}
-                  {#if col.key === "done" && showAllDone && col.cards.length > 1}
+                  {#if col.key === "done" && !showAllDone && col.cards.length > DONE_VISIBLE}
+                    <div class="donesum">
+                      <span
+                        >{col.cards.length - DONE_VISIBLE} more completed
+                        task{col.cards.length - DONE_VISIBLE === 1
+                          ? ""
+                          : "s"} · merged into the piece scores</span
+                      >
+                      <button
+                        type="button"
+                        class="linkish"
+                        onclick={() => (showAllDone = true)}>Show all ▸</button
+                      >
+                    </div>
+                  {:else if col.key === "done" && showAllDone && col.cards.length > DONE_VISIBLE}
                     <button
                       type="button"
                       class="more"
-                      onclick={() => (showAllDone = false)}
-                      >show the summary</button
+                      onclick={() => (showAllDone = false)}>show fewer</button
                     >
                   {:else if col.key !== "done" && col.cards.length > CARD_CAP}
                     <button
@@ -1055,7 +1079,6 @@
                         : `+ ${col.cards.length - CARD_CAP} more`}</button
                     >
                   {/if}
-                {/if}
               </div>
             </div>
           {/each}
@@ -1507,7 +1530,11 @@
   }
   .card {
     position: relative;
-    display: block;
+    /* A flex column, so each column's footer row (claim, waits-for, worker,
+       completion line) pins to the card's bottom edge via margin-top: auto
+       instead of leaving the uniform height unused. */
+    display: flex;
+    flex-direction: column;
     text-align: left;
     font-family: inherit;
     background: var(--card);
@@ -1540,6 +1567,11 @@
   .card.pre {
     border-left: 3px solid var(--pre);
   }
+  /* Before .card.failtint: a recorded fail outweighs the finished highlight. */
+  .card.justmoved {
+    border-color: var(--ok-line);
+    background: var(--ok-wash);
+  }
   .card.failtint {
     background: var(--danger-bg);
     border-color: var(--danger-line);
@@ -1548,7 +1580,9 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--pre);
-    margin-top: 8px;
+    margin-top: auto;
+    padding-top: 6px;
+    display: flex;
   }
   .donesum {
     background: color-mix(in srgb, var(--card) 60%, transparent);
@@ -1581,6 +1615,22 @@
   :global([data-theme="dark"]) .nextup-badge {
     color: #fff;
   }
+  .justmoved-badge {
+    position: absolute;
+    top: -9px;
+    right: 12px;
+    background: var(--ok);
+    color: var(--invert-ink);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 2px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  :global([data-theme="dark"]) .justmoved-badge {
+    color: #fff;
+  }
   .card-title {
     font-size: 13px;
     font-weight: 600;
@@ -1603,12 +1653,15 @@
   .card-foot {
     font-size: 11.5px;
     color: var(--ink-faint);
-    margin-top: 8px;
+    margin-top: auto;
     border-top: 1px solid var(--hairline);
     padding-top: 8px;
   }
   .card-claim {
-    margin-top: 8px;
+    margin-top: auto;
+    padding-top: 6px;
+    /* Flex, so the button defines the row height without a line-box below it. */
+    display: flex;
   }
   .claimlink {
     font-family: inherit;
@@ -1641,7 +1694,8 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    margin-top: 9px;
+    margin-top: auto;
+    padding-top: 6px;
   }
   .avatar {
     width: 20px;
@@ -1669,7 +1723,8 @@
   .card-dots {
     display: flex;
     gap: 4px;
-    margin-top: 9px;
+    margin-top: auto;
+    padding-top: 6px;
   }
   .dot {
     width: 10px;
@@ -1730,7 +1785,15 @@
     font-size: 11.5px;
     color: var(--ok);
     font-weight: 600;
-    margin-top: 3px;
+    margin-top: auto;
+    padding-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .hand-done {
+    height: 12px;
+    flex: none;
   }
   .more {
     font: inherit;

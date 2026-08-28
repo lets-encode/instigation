@@ -116,6 +116,22 @@ function taskCounts(d: GraphData, comments: CommentRow[], task: string): TaskCou
 
 const countsTotal = (c: TaskCounts): number => c.fails + c.comments + c.questions;
 
+/** When a task was finished: its last final verdict, else its encoding time. */
+function finishedAt(d: GraphData, task: string): string {
+	let last = '';
+	for (const row of d.rows) {
+		if (row.task_id !== task || row.subtask_id === '') continue;
+		for (const column of d.validationColumns) {
+			const cell = row[column] ?? '';
+			if (isFinalValidation(cell)) {
+				const ts = cell.split('|')[2];
+				if (ts > last) last = ts;
+			}
+		}
+	}
+	return last || (findRow(d.rows, task, '')?.encoded_at ?? '');
+}
+
 // ---------------------------------------------------------------------------
 // The board
 
@@ -158,8 +174,10 @@ export interface BoardCard {
 	threshold: number;
 	dots: StatusKey[];
 	counts: TaskCounts;
-	/** Done column: the completion line ("✓ 3 of 3 validations"). */
+	/** Done column: the completion line ("3 of 3 validations"), rendered behind a pass icon. */
 	doneLine: string;
+	/** Done column: when the last pass verdict landed (else the encoding time); '' elsewhere. */
+	finishedAt: string;
 	/** The first card the viewer can act on right now. */
 	nextUp: boolean;
 	/** The underlying slots, for the overlay's validation record. */
@@ -303,12 +321,19 @@ export function buildBoard(
 			counts,
 			doneLine:
 				n.kind === 'pre' || n.threshold === 0
-					? `✓ finished by ${handle(logins, state?.encoder ?? '') || '—'}`
-					: `✓ ${n.passes} of ${n.threshold} validations`,
+					? `finished by ${handle(logins, state?.encoder ?? '') || '—'}`
+					: `${n.passes} of ${n.threshold} validations`,
+			finishedAt: column === 'done' ? finishedAt(d, n.task) : '',
 			nextUp: n.nextUp,
 			slots: n.slots
 		});
 	}
+
+	// The Done column reads newest first, so the tasks finished last stay in
+	// view above its collapse.
+	columnByKey
+		.get('done')!
+		.cards.sort((a, b) => (a.finishedAt < b.finishedAt ? 1 : a.finishedAt > b.finishedAt ? -1 : 0));
 
 	// The campaign's attention count (hero counter and the validation column's
 	// badge): unresolved comments plus recorded fails, on non-completed tasks —

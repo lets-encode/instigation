@@ -60,6 +60,35 @@ test('orphanedFails skips a fail comment its fail cell still matches', () => {
 	assert.deepEqual(orphanedFails(card, comments), []);
 });
 
+test('the done column lists the tasks finished last first', () => {
+	const d = {
+		taskDefs: parseTaskCsv(
+			'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+				'T0001,,sources/a.mei,,,,\n' +
+				'T0001,S0001,sources/a.mei,,,,\n' +
+				'T0002,,sources/a.mei,,,,\n' +
+				'T0002,S0001,sources/a.mei,,,,\n'
+		),
+		rows: parseStateCsv(
+			'task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n' +
+				'T0001,,completed,7,2026-08-01T00:00:00Z,\n' +
+				'T0001,S0001,completed,,,pass|9|2026-08-10T00:00:00Z\n' +
+				'T0002,,completed,7,2026-08-02T00:00:00Z,\n' +
+				'T0002,S0001,completed,,,pass|9|2026-08-12T00:00:00Z\n'
+		).rows,
+		validationColumns: ['validate_status_1'],
+		locks: [],
+		passThreshold: 1
+	};
+	const board = buildBoard(d, [], []);
+	const done = board.columns.find((c) => c.key === 'done')!;
+	assert.deepEqual(
+		done.cards.map((c) => c.task),
+		['T0002', 'T0001']
+	);
+	assert.equal(done.cards[0].finishedAt, '2026-08-12T00:00:00Z');
+});
+
 test('attention counts skip replies once their root comment is resolved', () => {
 	const d = {
 		taskDefs: parseTaskCsv(

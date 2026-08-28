@@ -5,6 +5,9 @@ parentheses.
 
 ## 0.22.2 – 2026-08-28
 
+- The board tints each task an accepted submission (encoding, validation, send-back) of the viewer's just moved, with a "just submitted" badge, for one minute.
+- The Done column now lists the five most recently finished tasks as cards, newest first, collapsing only the rest into the summary; done lines show the pass hand instead of a tick.
+- Card footers (claim, waits-for, worker, validation dots, completion line) now sit at the card's bottom edge instead of leaving the uniform card height unused.
 - Task titles now name the piece (config title, else its id) everywhere — board cards, task panel, review view, ticker, plan editor and dashboard — instead of the score file's basename.
 - The Manage button now matches the size of the other hero buttons.
 - Restyled the banners to match the app design (wash background, coloured left edge, ink text) and unified their styles and placement across all pages.

@@ -327,6 +327,8 @@ export interface PendingVerdictSink {
 		prNumber: number;
 		prUrl: string;
 		key?: string;
+		/** The campaign repo the submission acts on. */
+		repoId?: number;
 		state?: 'opening' | 'processing';
 	}): string;
 	/** The background-opened PR exists now; the entry moves to 'processing'. */
@@ -368,7 +370,14 @@ function openAndFinishInBackground(
 		cleanup?: 'always' | 'accepted';
 	}>
 ): Result {
-	const id = verdictSink.begin({ label, prNumber: 0, prUrl: '', key, state: 'opening' });
+	const id = verdictSink.begin({
+		label,
+		prNumber: 0,
+		prUrl: '',
+		key,
+		repoId: ctx.repoId,
+		state: 'opening'
+	});
 	const background: CommandContext = { ...ctx, progress: () => {} };
 	void (async () => {
 		let pr;
