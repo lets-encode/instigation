@@ -5,8 +5,8 @@ parentheses.
 
 ## 0.22.2 – 2026-08-28
 
-- Restyled the banner family to match the app design: faint wash background, semantic border with a solid coloured left edge, message text in ink (like the fail boxes), card radius and shadow. The campaigns page now uses the shared banner styles instead of its own copy, and the review view's status message no longer stretches to full height.
-- A campaign page opened while the GitHub rate limit is exhausted now reports the failed lookup (with a retry) instead of claiming the campaign does not exist — on the campaign, review, zones and setup routes.
+- Restyled the banners to match the app design (wash background, coloured left edge, ink text) and unified their styles and placement across all pages.
+- A rate-limited campaign page now reports the failed lookup with a retry instead of claiming the campaign does not exist.
 - Redesigned the GitHub-interaction status messages. (`05ca5cb`)
 - Added this changelog, reconstructed from the full git history.
 - Synced the package version with the changelog.

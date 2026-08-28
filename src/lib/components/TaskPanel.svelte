@@ -207,6 +207,7 @@
   }
   .taskpanel :global(.banner) {
     border-radius: 0;
+    box-shadow: none;
   }
   .thead {
     flex: none;

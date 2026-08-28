@@ -65,9 +65,13 @@
   --ok: #279b57;
   --ok-bg: #cef3ce;
   --ok-line: #85dd8f;
+  /* A fainter green wash than --ok-bg, for boxes that hold readable text. */
+  --ok-wash: #eefaee;
   --warn: #d0742a;
   --warn-bg: #ffe6d0;
   --warn-line: #f2c69a;
+  /* A fainter orange wash than --warn-bg, for boxes that hold readable text. */
+  --warn-wash: #fdf4ea;
   /* Solid fill for the attention badge; white text on it. */
   --warn-solid: #d0742a;
   --danger: #c03b28;
@@ -167,9 +171,11 @@
   --ok: #76de76;
   --ok-bg: rgba(118, 222, 118, .16);
   --ok-line: #3a7350;
+  --ok-wash: rgba(118, 222, 118, .07);
   --warn: #ffa76d;
   --warn-bg: rgba(255, 167, 109, .17);
   --warn-line: #6e5530;
+  --warn-wash: rgba(255, 167, 109, .07);
   /* Solid badges darken on dark — a bright fill under white text glares. */
   --warn-solid: #a8672e;
   --danger: #f2765e;

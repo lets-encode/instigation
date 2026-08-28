@@ -279,16 +279,18 @@
       class:warn={runner.result.warn}
       class:err={!!runner.result.error}
     >
-      <span>{runner.result.error ?? runner.result.message}</span>
-      {#if runner.result.prUrl}
-        <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-          >View PR →</a
-        >
-      {/if}
+      <span>
+        {runner.result.error ?? runner.result.message}
+        {#if runner.result.prUrl}
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View PR →</a
+          >
+        {/if}
+      </span>
       <button
         type="button"
         class="dismiss"
-        onclick={() => (runner.result = null)}>×</button
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {/if}
@@ -761,41 +763,5 @@
   .linkish:hover {
     text-decoration: underline;
   }
-  .banner {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-radius: 10px;
-    padding: 10px 16px;
-    font-size: 13.5px;
-    border: 1px solid var(--line);
-    background: var(--card);
-  }
-  .banner.ok {
-    border-color: var(--ok-line);
-    background: var(--ok-bg);
-    color: var(--ok);
-  }
-  .banner.warn {
-    border-color: var(--warn-line);
-    background: var(--warn-bg);
-    color: var(--warn);
-  }
-  .banner.err {
-    border-color: var(--danger-line);
-    background: var(--danger-bg);
-    color: var(--danger);
-  }
-  .banner a {
-    font-weight: 600;
-    color: inherit;
-  }
-  .dismiss {
-    margin-left: auto;
-    font-size: 15px;
-    background: none;
-    border: 0;
-    color: inherit;
-    cursor: pointer;
-  }
+  /* Banner styles are shared app-wide in ui.css. */
 </style>

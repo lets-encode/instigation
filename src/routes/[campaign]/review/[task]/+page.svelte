@@ -461,6 +461,8 @@
   .msg {
     margin: 24px auto;
     max-width: 640px;
+    /* .review is a flex row; keep the message at content height. */
+    align-self: flex-start;
   }
   .perr {
     padding: 14px;
@@ -496,6 +498,7 @@
   }
   .rail :global(.banner) {
     border-radius: 0;
+    box-shadow: none;
   }
   .rhead {
     flex: none;

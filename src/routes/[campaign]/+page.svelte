@@ -625,51 +625,52 @@
       {@render resultBanner()}
     {/if}
 
+    {#if resolveError}
+      <div class="banner bar err">
+        <span>
+          {resolveError}
+          <button
+            type="button"
+            class="linkish"
+            onclick={() => (resolveError = null)}>Try again</button
+          >
+        </span>
+      </div>
+    {:else if notFound}
+      <div class="banner bar err">
+        <span>
+          No campaign called <code>{campaign}</code> was found. It may have
+          been removed, or the name may be misspelled.
+          <a href="/campaigns">Back to all campaigns</a>.
+        </span>
+      </div>
+    {:else if slugState === "pending"}
+      <div class="banner bar warn">
+        <span>
+          Someone is setting up a campaign called <code>{campaign}</code>.
+          If they don't finish it, the name becomes free again.
+          <a href="/campaigns">Back to all campaigns</a>.
+        </span>
+      </div>
+    {:else if slugState === "reserved"}
+      <div class="banner bar err">
+        <span>
+          <code>{campaign}</code> is reserved and can't be used for a
+          campaign. <a href="/campaigns">Back to all campaigns</a>.
+        </span>
+      </div>
+    {:else if slugState === "tombstoned"}
+      <div class="banner bar err">
+        <span>
+          The name <code>{campaign}</code> has been blocked and can't be
+          used. <a href="/campaigns">Back to all campaigns</a>.
+        </span>
+      </div>
+    {:else}
     <div class="workarea t-{taskLayout.side}">
     <div class="workmain p-{previewLayout.side}">
     <div class="viewcol">
-      {#if resolveError}
-        <div class="banner bar err">
-          <span>
-            {resolveError}
-            <button
-              type="button"
-              class="linkish"
-              onclick={() => (resolveError = null)}>Try again</button
-            >
-          </span>
-        </div>
-      {:else if notFound}
-        <div class="banner bar err">
-          <span>
-            No campaign called <code>{campaign}</code> was found. It may have
-            been removed, or the name may be misspelled.
-            <a href="/campaigns">Back to all campaigns</a>.
-          </span>
-        </div>
-      {:else if slugState === "pending"}
-        <div class="banner bar warn">
-          <span>
-            Someone is setting up a campaign called <code>{campaign}</code>.
-            If they don't finish it, the name becomes free again.
-            <a href="/campaigns">Back to all campaigns</a>.
-          </span>
-        </div>
-      {:else if slugState === "reserved"}
-        <div class="banner bar err">
-          <span>
-            <code>{campaign}</code> is reserved and can't be used for a
-            campaign. <a href="/campaigns">Back to all campaigns</a>.
-          </span>
-        </div>
-      {:else if slugState === "tombstoned"}
-        <div class="banner bar err">
-          <span>
-            The name <code>{campaign}</code> has been blocked and can't be
-            used. <a href="/campaigns">Back to all campaigns</a>.
-          </span>
-        </div>
-      {:else if !resolved}
+      {#if !resolved}
         <p class="msg muted">Finding the campaign…</p>
       {:else if loading}
         <p class="msg muted">Loading campaign…</p>
@@ -1124,6 +1125,7 @@
       </DockPanel>
     {/if}
     </div>
+    {/if}
   {/if}
 </div>
 
