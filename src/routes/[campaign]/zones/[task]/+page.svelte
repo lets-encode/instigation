@@ -14,7 +14,7 @@
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { resolveCampaign } from "$lib/campaign-resolve.ts";
+  import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
@@ -24,6 +24,9 @@
   let resolved = $state<ResolvedCampaign | null>(null);
   let resolving = $state(false);
   let notFound = $state(false);
+  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
+  // campaign exists but could not be loaded, which is not a "not found".
+  let resolveError = $state<string | null>(null);
   const owner = $derived(resolved?.owner ?? "");
   const repo = $derived(resolved?.repo ?? "");
   const repoId = $derived(resolved?.repoId ?? 0);
@@ -237,6 +240,7 @@
     void campaign;
     resolved = null;
     notFound = false;
+    resolveError = null;
   });
   $effect(() => {
     void campaign;
@@ -250,7 +254,8 @@
   // Resolve the campaign name to its repo first; the load effect is gated on
   // `owner`/`repo` so it waits for this.
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolving) return;
+    if (auth.status === "loading" || resolved || notFound || resolveError || resolving)
+      return;
     resolving = true;
     // A result for a name the page has since navigated away from is dropped.
     const name = campaign;
@@ -260,8 +265,8 @@
         if (r) resolved = r;
         else notFound = true;
       })
-      .catch(() => {
-        if (name === campaign) notFound = true;
+      .catch((e) => {
+        if (name === campaign) resolveError = resolveFailureMessage(e);
       })
       .finally(() => (resolving = false));
   });
@@ -873,7 +878,16 @@
 {/if}
 
 <div class="corrector">
-  {#if notFound}
+  {#if resolveError}
+    <div class="deskwrap">
+      <div class="banner err">
+        {resolveError}
+        <button type="button" class="linkish" onclick={() => (resolveError = null)}
+          >Try again</button
+        >
+      </div>
+    </div>
+  {:else if notFound}
     <div class="deskwrap">
       <div class="banner err">
         No campaign called <code>{campaign}</code> was found.

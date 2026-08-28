@@ -14,7 +14,7 @@
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { resolveCampaign } from "$lib/campaign-resolve.ts";
+  import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type {
@@ -42,6 +42,9 @@
   let resolved = $state<ResolvedCampaign | null>(null);
   let resolving = $state(false);
   let notFound = $state(false);
+  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
+  // campaign exists but could not be loaded, which is not a "not found".
+  let resolveError = $state<string | null>(null);
   const owner = $derived(resolved?.owner ?? "");
   const repo = $derived(resolved?.repo ?? "");
   const repoId = $derived(resolved?.repoId ?? 0);
@@ -177,6 +180,7 @@
     void taskId;
     resolved = null;
     notFound = false;
+    resolveError = null;
     loaded = false;
     loadError = null;
     anchor = null;
@@ -184,15 +188,18 @@
   });
 
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolving) return;
+    if (auth.status === "loading" || resolved || notFound || resolveError || resolving)
+      return;
     resolving = true;
     const name = campaign;
     resolveCampaign(readForge(), name)
-      .catch(() => null)
       .then((r) => {
         if (name !== campaign) return;
         if (r) resolved = r;
         else notFound = true;
+      })
+      .catch((e) => {
+        if (name === campaign) resolveError = resolveFailureMessage(e);
       })
       .finally(() => (resolving = false));
   });
@@ -308,6 +315,15 @@
 <div class="review">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
+  {:else if resolveError}
+    <div class="msg banner err">
+      <span>
+        {resolveError}
+        <button type="button" class="linkish" onclick={() => (resolveError = null)}
+          >Try again</button
+        >
+      </span>
+    </div>
   {:else if notFound}
     <div class="msg banner err">
       <span>

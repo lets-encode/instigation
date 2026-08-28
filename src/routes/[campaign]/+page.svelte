@@ -5,7 +5,7 @@
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import { lookupSlug, resolveCampaign } from "$lib/campaign-resolve.ts";
+  import { lookupSlug, resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type {
@@ -38,6 +38,9 @@
   let resolved = $state<ResolvedCampaign | null>(null);
   let resolving = $state(false);
   let notFound = $state(false);
+  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
+  // campaign exists but could not be loaded, which is not a "not found".
+  let resolveError = $state<string | null>(null);
   // A name that is not (yet) a campaign: held by a setup in progress, reserved
   // for the app's own routes, or blocked. A free name never renders here — it
   // forwards to the wizard.
@@ -260,6 +263,7 @@
     void campaign;
     resolved = null;
     notFound = false;
+    resolveError = null;
     slugState = null;
     loaded = false;
     loadError = null;
@@ -272,7 +276,14 @@
   // the wizard with the name prefilled, and a name that is held, reserved or
   // blocked explains itself.
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || slugState || resolving)
+    if (
+      auth.status === "loading" ||
+      resolved ||
+      notFound ||
+      resolveError ||
+      slugState ||
+      resolving
+    )
       return;
     resolving = true;
     resolve().finally(() => (resolving = false));
@@ -296,9 +307,16 @@
       return;
     }
     // Active — or the registry was unreachable / the name malformed, which
-    // resolveCampaign reports as null (notFound). The lookup above is passed
-    // through so the name is not fetched from the registry twice.
-    const r = await resolveCampaign(readForge(), name, info).catch(() => null);
+    // resolveCampaign reports as null (notFound). A thrown forge error (e.g.
+    // rate limit) is a failed lookup, not a missing campaign. The lookup above
+    // is passed through so the name is not fetched from the registry twice.
+    let r: ResolvedCampaign | null = null;
+    try {
+      r = await resolveCampaign(readForge(), name, info);
+    } catch (e) {
+      if (name === campaign) resolveError = resolveFailureMessage(e);
+      return;
+    }
     if (name !== campaign) return;
     if (r) resolved = r;
     else notFound = true;
@@ -610,7 +628,18 @@
     <div class="workarea t-{taskLayout.side}">
     <div class="workmain p-{previewLayout.side}">
     <div class="viewcol">
-      {#if notFound}
+      {#if resolveError}
+        <div class="banner bar err">
+          <span>
+            {resolveError}
+            <button
+              type="button"
+              class="linkish"
+              onclick={() => (resolveError = null)}>Try again</button
+            >
+          </span>
+        </div>
+      {:else if notFound}
         <div class="banner bar err">
           <span>
             No campaign called <code>{campaign}</code> was found. It may have

@@ -117,10 +117,25 @@ export async function registerCampaign(
 }
 
 /**
+ * Message for a resolution that FAILED (resolveCampaign threw — the forge
+ * request errored, e.g. the API rate limit) as opposed to a genuine miss
+ * (resolveCampaign returned null). A failed resolution must never be presented
+ * as "campaign not found".
+ */
+export function resolveFailureMessage(e: unknown): string {
+	const msg = e instanceof Error ? e.message : String(e);
+	return /rate limit/i.test(msg)
+		? "GitHub's request limit was reached, so the campaign could not be loaded. Try again later, or log in for a higher limit."
+		: `The campaign could not be loaded: ${msg}`;
+}
+
+/**
  * Resolve a campaign name to its repo via the registry (name → stable repo id →
  * current owner/name). Returns null when no campaign of that name can be found —
- * including when the registry is unreachable. A caller that has already looked
- * the name up passes its `SlugInfo` to save the second registry round trip.
+ * including when the registry is unreachable. Throws when the forge lookup of
+ * the registry's repo id fails (getRepoById) — a failure, not a miss. A caller
+ * that has already looked the name up passes its `SlugInfo` to save the second
+ * registry round trip.
  */
 export async function resolveCampaign(
 	f: ForgeClient,

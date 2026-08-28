@@ -5,6 +5,7 @@ parentheses.
 
 ## 0.22.2
 
+- A campaign page opened while the GitHub rate limit is exhausted now reports the failed lookup (with a retry) instead of claiming the campaign does not exist — on the campaign, review, zones and setup routes.
 - Redesigned the GitHub-interaction status messages. (`05ca5cb`)
 - Added this changelog, reconstructed from the full git history.
 - Synced the package version with the changelog.
