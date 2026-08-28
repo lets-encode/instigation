@@ -72,10 +72,14 @@ export class CommandRunner {
 			if (result?.error) this.log.fail();
 			else this.log.done();
 			this.logTiming(!result?.error);
-			this.held = true;
-			await new Promise<void>((resolve) => (this.release = resolve));
-			this.release = null;
-			this.held = false;
+			// A background command holds nobody: no overlay stop, no banner —
+			// the task's run state carries on from here.
+			if (!result?.background) {
+				this.held = true;
+				await new Promise<void>((resolve) => (this.release = resolve));
+				this.release = null;
+				this.held = false;
+			}
 			if (after) await after(result);
 		} finally {
 			this.log.done();

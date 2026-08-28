@@ -480,3 +480,66 @@ textarea.input {
   font: 10.5px ui-monospace, Menlo, monospace;
   color: var(--ink-faint);
 }
+
+/* ---- Result banners ------------------------------------------------------
+   One family for every command-result / GitHub-interaction message. The
+   default is a rounded card; add .bar for a full-width strip flush against
+   its container (console header, editor toolbars, the review rail). Colours
+   follow the outcome: ok / warn / err. */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.banner.bar {
+  flex: none;
+  border-radius: 0;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  padding: 9px 20px;
+}
+.banner.ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+  color: var(--ok);
+}
+.banner.err {
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+.banner.warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+.banner a {
+  color: var(--link);
+}
+/* Stacked banner content: the message plus links/inputs below it. */
+.banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.banner .dismiss {
+  font-size: 11px;
+  font-weight: 600;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  flex: none;
+}
+.banner .dismiss:hover {
+  opacity: 1;
+}

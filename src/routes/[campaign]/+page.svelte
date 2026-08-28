@@ -30,6 +30,7 @@
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import PreviewDock from "$lib/components/PreviewDock.svelte";
   import TaskPanel from "$lib/components/TaskPanel.svelte";
+  import TaskRunState from "$lib/components/TaskRunState.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
   // from it (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -326,8 +327,10 @@
     if (!f) return;
     await runner.run(
       () => command(ctx(f)),
-      async () => {
-        if (refresh) {
+      async (result) => {
+        // A background command changed nothing yet — the settle listener
+        // refreshes when its verdict lands.
+        if (refresh && !result.background) {
           runner.log.step("Refreshing tables…");
           await load();
         }
@@ -512,7 +515,7 @@
 
 {#snippet resultBanner()}
   {#if runner.result && runner.result.error}
-    <div class="banner err">
+    <div class="banner bar err">
       <span>
         {runner.result.error}
         {#if runner.result.prUrl}
@@ -523,8 +526,8 @@
         >Dismiss</button
       >
     </div>
-  {:else if runner.result && runner.result.ok}
-    <div class="banner {runner.result.warn ? 'warn' : 'ok'}">
+  {:else if runner.result && runner.result.ok && !runner.result.background}
+    <div class="banner bar {runner.result.warn ? 'warn' : 'ok'}">
       <div class="banner-body">
         {runner.result.message}
         {#if runner.result.prUrl}
@@ -589,7 +592,7 @@
     <p class="msg muted">Loading…</p>
   {:else}
     {#if !auth.user}
-      <div class="banner warn">
+      <div class="banner bar warn">
         <span>
           Viewing this public campaign read-only. <button
             type="button"
@@ -608,7 +611,7 @@
     <div class="workmain p-{previewLayout.side}">
     <div class="viewcol">
       {#if notFound}
-        <div class="banner err">
+        <div class="banner bar err">
           <span>
             No campaign called <code>{campaign}</code> was found. It may have
             been removed, or the name may be misspelled.
@@ -616,7 +619,7 @@
           </span>
         </div>
       {:else if slugState === "pending"}
-        <div class="banner warn">
+        <div class="banner bar warn">
           <span>
             Someone is setting up a campaign called <code>{campaign}</code>.
             If they don't finish it, the name becomes free again.
@@ -624,14 +627,14 @@
           </span>
         </div>
       {:else if slugState === "reserved"}
-        <div class="banner err">
+        <div class="banner bar err">
           <span>
             <code>{campaign}</code> is reserved and can't be used for a
             campaign. <a href="/campaigns">Back to all campaigns</a>.
           </span>
         </div>
       {:else if slugState === "tombstoned"}
-        <div class="banner err">
+        <div class="banner bar err">
           <span>
             The name <code>{campaign}</code> has been blocked and can't be
             used. <a href="/campaigns">Back to all campaigns</a>.
@@ -642,9 +645,9 @@
       {:else if loading}
         <p class="msg muted">Loading campaign…</p>
       {:else if loadError}
-        <div class="banner err"><span>{loadError}</span></div>
+        <div class="banner bar err"><span>{loadError}</span></div>
       {:else if notInitialised}
-        <div class="banner warn">
+        <div class="banner bar warn">
           <span>
             This repository has no tracking tables (<code
               >tracking/task.csv</code
@@ -893,6 +896,7 @@
                           : card.typeLine}
                         <span class="mono card-id">{card.task}</span>
                       </div>
+                      <TaskRunState task={card.task} />
                       {#if card.column === "blocked"}
                         <div class="card-foot">
                           waits for <strong>{card.waitsFor}</strong>
@@ -1127,47 +1131,7 @@
     padding: 1rem 1.4rem;
   }
 
-  /* ------------------------------------------------------------ banners */
-  .banner {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 20px;
-    font-size: 12.5px;
-    flex: none;
-  }
-  .banner.ok {
-    background: var(--ok-bg);
-    border-bottom: 1px solid var(--ok-line);
-    color: var(--ok);
-  }
-  .banner.err {
-    background: var(--danger-bg);
-    border-bottom: 1px solid var(--danger-line);
-    color: var(--danger);
-  }
-  .banner.warn {
-    background: var(--warn-bg);
-    border-bottom: 1px solid var(--warn-line);
-    color: var(--warn);
-  }
-  .banner-body {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-  }
-  .dismiss {
-    font-size: 11px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    opacity: 0.6;
-    flex: none;
-  }
+  /* Banner styles are shared app-wide in ui.css. */
   .rawlink {
     display: flex;
     gap: 0.4rem;

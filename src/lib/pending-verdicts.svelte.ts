@@ -1,19 +1,21 @@
 // Background verdicts for PR commands that return before the campaign
 // automation has processed their PR. Each optimistic command registers an
 // entry when its PR opens; the entry settles when the automation's verdict
-// lands. The layout renders the entries (PendingVerdicts.svelte) on every
-// page; pages hook their table refresh into onSettled. Loading this module
+// lands. The entries render task-anchored (TaskRunState.svelte); rejections
+// additionally take the viewport over (PendingVerdicts.svelte, in the
+// layout); pages hook their table refresh into onSettled. Loading this module
 // plugs the store into the command layer's verdict sink — commands.ts itself
 // stays free of runes so the Node test runner can import it.
 
 import { setVerdictSink } from './commands.ts';
 
-export type PendingState = 'processing' | 'accepted' | 'rejected' | 'timeout';
+export type PendingState = 'opening' | 'processing' | 'accepted' | 'rejected' | 'timeout';
 
 export interface PendingVerdict {
 	id: string;
 	/** What was submitted, e.g. "Encoding of T0002". */
 	label: string;
+	/** 0 while the PR is still being opened in the background. */
 	prNumber: number;
 	prUrl: string;
 	/** Structured id of the acted-on target (e.g. "validate:T0002/S0001"); '' when untyped. */
@@ -25,6 +27,12 @@ export interface PendingVerdict {
 
 /** How long an accepted entry stays visible before it removes itself. */
 const ACCEPTED_LINGER_MS = 6_000;
+
+/** The task id a structured key acts on: "validate:T0002/S0001" → "T0002". */
+const taskOf = (key: string): string => {
+	const rest = key.slice(key.indexOf(':') + 1);
+	return key.includes(':') ? rest.split('/', 1)[0] : '';
+};
 
 class PendingVerdictStore {
 	entries = $state<PendingVerdict[]>([]);
@@ -39,19 +47,50 @@ class PendingVerdictStore {
 		};
 	}
 
-	begin(entry: { label: string; prNumber: number; prUrl: string; key?: string }): string {
+	begin(entry: {
+		label: string;
+		prNumber: number;
+		prUrl: string;
+		key?: string;
+		state?: 'opening' | 'processing';
+	}): string {
 		const id = crypto.randomUUID().slice(0, 8);
-		this.entries = [...this.entries, { ...entry, key: entry.key ?? '', id, state: 'processing', message: '' }];
+		this.entries = [
+			...this.entries,
+			{ ...entry, key: entry.key ?? '', id, state: entry.state ?? 'processing', message: '' }
+		];
 		return id;
+	}
+
+	/** The background-opened PR exists now; the entry moves to 'processing'. */
+	attachPr(id: string, prNumber: number, prUrl: string): void {
+		this.entries = this.entries.map((e) =>
+			e.id === id ? { ...e, prNumber, prUrl, state: 'processing' as const } : e
+		);
+	}
+
+	/** The entry acting on `taskId` — processing first, else the latest
+	 * settled one still on screen; null when the task has none. Drives the
+	 * task-anchored run state (TaskRunState.svelte). */
+	forTask(taskId: string): PendingVerdict | null {
+		if (!taskId) return null;
+		const mine = this.entries.filter((e) => taskOf(e.key) === taskId);
+		return (
+			mine.find((e) => e.state === 'opening' || e.state === 'processing') ??
+			mine[mine.length - 1] ??
+			null
+		);
 	}
 
 	/** Whether a submission for `key` is still being processed — its controls
 	 * should hold until the verdict lands (a repeat would only be rejected). */
 	isProcessing(key: string): boolean {
-		return this.entries.some((e) => e.key === key && e.state === 'processing');
+		return this.entries.some(
+			(e) => e.key === key && (e.state === 'processing' || e.state === 'opening')
+		);
 	}
 
-	settle(id: string, state: Exclude<PendingState, 'processing'>, message: string): void {
+	settle(id: string, state: Exclude<PendingState, 'opening' | 'processing'>, message: string): void {
 		this.entries = this.entries.map((e) => (e.id === id ? { ...e, state, message } : e));
 		for (const listener of this.settledListeners) listener();
 		if (state === 'accepted') setTimeout(() => this.dismiss(id), ACCEPTED_LINGER_MS);

@@ -80,6 +80,9 @@ export interface CommandContext {
 /** The result banner a command resolves to (never rejects). */
 export type Result = {
 	ok?: boolean;
+	/** The command finished in the background: the runner holds no overlay and
+	 * the PR + verdict are followed through the verdict sink on the task. */
+	background?: boolean;
 	warn?: boolean;
 	error?: string;
 	message?: string;
@@ -318,7 +321,16 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
  * directly — it uses Svelte runes, which only exist under the Svelte compiler.
  */
 export interface PendingVerdictSink {
-	begin(entry: { label: string; prNumber: number; prUrl: string; key?: string }): string;
+	begin(entry: {
+		label: string;
+		/** 0 while the PR is still being opened (state 'opening'). */
+		prNumber: number;
+		prUrl: string;
+		key?: string;
+		state?: 'opening' | 'processing';
+	}): string;
+	/** The background-opened PR exists now; the entry moves to 'processing'. */
+	attachPr(id: string, prNumber: number, prUrl: string): void;
 	settle(id: string, state: 'accepted' | 'rejected' | 'timeout', message: string): void;
 }
 
@@ -326,6 +338,7 @@ export interface PendingVerdictSink {
 // disappear silently — it is at least an error in the console.
 let verdictSink: PendingVerdictSink = {
 	begin: () => '',
+	attachPr: () => {},
 	settle: (_id, state, message) => {
 		if (state !== 'accepted') console.error('[pending-verdict] unrendered verdict:', state, message);
 	}
@@ -335,29 +348,38 @@ export function setVerdictSink(sink: PendingVerdictSink): void {
 	verdictSink = sink;
 }
 
-// Resolve an optimistic PR command: the Result returns as soon as the PR is
-// open, and the automation's verdict is followed in the background through
-// the verdict sink (accepted entries settle quietly; a rejection stays on
-// screen until dismissed). Claims stay synchronous — their verdict gates the
-// user's next step — so this is only for submission-shaped commands. The
-// background wait reports no progress: the overlay belongs to the next
-// command by the time the verdict lands.
-function finishInBackground(
+// Run a submission-shaped PR command entirely in the background: the Result
+// returns at once, and both the PR opening and the automation's verdict are
+// followed through the verdict sink — they land on the task's run state
+// (TaskRunState.svelte), with a rejection taking the viewport over
+// (PendingVerdicts.svelte). Claims stay synchronous — their verdict gates the
+// user's next step. The background work reports no progress: the overlay
+// belongs to the next command by the time anything lands.
+function openAndFinishInBackground(
 	ctx: CommandContext,
-	pr: {
+	label: string,
+	/** Structured id of the acted-on target, so UIs can hold its controls while the verdict is pending. */
+	key: string | undefined,
+	open: (bg: CommandContext) => Promise<{
 		number: number;
 		html_url: string;
 		headSha?: string;
 		head?: { owner: string; repo: string; branch: string };
 		cleanup?: 'always' | 'accepted';
-	},
-	label: string,
-	/** Structured id of the acted-on target, so UIs can hold its controls while the verdict is pending. */
-	key?: string
+	}>
 ): Result {
-	const id = verdictSink.begin({ label, prNumber: pr.number, prUrl: pr.html_url, key });
+	const id = verdictSink.begin({ label, prNumber: 0, prUrl: '', key, state: 'opening' });
 	const background: CommandContext = { ...ctx, progress: () => {} };
 	void (async () => {
+		let pr;
+		try {
+			pr = await open(background);
+		} catch (e) {
+			console.warn('[pending-verdict]', label, 'PR opening failed:', (e as Error).message);
+			verdictSink.settle(id, 'rejected', `${label} failed: ${(e as Error).message}`);
+			return;
+		}
+		verdictSink.attachPr(id, pr.number, pr.html_url);
 		let res: Result;
 		try {
 			const outcome = await waitForPrProcessed(background, pr);
@@ -372,11 +394,9 @@ function finishInBackground(
 		console.log('[pending-verdict]', label, 'PR', pr.number, state);
 		verdictSink.settle(id, state, res.error ?? res.message ?? `${label} processed.`);
 	})();
-	return {
-		ok: true,
-		prUrl: pr.html_url,
-		message: `${label} — PR #${pr.number} opened. The verdict lands in the corner of the page.`
-	};
+	// No banner: the task's run state (TaskRunState.svelte) is the visible
+	// signal from here on.
+	return { ok: true, background: true };
 }
 
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
@@ -643,9 +663,8 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 	log: 'pr',
 	async run({ task_id }, ctx, envelope) {
 		const { forge: f, owner, repo, viewerLogin } = ctx;
-		try {
+		return openAndFinishInBackground(ctx, `Encoding of ${task_id}`, `encode:${task_id}`, async () => {
 			await muteOnce(ctx);
-			ctx.progress({ step: 'Opening the submission PR…' });
 			const { branch: base, canPush } = await f.getRepoHead(owner, repo);
 			// The claim/editor flow put the encoding on `encode-<task_id>` — in the
 			// campaign repo for owners/collaborators, in the volunteer's fork
@@ -669,15 +688,8 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[submitpr] submission PR opened', pr.number, pr.html_url);
-			return finishInBackground(
-				ctx,
-				{ ...pr, head: forkHead, cleanup: 'accepted' },
-				`Encoding of ${task_id}`,
-				`encode:${task_id}`
-			);
-		} catch (e) {
-			return { error: `Submission PR failed: ${(e as Error).message}` };
-		}
+			return { ...pr, head: forkHead, cleanup: 'accepted' };
+		});
 	}
 };
 
@@ -703,20 +715,21 @@ const submitValidation: CommandDef<
 	envelopeInput: ({ task_id, subtask_id, verdict }) => ({ task_id, subtask_id, verdict }),
 	async run({ task_id, subtask_id, verdict, comment }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
-		try {
-			if (verdict !== 'pass' && verdict !== 'fail') {
-				return { error: `Invalid validation verdict: ${verdict}.` };
-			}
-			if (verdict === 'fail' && !comment?.body.trim()) {
-				return { error: 'A fail needs a comment saying why — nothing was submitted.' };
-			}
+		if (verdict !== 'pass' && verdict !== 'fail') {
+			return { error: `Invalid validation verdict: ${verdict}.` };
+		}
+		if (verdict === 'fail' && !comment?.body.trim()) {
+			return { error: 'A fail needs a comment saying why — nothing was submitted.' };
+		}
+		const label = `Validation of ${task_id}/${subtask_id} (${verdict})`;
+		return openAndFinishInBackground(ctx, label, `validate:${task_id}/${subtask_id}`, async () => {
 			await muteOnce(ctx);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
 			const row = findRow(state.rows, task_id, subtask_id);
-			if (!row) return { error: `Unknown subtask ${task_id}/${subtask_id}.` };
+			if (!row) throw new Error(`unknown subtask ${task_id}/${subtask_id}.`);
 			const slot = state.validationColumns.find((c) => (row[c] ?? '') === '');
 			if (!slot) {
-				return { error: `No open validation slot on ${task_id}/${subtask_id}.` };
+				throw new Error(`no open validation slot on ${task_id}/${subtask_id}.`);
 			}
 			row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
 			const files = [{ path: STATE_PATH, content: serializeStateCsv(state) }];
@@ -743,7 +756,6 @@ const submitValidation: CommandDef<
 					])
 				});
 			}
-			ctx.progress({ step: 'Opening the validation PR…' });
 			const body = `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`;
 			console.log('[validate] opening validation PR', { task_id, subtask_id, verdict, slot });
 			const pr = await f.openChangePr(owner, repo, {
@@ -754,15 +766,8 @@ const submitValidation: CommandDef<
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[validate] validation PR opened', pr.number, pr.html_url);
-			return finishInBackground(
-				ctx,
-				pr,
-				`Validation of ${task_id}/${subtask_id} (${verdict})`,
-				`validate:${task_id}/${subtask_id}`
-			);
-		} catch (e) {
-			return { error: `Validate failed: ${(e as Error).message}` };
-		}
+			return pr;
+		});
 	}
 };
 
@@ -787,8 +792,8 @@ const submitComment: CommandDef<
 	envelopeInput: ({ task_id, subtask_id, kind, parent_id }) => ({ task_id, subtask_id, kind, parent_id }),
 	async run(input, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
-		try {
-			if (!input.body.trim()) return { error: 'The comment is empty — nothing was sent.' };
+		if (!input.body.trim()) return { error: 'The comment is empty — nothing was sent.' };
+		return openAndFinishInBackground(ctx, `Comment on ${input.task_id}`, `comment:${input.task_id}`, async () => {
 			await muteOnce(ctx);
 			const commentCsv = (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '';
 			const content = appendComments(commentCsv, [
@@ -807,7 +812,6 @@ const submitComment: CommandDef<
 					body: input.body.trim()
 				}
 			]);
-			ctx.progress({ step: 'Sending the comment…' });
 			const body = `Adds a ${input.kind} comment on ${input.task_id}. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
 				branch: `comment-${input.task_id}-${rand()}`,
@@ -817,10 +821,8 @@ const submitComment: CommandDef<
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[comment] comment PR opened', pr.number, pr.html_url);
-			return finishInBackground(ctx, pr, `Comment on ${input.task_id}`);
-		} catch (e) {
-			return { error: `Comment failed: ${(e as Error).message}` };
-		}
+			return pr;
+		});
 	}
 };
 
@@ -832,16 +834,20 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 	log: 'pr',
 	async run({ comment_id }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
+		let comments;
 		try {
+			comments = parseCommentCsv((await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '');
+		} catch (e) {
+			return { error: `Resolve failed: ${(e as Error).message}` };
+		}
+		const row = comments.find((c) => c.comment_id === comment_id);
+		if (!row) return { error: `Unknown comment ${comment_id}.` };
+		if (row.resolved === 'true') return { ok: true, warn: true, message: 'Already resolved.' };
+		// A resolved comment takes its replies with it (the automation enforces
+		// the same on its side).
+		const resolved = resolveCommentThread(comments, comment_id);
+		return openAndFinishInBackground(ctx, `Resolution of comment ${comment_id}`, `resolve:${row.task_id}`, async () => {
 			await muteOnce(ctx);
-			const comments = parseCommentCsv((await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? '');
-			const row = comments.find((c) => c.comment_id === comment_id);
-			if (!row) return { error: `Unknown comment ${comment_id}.` };
-			if (row.resolved === 'true') return { ok: true, warn: true, message: 'Already resolved.' };
-			// A resolved comment takes its replies with it (the automation enforces
-			// the same on its side).
-			const resolved = resolveCommentThread(comments, comment_id);
-			ctx.progress({ step: 'Resolving the comment…' });
 			const body = `Resolves comment ${comment_id} on ${row.task_id}. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
 				branch: `resolve-${comment_id}-${rand()}`,
@@ -851,10 +857,8 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[comment] resolve PR opened', pr.number, pr.html_url);
-			return finishInBackground(ctx, pr, `Resolution of comment ${comment_id}`);
-		} catch (e) {
-			return { error: `Resolve failed: ${(e as Error).message}` };
-		}
+			return pr;
+		});
 	}
 };
 
@@ -868,7 +872,7 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 	log: 'pr',
 	async run({ task_id }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
-		try {
+		return openAndFinishInBackground(ctx, `Send-back of ${task_id}`, `sendback:${task_id}`, async () => {
 			await muteOnce(ctx);
 			const [stateCsv, taskCsv] = await Promise.all([
 				f.getRepoFile(owner, repo, STATE_PATH),
@@ -876,11 +880,10 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 			]);
 			const state = parseStateCsv(stateCsv ?? '');
 			const row = findRow(state.rows, task_id, '');
-			if (!row) return { error: `Unknown task ${task_id}.` };
+			if (!row) throw new Error(`unknown task ${task_id}.`);
 			const locator = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.locator ?? '';
 			const stage = sendBackTarget(locator);
 			resetTaskRows(state.rows, state.validationColumns, task_id);
-			ctx.progress({ step: 'Opening the send-back PR…' });
 			const body = `Sends ${task_id} back for ${stage} after a failed validation. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
 				branch: `sendback-${task_id}-${rand()}`,
@@ -890,10 +893,8 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
 			});
 			console.log('[sendback] PR opened', pr.number, pr.html_url);
-			return finishInBackground(ctx, pr, `Send-back of ${task_id}`, `sendback:${task_id}`);
-		} catch (e) {
-			return { error: `Send back failed: ${(e as Error).message}` };
-		}
+			return pr;
+		});
 	}
 };
 

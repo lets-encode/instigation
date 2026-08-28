@@ -11,6 +11,7 @@
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { resolveCampaign } from "$lib/campaign-resolve.ts";
@@ -291,6 +292,9 @@
           // Still processing (warn): keep the editor and its edits as they are.
           return;
         }
+        // A background command changed nothing yet — the settle listener
+        // reloads when its verdict lands.
+        if (result.background) return;
         runner.log.step("Reloading…");
         data = null;
         await load();
@@ -950,12 +954,13 @@
         {runner.result.error}
         {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
       </div>
-    {:else if runner.result && runner.result.ok}
+    {:else if runner.result && runner.result.ok && !runner.result.background}
       <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
         {runner.result.message}
         {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
       </div>
     {/if}
+    <TaskRunState task={taskId} bar />
 
     <div class="desk" bind:clientWidth={deskW} bind:clientHeight={deskH}>
       <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
@@ -1480,32 +1485,7 @@
     margin: 0;
   }
 
-  /* ------------------------------------------------------ banners & desk */
-  .banner {
-    padding: 0.7rem 1rem;
-    border-radius: 8px;
-  }
-  .banner.bar {
-    flex: none;
-    border-radius: 0;
-    border-left: 0;
-    border-right: 0;
-  }
-  .banner.ok {
-    background: var(--ok-bg);
-    border: 1px solid var(--ok-line);
-  }
-  .banner.err {
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
-  }
-  .banner.warn {
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
-  }
-  .banner a {
-    color: var(--link);
-  }
+  /* Banner styles are shared app-wide in ui.css. */
   /* Pre-editor states (loading, errors, login) on the desk. */
   .deskwrap {
     flex: 1;

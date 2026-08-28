@@ -1,53 +1,20 @@
 <!--
-  Background verdicts. Processing, accepted and timed-out entries are quiet
-  cards in the corner; a REJECTION takes the viewport over with a modal card —
-  the submitted work did not land, which must not be missable.
+  Background rejections. The quiet states of a background run (opening,
+  processing, accepted, timeout) render task-anchored (TaskRunState.svelte);
+  a REJECTION takes the viewport over with a modal card — the submitted work
+  did not land, which must not be missable.
 -->
 <script lang="ts">
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
-  // The verdict comments open with their own ✅/❌; the cards carry a state
+  // The verdict comments open with their own ✅/❌; the card carries a state
   // mark, so the duplicate symbol is dropped from the text.
   const text = (message: string) => message.replace(/^[✅❌]\s*/, "");
 
-  const corner = $derived(
-    pendingVerdicts.entries.filter((e) => e.state !== "rejected"),
-  );
   const rejected = $derived(
     pendingVerdicts.entries.filter((e) => e.state === "rejected"),
   );
 </script>
-
-{#if corner.length}
-  <div class="stack" aria-live="polite">
-    {#each corner as entry (entry.id)}
-      <div class="card {entry.state}">
-        {#if entry.state === "processing"}
-          <span class="spinner" aria-hidden="true"></span>
-          <span class="text">
-            {entry.label} — processing
-            <a href={entry.prUrl} target="_blank" rel="noreferrer">PR #{entry.prNumber}</a>…
-          </span>
-        {:else if entry.state === "accepted"}
-          <span class="mark ok-mark" aria-hidden="true">✓</span>
-          <span class="text">{text(entry.message)}</span>
-        {:else}
-          <span class="mark warn-mark" aria-hidden="true">…</span>
-          <span class="text">
-            {text(entry.message)}
-            <a href={entry.prUrl} target="_blank" rel="noreferrer">PR #{entry.prNumber}</a>
-          </span>
-          <button
-            type="button"
-            class="close"
-            aria-label="Dismiss"
-            onclick={() => pendingVerdicts.dismiss(entry.id)}>×</button
-          >
-        {/if}
-      </div>
-    {/each}
-  </div>
-{/if}
 
 {#if rejected.length}
   <div class="overlay" role="alert">
@@ -59,7 +26,9 @@
           <p class="failure-label">{entry.label}</p>
           <p class="failure-message">
             {text(entry.message)}
-            <a href={entry.prUrl} target="_blank" rel="noreferrer">PR #{entry.prNumber}</a>
+            {#if entry.prNumber}
+              <a href={entry.prUrl} target="_blank" rel="noreferrer">PR #{entry.prNumber}</a>
+            {/if}
           </p>
         </div>
       {/each}
@@ -75,80 +44,6 @@
 {/if}
 
 <style>
-  .stack {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-width: min(26rem, 92vw);
-  }
-  .card {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 10px 12px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
-    font-size: 0.85rem;
-  }
-  .card.accepted {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-  }
-  .card.timeout {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-  }
-  .text {
-    overflow-wrap: anywhere;
-  }
-  .spinner {
-    flex: none;
-    width: 14px;
-    height: 14px;
-    margin-top: 2px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
-  }
-  .mark {
-    flex: none;
-    font-weight: 600;
-  }
-  .ok-mark {
-    color: var(--ok);
-  }
-  .warn-mark {
-    color: var(--warn);
-  }
-  .close {
-    flex: none;
-    margin-left: auto;
-    padding: 0 4px;
-    background: none;
-    border: none;
-    color: var(--ink-faint);
-    font-size: 1rem;
-    line-height: 1;
-    cursor: pointer;
-  }
-
   /* The rejection modal mirrors the busy overlay's failed state. */
   .overlay {
     position: fixed;

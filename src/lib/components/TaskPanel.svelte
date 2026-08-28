@@ -16,6 +16,7 @@
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import CommentComposer from "./CommentComposer.svelte";
+  import TaskRunState from "./TaskRunState.svelte";
   import TaskDiscussion from "./TaskDiscussion.svelte";
   import ValidationRecord from "./ValidationRecord.svelte";
 
@@ -95,6 +96,7 @@
 
 <aside class="taskpanel" aria-label={`Task ${card.title}`}>
   {@render resultBanner()}
+  <TaskRunState task={card.task} bar />
   <div class="thead">
     <div class="tline">
       <span class="pill s-{card.statusKey}">

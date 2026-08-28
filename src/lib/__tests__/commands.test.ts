@@ -53,6 +53,7 @@ function captureVerdict(): Promise<{ state: string; message: string }> {
 	return new Promise((resolve) => {
 		setVerdictSink({
 			begin: () => 'test',
+			attachPr: () => {},
 			settle: (_id, state, message) => resolve({ state, message })
 		});
 	});

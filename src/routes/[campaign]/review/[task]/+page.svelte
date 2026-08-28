@@ -32,6 +32,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskDiscussion from "$lib/components/TaskDiscussion.svelte";
+  import TaskRunState from "$lib/components/TaskRunState.svelte";
   import ValidationRecord from "$lib/components/ValidationRecord.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
@@ -215,7 +216,10 @@
     if (!f) return;
     await runner.run(
       () => command(ctx(f)),
-      async () => {
+      async (result) => {
+        // A background command changed nothing yet — the settle listener
+        // refreshes when its verdict lands.
+        if (result.background) return;
         runner.log.step("Refreshing tables…");
         await load();
       },
@@ -286,7 +290,7 @@
         >Dismiss</button
       >
     </div>
-  {:else if runner.result && runner.result.ok}
+  {:else if runner.result && runner.result.ok && !runner.result.background}
     <div class="banner {runner.result.warn ? 'warn' : 'ok'}">
       <span>
         {runner.result.message}
@@ -380,6 +384,7 @@
     ></div>
     <aside class="rail" style={`width:${railWidth}px`} aria-label={`Review ${card.title}`}>
       {@render resultBanner()}
+      <TaskRunState task={taskId} bar />
       <div class="rhead">
         <span class="rtitle">{card.title}</span>
         <span class="taskchip"
