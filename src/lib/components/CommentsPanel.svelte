@@ -205,14 +205,13 @@
 {/if}
 
 <style>
-  /* The panel hugs its content; a longer list is capped by the host row and
-     scrolls inside. */
+  /* The panel runs the full row height; its list scrolls and the composer
+     stays pinned at the bottom. */
   .cpwrap {
     flex: none;
     display: flex;
     min-height: 0;
-    max-height: 100%;
-    align-self: flex-start;
+    align-self: stretch;
   }
   /* The host row's gap spaces the bar from the content; the right margin
      mirrors it towards the panel. */
@@ -312,7 +311,7 @@
     padding: 0;
   }
   .clist {
-    flex: 0 1 auto;
+    flex: 1;
     min-height: 0;
     overflow-y: auto;
     display: flex;

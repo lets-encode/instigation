@@ -598,7 +598,11 @@
   .ptoolbar {
     height: 44px;
     flex: none;
-    border-bottom: 1px solid var(--line);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 10px;
     display: flex;
     align-items: center;
     padding: 0 16px;
@@ -645,6 +649,7 @@
     min-height: 0;
     background: var(--bg-inset);
     box-shadow: var(--shadow-inset);
+    border-radius: 10px;
     display: flex;
     gap: 10px;
     padding: 10px 10px 4px;

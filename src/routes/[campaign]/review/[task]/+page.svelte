@@ -29,10 +29,11 @@
   import { buildBoard } from "$lib/campaign-board.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readDockLayout, writeDockLayout, DOCK_MIN } from "$lib/preview-dock.ts";
-  import CommentComposer from "$lib/components/CommentComposer.svelte";
+  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PanelIcon from "$lib/components/PanelIcon.svelte";
+  import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
-  import TaskDiscussion from "$lib/components/TaskDiscussion.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import ValidationRecord from "$lib/components/ValidationRecord.svelte";
 
@@ -116,9 +117,22 @@
     m2: selectedMeasure ?? "",
   });
 
-  // The comment a discussion reply targets, shared by the thread list and the
-  // composer.
-  let replyTo = $state<CommentRow | null>(null);
+  // The piece's comments panel beside the rail; the tables it reads are the
+  // ones this page already loads.
+  let commentsPanel = $state(readSidePanel("comments"));
+  const panelTables = $derived({
+    taskDefs,
+    rows,
+    validationColumns,
+    locks,
+    history,
+    comments,
+    pieces,
+    logins,
+    passThreshold,
+    allowSelfValidation,
+    canPush,
+  });
 
   // The rail's width, persisted per browser; dragging the grip resizes it.
   let railWidth = $state(readDockLayout("review").width);
@@ -257,12 +271,17 @@
   const sendBackTask = (task_id: string) =>
     run((c) => invoke(commands.sendBack, { task_id }, c));
 
-  const postComment = (kind: string, body: string, parent_id: string) =>
+  const postComment = (
+    task_id: string,
+    kind: string,
+    body: string,
+    parent_id: string,
+  ) =>
     run((c) =>
       invoke(
         commands.submitComment,
         {
-          task_id: taskId,
+          task_id,
           subtask_id: "",
           kind,
           body,
@@ -415,6 +434,20 @@
             ? `validation · ${card.passes} of ${card.threshold} passes`
             : statusPill(card.statusKey, card.pre)}
         </span>
+        {#if !commentsPanel.open}
+          <button
+            type="button"
+            class="btn"
+            title="Show the comments panel"
+            onclick={() => {
+              commentsPanel.open = true;
+              writeSidePanel("comments", { ...commentsPanel });
+            }}
+          >
+            <PanelIcon />
+            Comments
+          </button>
+        {/if}
       </div>
       <div class="rail-scroll">
         <ValidationRecord
@@ -431,19 +464,18 @@
           onresolve={resolveCommentRow}
           onsendback={sendBackTask}
         />
-        <TaskDiscussion
-          taskId={card.task}
-          {comments}
-          {viewer}
-          {logins}
-          {canPush}
-          {runner}
-          bind:replyTo
-          onresolve={resolveCommentRow}
-        />
       </div>
-      <CommentComposer {logins} {runner} bind:replyTo oncomment={postComment} />
     </aside>
+    <PieceCommentsPanel
+      tables={panelTables}
+      {taskId}
+      {viewer}
+      {runner}
+      bind:panel={commentsPanel}
+      onanchor={showAnchorFor}
+      oncomment={postComment}
+      onresolve={resolveCommentRow}
+    />
   {/if}
 </div>
 
@@ -481,6 +513,11 @@
     min-height: 0;
     display: flex;
     background: var(--bg);
+  }
+  /* The comments panel brings no outer spacing of its own; the score view's
+     host row provides it there. */
+  .review > :global(.cpwrap) {
+    margin: 12px 16px 12px 0;
   }
   .scorecol {
     flex: 1;

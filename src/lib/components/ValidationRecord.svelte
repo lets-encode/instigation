@@ -367,9 +367,11 @@
     color: var(--ink-faint);
     padding-bottom: 4px;
   }
+  /* Wraps so the verdict buttons stay visible in a narrow panel. */
   .rrow {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 10px 0;
     border-bottom: 1px solid var(--hairline);
@@ -431,6 +433,7 @@
   }
   .failacts {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     margin-top: 10px;
     align-items: center;

@@ -52,8 +52,8 @@
     onact: (card: BoardCard) => void;
     /** Open a task's panel. */
     onopen: (task: string) => void;
-    /** Open the score on the piece at this index. */
-    onviewscore: (index: number) => void;
+    /** Open the score on the piece at this index, optionally at a 0-based page. */
+    onviewscore: (index: number, page?: number) => void;
   } = $props();
 
   const mine = (c: BoardCard) =>
@@ -210,7 +210,11 @@
               class="previewlink"
               onclick={(e) => {
                 e.stopPropagation();
-                onviewscore(pieceIndex.get(nextCard.task) ?? 0);
+                const page = startPage(nextCard);
+                onviewscore(
+                  pieceIndex.get(nextCard.task) ?? 0,
+                  page ? page - 1 : undefined,
+                );
               }}>Preview these pages first</button
             >
           </div>
@@ -374,6 +378,9 @@
   }
   .vcol {
     width: 100%;
+    /* A reading width for the task and piece rows; the comments panel keeps
+       its place at the window's right edge. */
+    max-width: 1000px;
     display: flex;
     flex-direction: column;
     gap: 16px;

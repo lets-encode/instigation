@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -24,7 +23,6 @@
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
-  import { readDockLayout } from "$lib/preview-dock.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
@@ -34,7 +32,7 @@
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
-  import PreviewDock from "$lib/components/PreviewDock.svelte";
+  import ScoreView from "$lib/components/ScoreView.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import TaskSidePanel from "$lib/components/TaskSidePanel.svelte";
   import VolunteerView from "$lib/components/VolunteerView.svelte";
@@ -81,14 +79,11 @@
 
   const runner = new CommandRunner();
 
-  // UI-only state — the board, with the owner's manage takeover over it and
-  // the dock panels beside it: the score preview, plus the task panel when
-  // ?task= is present. Everything else derives from the tracking tables.
+  // UI-only state — the board, with the owner's manage takeover and the score
+  // view (?score=) over it, plus the task panel when ?task= is present.
+  // Everything else derives from the tracking tables.
   let manage = $state(false);
   let showInfo = $state(false);
-  // The dock panels and where each docks; the view lays out around them.
-  let showDock = $state(false);
-  let previewLayout = $state(readDockLayout("preview"));
   // The in-page task panel's width; its open state follows ?task=.
   let taskPanel = $state(readSidePanel("task"));
   // The scores a viewer can read end to end: the pieces the tasks address,
@@ -280,63 +275,76 @@
   );
   function openTask(task: string) {
     detailTask = task;
-    anchor = null;
     goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
       replaceState: true,
       noScroll: true,
       keepFocus: true,
     });
   }
-  // The score panel without a task: the whole-score preview.
-  function openScore() {
-    detailTask = null;
-    showDock = true;
-    anchor = null;
-    goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
-  }
-  // The piece the whole-score preview shows, set by the piece tiles.
-  let scorePiece = $state(0);
-  function viewScorePiece(index: number) {
-    scorePiece = index;
-    openScore();
-  }
-  // Close the task panel; the score preview stays open.
+  // Close the task panel.
   function closeTask() {
     detailTask = null;
-    anchor = null;
-    goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
-  }
-  // Close both panels.
-  function closeDock() {
-    detailTask = null;
-    showDock = false;
-    anchor = null;
     goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 
-  // The score panel, bound so an anchored comment can turn it to its page.
-  let previewDock = $state<ReturnType<typeof PreviewDock>>();
-  // The measure range a fail refers to, highlighted in the score panel.
+  // -------------------------------------------------------- the score view
+  // The full-page score view is addressed by ?score=<piece path> (and an
+  // optional 1-based ?page=), read reactively so back/forward navigate it.
+  const scoreView = $derived.by(() => {
+    const path = page.url.searchParams.get("score");
+    if (!path) return null;
+    const index = previewPieces.findIndex((p) => p.path === path);
+    return index >= 0 ? { piece: previewPieces[index], index } : null;
+  });
+  const scoreStartPage = $derived(
+    Math.max(0, (Number(page.url.searchParams.get("page")) || 1) - 1),
+  );
+  const scoreCards = $derived(
+    scoreView
+      ? allCards.filter(
+          (c) => (pieceIndexByTask.get(c.task) ?? 0) === scoreView.index,
+        )
+      : [],
+  );
+  // The measure range the score view opens highlighted (from a comment
+  // anchor); within the view, anchors work without navigation.
   let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
-  function showAnchorFor(c: CommentRow) {
+  // The open task's ?task= survives entering and leaving the score view.
+  function openScoreView(
+    path: string,
+    startPage?: number,
+    a: { page: number; m1: number; m2: number } | null = null,
+  ) {
+    anchor = a;
+    const query = new URLSearchParams();
+    if (detailTask) query.set("task", detailTask);
+    query.set("score", path);
+    if (startPage) query.set("page", String(startPage + 1));
+    goto(`/${campaign}?${query}`, { noScroll: true, keepFocus: true });
+  }
+  function closeScoreView() {
+    goto(
+      `/${campaign}${detailTask ? `?task=${encodeURIComponent(detailTask)}` : ""}`,
+      { noScroll: true, keepFocus: true },
+    );
+  }
+  function viewScorePiece(index: number, startPage?: number) {
+    const path = previewPieces[index]?.path;
+    if (path) openScoreView(path, startPage);
+  }
+  // A comment anchor outside the score view: open it on the comment's piece,
+  // at the anchored page, with the range highlighted.
+  function showCommentInScore(c: CommentRow) {
+    const index = pieceIndexByTask.get(c.task_id);
+    const path = previewPieces[index ?? -1]?.path;
+    if (!path) return;
     const m1 = Number(c.measure_start);
     const m2 = Number(c.measure_end || c.measure_start);
-    anchor = {
+    openScoreView(path, c.page ? Number(c.page) - 1 : undefined, {
       page: Number(c.page),
       m1: Number.isFinite(m1) ? m1 : 0,
       m2: Number.isFinite(m2) ? m2 : 0,
-    };
-    previewDock?.setZones(true);
-    previewDock?.showPage(anchor.page - 1);
-  }
-  // A panel anchor: open the score on the comment's piece (the open task
-  // stays), then turn it to the anchored page.
-  async function showCommentInScore(c: CommentRow) {
-    const index = pieceIndexByTask.get(c.task_id);
-    if (index !== undefined) scorePiece = index;
-    showDock = true;
-    await tick();
-    showAnchorFor(c);
+    });
   }
 
   const copy = (text: string) =>
@@ -549,6 +557,7 @@
     kind: string,
     body: string,
     parent_id: string,
+    at?: { page: string; measure_start: string; measure_end: string },
   ) =>
     run((c) =>
       invoke(
@@ -558,9 +567,9 @@
           subtask_id: "",
           kind,
           body,
-          page: "",
-          measure_start: "",
-          measure_end: "",
+          page: at?.page ?? "",
+          measure_start: at?.measure_start ?? "",
+          measure_end: at?.measure_end ?? "",
           parent_id,
         },
         c,
@@ -684,8 +693,8 @@
 <svelte:window
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
-    if (detailTask) closeTask();
-    else if (showDock) closeDock();
+    if (scoreView) closeScoreView();
+    else if (detailTask) closeTask();
   }}
 />
 
@@ -769,9 +778,12 @@
     {runner}
     {resultBanner}
     bind:panel={taskPanel}
-    currentPage={() => previewDock?.currentPage() ?? 0}
     onclose={closeTask}
-    onopenscore={() => (showDock = true)}
+    onopenscore={() => {
+      const index = pieceIndexByTask.get(card.task) ?? 0;
+      const start = /^surface-(\d+)$/.exec(card.locator);
+      viewScorePiece(index, start ? Number(start[1]) - 1 : undefined);
+    }}
     onshowanchor={showCommentInScore}
     onclaim={claimValidate}
     oneditor={editor}
@@ -847,8 +859,8 @@
       </div>
     {:else}
     <div class="workarea">
-    <div class="workmain p-{previewLayout.side}">
-    <div class="viewcol">
+    <div class="workmain">
+    <div class="viewcol" class:inscore={!!scoreView}>
       {#if !resolved}
         <p class="msg muted">Finding the campaign…</p>
       {:else if loading}
@@ -866,6 +878,27 @@
             page to initialise it.
           </span>
         </div>
+      {:else if scoreView}
+        {#key scoreView.piece.path}
+          <ScoreView
+            piece={scoreView.piece}
+            zone={(scoreView.index % 8) + 1}
+            campaignTitle={title || repo}
+            {owner}
+            {repo}
+            startPage={scoreStartPage}
+            {anchor}
+            cards={scoreCards}
+            {comments}
+            {logins}
+            {viewer}
+            {canPush}
+            {runner}
+            bind:panel={commentsPanel}
+            oncomment={postComment}
+            onresolve={resolveCommentRow}
+          />
+        {/key}
       {:else if manage && canPush}
         <div class="crumbrow">
           <button type="button" class="backlink" onclick={() => (manage = false)}
@@ -1348,21 +1381,6 @@
         </div>
       {/if}
     </div>
-    {#if showDock && loaded && !notInitialised}
-      <PreviewDock
-        bind:this={previewDock}
-        bind:layout={previewLayout}
-        card={detailCard}
-        campaignTitle={title || repo}
-        {owner}
-        {repo}
-        {taskDefs}
-        pieces={previewPieces}
-        bind:selected={scorePiece}
-        {anchor}
-        onclose={closeDock}
-      />
-    {/if}
     </div>
     </div>
     {/if}
@@ -1453,14 +1471,9 @@
   }
   .workmain {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-  }
-  .workmain.p-left {
-    flex-direction: row-reverse;
-  }
-  .workmain.p-right {
-    flex-direction: row;
   }
 
   /* The view fills the window — the rail, board and task panel share every
@@ -1477,6 +1490,11 @@
     flex-direction: column;
     container-type: inline-size;
   }
+  /* The score view scrolls inside its panes, so the column must cap at the
+     window instead of growing to its content. */
+  .viewcol.inscore {
+    min-height: 0;
+  }
 
   /* The volunteer view: a full-width header row over the task column and the
      comments panel beside it. */
@@ -1487,9 +1505,7 @@
     flex-direction: column;
     gap: 14px;
     width: 100%;
-    max-width: 1400px;
-    margin-inline: auto;
-    padding: 0 32px 8px;
+    padding: 18px 32px 8px;
     box-sizing: border-box;
   }
   .volhead {

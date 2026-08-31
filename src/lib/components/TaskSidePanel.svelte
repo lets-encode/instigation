@@ -43,7 +43,6 @@
     runner,
     resultBanner,
     panel = $bindable(),
-    currentPage,
     onclose,
     onopenscore,
     onshowanchor,
@@ -70,8 +69,6 @@
     runner: CommandRunner;
     resultBanner: Snippet;
     panel: SidePanelState;
-    /** The first page the score shows right now, 0-based. */
-    currentPage: () => number;
     onclose: () => void;
     /** Open the score at the task's pages. */
     onopenscore: () => void;
@@ -129,10 +126,10 @@
     taskState?.encoder ? handle(logins, taskState.encoder) : "",
   );
 
-  const scoreLink = $derived.by(() => {
-    const page = /^surface-(\d+)$/.exec(card.locator);
-    return page ? `p. ${page[1]} →` : "score →";
-  });
+  // The task's page, linking the status line to the score and prefilling a
+  // fail's anchor.
+  const taskPage = $derived(/^surface-(\d+)$/.exec(card.locator)?.[1] ?? "");
+  const scoreLink = $derived(taskPage ? `p. ${taskPage} →` : "score →");
 
   const threads = $derived(buildThreads(comments, card.task));
   const discussionCount = $derived(
@@ -237,7 +234,7 @@
             {canPush}
             {runner}
             variant="side"
-            prefill={() => ({ page: String(currentPage() + 1), m1: "", m2: "" })}
+            prefill={() => ({ page: taskPage, m1: "", m2: "" })}
             {onshowanchor}
             {onclaim}
             {onvalidate}

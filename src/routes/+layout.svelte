@@ -40,6 +40,13 @@
   );
   const onHome = $derived(page.route.id === '/campaigns');
   const inCampaign = $derived(page.route.id === '/[campaign]');
+  // The campaign page's full-page score view (?score=) backs out to the
+  // campaign, keeping its open task.
+  const inScore = $derived(inCampaign && page.url.searchParams.has('score'));
+  const campaignHref = $derived.by(() => {
+    const task = page.url.searchParams.get('task');
+    return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ''}`;
+  });
 
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
@@ -54,7 +61,9 @@
   </a>
   <!-- Closing a screen lands one level up: the campaign view returns to the
        listing, the corrector to the campaign it belongs to. -->
-  {#if inCampaign}
+  {#if inScore}
+    <a class="nav-link back" href={campaignHref}>← {page.params.campaign}</a>
+  {:else if inCampaign}
     <a class="nav-link back" href="/campaigns">← All campaigns</a>
   {:else if corrector}
     <a class="nav-link back" href={`/${page.params.campaign}`}

@@ -4,13 +4,17 @@
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
-  import type { CommandContext, Result, FacsimileTaskData } from "$lib/commands.ts";
+  import type { CommandContext, Result, FacsimileTaskData, CampaignTables } from "$lib/commands.ts";
   import { handle } from "$lib/campaign-graph.ts";
   import { elapsed } from "$lib/campaign-board.ts";
+  import type { CommentRow } from "$lib/campaign-tables.ts";
+  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import { buildBlankScoreMei } from "$lib/mei-facsimile.ts";
   import type { ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
   import { getVerovio, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PanelIcon from "$lib/components/PanelIcon.svelte";
+  import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
@@ -90,6 +94,9 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let data = $state<FacsimileTaskData | null>(null);
+  // The campaign tables behind the comments panel; refreshed on their own so
+  // a posted comment never reloads the form.
+  let tables = $state<CampaignTables | null>(null);
   // The form's working copy of the score definition.
   let staves = $state<StaffModel[]>([]);
   let groups = $state<StaffGroupModel[]>([]);
@@ -150,9 +157,13 @@
     loading = true;
     loadError = null;
     try {
-      const d = await invoke(commands.readFacsimile, { task_id: task }, ctx(f));
+      const [d, t] = await Promise.all([
+        invoke(commands.readFacsimile, { task_id: task }, ctx(f)),
+        invoke(commands.readTables, {}, ctx(f)),
+      ]);
       if (stale()) return;
       data = d;
+      tables = t;
       staves = d.model.scoreDef.staves.map((s) => ({ ...s }));
       groups = d.model.scoreDef.groups.map((g) => ({ ...g }));
       keysig = d.model.scoreDef.keysig;
@@ -275,13 +286,16 @@
       pendingVerdicts.isProcessing(`validate:${taskId}/${validation.subtask_id}`),
   );
   // A settled background verdict changed the tables; reload the read-only
-  // view so it shows the recorded state. An edit session is never reloaded —
-  // that would discard the volunteer's unsubmitted work.
+  // view so it shows the recorded state. An edit session only refreshes the
+  // tables — a reload would discard the volunteer's unsubmitted work.
   $effect(() =>
     pendingVerdicts.onSettled(() => {
-      if (!canEdit && !runner.busy) {
+      if (runner.busy) return;
+      if (!canEdit) {
         data = null;
         loaded = false;
+      } else {
+        refreshTables();
       }
     }),
   );
@@ -328,6 +342,75 @@
   const sendBackPending = $derived(
     pendingVerdicts.isProcessing(`sendback:${taskId}`),
   );
+
+  // ------------------------------------------------------------- comments
+  // The piece's comments panel beside the tool. Posting and resolving refresh
+  // the tables only: a full reload would discard unsubmitted form values.
+  let commentsPanel = $state(readSidePanel("comments"));
+  async function refreshTables() {
+    const f = forge();
+    if (!f) return;
+    try {
+      tables = await invoke(commands.readTables, {}, ctx(f));
+    } catch {
+      /* the next full load refreshes the tables */
+    }
+  }
+  const afterComment = async (result: Result) => {
+    if (result.error || result.background) return;
+    runner.log.step("Refreshing comments…");
+    await refreshTables();
+  };
+  async function postComment(
+    task_id: string,
+    kind: string,
+    body: string,
+    parent_id: string,
+  ) {
+    const f = forge();
+    if (!f) return;
+    await runner.run(
+      () =>
+        invoke(
+          commands.submitComment,
+          {
+            task_id,
+            subtask_id: "",
+            kind,
+            body,
+            page: "",
+            measure_start: "",
+            measure_end: "",
+            parent_id,
+          },
+          ctx(f),
+        ),
+      afterComment,
+    );
+  }
+  async function resolveCommentRow(comment_id: string) {
+    const f = forge();
+    if (!f) return;
+    await runner.run(
+      () => invoke(commands.resolveComment, { comment_id }, ctx(f)),
+      afterComment,
+    );
+  }
+  // A comment anchor turns the reference score to its page and highlights the
+  // range; the measure zones show so the range is visible.
+  let refPreview = $state<ReturnType<typeof ScorePreview>>();
+  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  function showAnchorFor(c: CommentRow) {
+    const m1 = Number(c.measure_start);
+    const m2 = Number(c.measure_end || c.measure_start);
+    anchor = {
+      page: Number(c.page),
+      m1: Number.isFinite(m1) ? m1 : 0,
+      m2: Number.isFinite(m2) ? m2 : 0,
+    };
+    refPreview?.setZones(true);
+    if (anchor.page) refPreview?.showPage(anchor.page - 1);
+  }
 
   // Logins for verdict authors, fail-comment authors and the encoding lock
   // holder (id → login, display).
@@ -802,11 +885,13 @@
              image, not the measure grid. -->
         <div class="refcol">
           <ScorePreview
+            bind:this={refPreview}
             {owner}
             {repo}
             fragment={data.fragment}
             initialPane="facs"
             initialZones={false}
+            {anchor}
           />
         </div>
       </div>
@@ -855,6 +940,20 @@
         >
           Submit setup
         </button>
+        {#if !commentsPanel.open}
+          <button
+            type="button"
+            class="btn"
+            title="Show the comments panel"
+            onclick={() => {
+              commentsPanel.open = true;
+              writeSidePanel("comments", { ...commentsPanel });
+            }}
+          >
+            <PanelIcon />
+            Comments
+          </button>
+        {/if}
       </div>
 
       {#if failComments.length > 0}
@@ -954,6 +1053,19 @@
         <p>Every encoding task of this piece waits for this setup.</p>
       </div>
     </aside>
+
+    {#if tables}
+      <PieceCommentsPanel
+        {tables}
+        {taskId}
+        {viewer}
+        {runner}
+        bind:panel={commentsPanel}
+        onanchor={showAnchorFor}
+        oncomment={postComment}
+        onresolve={resolveCommentRow}
+      />
+    {/if}
   {/if}
 </div>
 
@@ -984,6 +1096,11 @@
     display: flex;
     background: var(--desk);
     box-shadow: var(--shadow-inset);
+  }
+  /* The comments panel brings no outer spacing of its own; the score view's
+     host row provides it there. */
+  .corrector > :global(.cpwrap) {
+    margin: 12px 16px 12px 0;
   }
   .deskwrap {
     flex: 1;

@@ -5,6 +5,10 @@ parentheses.
 
 ## Unreleased
 
+- The score setup, measure correction and review viewers carry the piece's comments panel beside their task controls; the review viewer's old discussion list and composer are gone.
+- Score view fits the window: the panes scroll to the page bottom and the comments composer stays visible; the panes area got rounded corners.
+- Full-page score view at ?score=<piece> (with optional ?page=), replacing the score dock: the top bar backs out to the campaign, the piece-scoped comments panel sits beside the score, comment anchors turn to their page and highlight the range, and measure selection targets the composer — a comment posted then carries the selected measure as its anchor. Back/forward navigate it; an open task's ?task= survives the round trip, and its panel links to the score at the task's page.
+- The score toolbar sits on its own background bar; the side panels run the full row height with pinned composers; the volunteer task column keeps a reading width beside the right-edge comments panel.
 - Instigator view: a piece rail scopes the board to one piece (context strip with thumbnail, incipit and progress above the columns); rail rows carry per-category task counts in the column colours; cards carry their piece's colour edge; clicking a card tints it and opens an in-page task panel (status, score link, submission, validation record, one action, discussion) instead of the dock takeover — Escape or ✕ closes it. Volunteers get the same panel in the comments panel's place. The campaign view now fills the window width.
 - Board columns list every card; a stats-bar toggle (All tasks / Claimable) filters to open encodings and free review slots instead of the per-column show-more collapse.
 - The side panels' resize handle is a visible grip bar.
