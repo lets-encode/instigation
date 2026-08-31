@@ -26,16 +26,17 @@
   import type { MeiHeader } from "$lib/mei-header.ts";
   import { readDockLayout } from "$lib/preview-dock.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import { piecePreview } from "$lib/piece-previews.ts";
+  import type { PiecePreview } from "$lib/piece-previews.ts";
   import CommentsPanel from "$lib/components/CommentsPanel.svelte";
-  import DockPanel from "$lib/components/DockPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import PieceCards from "$lib/components/PieceCards.svelte";
+  import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import PreviewDock from "$lib/components/PreviewDock.svelte";
-  import TaskPanel from "$lib/components/TaskPanel.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
+  import TaskSidePanel from "$lib/components/TaskSidePanel.svelte";
   import VolunteerView from "$lib/components/VolunteerView.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
@@ -88,7 +89,8 @@
   // The dock panels and where each docks; the view lays out around them.
   let showDock = $state(false);
   let previewLayout = $state(readDockLayout("preview"));
-  let taskLayout = $state(readDockLayout("task"));
+  // The in-page task panel's width; its open state follows ?task=.
+  let taskPanel = $state(readSidePanel("task"));
   // The scores a viewer can read end to end: the pieces the tasks address,
   // named from the campaign's config where it names them.
   const previewPieces = $derived.by(() => {
@@ -104,13 +106,12 @@
       return { id: piece?.id ?? path, path, title: piece?.title ?? "" };
     });
   });
-  // Columns the viewer expanded past the card cap.
-  let expanded = $state<Partial<Record<ColumnKey, boolean>>>({});
-  const CARD_CAP = 5;
-  // The Done column shows the tasks finished last; the rest collapse into a
-  // summary card until expanded.
-  const DONE_VISIBLE = 5;
-  let showAllDone = $state(false);
+  // The stats bar's board filter: every task, or only those someone can act
+  // on right now — claimable encodings and validations with a free slot.
+  let boardScope = $state<"all" | "open">("all");
+  const actionable = (c: BoardCard) =>
+    c.column === "ready" ||
+    (c.column === "validation" && c.slots.some((s) => s.key === "open"));
 
   // The score's <meiHead> fields, fetched on first open of the info panel.
   let scoreHead = $state<MeiHeader | null>(null);
@@ -180,6 +181,58 @@
     ),
   );
   let showAttention = $state(false);
+  // ---------------------------------------------- the instigator piece rail
+  // The piece the board is scoped to, or "all" for the full board.
+  let selectedPiece = $state<"all" | string>("all");
+  const attentionByPiece = $derived.by(() => {
+    const by = new Map<string, number>();
+    for (const c of attentionCards) {
+      const path = previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path;
+      if (!path) continue;
+      by.set(
+        path,
+        (by.get(path) ?? 0) +
+          c.counts.fails +
+          c.counts.comments +
+          c.counts.questions,
+      );
+    }
+    return by;
+  });
+  // Tasks per board category for each piece, shown on its rail row. Ready and
+  // blocked share the board's Open column.
+  const railCounts = $derived.by(() => {
+    const by = new Map<
+      string,
+      { open: number; encoding: number; validation: number }
+    >();
+    for (const c of allCards) {
+      if (c.column === "done") continue;
+      const path = previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path;
+      if (!path) continue;
+      const n = by.get(path) ?? { open: 0, encoding: 0, validation: 0 };
+      if (c.column === "encoding") n.encoding++;
+      else if (c.column === "validation") n.validation++;
+      else n.open++;
+      by.set(path, n);
+    }
+    return by;
+  });
+  const railPiece = $derived.by(() => {
+    const index = previewPieces.findIndex((p) => p.path === selectedPiece);
+    return index >= 0 ? { piece: previewPieces[index], index } : null;
+  });
+  // The scoped piece's preview, for the context strip over the columns.
+  let stripPreview = $state<PiecePreview | null>(null);
+  $effect(() => {
+    const piece = railPiece?.piece;
+    stripPreview = null;
+    if (!piece || !owner) return;
+    const path = piece.path;
+    piecePreview(readForge(), owner, repo, path).then((preview) => {
+      if (railPiece?.piece.path === path) stripPreview = preview;
+    });
+  });
   // Tasks the viewer's accepted submissions just moved on this campaign's
   // board, highlighted in their new column for a short while.
   const recentlyFinished = $derived(
@@ -227,7 +280,6 @@
   );
   function openTask(task: string) {
     detailTask = task;
-    showDock = true;
     anchor = null;
     goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
       replaceState: true,
@@ -277,12 +329,12 @@
     previewDock?.setZones(true);
     previewDock?.showPage(anchor.page - 1);
   }
-  // A comments-panel anchor: open the score on the comment's piece, then turn
-  // it to the anchored page.
+  // A panel anchor: open the score on the comment's piece (the open task
+  // stays), then turn it to the anchored page.
   async function showCommentInScore(c: CommentRow) {
     const index = pieceIndexByTask.get(c.task_id);
     if (index !== undefined) scorePiece = index;
-    openScore();
+    showDock = true;
     await tick();
     showAnchorFor(c);
   }
@@ -534,10 +586,7 @@
     if (!loaded || deepLinked) return;
     deepLinked = true;
     const task = page.url.searchParams.get("task");
-    if (task && findRow(taskDefs, task, "")) {
-      detailTask = task;
-      showDock = true;
-    }
+    if (task && findRow(taskDefs, task, "")) detailTask = task;
   });
 
   function claimCard(card: BoardCard) {
@@ -560,6 +609,13 @@
   function actOnNext() {
     if (nextCard) actOnCard(nextCard);
   }
+
+  // The task panel names its piece and carries its colour.
+  const pieceNameOf = (task: string) => {
+    const p = previewPieces[pieceIndexByTask.get(task) ?? 0];
+    return p ? p.title || p.id : "";
+  };
+  const zoneOf = (task: string) => ((pieceIndexByTask.get(task) ?? 0) % 8) + 1;
 
   // The board rendered as four columns: queued-but-blocked tasks share the
   // Open column (dimmed, with what they wait for) instead of a fifth column.
@@ -593,6 +649,27 @@
       },
     ];
   });
+  // The rail's selection filters the rendered columns to one piece; the
+  // stats-bar toggle keeps only the claimable cards. Every column stays in
+  // view, however empty the filters leave it.
+  const scopedColumns = $derived.by(() => {
+    let cols = displayColumns;
+    if (selectedPiece !== "all")
+      cols = cols.map((col) => ({
+        ...col,
+        cards: col.cards.filter(
+          (c) =>
+            previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path ===
+            selectedPiece,
+        ),
+      }));
+    if (boardScope === "open")
+      cols = cols.map((col) => ({
+        ...col,
+        cards: col.cards.filter(actionable),
+      }));
+    return cols;
+  });
 
   // The reaper's last trace in the history, for the manage header.
   const lastReap = $derived(
@@ -606,9 +683,9 @@
 
 <svelte:window
   onkeydown={(e) => {
-    if (e.key !== "Escape" || !showDock) return;
+    if (e.key !== "Escape") return;
     if (detailTask) closeTask();
-    else closeDock();
+    else if (showDock) closeDock();
   }}
 />
 
@@ -677,6 +754,36 @@
   <span class="dot {key}" aria-label={key} title={key}></span>
 {/snippet}
 
+{#snippet taskSide(card: BoardCard)}
+  <TaskSidePanel
+    {card}
+    pieceName={pieceNameOf(card.task)}
+    zone={zoneOf(card.task)}
+    {campaign}
+    {comments}
+    {locks}
+    {rows}
+    {logins}
+    {viewer}
+    {canPush}
+    {runner}
+    {resultBanner}
+    bind:panel={taskPanel}
+    currentPage={() => previewDock?.currentPage() ?? 0}
+    onclose={closeTask}
+    onopenscore={() => (showDock = true)}
+    onshowanchor={showCommentInScore}
+    onclaim={claimValidate}
+    oneditor={editor}
+    onsubmitencoding={submitpr}
+    onvalidate={validate}
+    oncomment={(kind, body, parent_id) =>
+      postComment(card.task, kind, body, parent_id)}
+    onresolve={resolveCommentRow}
+    onsendback={sendBackTask}
+  />
+{/snippet}
+
 <div class="console">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
@@ -693,7 +800,7 @@
         </span>
       </div>
     {/if}
-    {#if !(showDock && detailCard)}
+    {#if !detailCard}
       {@render resultBanner()}
     {/if}
 
@@ -739,7 +846,7 @@
         </span>
       </div>
     {:else}
-    <div class="workarea t-{taskLayout.side}">
+    <div class="workarea">
     <div class="workmain p-{previewLayout.side}">
     <div class="viewcol">
       {#if !resolved}
@@ -806,7 +913,7 @@
                 style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
               ></div>
             </div>
-            {#if volunteerScope && !commentsPanel.open}
+            {#if volunteerScope && !commentsPanel.open && !detailCard}
               <button
                 type="button"
                 class="cptoggle"
@@ -836,7 +943,9 @@
               onopen={openTask}
               onviewscore={viewScorePiece}
             />
-            {#if volunteerScope && commentsPanel.open}
+            {#if detailCard}
+              {@render taskSide(detailCard)}
+            {:else if volunteerScope && commentsPanel.open}
               <CommentsPanel
                 piece={volunteerScope.piece}
                 zone={(volunteerScope.index % 8) + 1}
@@ -928,6 +1037,20 @@
               ></div>
             </div>
             <span class="hbarlabel">{board.done}/{board.total} tasks done</span>
+            <div class="seg">
+              <button
+                type="button"
+                class:on={boardScope === "all"}
+                onclick={() => (boardScope = "all")}>All tasks</button
+              >
+              <button
+                type="button"
+                class:on={boardScope === "open"}
+                onclick={() => (boardScope = "open")}
+                title="Only tasks with something to do right now: open encodings and free review slots."
+                >Claimable</button
+              >
+            </div>
           </div>
           {#if showAttention && attentionCards.length > 0}
             <div class="attnbox">
@@ -1041,30 +1164,67 @@
           </div>
         {/if}
 
+        <div class="instrow">
         {#if previewPieces.length > 0}
-          <div class="piecesrow">
-            <PieceCards
-              pieces={previewPieces}
-              progress={pieceProgress}
-              onview={viewScorePiece}
-            />
+          <PieceRail
+            pieces={previewPieces}
+            {owner}
+            {repo}
+            progress={pieceProgress}
+            counts={railCounts}
+            attention={attentionByPiece}
+            openCount={board.columns.find((c) => c.key === "ready")?.cards
+              .length ?? 0}
+            selected={selectedPiece}
+            onselect={(sel) => (selectedPiece = sel)}
+          />
+        {/if}
+        <div class="boardcol">
+        {#if railPiece}
+          {@const p = pieceProgress.get(railPiece.piece.path)}
+          <div
+            class="ctxstrip"
+            style="--zone: var(--zone-{(railPiece.index % 8) + 1})"
+          >
+            <span class="ctxpaper">
+              {#if stripPreview?.thumb}
+                <img src={stripPreview.thumb} alt="" loading="lazy" />
+              {/if}
+            </span>
+            <div class="ctxinfo">
+              <span class="ctxname"
+                >{railPiece.piece.title || railPiece.piece.id}</span
+              >
+              <span class="ctxmeta"
+                >{stripPreview?.pageMeasures.length
+                  ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
+                  : ""}{p?.done ?? 0} of {p?.total ?? 0} done</span
+              >
+            </div>
+            <div class="ctxincipit">
+              {#if stripPreview?.incipit}
+                {@html stripPreview.incipit}
+              {:else if stripPreview?.incipitPending}
+                <span class="ctxincnote">incipit appears after score setup</span>
+              {/if}
+            </div>
+            <button
+              type="button"
+              class="btn"
+              onclick={() => viewScorePiece(railPiece.index)}
+              title="Show every page of this piece's score.">View score →</button
+            >
           </div>
         {/if}
         <div class="board">
-          {#each displayColumns as col (col.key)}
+          {#each scopedColumns as col (col.key)}
             <div class="bcol">
               <div class="bcol-head c-{col.key}">
                 <span class="bcol-name">{col.label}</span>
                 <span class="bcol-count">{col.cards.length}</span>
               </div>
               <div class="well">
-                  {#each col.key === "done"
-                    ? showAllDone
-                      ? col.cards
-                      : col.cards.slice(0, DONE_VISIBLE)
-                    : expanded[col.key]
-                      ? col.cards
-                      : col.cards.slice(0, CARD_CAP) as card (card.task)}
+                  {#each col.cards as card (card.task)}
                     <!-- A focusable div, not a <button>: the run state inside
                          it can render a PR link, which HTML does not allow
                          nested in a button. -->
@@ -1073,6 +1233,11 @@
                       class:nextup={card.nextUp}
                       class:justmoved={recentlyFinished.has(card.task)}
                       class:pre={card.pre}
+                      class:tinted={previewPieces.length > 1}
+                      class:paneled={detailTask === card.task}
+                      style={previewPieces.length > 1
+                        ? `--piece-tint: var(--zone-${zoneOf(card.task)})`
+                        : undefined}
                       class:failtint={card.counts.fails > 0 &&
                         card.column !== "done"}
                       role="button"
@@ -1157,43 +1322,14 @@
                       {/if}
                     </div>
                   {/each}
-                  {#if col.key === "done" && !showAllDone && col.cards.length > DONE_VISIBLE}
-                    <div class="donesum">
-                      <span
-                        >{col.cards.length - DONE_VISIBLE} more completed
-                        task{col.cards.length - DONE_VISIBLE === 1
-                          ? ""
-                          : "s"} · merged into the piece scores</span
-                      >
-                      <button
-                        type="button"
-                        class="linkish"
-                        onclick={() => (showAllDone = true)}>Show all ▸</button
-                      >
-                    </div>
-                  {:else if col.key === "done" && showAllDone && col.cards.length > DONE_VISIBLE}
-                    <button
-                      type="button"
-                      class="more"
-                      onclick={() => (showAllDone = false)}>show fewer</button
-                    >
-                  {:else if col.key !== "done" && col.cards.length > CARD_CAP}
-                    <button
-                      type="button"
-                      class="more"
-                      onclick={() =>
-                        (expanded = {
-                          ...expanded,
-                          [col.key]: !expanded[col.key],
-                        })}
-                      >{expanded[col.key]
-                        ? "show fewer"
-                        : `+ ${col.cards.length - CARD_CAP} more`}</button
-                    >
-                  {/if}
               </div>
             </div>
           {/each}
+        </div>
+        </div>
+        {#if detailCard}
+          {@render taskSide(detailCard)}
+        {/if}
         </div>
 
         <div class="ticker">
@@ -1228,40 +1364,6 @@
       />
     {/if}
     </div>
-    {#if showDock && detailCard}
-      <DockPanel
-        bind:layout={taskLayout}
-        id="task"
-        label={`Task ${detailCard.title}`}
-        onclose={closeTask}
-      >
-        {#snippet header()}
-          <span class="dtitle">{detailCard.title}</span>
-          <span class="dsub">· {detailCard.task}</span>
-        {/snippet}
-        <TaskPanel
-          card={detailCard}
-          {campaign}
-          {comments}
-          {locks}
-          {logins}
-          {viewer}
-          {canPush}
-          {runner}
-          {resultBanner}
-          currentPage={() => previewDock?.currentPage() ?? 0}
-          onshowanchor={showAnchorFor}
-          onclaim={claimValidate}
-          oneditor={editor}
-          onsubmitencoding={submitpr}
-          onvalidate={validate}
-          oncomment={(kind, body, parent_id) =>
-            postComment(detailCard!.task, kind, body, parent_id)}
-          onresolve={resolveCommentRow}
-          onsendback={sendBackTask}
-        />
-      </DockPanel>
-    {/if}
     </div>
     {/if}
   {/if}
@@ -1340,9 +1442,8 @@
   }
 
   /* --------------------------------------------------------------- main */
-  /* The board and the dock panels share this area as nested splits: the task
-     panel's dock side splits the whole area, the score panel's splits what
-     remains beside the board. */
+  /* The board and the score panel share this area as a split: the score
+     panel's dock side splits what remains beside the board. */
   .workarea {
     flex: 1;
     min-height: 0;
@@ -1350,14 +1451,6 @@
     display: flex;
     flex-direction: column;
   }
-  .workarea.t-left {
-    flex-direction: row-reverse;
-  }
-  .workarea.t-right {
-    flex-direction: row;
-  }
-  /* No explicit minimums: the content-based ones propagate out of here, so
-     the task panel is stopped by the board's and the score panel's needs. */
   .workmain {
     flex: 1;
     display: flex;
@@ -1370,32 +1463,16 @@
     flex-direction: row;
   }
 
-  /* The task panel's header line, rendered into its dock panel. */
-  .dtitle {
-    font-size: 14px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .dsub {
-    font-size: 14px;
-    color: var(--ink-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* The view's content stops widening at --page-max and centres past it; the
-     console's gradient behind it stays full-bleed. Its minimum height is its
-     content's, and the dock panels — shrinkable flex items — stop growing
-     right there, at any browser zoom. The width minimum is explicit: the
-     inline-size containment below makes the content's own width invisible to
-     sizing, and the board's stacking reacts to the column's width instead. */
+  /* The view fills the window — the rail, board and task panel share every
+     available column. Its minimum height is its content's, and the score
+     panel — a shrinkable flex item — stops growing right there, at any
+     browser zoom. The width minimum is explicit: the inline-size containment
+     below makes the content's own width invisible to sizing, and the board's
+     stacking reacts to the column's width instead. */
   .viewcol {
     flex: 1;
     min-width: 340px;
     width: 100%;
-    max-width: var(--page-max);
-    margin-inline: auto;
     display: flex;
     flex-direction: column;
     container-type: inline-size;
@@ -1666,9 +1743,83 @@
     color: var(--ink-faint);
   }
   /* -------------------------------------------------------------- pieces */
-  .piecesrow {
+  /* ---------------------------------------- rail · board · task panel row */
+  .instrow {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 14px;
+    padding: 0 32px;
+  }
+  .boardcol {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  /* The scoped piece's preview over the columns. */
+  .ctxstrip {
     flex: none;
-    margin: 0 32px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: color-mix(in srgb, var(--zone) 8%, var(--card));
+    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
+    border-radius: 12px;
+    padding: 10px 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .ctxpaper {
+    flex: none;
+    width: 36px;
+    height: 47px;
+    background: var(--facsimile-paper);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .ctxpaper img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .ctxinfo {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ctxname {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .ctxmeta {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .ctxincipit {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 10px;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+  .ctxincipit :global(svg) {
+    height: 100%;
+    width: auto;
+    max-width: 100%;
+  }
+  .ctxincnote {
+    font-size: 11px;
+    color: var(--ink-faint);
   }
   /* --------------------------------------------------------------- board */
   .board {
@@ -1678,7 +1829,6 @@
     min-height: 170px;
     display: flex;
     gap: 14px;
-    padding: 0 32px;
   }
   .bcol {
     flex: 1;
@@ -1768,6 +1918,15 @@
     min-height: 88px;
     box-sizing: border-box;
   }
+  /* The piece's colour threads from the rail through every card's edge. */
+  .card.tinted {
+    border-left: 3px solid var(--piece-tint);
+  }
+  /* The card whose task panel is open. */
+  .card.paneled {
+    background: var(--info-bg);
+    border-color: var(--info-line);
+  }
   .card:hover {
     border-color: var(--accent);
   }
@@ -1795,18 +1954,6 @@
   .card.failtint {
     background: var(--danger-bg);
     border-color: var(--danger-line);
-  }
-  .donesum {
-    background: color-mix(in srgb, var(--card) 60%, transparent);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    align-items: flex-start;
   }
   .card.nextup {
     border-color: var(--accent);
@@ -1974,20 +2121,6 @@
     height: 12px;
     flex: none;
   }
-  .more {
-    font: inherit;
-    font-size: 12px;
-    color: var(--ink-faint);
-    text-align: center;
-    padding: 4px;
-    background: none;
-    border: none;
-    cursor: pointer;
-  }
-  .more:hover {
-    color: var(--accent);
-  }
-
   /* -------------------------------------------------------------- ticker */
   .ticker {
     flex: none;

@@ -6,14 +6,13 @@
   button that reopens a closed panel.
 -->
 <script lang="ts">
-  import { auth } from "$lib/auth.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
-  import { handle } from "$lib/campaign-graph.ts";
-  import { buildThreads, elapsed, initialOf } from "$lib/campaign-board.ts";
+  import { buildThreads } from "$lib/campaign-board.ts";
   import type { BoardCard, Thread } from "$lib/campaign-board.ts";
   import { clampPanelWidth, writeSidePanel } from "$lib/side-panels.ts";
   import type { SidePanelState } from "$lib/side-panels.ts";
+  import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
   import PanelIcon from "./PanelIcon.svelte";
 
@@ -98,21 +97,6 @@
       (cards.find((c) => c.column !== "done") ?? cards[0])?.task,
   );
 
-  const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
-  const canResolve = (c: CommentRow) =>
-    viewer !== "" && (canPush || c.author_id === viewer);
-
-  const measureLabel = (c: CommentRow) =>
-    c.measure_start
-      ? `m. ${c.measure_start}${c.measure_end && c.measure_end !== c.measure_start ? `–${c.measure_end}` : ""}`
-      : c.page
-        ? `page ${c.page}`
-        : "";
-  const anchorLabel = (c: CommentRow) =>
-    inScore
-      ? `◉ ${measureLabel(c)}${c.page ? ` — highlighted on page ${c.page}` : ""}`
-      : `${measureLabel(c)} — show in score →`;
-
   // Left-edge drag: the panel is right-docked, so dragging left widens it.
   let resizing = $state(false);
   let startX = 0;
@@ -172,60 +156,31 @@
             <span class="secpill">{sectionPill(s.card)}</span>
           </div>
           {#each s.threads as t (t.root.comment_id)}
-            <div
-              class="ccard"
-              class:review={isReview(s.card)}
-              class:resolved={t.root.resolved === "true"}
-            >
-              <div class="chead">
-                <span class="avatar">{initialOf(commentLogin(t.root))}</span>
-                <span class="cwho">{commentLogin(t.root)}</span>
-                <span class="cmeta">
-                  · {elapsed(t.root.timestamp)}{measureLabel(t.root)
-                    ? ` · ${measureLabel(t.root)}`
-                    : ""}{t.root.resolved === "true" ? " · resolved" : ""}
-                </span>
-                {#if t.root.kind === "question"}
-                  <span class="kindpill question">question</span>
-                {:else}
-                  <span class="kindpill note">note</span>
-                {/if}
-              </div>
-              <span class="cbody">{t.root.body}</span>
-              {#if measureLabel(t.root)}
-                <button type="button" class="anchor" onclick={() => onanchor(t.root)}>
-                  {anchorLabel(t.root)}
-                </button>
-              {/if}
-              {#if auth.user || (t.root.resolved !== "true" && canResolve(t.root))}
-                <div class="cacts">
-                  {#if auth.user}
-                    <button type="button" class="linkish" onclick={() => (replyTo = t.root)}>
-                      Reply
-                    </button>
-                  {/if}
-                  {#if t.root.resolved !== "true" && canResolve(t.root)}
-                    <button
-                      type="button"
-                      class="linkish"
-                      onclick={() => onresolve(t.root.comment_id)}
-                      disabled={runner.busy}
-                    >
-                      Resolve
-                    </button>
-                  {/if}
-                </div>
-              {/if}
-            </div>
+            <CommentCard
+              comment={t.root}
+              {logins}
+              {viewer}
+              {canPush}
+              {runner}
+              review={isReview(s.card)}
+              {inScore}
+              {onanchor}
+              onreply={(c) => (replyTo = c)}
+              {onresolve}
+            />
             {#each t.replies as reply (reply.comment_id)}
-              <div class="ccard reply" class:review={isReview(s.card)}>
-                <div class="chead">
-                  <span class="avatar">{initialOf(commentLogin(reply))}</span>
-                  <span class="cwho">{commentLogin(reply)}</span>
-                  <span class="cmeta">· {elapsed(reply.timestamp)} · ↳ reply</span>
-                </div>
-                <span class="cbody">{reply.body}</span>
-              </div>
+              <CommentCard
+                comment={reply}
+                {logins}
+                {viewer}
+                {canPush}
+                {runner}
+                review={isReview(s.card)}
+                reply
+                {inScore}
+                {onanchor}
+                {onresolve}
+              />
             {/each}
           {/each}
         {/each}
@@ -259,17 +214,42 @@
     max-height: 100%;
     align-self: flex-start;
   }
+  /* The host row's gap spaces the bar from the content; the right margin
+     mirrors it towards the panel. */
   .handle {
     flex: none;
     align-self: stretch;
+    margin: 12px 14px 12px 0;
     width: 6px;
-    cursor: col-resize;
     border-radius: 3px;
+    background: var(--line-input);
+    opacity: 0.65;
+    cursor: col-resize;
     touch-action: none;
+    position: relative;
   }
   .handle:hover,
   .handle.active {
-    background: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent);
+    opacity: 0.8;
+  }
+  /* The embossed double line marking the bar as draggable. */
+  .handle::before,
+  .handle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 1px;
+    height: 26px;
+    transform: translateY(-50%);
+    border-radius: 1px;
+    background: var(--card);
+  }
+  .handle::before {
+    left: 1.5px;
+  }
+  .handle::after {
+    right: 1.5px;
   }
   .cpanel {
     flex: 1;
@@ -379,109 +359,6 @@
     color: var(--warn);
     background: var(--warn-bg);
     border-color: var(--warn-line);
-  }
-  .ccard {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--info);
-    border-radius: 10px;
-    padding: 10px 12px;
-  }
-  .ccard.review {
-    border-left-color: var(--warn);
-  }
-  .ccard.reply {
-    margin-left: 14px;
-  }
-  .ccard.resolved {
-    opacity: 0.55;
-  }
-  .chead {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    min-width: 0;
-  }
-  .avatar {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-btn);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-  }
-  .cwho {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--ink);
-  }
-  .cmeta {
-    font-size: 11px;
-    color: var(--ink-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .kindpill {
-    margin-left: auto;
-    font-size: 10.5px;
-    font-weight: 600;
-    border-radius: 999px;
-    padding: 1px 7px;
-    flex: none;
-  }
-  .kindpill.question {
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
-  }
-  .kindpill.note {
-    color: var(--warn);
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
-  }
-  .cbody {
-    font-size: 12px;
-    color: var(--ink);
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-  }
-  .anchor {
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--info);
-    cursor: pointer;
-    background: none;
-    border: none;
-    padding: 0;
-    text-align: left;
-    font-family: inherit;
-  }
-  .cacts {
-    display: flex;
-    gap: 12px;
-  }
-  .linkish {
-    font: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-  }
-  .linkish:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
   .cnone {
     font-size: 11.5px;

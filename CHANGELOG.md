@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- Instigator view: a piece rail scopes the board to one piece (context strip with thumbnail, incipit and progress above the columns); rail rows carry per-category task counts in the column colours; cards carry their piece's colour edge; clicking a card tints it and opens an in-page task panel (status, score link, submission, validation record, one action, discussion) instead of the dock takeover — Escape or ✕ closes it. Volunteers get the same panel in the comments panel's place. The campaign view now fills the window width.
+- Board columns list every card; a stats-bar toggle (All tasks / Claimable) filters to open encodings and free review slots instead of the per-column show-more collapse.
+- The side panels' resize handle is a visible grip bar.
 - Volunteer view rebuilt: campaign title with progress, the next task as a hero card (facsimile thumbnail, context and effort lines, claim + preview actions), three suggested alternatives, and every piece as an expandable row listing its tasks; the comments panel sits beside it and follows the expanded piece. Hero stats, task ids, run states and attention chips left the volunteer screen; claim buttons are disabled logged out.
 - Comments side panel component: one piece's discussion, sectioned per task and colour-coded by stage, with measure anchors, a pinned composer, drag-resize and a persisted open state.
 - Piece previews module: cached first-page facsimile thumbnail and Verovio incipit (opening system) per piece, for the campaign view redesign.

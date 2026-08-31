@@ -37,10 +37,11 @@
     runner: CommandRunner;
     /**
      * "full" renders every slot row including the claim control (the review
-     * view); "panel" renders only fail boxes and the viewer's own slots — the
-     * task panel's header carries the status and the claim.
+     * view); "panel" renders only fail boxes and the viewer's own slots;
+     * "side" renders every slot but leaves the claim to the host's footer
+     * action (the task side panel).
      */
-    variant?: "full" | "panel";
+    variant?: "full" | "panel" | "side";
     /** The anchor a fresh fail form opens with (page and measure range). */
     prefill: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the preview. */
@@ -189,7 +190,7 @@
         <span class="mspacer"></span>
         {#if r.key === "pass"}
           <span class="muted small-note">no remarks</span>
-        {:else if r.key === "open" && r.claimable}
+        {:else if r.key === "open" && r.claimable && variant !== "side"}
           <button
             type="button"
             class="btn"
