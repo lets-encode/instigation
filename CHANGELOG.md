@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## Unreleased
+
+- Piece previews module: cached first-page facsimile thumbnail and Verovio incipit (opening system) per piece, for the campaign view redesign.
+
 ## 0.23.0 – 2026-08-28
 
 - Task-first volunteer view instead of the board (next task, open tasks grouped and tinted per piece, piece progress); the board stays for instigators.
