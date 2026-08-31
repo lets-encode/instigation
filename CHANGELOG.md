@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Volunteer view rebuilt: campaign title with progress, the next task as a hero card (facsimile thumbnail, context and effort lines, claim + preview actions), three suggested alternatives, and every piece as an expandable row listing its tasks; the comments panel sits beside it and follows the expanded piece. Hero stats, task ids, run states and attention chips left the volunteer screen; claim buttons are disabled logged out.
 - Comments side panel component: one piece's discussion, sectioned per task and colour-coded by stage, with measure anchors, a pinned composer, drag-resize and a persisted open state.
 - Piece previews module: cached first-page facsimile thumbnail and Verovio incipit (opening system) per piece, for the campaign view redesign.
 

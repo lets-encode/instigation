@@ -250,14 +250,18 @@
 {/if}
 
 <style>
+  /* The panel hugs its content; a longer list is capped by the host row and
+     scrolls inside. */
   .cpwrap {
     flex: none;
     display: flex;
     min-height: 0;
-    align-self: stretch;
+    max-height: 100%;
+    align-self: flex-start;
   }
   .handle {
     flex: none;
+    align-self: stretch;
     width: 6px;
     cursor: col-resize;
     border-radius: 3px;
@@ -328,7 +332,7 @@
     padding: 0;
   }
   .clist {
-    flex: 1;
+    flex: 0 1 auto;
     min-height: 0;
     overflow-y: auto;
     display: flex;

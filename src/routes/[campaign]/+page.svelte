@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -24,8 +25,11 @@
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
   import { readDockLayout } from "$lib/preview-dock.ts";
+  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import CommentsPanel from "$lib/components/CommentsPanel.svelte";
   import DockPanel from "$lib/components/DockPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PanelIcon from "$lib/components/PanelIcon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PieceCards from "$lib/components/PieceCards.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
@@ -191,6 +195,29 @@
       : null,
   );
 
+  // ----------------------------------------- the volunteer's comments panel
+  let commentsPanel = $state(readSidePanel("comments"));
+  // The piece row the volunteer expanded; the comments panel follows it, and
+  // falls back to the next task's piece.
+  let volunteerPiece = $state<string | null>(null);
+  const volunteerScope = $derived.by(() => {
+    const path =
+      volunteerPiece ??
+      (nextCard
+        ? previewPieces[pieceIndexByTask.get(nextCard.task) ?? 0]?.path
+        : undefined) ??
+      previewPieces[0]?.path;
+    const index = previewPieces.findIndex((p) => p.path === path);
+    return index >= 0 ? { piece: previewPieces[index], index } : null;
+  });
+  const scopeCards = $derived(
+    volunteerScope
+      ? allCards.filter(
+          (c) => (pieceIndexByTask.get(c.task) ?? 0) === volunteerScope.index,
+        )
+      : [],
+  );
+
   // --------------------------------------------------------- the task detail
   // A task's detail opens in the preview panel; the URL carries it as ?task=
   // so the row stays addressable (deep links, post-login resume).
@@ -249,6 +276,15 @@
     };
     previewDock?.setZones(true);
     previewDock?.showPage(anchor.page - 1);
+  }
+  // A comments-panel anchor: open the score on the comment's piece, then turn
+  // it to the anchored page.
+  async function showCommentInScore(c: CommentRow) {
+    const index = pieceIndexByTask.get(c.task_id);
+    if (index !== undefined) scorePiece = index;
+    openScore();
+    await tick();
+    showAnchorFor(c);
   }
 
   const copy = (text: string) =>
@@ -456,12 +492,17 @@
   const sendBackTask = (task_id: string) =>
     run((c) => invoke(commands.sendBack, { task_id }, c));
 
-  const postComment = (kind: string, body: string, parent_id: string) =>
+  const postComment = (
+    task_id: string,
+    kind: string,
+    body: string,
+    parent_id: string,
+  ) =>
     run((c) =>
       invoke(
         commands.submitComment,
         {
-          task_id: detailTask!,
+          task_id,
           subtask_id: "",
           kind,
           body,
@@ -754,6 +795,65 @@
           onsave={savePlan}
           oncancel={() => (manage = false)}
         />
+      {:else if !canPush}
+        <div class="volwrap">
+          <div class="volhead">
+            <h1>{title || repo}</h1>
+            <span class="volspacer"></span>
+            <span class="volcount">{board.done} of {board.total} done</span>
+            <div class="volbar">
+              <div
+                style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+              ></div>
+            </div>
+            {#if volunteerScope && !commentsPanel.open}
+              <button
+                type="button"
+                class="cptoggle"
+                title="Show the comments panel"
+                onclick={() => {
+                  commentsPanel.open = true;
+                  writeSidePanel("comments", { ...commentsPanel });
+                }}><PanelIcon /></button
+              >
+            {/if}
+          </div>
+          <div class="volrow">
+            <VolunteerView
+              {owner}
+              {repo}
+              cards={allCards}
+              {nextCard}
+              {taskDefs}
+              {locks}
+              {viewer}
+              pieces={previewPieces}
+              progress={pieceProgress}
+              pieceIndex={pieceIndexByTask}
+              busy={runner.busy}
+              bind:expandedPiece={volunteerPiece}
+              onact={actOnCard}
+              onopen={openTask}
+              onviewscore={viewScorePiece}
+            />
+            {#if volunteerScope && commentsPanel.open}
+              <CommentsPanel
+                piece={volunteerScope.piece}
+                zone={(volunteerScope.index % 8) + 1}
+                cards={scopeCards}
+                {comments}
+                {logins}
+                {viewer}
+                {canPush}
+                {runner}
+                bind:panel={commentsPanel}
+                onanchor={showCommentInScore}
+                oncomment={postComment}
+                onresolve={resolveCommentRow}
+              />
+            {/if}
+          </div>
+        </div>
       {:else}
         <div class="hero">
           <div class="hero-line">
@@ -941,21 +1041,6 @@
           </div>
         {/if}
 
-        {#if !canPush}
-          <VolunteerView
-            cards={allCards}
-            {nextCard}
-            {locks}
-            {viewer}
-            pieces={previewPieces}
-            progress={pieceProgress}
-            pieceIndex={pieceIndexByTask}
-            busy={runner.busy}
-            onact={actOnCard}
-            onopen={openTask}
-            onviewscore={viewScorePiece}
-          />
-        {:else}
         {#if previewPieces.length > 0}
           <div class="piecesrow">
             <PieceCards
@@ -1110,7 +1195,6 @@
             </div>
           {/each}
         </div>
-        {/if}
 
         <div class="ticker">
           <span class="ticker-label">Activity</span>
@@ -1171,7 +1255,8 @@
           oneditor={editor}
           onsubmitencoding={submitpr}
           onvalidate={validate}
-          oncomment={postComment}
+          oncomment={(kind, body, parent_id) =>
+            postComment(detailCard!.task, kind, body, parent_id)}
           onresolve={resolveCommentRow}
           onsendback={sendBackTask}
         />
@@ -1314,6 +1399,74 @@
     display: flex;
     flex-direction: column;
     container-type: inline-size;
+  }
+
+  /* The volunteer view: a full-width header row over the task column and the
+     comments panel beside it. */
+  .volwrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    max-width: 1400px;
+    margin-inline: auto;
+    padding: 0 32px 8px;
+    box-sizing: border-box;
+  }
+  .volhead {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .volhead h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .volspacer {
+    flex: 1;
+  }
+  .volcount {
+    font-size: 12px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    flex: none;
+  }
+  .volbar {
+    flex: none;
+    width: 160px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--bg-tint);
+    overflow: hidden;
+  }
+  .volbar > div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--green));
+  }
+  .volrow {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 14px;
+  }
+  .cptoggle {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--line-input);
+    background: var(--card);
+    color: var(--ink-soft);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex: none;
+    padding: 0;
   }
 
   /* ---------------------------------------------------------- info block */

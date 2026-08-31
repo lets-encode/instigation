@@ -19,9 +19,19 @@ export interface PiecePreview {
 	incipit: string;
 	/** True while the score has facsimile pages but no measures yet. */
 	incipitPending: boolean;
+	/** Measure count of each facsimile page; empty without a facsimile. */
+	pageMeasures: number[];
+	/** Staves in the score definition. */
+	staves: number;
 }
 
-const EMPTY: PiecePreview = { thumb: '', incipit: '', incipitPending: false };
+const EMPTY: PiecePreview = {
+	thumb: '',
+	incipit: '',
+	incipitPending: false,
+	pageMeasures: [],
+	staves: 0
+};
 
 // One load per piece per page load; a failed load is dropped so the next
 // mount retries it.
@@ -65,12 +75,15 @@ async function loadPreview(
 		thumb = urls[0] ?? '';
 	}
 
+	const pageMeasures = parsed.pages.map((page) => page.zones.length);
+	const staves = parsed.scoreDef.staves.length;
+
 	// A facsimile score renders only once its measures exist; a score without
 	// facsimile pages renders as-is.
 	if (parsed.pages.length && !parsed.hasMeasures) {
-		return { thumb, incipit: '', incipitPending: true };
+		return { thumb, incipit: '', incipitPending: true, pageMeasures, staves };
 	}
-	return { thumb, incipit: await renderIncipit(mei), incipitPending: false };
+	return { thumb, incipit: await renderIncipit(mei), incipitPending: false, pageMeasures, staves };
 }
 
 // ---------------------------------------------------------------------------
