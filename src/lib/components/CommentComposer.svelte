@@ -14,12 +14,17 @@
     runner,
     replyTo = $bindable(),
     oncomment,
+    variant = "dock",
+    placeholder = "Reply or leave a note…",
   }: {
     logins: Record<string, string>;
     runner: CommandRunner;
     /** The comment a reply is being written to, shared with the thread list. */
     replyTo: CommentRow | null;
     oncomment: (kind: string, body: string, parent_id: string) => Promise<void>;
+    /** "dock" sits full-width under a rail; "card" is a bordered card in a panel. */
+    variant?: "dock" | "card";
+    placeholder?: string;
   } = $props();
 
   let composerText = $state("");
@@ -40,7 +45,7 @@
 </script>
 
 {#if auth.user}
-  <div class="composer">
+  <div class="composer {variant}">
     {#if replyTo}
       <div class="replying">
         Replying to <strong>{commentLogin(replyTo)}</strong>
@@ -69,7 +74,7 @@
     <div class="composer-row">
       <input
         bind:value={composerText}
-        placeholder="Reply or leave a note…"
+        {placeholder}
         onkeydown={(e) => {
           if (e.key === "Enter" && composerText.trim()) postComment();
         }}
@@ -97,11 +102,19 @@
   }
   .composer {
     flex: none;
-    padding: 10px 20px 16px;
-    border-top: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .composer.dock {
+    padding: 10px 20px 16px;
+    border-top: 1px solid var(--line);
+  }
+  .composer.card {
+    padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 10px;
   }
   .replying {
     font-size: 11.5px;

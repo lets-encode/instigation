@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Comments side panel component: one piece's discussion, sectioned per task and colour-coded by stage, with measure anchors, a pinned composer, drag-resize and a persisted open state.
 - Piece previews module: cached first-page facsimile thumbnail and Verovio incipit (opening system) per piece, for the campaign view redesign.
 
 ## 0.23.0 – 2026-08-28
