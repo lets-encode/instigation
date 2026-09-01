@@ -3,20 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
-## Unreleased
+## 0.25.0 – 2026-09-01
 
-- A campaign's creation time now comes from the repository, so the NEW tag and the newest sort work before any task activity (previously both derived from the first history entry).
-- Campaign overview redesign: the grid of tiles is now a list of full-width rows — facsimile spine, title/byline/progress, incipit strip, and the campaign's suggested next task, claimable in place (encoding claims open mei-friend, review claims land on the review; work the viewer holds shows Continue). One search & filter bar (All / Open to claim / Nearly done / Yours, sort select) replaces the sort segments, open-tasks switch and pager; "Show n more" pages the list. Logged out, rows are link-only.
-- The score setup, measure correction and review viewers carry the piece's comments panel beside their task controls; the review viewer's old discussion list and composer are gone.
-- Score view fits the window: the panes scroll to the page bottom and the comments composer stays visible; the panes area got rounded corners.
-- Full-page score view at ?score=<piece> (with optional ?page=), replacing the score dock: the top bar backs out to the campaign, the piece-scoped comments panel sits beside the score, comment anchors turn to their page and highlight the range, and measure selection targets the composer — a comment posted then carries the selected measure as its anchor. Back/forward navigate it; an open task's ?task= survives the round trip, and its panel links to the score at the task's page.
-- The score toolbar sits on its own background bar; the side panels run the full row height with pinned composers; the volunteer task column keeps a reading width beside the right-edge comments panel.
-- Instigator view: a piece rail scopes the board to one piece (context strip with thumbnail, incipit and progress above the columns); rail rows carry per-category task counts in the column colours; cards carry their piece's colour edge; clicking a card tints it and opens an in-page task panel (status, score link, submission, validation record, one action, discussion) instead of the dock takeover — Escape or ✕ closes it. Volunteers get the same panel in the comments panel's place. The campaign view now fills the window width.
-- Board columns list every card; a stats-bar toggle (All tasks / Claimable) filters to open encodings and free review slots instead of the per-column show-more collapse.
-- The side panels' resize handle is a visible grip bar.
-- Volunteer view rebuilt: campaign title with progress, the next task as a hero card (facsimile thumbnail, context and effort lines, claim + preview actions), three suggested alternatives, and every piece as an expandable row listing its tasks; the comments panel sits beside it and follows the expanded piece. Hero stats, task ids, run states and attention chips left the volunteer screen; claim buttons are disabled logged out.
-- Comments side panel component: one piece's discussion, sectioned per task and colour-coded by stage, with measure anchors, a pinned composer, drag-resize and a persisted open state.
-- Piece previews module: cached first-page facsimile thumbnail and Verovio incipit (opening system) per piece, for the campaign view redesign.
+- Volunteer view rebuilt: the next task as a hero card with claim and preview actions, three suggested alternatives, expandable piece rows, and the piece-scoped comments panel (sectioned per task, measure anchors, resizable) beside it.
+- Instigator view: a piece rail with per-category task counts scopes the full-width board, cards carry their piece's colour, and an in-page task panel replaces the dock takeover; the columns list every card, filterable by an All tasks / Claimable toggle.
+- Full-page score view at ?score= replaces the score dock: comment anchors page and highlight the score, a selected measure targets the composer, and the comments panel also joins the setup, zones and review viewers.
+- Campaign overview as full-width rows with the suggested next task claimable in place and one search & filter bar; the retired dock components are removed.
 
 ## 0.24.0 – 2026-09-01
 

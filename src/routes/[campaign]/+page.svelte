@@ -858,8 +858,6 @@
         </span>
       </div>
     {:else}
-    <div class="workarea">
-    <div class="workmain">
     <div class="viewcol" class:inscore={!!scoreView}>
       {#if !resolved}
         <p class="msg muted">Finding the campaign…</p>
@@ -1381,8 +1379,6 @@
         </div>
       {/if}
     </div>
-    </div>
-    </div>
     {/if}
   {/if}
 </div>
@@ -1460,28 +1456,11 @@
   }
 
   /* --------------------------------------------------------------- main */
-  /* The board and the score panel share this area as a split: the score
-     panel's dock side splits what remains beside the board. */
-  .workarea {
-    flex: 1;
-    min-height: 0;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .workmain {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
   /* The view fills the window — the rail, board and task panel share every
-     available column. Its minimum height is its content's, and the score
-     panel — a shrinkable flex item — stops growing right there, at any
-     browser zoom. The width minimum is explicit: the inline-size containment
-     below makes the content's own width invisible to sizing, and the board's
-     stacking reacts to the column's width instead. */
+     available column. Its minimum height is its content's. The width minimum
+     is explicit: the inline-size containment below makes the content's own
+     width invisible to sizing, and the board's stacking reacts to the
+     column's width instead. */
   .viewcol {
     flex: 1;
     min-width: 340px;

@@ -1,7 +1,7 @@
 <!--
   The discussion composer: a question or note on the task, or a reply to the
-  bound comment (set by TaskDiscussion's Reply buttons). Renders nothing for
-  a logged-out viewer.
+  bound comment (set by the host's Reply buttons). Renders nothing for a
+  logged-out viewer.
 -->
 <script lang="ts">
   import { auth } from "$lib/auth.svelte.ts";
@@ -16,7 +16,6 @@
     runner,
     replyTo = $bindable(),
     oncomment,
-    variant = "dock",
     placeholder = "Reply or leave a note…",
   }: {
     /** The task id the composer posts to, e.g. "T0002". */
@@ -26,8 +25,6 @@
     /** The comment a reply is being written to, shared with the thread list. */
     replyTo: CommentRow | null;
     oncomment: (kind: string, body: string, parent_id: string) => Promise<void>;
-    /** "dock" sits full-width under a rail; "card" is a bordered card in a panel. */
-    variant?: "dock" | "card";
     placeholder?: string;
   } = $props();
 
@@ -61,7 +58,7 @@
 </script>
 
 {#if auth.user}
-  <div class="composer {variant}">
+  <div class="composer">
     {#if replyTo}
       <div class="replying">
         Replying to <strong>{commentLogin(replyTo)}</strong>
@@ -127,12 +124,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-  }
-  .composer.dock {
-    padding: 10px 20px 16px;
-    border-top: 1px solid var(--line);
-  }
-  .composer.card {
     padding: 10px 12px;
     background: var(--card);
     border: 1px solid var(--line-input);

@@ -37,11 +37,10 @@
     runner: CommandRunner;
     /**
      * "full" renders every slot row including the claim control (the review
-     * view); "panel" renders only fail boxes and the viewer's own slots;
-     * "side" renders every slot but leaves the claim to the host's footer
-     * action (the task side panel).
+     * view); "side" leaves the claim to the host's footer action (the task
+     * side panel).
      */
-    variant?: "full" | "panel" | "side";
+    variant?: "full" | "side";
     /** The anchor a fresh fail form opens with (page and measure range). */
     prefill: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the preview. */
@@ -57,12 +56,7 @@
     onsendback: (task_id: string) => Promise<void>;
   } = $props();
 
-  const record = $derived(buildRecord(card, comments, viewer, logins));
-  const rows = $derived(
-    variant === "panel"
-      ? record.filter((r) => r.key === "fail" || r.mine)
-      : record,
-  );
+  const rows = $derived(buildRecord(card, comments, viewer, logins));
   // A verdict already submitted for a subtask and still being processed: its
   // controls hold until it lands — a repeat would only be rejected.
   const verdictPending = (sub: string) =>

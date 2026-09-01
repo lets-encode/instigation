@@ -374,7 +374,7 @@
       <span class="cnone">No discussion yet.</span>
     {/if}
     </div>
-    <CommentComposer task={card.task} {logins} {runner} bind:replyTo variant="card" {oncomment} />
+    <CommentComposer task={card.task} {logins} {runner} bind:replyTo {oncomment} />
   </aside>
 </div>
 

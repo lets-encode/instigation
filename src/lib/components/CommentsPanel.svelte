@@ -194,7 +194,6 @@
           {logins}
           {runner}
           bind:replyTo
-          variant="card"
           placeholder={composerHint ||
             `Ask a question about ${piece.title || piece.id}…`}
           oncomment={(kind, body, parent_id) =>

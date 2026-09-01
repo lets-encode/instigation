@@ -1,12 +1,9 @@
-// Where the campaign view's dock panels sit and how large they are. Like the
-// pane choice (preview-pane.ts) this is a viewing preference, kept per
-// browser. There are two panels — the score preview and the task panel — and
-// each remembers its own edge and size. A bottom dock is sized by height, a
-// side dock by width.
+// The review view's rail: how wide it is, kept per browser. Like the pane
+// choice (preview-pane.ts) this is a viewing preference. The rail is
+// side-fixed, so only its width applies.
 
-/** The stored panel layouts: the campaign view's two dock panels and the
-    review view's rail (side-fixed, only its width applies). */
-export type DockId = 'preview' | 'task' | 'review';
+/** The stored panel layouts: the review view's rail. */
+export type DockId = 'review';
 
 /** The edge of the view a panel docks to. */
 export type DockSide = 'left' | 'bottom' | 'right';
@@ -20,16 +17,12 @@ export interface DockLayout {
 }
 
 const KEYS: Record<DockId, string> = {
-	preview: 'lets-encode:preview-dock',
-	task: 'lets-encode:task-dock',
 	review: 'lets-encode:review-rail'
 };
 
 export const DOCK_MIN = 260;
 
 const DEFAULTS: Record<DockId, DockLayout> = {
-	preview: { side: 'bottom', height: 440, width: 640 },
-	task: { side: 'right', height: 360, width: 400 },
 	review: { side: 'right', height: 360, width: 400 }
 };
 
