@@ -94,6 +94,9 @@ interface CommandDef<I, O> {
 	id: string;
 	version: number;
 	log: 'pr' | 'direct' | 'none';
+	/** The command resolves to a background result (openAndFinishInBackground):
+	 * it runs without the busy overlay and its verdict lands through the sink. */
+	background?: boolean;
 	/** What of the input goes into the envelope; defaults to the input itself. Use to keep bulky payloads (already carried by the PR diff) out of the log. */
 	envelopeInput?: (input: I) => Record<string, unknown>;
 	run: (input: I, ctx: CommandContext, envelope: CommandEnvelope | null) => Promise<O>;
@@ -119,7 +122,7 @@ export async function invoke<I extends Record<string, unknown>, O>(
 					input: def.envelopeInput ? def.envelopeInput(input) : input
 				};
 	console.log('[command]', def.id, input);
-	ctx.progress({ command: def.id });
+	ctx.progress({ command: def.id, background: def.background });
 	const output = await def.run(input, ctx, envelope);
 	if (def.log === 'direct' && envelope) await logDirect(ctx, envelope, output as Result);
 	return output;
@@ -669,6 +672,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 	id: 'campaign.submitEncoding',
 	version: 1,
 	log: 'pr',
+	background: true,
 	async run({ task_id }, ctx, envelope) {
 		const { forge: f, owner, repo, viewerLogin } = ctx;
 		return openAndFinishInBackground(ctx, `Encoding of ${task_id}`, `encode:${task_id}`, async () => {
@@ -720,6 +724,7 @@ const submitValidation: CommandDef<
 	id: 'campaign.submitValidation',
 	version: 2,
 	log: 'pr',
+	background: true,
 	envelopeInput: ({ task_id, subtask_id, verdict }) => ({ task_id, subtask_id, verdict }),
 	async run({ task_id, subtask_id, verdict, comment }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
@@ -797,6 +802,7 @@ const submitComment: CommandDef<
 	id: 'campaign.submitComment',
 	version: 1,
 	log: 'pr',
+	background: true,
 	envelopeInput: ({ task_id, subtask_id, kind, parent_id }) => ({ task_id, subtask_id, kind, parent_id }),
 	async run(input, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
@@ -840,6 +846,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 	id: 'campaign.resolveComment',
 	version: 1,
 	log: 'pr',
+	background: true,
 	async run({ comment_id }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
 		let comments;
@@ -854,7 +861,9 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 		// A resolved comment takes its replies with it (the automation enforces
 		// the same on its side).
 		const resolved = resolveCommentThread(comments, comment_id);
-		return openAndFinishInBackground(ctx, `Resolution of comment ${comment_id}`, `resolve:${row.task_id}`, async () => {
+		// Keyed by comment, not task: the run state renders on the comment's
+		// card (CommentCard and friends), not on the task's run state.
+		return openAndFinishInBackground(ctx, `Resolution of comment ${comment_id}`, `resolve:${comment_id}`, async () => {
 			await muteOnce(ctx);
 			const body = `Resolves comment ${comment_id} on ${row.task_id}. Opened from the campaign console.`;
 			const pr = await f.openChangePr(owner, repo, {
@@ -878,6 +887,7 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
 	id: 'campaign.sendBack',
 	version: 1,
 	log: 'pr',
+	background: true,
 	async run({ task_id }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
 		return openAndFinishInBackground(ctx, `Send-back of ${task_id}`, `sendback:${task_id}`, async () => {

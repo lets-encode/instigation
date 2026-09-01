@@ -240,7 +240,7 @@
       {onresolve}
     />
   </div>
-  <CommentComposer {logins} {runner} bind:replyTo {oncomment} />
+  <CommentComposer task={card.task} {logins} {runner} bind:replyTo {oncomment} />
 </aside>
 
 <style>

@@ -11,7 +11,14 @@ import type { ForgeClient, WorkflowRunInfo } from './forge/types.ts';
  * One progress update: open a new step, and/or set the running step's detail.
  * `command` names the command whose steps follow, sent once when it starts.
  */
-export type ProgressUpdate = { step?: string; detail?: string; command?: string };
+export type ProgressUpdate = {
+	step?: string;
+	detail?: string;
+	command?: string;
+	/** Sent with `command`: the command resolves to a background result, so it
+	 * runs without the busy overlay. */
+	background?: boolean;
+};
 
 /** Where the watched run stands after the latest tick. */
 export type RunWatchState =

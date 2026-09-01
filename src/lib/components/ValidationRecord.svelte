@@ -110,6 +110,22 @@
   const canResolve = (c: CommentRow) =>
     viewer !== "" && (canPush || c.author_id === viewer);
 
+  let resolving = $state<string | null>(null);
+  // Pending from the click until the resolution PR's verdict lands: first the
+  // foreground command, then its background entry in the verdict store.
+  const resolvePending = (comment_id: string) =>
+    resolving === comment_id ||
+    pendingVerdicts.isProcessing(`resolve:${comment_id}`);
+
+  async function resolve(comment_id: string) {
+    resolving = comment_id;
+    try {
+      await onresolve(comment_id);
+    } finally {
+      resolving = null;
+    }
+  }
+
   const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
 </script>
 
@@ -152,14 +168,21 @@
         {/if}
         <div class="failacts">
           {#if r.comment && r.comment.resolved !== "true" && canResolve(r.comment)}
-            <button
-              type="button"
-              class="linkish"
-              onclick={() => onresolve(r.comment!.comment_id)}
-              disabled={runner.busy}
-              title="Mark this fail's comment as handled — it leaves the attention counts."
-              >Resolve</button
-            >
+            {#if resolvePending(r.comment.comment_id)}
+              <span class="resolving">
+                <span class="spinner" aria-hidden="true"></span>
+                Resolving…
+              </span>
+            {:else}
+              <button
+                type="button"
+                class="linkish"
+                onclick={() => resolve(r.comment!.comment_id)}
+                disabled={runner.busy || resolving !== null}
+                title="Mark this fail's comment as handled — it leaves the attention counts."
+                >Resolve</button
+              >
+            {/if}
           {:else if r.comment?.resolved === "true"}
             <span class="muted small-note">resolved</span>
           {/if}
@@ -289,14 +312,21 @@
       {/if}
       {#if canResolve(c)}
         <div class="failacts">
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => onresolve(c.comment_id)}
-            disabled={runner.busy}
-            title="Mark this fail's comment as handled — it leaves the attention counts."
-            >Resolve</button
-          >
+          {#if resolvePending(c.comment_id)}
+            <span class="resolving">
+              <span class="spinner" aria-hidden="true"></span>
+              Resolving…
+            </span>
+          {:else}
+            <button
+              type="button"
+              class="linkish"
+              onclick={() => resolve(c.comment_id)}
+              disabled={runner.busy || resolving !== null}
+              title="Mark this fail's comment as handled — it leaves the attention counts."
+              >Resolve</button
+            >
+          {/if}
         </div>
       {/if}
     </div>
@@ -437,6 +467,33 @@
     gap: 12px;
     margin-top: 10px;
     align-items: center;
+  }
+  .resolving {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 2s;
+    }
   }
   .failform {
     border: 1px solid var(--danger-line);

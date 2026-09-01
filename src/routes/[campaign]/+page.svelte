@@ -698,7 +698,7 @@
   }}
 />
 
-{#if runner.busy}
+{#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
     finished={runner.held}

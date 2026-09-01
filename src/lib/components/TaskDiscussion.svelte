@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { auth } from "$lib/auth.svelte.ts";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { handle } from "$lib/campaign-graph.ts";
@@ -36,6 +37,22 @@
 
   const canResolve = (c: CommentRow) =>
     viewer !== "" && (canPush || c.author_id === viewer);
+
+  let resolving = $state<string | null>(null);
+  // Pending from the click until the resolution PR's verdict lands: first the
+  // foreground command, then its background entry in the verdict store.
+  const resolvePending = (comment_id: string) =>
+    resolving === comment_id ||
+    pendingVerdicts.isProcessing(`resolve:${comment_id}`);
+
+  async function resolve(comment_id: string) {
+    resolving = comment_id;
+    try {
+      await onresolve(comment_id);
+    } finally {
+      resolving = null;
+    }
+  }
 
   const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
 </script>
@@ -69,12 +86,19 @@
           >
         {/if}
         {#if t.root.resolved !== "true" && canResolve(t.root)}
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => onresolve(t.root.comment_id)}
-            disabled={runner.busy}>Resolve</button
-          >
+          {#if resolvePending(t.root.comment_id)}
+            <span class="resolving">
+              <span class="spinner" aria-hidden="true"></span>
+              Resolving…
+            </span>
+          {:else}
+            <button
+              type="button"
+              class="linkish"
+              onclick={() => resolve(t.root.comment_id)}
+              disabled={runner.busy || resolving !== null}>Resolve</button
+            >
+          {/if}
         {/if}
       </div>
       {#each t.replies as reply (reply.comment_id)}
@@ -195,8 +219,36 @@
   }
   .cacts {
     display: flex;
+    align-items: center;
     gap: 12px;
     margin-top: 6px;
+  }
+  .resolving {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 2s;
+    }
   }
   .creply {
     padding: 10px 0 0 18px;

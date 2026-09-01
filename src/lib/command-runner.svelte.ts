@@ -31,6 +31,9 @@ export class CommandRunner {
 	busy = $state(false);
 	/** True once the command has finished and the overlay waits to be dismissed. */
 	held = $state(false);
+	/** False while a background-kind command runs: it shows no busy overlay —
+	 * its progress renders at the acted-on comment, composer or task instead. */
+	overlay = $state(true);
 	readonly log = new ProgressLog();
 	result = $state<Result | null>(null);
 	private release: (() => void) | null = null;
@@ -46,7 +49,10 @@ export class CommandRunner {
 			viewerLogin: auth.user?.login ?? '',
 			...opts,
 			progress: (u) => {
-				if (u.command) this.command = u.command;
+				if (u.command) {
+					this.command = u.command;
+					this.overlay = !u.background;
+				}
 				if (u.step) this.log.step(u.step);
 				if (u.detail) this.log.detail(u.detail);
 			}
@@ -63,6 +69,7 @@ export class CommandRunner {
 	async run(command: () => Promise<Result>, after?: (result: Result) => Promise<void> | void): Promise<void> {
 		if (this.busy) return;
 		this.busy = true;
+		this.overlay = true;
 		this.command = '';
 		this.log.clear();
 		try {
@@ -73,8 +80,9 @@ export class CommandRunner {
 			else this.log.done();
 			this.logTiming(!result?.error);
 			// A background command holds nobody: no overlay stop, no banner —
-			// the task's run state carries on from here.
-			if (!result?.background) {
+			// the task's run state carries on from here. Without an overlay there
+			// is no Continue button, so nothing to hold for either.
+			if (!result?.background && this.overlay) {
 				this.held = true;
 				await new Promise<void>((resolve) => (this.release = resolve));
 				this.release = null;

@@ -298,7 +298,7 @@
     run((c) => invoke(commands.resolveComment, { comment_id }, c));
 </script>
 
-{#if runner.busy}
+{#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
     finished={runner.held}

@@ -190,6 +190,7 @@
       </div>
       {#if composerTask}
         <CommentComposer
+          task={composerTask}
           {logins}
           {runner}
           bind:replyTo

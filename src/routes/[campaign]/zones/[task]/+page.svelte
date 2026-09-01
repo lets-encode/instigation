@@ -947,7 +947,7 @@
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
 
-{#if runner.busy}
+{#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
     finished={runner.held}
@@ -960,17 +960,21 @@
   {#if resolveError}
     <div class="deskwrap">
       <div class="banner err">
-        {resolveError}
-        <button type="button" class="linkish" onclick={() => (resolveError = null)}
-          >Try again</button
-        >
+        <span>
+          {resolveError}
+          <button type="button" class="linkish" onclick={() => (resolveError = null)}
+            >Try again</button
+          >
+        </span>
       </div>
     </div>
   {:else if notFound}
     <div class="deskwrap">
       <div class="banner err">
-        No campaign called <code>{campaign}</code> was found.
-        <a href="/campaigns">Back to all campaigns</a>.
+        <span>
+          No campaign called <code>{campaign}</code> was found.
+          <a href="/campaigns">Back to all campaigns</a>.
+        </span>
       </div>
     </div>
   {:else if auth.status === "loading" || (!resolved && !notFound)}
@@ -978,8 +982,10 @@
   {:else if !auth.user}
     <div class="deskwrap">
       <div class="banner warn">
-        Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
-        to work on this task.
+        <span>
+          Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
+          to work on this task.
+        </span>
       </div>
     </div>
   {:else if loading}
@@ -987,8 +993,10 @@
   {:else if loadError}
     <div class="deskwrap">
       <div class="banner err">
-        {loadError}
-        <button type="button" class="linkish" onclick={() => load()}>Try again</button>
+        <span>
+          {loadError}
+          <button type="button" class="linkish" onclick={() => load()}>Try again</button>
+        </span>
       </div>
     </div>
   {:else if data}
@@ -1044,13 +1052,17 @@
     </div>
     {#if runner.result && runner.result.error}
       <div class="banner err bar">
-        {runner.result.error}
-        {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+        <span>
+          {runner.result.error}
+          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+        </span>
       </div>
     {:else if runner.result && runner.result.ok && !runner.result.background}
       <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
-        {runner.result.message}
-        {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+        <span>
+          {runner.result.message}
+          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+        </span>
       </div>
     {/if}
     <TaskRunState task={taskId} bar />

@@ -42,6 +42,10 @@ const taskOf = (key: string): string => {
 /** Submission kinds that finish work on a task, as the board understands it. */
 const FINISH_KINDS = new Set(['encode', 'validate', 'sendback']);
 
+/** Discussion kinds: their run state renders at the comment or composer they
+ * act on (CommentCard, CommentComposer), never on the task. */
+const DISCUSSION_KEY_KINDS = new Set(['comment', 'resolve']);
+
 class PendingVerdictStore {
 	entries = $state<PendingVerdict[]>([]);
 	/** Tasks an accepted encoding, validation or send-back of the viewer's just
@@ -95,7 +99,9 @@ class PendingVerdictStore {
 	 * task-anchored run state (TaskRunState.svelte). */
 	forTask(taskId: string): PendingVerdict | null {
 		if (!taskId) return null;
-		const mine = this.entries.filter((e) => taskOf(e.key) === taskId);
+		const mine = this.entries.filter(
+			(e) => taskOf(e.key) === taskId && !DISCUSSION_KEY_KINDS.has(e.key.split(':', 1)[0])
+		);
 		return (
 			mine.find((e) => e.state === 'opening' || e.state === 'processing') ??
 			mine[mine.length - 1] ??

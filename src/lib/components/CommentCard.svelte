@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { auth } from "$lib/auth.svelte.ts";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { handle } from "$lib/campaign-graph.ts";
@@ -47,6 +48,22 @@
   const canResolve = $derived(
     viewer !== "" && (canPush || comment.author_id === viewer),
   );
+
+  let resolving = $state(false);
+  // Pending from the click until the resolution PR's verdict lands: first the
+  // foreground command, then its background entry in the verdict store.
+  const resolvePending = $derived(
+    resolving || pendingVerdicts.isProcessing(`resolve:${comment.comment_id}`),
+  );
+
+  async function resolve() {
+    resolving = true;
+    try {
+      await onresolve(comment.comment_id);
+    } finally {
+      resolving = false;
+    }
+  }
 
   const measureLabel = $derived(
     comment.measure_start
@@ -97,14 +114,21 @@
         </button>
       {/if}
       {#if !resolved && canResolve}
-        <button
-          type="button"
-          class="linkish"
-          onclick={() => onresolve(comment.comment_id)}
-          disabled={runner.busy}
-        >
-          Resolve
-        </button>
+        {#if resolvePending}
+          <span class="resolving">
+            <span class="spinner" aria-hidden="true"></span>
+            Resolving…
+          </span>
+        {:else}
+          <button
+            type="button"
+            class="linkish"
+            onclick={resolve}
+            disabled={runner.busy}
+          >
+            Resolve
+          </button>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -198,7 +222,35 @@
   }
   .cacts {
     display: flex;
+    align-items: center;
     gap: 12px;
+  }
+  .resolving {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 2s;
+    }
   }
   .linkish {
     font: inherit;

@@ -16,6 +16,12 @@ parentheses.
 - Comments side panel component: one piece's discussion, sectioned per task and colour-coded by stage, with measure anchors, a pinned composer, drag-resize and a persisted open state.
 - Piece previews module: cached first-page facsimile thumbnail and Verovio incipit (opening system) per piece, for the campaign view redesign.
 
+## 0.24.0 – 2026-09-01
+
+- Banner text on the setup and zones task pages is left-aligned again.
+- Posting or resolving a comment shows a spinner at the composer or comment instead of the task's run state.
+- Background submissions no longer show the busy overlay popup.
+
 ## 0.23.0 – 2026-08-28
 
 - Task-first volunteer view instead of the board (next task, open tasks grouped and tinted per piece, piece progress); the board stays for instigators.

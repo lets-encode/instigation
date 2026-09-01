@@ -262,7 +262,7 @@
   const openCount = $derived(stats.filter((s) => s.ready > 0).length);
 </script>
 
-{#if runner.busy}
+{#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
     finished={runner.held}
