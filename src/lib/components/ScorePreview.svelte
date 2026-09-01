@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import { untrack } from "svelte";
+  import type { Snippet } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
@@ -27,6 +28,7 @@
     initialPane = null,
     initialZones = true,
     onmeasureselect,
+    trailing,
   }: {
     owner: string;
     repo: string;
@@ -42,6 +44,8 @@
     initialZones?: boolean;
     /** Reports the selected measure's label; null when deselected. */
     onmeasureselect?: (label: string | null) => void;
+    /** Extra controls rendered at the toolbar's end. */
+    trailing?: Snippet;
   } = $props();
 
   /** One facsimile page in the preview: image plus its measure zones. */
@@ -460,6 +464,7 @@
       onclick={() => (pvZoom = 1)}
       title="Reset the zoom so a page fits the pane">Fit</button
     >
+    {@render trailing?.()}
   </div>
   <div class="pbody-panes">
     {#if !preview || preview.loading}

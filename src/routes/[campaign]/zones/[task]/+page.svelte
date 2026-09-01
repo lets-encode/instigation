@@ -943,6 +943,19 @@
   const MDIV_ACCENT = "#8b5fbf";
   const accentFor = (p: number, z: number) =>
     startsMovement(p, z) ? MDIV_ACCENT : MEASURE_ACCENT;
+
+  // The editing hints and colour legend, shown by the toolbar's help icon.
+  const helpText = $derived(
+    [
+      ...(canEdit
+        ? [
+            "drag on the page to draw a measure · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)",
+          ]
+        : []),
+      "⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages",
+      "purple = movement start",
+    ].join("\n"),
+  );
 </script>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
@@ -1049,6 +1062,42 @@
         disabled={zoom === fitZoom()}
         title="Fit the whole page in the view">Fit</button
       >
+      <span class="vline"></span>
+      {#if canEdit}
+        <button
+          type="button"
+          class="btn btn-icon"
+          onclick={() => undo()}
+          disabled={!canUndo}
+          aria-label="Undo"
+          title="Undo the last change (Ctrl/Cmd+Z)">↶</button
+        >
+        <button
+          type="button"
+          class="btn btn-icon"
+          onclick={() => redo()}
+          disabled={!canRedo}
+          aria-label="Redo"
+          title="Redo (Ctrl/Cmd+Shift+Z)">↷</button
+        >
+      {/if}
+      <span class="helpico" role="img" aria-label="Editor help" title={helpText}
+        >?</span
+      >
+      {#if !commentsPanel.open}
+        <button
+          type="button"
+          class="btn"
+          title="Show the comments panel with the task's controls"
+          onclick={() => {
+            commentsPanel.open = true;
+            writeSidePanel("comments", { ...commentsPanel });
+          }}
+        >
+          <PanelIcon />
+          Comments
+        </button>
+      {/if}
     </div>
     {#if runner.result && runner.result.error}
       <div class="banner err bar">
@@ -1234,31 +1283,34 @@
     </div>
     </div>
 
-    <aside class="sidebar">
-      <div class="sb-section">
-        <div class="sb-title">
+    {#snippet taskBox()}
+      <!-- The snippet renders only while `data` is loaded (see its host). -->
+      {@const d = data!}
+      <div class="taskbox">
+        <div class="tbhead">
           <span class="abtitle">Measure review</span>
           <code class="taskchip">{taskId}</code>
         </div>
+        <div class="tbsection">
         <span class="abcount">
           {measureCount} measure{measureCount === 1 ? "" : "s"}
           · {movementCount} movement{movementCount === 1 ? "" : "s"}
         </span>
         {#if canEdit}
           <span class="lockpill ok">you hold this task</span>
-        {:else if data.status === "completed"}
+        {:else if d.status === "completed"}
           <span class="lockpill grey">completed — read-only</span>
-        {:else if data.status !== "encoding_required"}
+        {:else if d.status !== "encoding_required"}
           {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
             <span class="lockpill red">validation failed — read-only</span>
           {:else}
             <span class="lockpill amber">submitted — awaiting validation, read-only</span>
           {/if}
-        {:else if data.blockedBy}
-          <span class="lockpill grey">waits for {data.blockedBy} — read-only</span>
-        {:else if data.encodingLockUser}
+        {:else if d.blockedBy}
+          <span class="lockpill grey">waits for {d.blockedBy} — read-only</span>
+        {:else if d.encodingLockUser}
           <span class="lockpill amber"
-            >claimed by @{handle(logins, data.encodingLockUser)} — read-only</span
+            >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
@@ -1273,24 +1325,10 @@
         >
           Submit corrections
         </button>
-        {#if !commentsPanel.open}
-          <button
-            type="button"
-            class="btn"
-            title="Show the comments panel"
-            onclick={() => {
-              commentsPanel.open = true;
-              writeSidePanel("comments", { ...commentsPanel });
-            }}
-          >
-            <PanelIcon />
-            Comments
-          </button>
-        {/if}
       </div>
 
       {#if failComments.length > 0}
-        <div class="sb-section">
+        <div class="tbsection">
           <span class="sb-label">Fail comments</span>
           {#each failComments as c (c.comment_id)}
             <div class="failnote" class:resolved={c.resolved === "true"}>
@@ -1306,18 +1344,8 @@
         </div>
       {/if}
 
-      {#if canEdit}
-        <div class="sb-section">
-          <span class="sb-label">Edit</span>
-          <div class="sb-row two">
-            <button type="button" class="btn" onclick={() => undo()} disabled={!canUndo} title="Undo the last change (Ctrl/Cmd+Z)">↶ Undo</button>
-            <button type="button" class="btn" onclick={() => redo()} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo ↷</button>
-          </div>
-        </div>
-      {/if}
-
       {#if validation && submitted}
-        <div class="sb-section sb-validation">
+        <div class="tbsection sb-validation">
           <span class="sb-label">Validation</span>
           <span class="vstatus">
             {#if validation.status === "completed"}
@@ -1391,15 +1419,8 @@
           {/if}
         </div>
       {/if}
-
-      <div class="sb-foot">
-        {#if canEdit}
-          <p>drag on the page to draw a measure · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)</p>
-        {/if}
-        <p>⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages</p>
-        <p><span class="legend-mdiv">purple = movement start</span></p>
       </div>
-    </aside>
+    {/snippet}
 
     {#if tables}
       <PieceCommentsPanel
@@ -1408,6 +1429,7 @@
         {viewer}
         {runner}
         bind:panel={commentsPanel}
+        header={taskBox}
         onanchor={showAnchorFor}
         oncomment={postComment}
         onresolve={resolveCommentRow}
@@ -1434,9 +1456,10 @@
     text-decoration: underline;
   }
 
-  /* The whole tool: a sidebar with the task info and controls, and the desk
-     the page sheets float on (the only scrolling region). The app's
-     navigation bar and footer come from the layout, as on every other page. */
+  /* The whole tool: the desk the page sheets float on (the only scrolling
+     region), with the comments panel — carrying the task box — beside it.
+     The app's navigation bar and footer come from the layout, as on every
+     other page. */
   .corrector {
     flex: 1;
     min-height: 0;
@@ -1450,31 +1473,34 @@
     margin: 12px 16px 12px 0;
   }
 
-  /* ---------------------------------------------------------------- sidebar
-     A column of ruled-off sections on the right: task, edit, zoom, pages,
-     validation, and the hints/legend foot. */
-  .sidebar {
-    flex: none;
-    width: 264px;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--card) 75%, transparent);
-    border-left: 1px solid var(--line);
-    overflow-y: auto;
+  /* --------------------------------------------------------------- task box
+     The task's status, actions and validation controls, pinned at the top of
+     the comments panel. The tint follows the panel's piece colour (--zone). */
+  .taskbox {
+    background: var(--card);
+    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
-  .sb-section {
+  .tbhead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: color-mix(in srgb, var(--zone) 10%, var(--card));
+    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
+    padding: 9px 12px;
+  }
+  .tbsection {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-    padding: 12px 0;
-    border-top: 1px solid var(--line);
+    padding: 10px 12px;
   }
-  .sb-section:first-child {
-    border-top: 0;
-    padding-top: 4px;
+  .tbsection + .tbsection {
+    border-top: 1px solid var(--line);
   }
   .sb-label {
     font-size: 10.5px;
@@ -1483,14 +1509,8 @@
     text-transform: uppercase;
     color: var(--ink-faint);
   }
-  .sb-title {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
   .abtitle {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
   }
@@ -1520,16 +1540,12 @@
     gap: 6px;
   }
   .sb-row.one,
-  .sb-row.two,
   .sb-row.three {
     display: grid;
     grid-template-columns: repeat(var(--cells), 1fr);
   }
   .sb-row.one {
     --cells: 1;
-  }
-  .sb-row.two {
-    --cells: 2;
   }
   .sb-row.three {
     --cells: 3;
@@ -1607,19 +1623,21 @@
     background: var(--card);
     color: var(--ink);
   }
-  /* The hints and colour legend, pinned to the sidebar's bottom. */
-  .sb-foot {
-    margin-top: auto;
-    border-top: 1px solid var(--line);
-    padding-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    font-size: 11.5px;
-    color: var(--ink-faint);
-  }
-  .sb-foot p {
-    margin: 0;
+  /* The toolbar's help icon; its title carries the hints and colour legend. */
+  .helpico {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--line-input);
+    background: var(--card);
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
   }
 
   /* Banner styles are shared app-wide in ui.css. */
@@ -1864,9 +1882,5 @@
     color: var(--danger);
     background: var(--danger-bg);
     border: 1px solid var(--danger-line);
-  }
-  .legend-mdiv {
-    color: var(--pre);
-    font-weight: 600;
   }
 </style>

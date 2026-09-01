@@ -1,10 +1,10 @@
 <!--
   The review view: a full-screen surface for validating an encoding task. The
-  score fills the window, facsimile and rendered encoding side by side, and a
-  resizable rail on the right carries the validation record with the verdict
-  controls and the task's discussion. Clicking a measure in either pane
-  highlights it in both and prefills the fail form's anchor. Pre-tasks are
-  reviewed in their own editors, not here.
+  score fills the window, facsimile and rendered encoding side by side, and
+  the comments panel on the right carries the task box — the validation
+  record with the verdict controls — pinned above the piece's discussion.
+  Clicking a measure in either pane highlights it in both and prefills the
+  fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
   import { page } from "$app/state";
@@ -28,7 +28,6 @@
   import { preTaskRoute, statusPill } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { readDockLayout, writeDockLayout, DOCK_MIN } from "$lib/preview-dock.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
@@ -133,30 +132,6 @@
     allowSelfValidation,
     canPush,
   });
-
-  // The rail's width, persisted per browser; dragging the grip resizes it.
-  let railWidth = $state(readDockLayout("review").width);
-  let resizing = $state(false);
-  const clampWidth = (w: number) =>
-    Math.round(
-      Math.min(Math.max(DOCK_MIN, window.innerWidth - 480), Math.max(DOCK_MIN, w)),
-    );
-  function startResize(e: PointerEvent) {
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    resizing = true;
-  }
-  function moveResize(e: PointerEvent) {
-    if (!resizing) return;
-    railWidth = clampWidth(window.innerWidth - e.clientX);
-  }
-  function endResize() {
-    if (!resizing) return;
-    resizing = false;
-    writeDockLayout("review", {
-      ...readDockLayout("review"),
-      width: railWidth,
-    });
-  }
 
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo }, { meiFriendUrl });
@@ -382,6 +357,57 @@
       </span>
     </div>
   {:else}
+    {#snippet reopenComments()}
+      {#if !commentsPanel.open}
+        <button
+          type="button"
+          class="btn"
+          title="Show the comments panel with the verdict controls"
+          onclick={() => {
+            commentsPanel.open = true;
+            writeSidePanel("comments", { ...commentsPanel });
+          }}
+        >
+          <PanelIcon />
+          Comments
+        </button>
+      {/if}
+    {/snippet}
+    {#snippet taskBox()}
+      <div class="taskbox" aria-label={`Review ${card.title}`}>
+        <div class="tbhead">
+          <span class="tbtitle">{card.title}</span>
+          <span class="taskchip"
+            >{card.task}{taskDef.locator ? ` · ${taskDef.locator}` : ""}</span
+          >
+        </div>
+        <TaskRunState task={taskId} bar />
+        {@render resultBanner()}
+        <div class="tbstatus">
+          <span class="pill s-{card.statusKey}">
+            {card.statusKey === "validation_required"
+              ? `validation · ${card.passes} of ${card.threshold} passes`
+              : statusPill(card.statusKey, card.pre)}
+          </span>
+        </div>
+        <div class="tbrecord">
+          <ValidationRecord
+            {card}
+            {comments}
+            {viewer}
+            {logins}
+            {canPush}
+            {runner}
+            {prefill}
+            onshowanchor={showAnchorFor}
+            onclaim={claim}
+            onvalidate={validate}
+            onresolve={resolveCommentRow}
+            onsendback={sendBackTask}
+          />
+        </div>
+      </div>
+    {/snippet}
     <div class="scorecol">
       {#if !auth.user}
         <div class="banner warn">
@@ -405,73 +431,22 @@
           {anchor}
           initialPane="both"
           onmeasureselect={(label) => (selectedMeasure = label)}
+          trailing={reopenComments}
         />
       {:else}
-        <p class="msg perr">No score file is recorded for {card.task}.</p>
+        <p class="msg perr">
+          No score file is recorded for {card.task}.
+          {@render reopenComments()}
+        </p>
       {/if}
     </div>
-    <div
-      class="grip"
-      class:active={resizing}
-      onpointerdown={startResize}
-      onpointermove={moveResize}
-      onpointerup={endResize}
-      onpointercancel={endResize}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize the review rail"
-    ></div>
-    <aside class="rail" style={`width:${railWidth}px`} aria-label={`Review ${card.title}`}>
-      {@render resultBanner()}
-      <TaskRunState task={taskId} bar />
-      <div class="rhead">
-        <span class="rtitle">{card.title}</span>
-        <span class="taskchip"
-          >{card.task}{taskDef.locator ? ` · ${taskDef.locator}` : ""}</span
-        >
-        <span class="pill s-{card.statusKey}">
-          {card.statusKey === "validation_required"
-            ? `validation · ${card.passes} of ${card.threshold} passes`
-            : statusPill(card.statusKey, card.pre)}
-        </span>
-        {#if !commentsPanel.open}
-          <button
-            type="button"
-            class="btn"
-            title="Show the comments panel"
-            onclick={() => {
-              commentsPanel.open = true;
-              writeSidePanel("comments", { ...commentsPanel });
-            }}
-          >
-            <PanelIcon />
-            Comments
-          </button>
-        {/if}
-      </div>
-      <div class="rail-scroll">
-        <ValidationRecord
-          {card}
-          {comments}
-          {viewer}
-          {logins}
-          {canPush}
-          {runner}
-          {prefill}
-          onshowanchor={showAnchorFor}
-          onclaim={claim}
-          onvalidate={validate}
-          onresolve={resolveCommentRow}
-          onsendback={sendBackTask}
-        />
-      </div>
-    </aside>
     <PieceCommentsPanel
       tables={panelTables}
       {taskId}
       {viewer}
       {runner}
       bind:panel={commentsPanel}
+      header={taskBox}
       onanchor={showAnchorFor}
       oncomment={postComment}
       onresolve={resolveCommentRow}
@@ -506,8 +481,8 @@
     color: var(--danger);
   }
 
-  /* The whole view: the score with the rail beside it, filling the window
-     under the navigation bar. */
+  /* The whole view: the score with the comments panel beside it, filling the
+     window under the navigation bar. */
   .review {
     flex: 1;
     min-height: 0;
@@ -527,80 +502,51 @@
     flex-direction: column;
   }
 
-  /* ------------------------------------------------------------------ rail */
-  .rail {
-    flex: 0 1 auto;
-    min-width: 300px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+  /* -------------------------------------------------------------- task box
+     The task's record and verdict controls, pinned at the top of the
+     comments panel. The tint follows the panel's piece colour (--zone). */
+  .taskbox {
     background: var(--card);
-    border-left: 1px solid var(--line);
+    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
-  .rail :global(.banner) {
+  .taskbox :global(.banner) {
     border-radius: 0;
     box-shadow: none;
+    margin: 0;
   }
-  .rhead {
-    flex: none;
+  .tbhead {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--zone) 10%, var(--card));
+    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
+    padding: 9px 12px;
   }
-  .rtitle {
-    font-size: 14px;
+  .tbtitle {
+    font-size: 12px;
     font-weight: 600;
   }
   .taskchip {
-    font-size: 12px;
+    font-size: 11px;
     font-family: ui-monospace, Menlo, monospace;
     background: var(--bg-tint);
     border-radius: 5px;
     padding: 2px 7px;
     white-space: nowrap;
   }
-  .rail-scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 16px 20px 6px;
+  .tbstatus {
     display: flex;
-    flex-direction: column;
-    gap: 14px;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
   }
-
-  /* ------------------------------------------------------------------ grip */
-  .grip {
-    flex: none;
-    width: 6px;
-    cursor: col-resize;
-    touch-action: none;
-    position: relative;
-  }
-  .grip:hover,
-  .grip.active {
-    background: color-mix(in srgb, var(--accent) 35%, transparent);
-  }
-  /* The embossed double line marking the handle as draggable. */
-  .grip::before,
-  .grip::after {
-    content: "";
-    position: absolute;
-    border-radius: 1px;
-    background: var(--line-strong);
-    width: 1px;
-    height: 40px;
-    top: calc(50% - 20px);
-    box-shadow: 1px 0 0 var(--card);
-  }
-  .grip::before {
-    left: 1px;
-  }
-  .grip::after {
-    left: 4px;
+  .tbrecord {
+    padding: 0 12px 10px;
   }
 
   /* ---------------------------------------------------------------- pills */

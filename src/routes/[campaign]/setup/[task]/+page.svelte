@@ -904,17 +904,40 @@
             initialPane="facs"
             initialZones={false}
             {anchor}
-          />
+          >
+            {#snippet trailing()}
+              {#if !commentsPanel.open}
+                <button
+                  type="button"
+                  class="btn"
+                  title="Show the comments panel with the task's controls"
+                  onclick={() => {
+                    commentsPanel.open = true;
+                    writeSidePanel("comments", { ...commentsPanel });
+                  }}
+                >
+                  <PanelIcon />
+                  Comments
+                </button>
+              {/if}
+            {/snippet}
+          </ScorePreview>
         </div>
       </div>
     </div>
 
-    <aside class="sidebar">
-      <div class="sb-section">
-        <div class="sb-title">
+    {#snippet taskBox()}
+      <!-- The snippet renders only while `data` is loaded (see its host). -->
+      {@const d = data!}
+      <div class="taskbox">
+        <div
+          class="tbhead"
+          title="Every encoding task of this piece waits for this setup."
+        >
           <span class="abtitle">Score setup</span>
           <code class="taskchip">{taskId}</code>
         </div>
+        <div class="tbsection">
         <span class="abcount">
           {staves.length} stave{staves.length === 1 ? "" : "s"}
           · {meterType === "numeric"
@@ -925,19 +948,19 @@
         </span>
         {#if canEdit}
           <span class="lockpill ok">you hold this task</span>
-        {:else if data.status === "completed"}
+        {:else if d.status === "completed"}
           <span class="lockpill grey">completed — read-only</span>
-        {:else if data.status !== "encoding_required"}
+        {:else if d.status !== "encoding_required"}
           {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
             <span class="lockpill red">validation failed — read-only</span>
           {:else}
             <span class="lockpill amber">submitted — awaiting validation, read-only</span>
           {/if}
-        {:else if data.blockedBy}
-          <span class="lockpill grey">waits for {data.blockedBy} — read-only</span>
-        {:else if data.encodingLockUser}
+        {:else if d.blockedBy}
+          <span class="lockpill grey">waits for {d.blockedBy} — read-only</span>
+        {:else if d.encodingLockUser}
           <span class="lockpill amber"
-            >claimed by @{handle(logins, data.encodingLockUser)} — read-only</span
+            >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
@@ -952,24 +975,10 @@
         >
           Submit setup
         </button>
-        {#if !commentsPanel.open}
-          <button
-            type="button"
-            class="btn"
-            title="Show the comments panel"
-            onclick={() => {
-              commentsPanel.open = true;
-              writeSidePanel("comments", { ...commentsPanel });
-            }}
-          >
-            <PanelIcon />
-            Comments
-          </button>
-        {/if}
       </div>
 
       {#if failComments.length > 0}
-        <div class="sb-section">
+        <div class="tbsection">
           <span class="sb-label">Fail comments</span>
           {#each failComments as c (c.comment_id)}
             <div class="failnote" class:resolved={c.resolved === "true"}>
@@ -986,7 +995,7 @@
       {/if}
 
       {#if validation && submitted}
-        <div class="sb-section sb-validation">
+        <div class="tbsection sb-validation">
           <span class="sb-label">Validation</span>
           <span class="vstatus">
             {#if validation.status === "completed"}
@@ -1060,11 +1069,8 @@
           {/if}
         </div>
       {/if}
-
-      <div class="sb-foot">
-        <p>Every encoding task of this piece waits for this setup.</p>
       </div>
-    </aside>
+    {/snippet}
 
     {#if tables}
       <PieceCommentsPanel
@@ -1073,6 +1079,7 @@
         {viewer}
         {runner}
         bind:panel={commentsPanel}
+        header={taskBox}
         onanchor={showAnchorFor}
         oncomment={postComment}
         onresolve={resolveCommentRow}
@@ -1099,9 +1106,9 @@
     text-decoration: underline;
   }
 
-  /* The whole tool: the form and its preview on the desk, a sidebar with the
-     task info and controls on the right. The app's navigation bar and footer
-     come from the layout, as on every other page. */
+  /* The whole tool: the form and its preview on the desk, with the comments
+     panel — carrying the task box — beside it. The app's navigation bar and
+     footer come from the layout, as on every other page. */
   .corrector {
     flex: 1;
     min-height: 0;
@@ -1308,31 +1315,34 @@
     height: auto;
   }
 
-  /* ---------------------------------------------------------------- sidebar
-     A column of ruled-off sections on the right: task, fail comments,
-     validation, and the foot note. */
-  .sidebar {
-    flex: none;
-    width: 264px;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    padding: 12px 16px;
-    background: color-mix(in srgb, var(--card) 75%, transparent);
-    border-left: 1px solid var(--line);
-    overflow-y: auto;
+  /* --------------------------------------------------------------- task box
+     The task's status, actions and validation controls, pinned at the top of
+     the comments panel. The tint follows the panel's piece colour (--zone). */
+  .taskbox {
+    background: var(--card);
+    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
-  .sb-section {
+  .tbhead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: color-mix(in srgb, var(--zone) 10%, var(--card));
+    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
+    padding: 9px 12px;
+  }
+  .tbsection {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-    padding: 12px 0;
-    border-top: 1px solid var(--line);
+    padding: 10px 12px;
   }
-  .sb-section:first-child {
-    border-top: 0;
-    padding-top: 4px;
+  .tbsection + .tbsection {
+    border-top: 1px solid var(--line);
   }
   .sb-label {
     font-size: 10.5px;
@@ -1341,14 +1351,8 @@
     text-transform: uppercase;
     color: var(--ink-faint);
   }
-  .sb-title {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
   .abtitle {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
   }
@@ -1478,18 +1482,5 @@
   }
   .sendbackbtn {
     align-self: stretch;
-  }
-  .sb-foot {
-    margin-top: auto;
-    border-top: 1px solid var(--line);
-    padding-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    font-size: 11.5px;
-    color: var(--ink-faint);
-  }
-  .sb-foot p {
-    margin: 0;
   }
 </style>

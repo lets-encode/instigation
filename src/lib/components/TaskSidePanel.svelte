@@ -179,7 +179,6 @@
   ></div>
   <aside class="tsp" style="--zone: var(--zone-{zone})" aria-label={`Task ${card.title}`}>
     {@render resultBanner()}
-    <div class="tspscroll">
     <div class="taskcard">
       <div class="tsphead">
         <span class="dot"></span>
@@ -339,6 +338,7 @@
       {/if}
     </div>
 
+    <div class="tspscroll">
     <span class="sechead" class:review={isReview}>
       <span class="secdot"></span>
       Discussion
@@ -379,8 +379,8 @@
 </div>
 
 <style>
-  /* The panel runs the full row height; its middle scrolls and the composer
-     stays pinned at the bottom. */
+  /* The panel runs the full row height; the task card stays pinned on top,
+     the discussion scrolls and the composer stays pinned at the bottom. */
   .tspwrap {
     flex: none;
     display: flex;
@@ -448,12 +448,16 @@
     margin: 0;
   }
 
+  /* Pinned above the discussion; past its share of the panel it scrolls on
+     its own so the verdict controls stay in reach. */
   .taskcard {
     flex: none;
+    max-height: 55%;
     background: var(--card);
     border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
     border-radius: 12px;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     box-shadow: var(--shadow-sm);
   }
   .tsphead {

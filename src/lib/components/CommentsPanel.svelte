@@ -6,6 +6,7 @@
   button that reopens a closed panel.
 -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
   import { buildThreads } from "$lib/campaign-board.ts";
@@ -30,6 +31,7 @@
     composerHint = "",
     inScore = false,
     fitEmpty = false,
+    header,
     onanchor,
     oncomment,
     onresolve,
@@ -55,6 +57,9 @@
     inScore?: boolean;
     /** With no comments, take the content's height instead of the row's. */
     fitEmpty?: boolean;
+    /** Pinned above the comment list (e.g. a task's record and controls);
+        scrolls on its own when taller than its share of the panel. */
+    header?: Snippet;
     /** Show a comment's measure range in the score. */
     onanchor: (comment: CommentRow) => void;
     oncomment: (
@@ -155,6 +160,9 @@
           <PanelIcon />
         </button>
       </div>
+      {#if header}
+        <div class="pinhead">{@render header()}</div>
+      {/if}
       <div class="clist">
         {#each sections as s (s.card.task)}
           <div class="sechead" class:review={isReview(s.card)}>
@@ -319,6 +327,13 @@
     cursor: pointer;
     flex: none;
     padding: 0;
+  }
+  /* The pinned header keeps its controls in reach while the list scrolls;
+     past its share of the panel it scrolls on its own. */
+  .pinhead {
+    flex: none;
+    max-height: 55%;
+    overflow-y: auto;
   }
   .clist {
     flex: 1;

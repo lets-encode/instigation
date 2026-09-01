@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.27.0 – 2026-09-01
+
+- The review, zones and setup pages lose their sidebars: the task's status, actions and validation controls sit in a task box pinned at the top of the comments panel.
+- The task panel on the campaign page pins its task card above the scrolling discussion.
+- Zones editor: undo/redo moved into the toolbar; the hints and legend sit behind a help icon.
+
 ## 0.26.0 – 2026-09-01
 
 - Volunteer board recomposed: centred layout, large next-task page preview, task types, per-task progress cells, contributors and last merge in the header.

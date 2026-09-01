@@ -6,6 +6,7 @@
   reopens a closed panel.
 -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CampaignTables } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
@@ -35,6 +36,7 @@
     viewer,
     runner,
     panel = $bindable(),
+    header,
     onanchor,
     oncomment,
     onresolve,
@@ -45,6 +47,8 @@
     viewer: string;
     runner: CommandRunner;
     panel: SidePanelState;
+    /** Pinned above the comment list (see CommentsPanel). */
+    header?: Snippet;
     /** Show a comment's measure range in the editor's own viewer. */
     onanchor: (comment: CommentRow) => void;
     oncomment: (
@@ -112,6 +116,7 @@
   bind:panel
   targetTask={taskId}
   inScore
+  {header}
   {onanchor}
   {oncomment}
   {onresolve}
