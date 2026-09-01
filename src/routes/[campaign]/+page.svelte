@@ -1238,7 +1238,7 @@
               {#if stripPreview?.incipit}
                 {@html stripPreview.incipit}
               {:else if stripPreview?.incipitPending}
-                <span class="ctxincnote">incipit appears after score setup</span>
+                <span class="ctxincnote">incipit appears after the preparation tasks</span>
               {/if}
             </div>
             <button

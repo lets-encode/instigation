@@ -4,10 +4,11 @@
 // can pull one user's work out of them. Derivations are pure functions of the
 // tables; loadCampaignStats does the fetching and caches per repo id.
 
-import { blockedBy, taskThreshold } from './campaign-graph.ts';
+import { blockedBy, buildGraph, isPreTask, taskThreshold } from './campaign-graph.ts';
 import type { GraphData } from './campaign-graph.ts';
 import { cardTitle } from './campaign-board.ts';
 import {
+	configFlag,
 	configNumber,
 	configPieces,
 	passThresholdOf,
@@ -56,10 +57,12 @@ export interface CampaignStats {
 	logins: Record<string, string>;
 	/** ISO timestamp of the last history entry; '' when there is none. */
 	lastActivity: string;
-	/** ISO timestamp of the first history entry (campaign start); '' unknown. */
+	/** The repository's creation time (first history entry as fallback); '' unknown. */
 	createdAt: string;
 	/** locking.stale_after_minutes from config.yaml. */
 	staleAfterMinutes: number;
+	/** validation.allow_self_validation from config.yaml. */
+	allowSelfValidation: boolean;
 	/** A facsimile page image for the tile preview, or null. */
 	preview: { url: string; page: number } | null;
 	/** Fragment path → piece display name, from the config's pieces list. */
@@ -107,6 +110,88 @@ export function validationReadyCount(
 // A campaign counts as nearly done from 80% task completion.
 export const isNearlyDone = (done: number, total: number): boolean =>
 	total > 0 && done < total && done / total >= 0.8;
+
+/** A campaign's suggested next task on the overview listing. */
+export interface NextTask {
+	task: string;
+	title: string;
+	locator: string;
+	pre: boolean;
+	/**
+	 * What acting on the task means for the viewer: claim the encoding, claim
+	 * the open review slot, or continue work they already hold. '' when the
+	 * task is open to others but not this viewer — shown without an action.
+	 */
+	action: 'encode' | 'review' | 'continue' | '';
+	/** The open review slot's subtask id (action 'review'); '' otherwise. */
+	subtask: string;
+	/** The work's stage, for labelling the suggestion. */
+	kind: 'score setup' | 'measure correction' | 'encoding' | 'validation';
+}
+
+const workKind = (locator: string): NextTask['kind'] =>
+	locator === 'score-setup'
+		? 'score setup'
+		: locator === 'measure-zones'
+			? 'measure correction'
+			: 'encoding';
+
+/**
+ * The campaign's suggested next task: the first task the viewer can act on
+ * (work they hold, an open encoding claim, or a validation slot they may
+ * take), else the first task open to anyone — for logged-out viewers, and for
+ * viewers the remaining open tasks are closed to. Null when nothing is open.
+ */
+export function nextTask(stats: CampaignStats, viewer: string): NextTask | null {
+	const d: GraphData = {
+		taskDefs: stats.taskDefs,
+		rows: stats.rows,
+		validationColumns: stats.validationColumns,
+		locks: stats.locks,
+		passThreshold: stats.passThreshold,
+		allowSelfValidation: stats.allowSelfValidation
+	};
+	const nodes = buildGraph(d, viewer);
+	const describe = (task: string): Omit<NextTask, 'action' | 'subtask' | 'kind'> => {
+		const def = findRow(stats.taskDefs, task, '');
+		const locator = def?.locator ?? '';
+		return {
+			task,
+			title: def ? cardTitle(def.fragment, locator, stats.pieceNames) : task,
+			locator,
+			pre: isPreTask(locator)
+		};
+	};
+	const mine = nodes.find((n) => n.nextUp);
+	if (mine) {
+		const base = describe(mine.task);
+		if (mine.statusKey === 'encoding_required')
+			return { ...base, action: 'encode', subtask: '', kind: workKind(base.locator) };
+		const slot = mine.slots.find((s) => s.claimable);
+		if (slot) return { ...base, action: 'review', subtask: slot.sub, kind: 'validation' };
+		// Held work: the lock says whether the viewer encodes or validates.
+		const held = stats.locks.find((l) => l.task_id === mine.task && l.user_id === viewer);
+		return {
+			...base,
+			action: 'continue',
+			subtask: '',
+			kind: held?.kind === 'validation' ? 'validation' : workKind(base.locator)
+		};
+	}
+	const open = nodes.find(
+		(n) =>
+			n.statusKey === 'encoding_required' ||
+			(n.statusKey === 'validation_required' && n.slots.some((s) => s.key === 'open'))
+	);
+	if (!open) return null;
+	const base = describe(open.task);
+	return {
+		...base,
+		action: '',
+		subtask: '',
+		kind: open.statusKey === 'validation_required' ? 'validation' : workKind(base.locator)
+	};
+}
 
 // ---------------------------------------------------------------------------
 // Fetching
@@ -270,8 +355,9 @@ async function fetchStats(
 		contributorIds,
 		logins,
 		lastActivity: history.at(-1)?.timestamp ?? '',
-		createdAt: history[0]?.timestamp ?? '',
+		createdAt: summary.created_at || history[0]?.timestamp || '',
 		staleAfterMinutes,
+		allowSelfValidation: configFlag(yaml, 'allow_self_validation'),
 		preview: null,
 		pieceNames: pieceNamesOf(configPieces(yaml)),
 		taskDefs,

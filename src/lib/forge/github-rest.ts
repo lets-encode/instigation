@@ -369,6 +369,7 @@ export interface RepoSummary {
 	private: boolean;
 	description: string | null;
 	updated_at: string;
+	created_at: string;
 }
 
 /** A repo's stable numeric id resolved to its current owner/name. */
@@ -1302,6 +1303,7 @@ export async function searchReposByTopic(topic: string, token?: string): Promise
 		private: boolean;
 		description: string | null;
 		updated_at: string;
+		created_at: string;
 	};
 	const items: SearchItem[] = [];
 	// The search API pages at 100 results and serves at most 1,000 (10 pages).
@@ -1323,6 +1325,7 @@ export async function searchReposByTopic(topic: string, token?: string): Promise
 		html_url: r.html_url,
 		private: r.private,
 		description: r.description,
-		updated_at: r.updated_at
+		updated_at: r.updated_at,
+		created_at: r.created_at
 	}));
 }

@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- A campaign's creation time now comes from the repository, so the NEW tag and the newest sort work before any task activity (previously both derived from the first history entry).
+- Campaign overview redesign: the grid of tiles is now a list of full-width rows — facsimile spine, title/byline/progress, incipit strip, and the campaign's suggested next task, claimable in place (encoding claims open mei-friend, review claims land on the review; work the viewer holds shows Continue). One search & filter bar (All / Open to claim / Nearly done / Yours, sort select) replaces the sort segments, open-tasks switch and pager; "Show n more" pages the list. Logged out, rows are link-only.
 - The score setup, measure correction and review viewers carry the piece's comments panel beside their task controls; the review viewer's old discussion list and composer are gone.
 - Score view fits the window: the panes scroll to the page bottom and the comments composer stays visible; the panes area got rounded corners.
 - Full-page score view at ?score=<piece> (with optional ?page=), replacing the score dock: the top bar backs out to the campaign, the piece-scoped comments panel sits beside the score, comment anchors turn to their page and highlight the range, and measure selection targets the composer — a comment posted then carries the selected measure as its anchor. Back/forward navigate it; an open task's ?task= survives the round trip, and its panel links to the score at the task's page.

@@ -115,7 +115,8 @@ test('searchReposByTopic reads every search page', async (t) => {
 		html_url: `https://example.test/repo-${i}`,
 		private: false,
 		description: null,
-		updated_at: '2026-08-14T00:00:00Z'
+		updated_at: '2026-08-14T00:00:00Z',
+		created_at: '2026-08-01T00:00:00Z'
 	});
 	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
 		const url = String(input);

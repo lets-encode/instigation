@@ -8,6 +8,7 @@ import {
 	isNearlyDone,
 	loadAllCampaignStats,
 	myTasksIn,
+	nextTask,
 	readyCount,
 	validationReadyCount
 } from '../campaign-stats.ts';
@@ -73,6 +74,7 @@ const stats: CampaignStats = {
 	lastActivity: '',
 	createdAt: '',
 	staleAfterMinutes: 120,
+	allowSelfValidation: false,
 	preview: null,
 	pieceNames: {},
 	taskDefs,
@@ -146,6 +148,70 @@ test('myTasksIn includes held validation claims with the reaper-derived expiry',
 	assert.equal(validating?.expiresAt, '2026-08-01T12:00:00.000Z');
 });
 
+test('nextTask: an open validation slot the viewer may take → review', () => {
+	// T0001 is locked, T0002 blocked; T0003 is the first open review slot.
+	const next = nextTask(stats, '5');
+	assert.equal(next?.task, 'T0003');
+	assert.equal(next?.action, 'review');
+	assert.equal(next?.subtask, 'S0001');
+	assert.equal(next?.title, 'a · p. 3');
+	assert.equal(next?.kind, 'validation');
+});
+
+test('nextTask: an unclaimed, unblocked encoding task → encode', () => {
+	const unlocked = { ...stats, locks: [] };
+	const next = nextTask(unlocked, '5');
+	assert.equal(next?.task, 'T0001');
+	assert.equal(next?.action, 'encode');
+	assert.equal(next?.pre, false);
+	assert.equal(next?.kind, 'encoding');
+});
+
+test("nextTask: work the viewer already holds → continue, not a claim", () => {
+	// 7 holds T0001's encoding claim.
+	const next = nextTask(stats, '7');
+	assert.equal(next?.task, 'T0001');
+	assert.equal(next?.action, 'continue');
+	assert.equal(next?.kind, 'encoding');
+	// A held validation claim reads as validation.
+	const reviewing = {
+		...stats,
+		locks: parseLockCsv(
+			LOCK_HEADER +
+				'T0001,,7,2026-08-01T10:00:00Z,encoding\n' +
+				'T0003,S0001,9,2026-08-01T10:00:00Z,validation\n'
+		)
+	};
+	assert.equal(nextTask(reviewing, '9')?.kind, 'validation');
+});
+
+test('nextTask: tasks open only to others show without an action', () => {
+	// 9 already recorded verdicts on T0003 and T0004 and may not validate again.
+	const next = nextTask(stats, '9');
+	assert.equal(next?.task, 'T0003');
+	assert.equal(next?.action, '');
+	// With self-validation allowed, the slot opens up for 9 again.
+	const selfOk = { ...stats, allowSelfValidation: true };
+	assert.equal(nextTask(selfOk, '9')?.action, 'review');
+});
+
+test('nextTask: logged out, the first task open to anyone, without an action', () => {
+	const next = nextTask(stats, '');
+	assert.equal(next?.task, 'T0003');
+	assert.equal(next?.action, '');
+	assert.equal(next?.kind, 'validation');
+});
+
+test('nextTask: nothing open → null', () => {
+	const finished = {
+		...stats,
+		rows: stats.rows.map((r) => ({ ...r, status: 'completed' })),
+		locks: []
+	};
+	assert.equal(nextTask(finished, '5'), null);
+	assert.equal(nextTask(finished, ''), null);
+});
+
 // A minimal forge for the listing loader: a topic search result plus a
 // per-repo file reader. Repo ids must be unique per test — loadCampaignStats
 // caches by id for the session.
@@ -157,7 +223,8 @@ const summary = (id: number, name: string): RepoSummary => ({
 	html_url: `https://github.com/o/${name}`,
 	private: false,
 	description: null,
-	updated_at: ''
+	updated_at: '',
+	created_at: ''
 });
 const fakeForge = (
 	repos: RepoSummary[],

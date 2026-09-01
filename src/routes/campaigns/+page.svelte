@@ -1,12 +1,14 @@
 <!--
   The main screen — the app's only dashboard. Top to bottom, for a logged-in
   viewer: what needs their attention (fix requests and unresolved comments on
-  their work), their open work, every campaign in a searchable grid (their own
-  campaigns first, in amber), and unfinished wizard drafts. Logged out, only
-  the grid renders. Campaign creation lives behind the top bar's New campaign
-  button. One stats load serves the whole screen.
+  their work), their open work, every campaign as a searchable list of
+  full-width rows (each carrying its suggested next task, claimable in
+  place), and unfinished wizard drafts. Logged out, only the list renders.
+  Campaign creation lives behind the top bar's New campaign button. One stats
+  load serves the whole screen.
 -->
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { auth, login } from "$lib/auth.svelte.ts";
   import {
     CommandRunner,
@@ -17,7 +19,7 @@
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { elapsed } from "$lib/campaign-board.ts";
-  import { handle } from "$lib/campaign-graph.ts";
+  import { handle, preTaskRoute } from "$lib/campaign-graph.ts";
   import {
     commentsOnMyWork,
     invalidateStats,
@@ -29,8 +31,9 @@
     CampaignStats,
     FeedComment,
     MyTask,
+    NextTask,
   } from "$lib/campaign-stats.ts";
-  import CampaignCard from "$lib/components/CampaignCard.svelte";
+  import CampaignRow from "$lib/components/CampaignRow.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -130,14 +133,16 @@
   // ------------------------------------------------------------ commands
   const runner = new CommandRunner();
 
-  const ctxFor = (t: MyTask): CommandContext | null => {
-    const s = stats.find((x) => x.name === t.campaignSlug);
-    if (!s) return null;
-    return runner.context(
+  const ctxOf = (s: CampaignStats): CommandContext =>
+    runner.context(
       readForge(),
       { repoId: s.repoId, owner: s.owner, repo: s.repo },
       { meiFriendUrl },
     );
+
+  const ctxFor = (t: MyTask): CommandContext | null => {
+    const s = stats.find((x) => x.name === t.campaignSlug);
+    return s ? ctxOf(s) : null;
   };
 
   // Re-read one campaign's stats and swap its grid row in place, leaving the
@@ -154,6 +159,7 @@
         private: s.isPrivate,
         description: null,
         updated_at: "",
+        created_at: s.createdAt,
       });
       stats = stats.map((x) => (x.repoId === fresh.repoId ? fresh : x));
     } catch {
@@ -198,6 +204,47 @@
   const submit = (t: MyTask) =>
     run(t, (c) => invoke(commands.submitEncoding, { task_id: t.task }, c));
 
+  // Claim a campaign row's suggested next task. Encoding claims open
+  // mei-friend (a pre-task claims in its own editor instead); a clean review
+  // claim lands on the place the review happens.
+  async function claimNext(s: CampaignStats, next: NextTask) {
+    if (next.action === "encode" && next.pre) {
+      await goto(`/${s.name}/${preTaskRoute(next.locator)}/${next.task}`);
+      return;
+    }
+    const c = ctxOf(s);
+    const refresh = async () => {
+      runner.log.step("Refreshing…");
+      await refreshStats(s);
+    };
+    if (next.action === "encode") {
+      await runner.run(
+        () => invoke(commands.openEditor, { task_id: next.task }, c),
+        refresh,
+      );
+      if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+        window.open(runner.result.meiFriendUrl, "_blank", "noopener");
+      }
+    } else if (next.action === "review") {
+      await runner.run(
+        () =>
+          invoke(
+            commands.claimValidation,
+            { task_id: next.task, subtask_id: next.subtask },
+            c,
+          ),
+        refresh,
+      );
+      if (runner.result?.ok && !runner.result.warn) {
+        await goto(
+          next.pre
+            ? `/${s.name}/${preTaskRoute(next.locator)}/${next.task}`
+            : `/${s.name}/review/${next.task}`,
+        );
+      }
+    }
+  }
+
   const taskHref = (slug: string, task: string) =>
     `/${slug}?task=${encodeURIComponent(task)}`;
   const taskLine = (t: MyTask) => `${t.campaign} · ${t.task} · ${t.title}`;
@@ -216,50 +263,50 @@
     return `claim expires in ${hours} h`;
   };
 
-  // ------------------------------------------------------------- the grid
+  // ------------------------------------------------------------- the list
   let search = $state("");
-  let sort = $state<"active" | "newest" | "nearly">("active");
-  let openOnly = $state(false);
-  let pageNo = $state(1);
-  // A changed filter starts over from page 1.
+  let filter = $state<"all" | "open" | "nearly" | "yours">("all");
+  let sort = $state<"active" | "newest" | "progress">("active");
+  let visibleCount = $state(PER_PAGE);
+  // A changed search, filter or sort starts the listing over.
   $effect(() => {
     void search;
+    void filter;
     void sort;
-    void openOnly;
-    pageNo = 1;
+    visibleCount = PER_PAGE;
   });
 
   const matchesSearch = (s: CampaignStats) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
-    return [s.name, s.title, s.composer].some((v) =>
-      v.toLowerCase().includes(q),
+    return [s.name, s.title, s.composer, ...Object.values(s.pieceNames)].some(
+      (v) => v.toLowerCase().includes(q),
     );
   };
   const isOwned = (s: CampaignStats) =>
     Boolean(auth.user) && s.owner === auth.user!.login;
+  const matchesFilter = (s: CampaignStats) =>
+    filter === "open"
+      ? s.ready > 0 || s.toValidate > 0
+      : filter === "nearly"
+        ? s.nearlyDone
+        : filter === "yours"
+          ? isOwned(s)
+          : true;
   const filtered = $derived.by(() => {
-    const list = stats
-      .filter(matchesSearch)
-      .filter((s) => !openOnly || s.ready > 0);
+    const list = stats.filter(matchesSearch).filter(matchesFilter);
     const ts = (v: string) => Date.parse(v || "0") || 0;
     if (sort === "newest") list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
-    else if (sort === "nearly")
+    else if (sort === "progress")
       list.sort(
         (a, b) =>
           (b.total ? b.done / b.total : 0) - (a.total ? a.done / a.total : 0),
       );
     else list.sort((a, b) => ts(b.lastActivity) - ts(a.lastActivity));
-    // The viewer's own campaigns first, keeping the active sort within each
-    // half — sort() above is stable, and so is this partition.
-    return [...list.filter(isOwned), ...list.filter((s) => !isOwned(s))];
+    return list;
   });
-  const pages = $derived(Math.max(1, Math.ceil(filtered.length / PER_PAGE)));
-  const current = $derived(Math.min(pageNo, pages));
-  const shown = $derived(
-    filtered.slice((current - 1) * PER_PAGE, current * PER_PAGE),
-  );
-  const openCount = $derived(stats.filter((s) => s.ready > 0).length);
+  const shown = $derived(filtered.slice(0, visibleCount));
+  const more = $derived(filtered.length - shown.length);
 </script>
 
 {#if runner.busy && runner.overlay}
@@ -430,67 +477,48 @@
   {/if}
 
   <section class="block grow">
-    <div class="shead">
-      <div class="slabel">Campaigns</div>
-      <span class="smeta">{stats.length} · {openCount} with open tasks</span>
-      <div class="searchbox">
-        <span class="glass">⌕</span>
-        <input
-          type="text"
-          bind:value={search}
-          placeholder="Search work, composer, campaign…"
-          aria-label="Search campaigns"
-        />
-      </div>
-      <span class="spacer"></span>
+    <div class="filterbar">
+      <span class="glass">⌕</span>
+      <input
+        type="text"
+        bind:value={search}
+        placeholder="Search campaigns, composers, pieces…"
+        aria-label="Search campaigns"
+      />
       <div class="seg">
         <button
           type="button"
-          class:on={sort === "active"}
-          onclick={() => (sort = "active")}>Most active</button
+          class:on={filter === "all"}
+          onclick={() => (filter = "all")}>All</button
         >
         <button
           type="button"
-          class:on={sort === "newest"}
-          onclick={() => (sort = "newest")}>Newest</button
+          class:on={filter === "open"}
+          onclick={() => (filter = "open")}>Open to claim</button
         >
         <button
           type="button"
-          class:on={sort === "nearly"}
-          onclick={() => (sort = "nearly")}>Nearly done</button
+          class:on={filter === "nearly"}
+          onclick={() => (filter = "nearly")}>Nearly done</button
         >
-      </div>
-      <button
-        type="button"
-        class="chip-switch"
-        class:on={openOnly}
-        onclick={() => (openOnly = !openOnly)}
-        ><span class="sw"></span> Has open tasks</button
-      >
-      <span class="pager">
-        {#if filtered.length === 0}
-          0 of {stats.length}
-        {:else}
-          {(current - 1) * PER_PAGE + 1}–{Math.min(
-            current * PER_PAGE,
-            filtered.length,
-          )} of {filtered.length}
+        {#if auth.user}
+          <button
+            type="button"
+            class="yoursopt"
+            class:on={filter === "yours"}
+            onclick={() => (filter = "yours")}>Yours</button
+          >
         {/if}
-        <button
-          type="button"
-          class="btn btn-icon"
-          disabled={current === 1}
-          onclick={() => (pageNo = current - 1)}
-          aria-label="Previous page">‹</button
-        >
-        <button
-          type="button"
-          class="btn btn-icon"
-          disabled={current === pages}
-          onclick={() => (pageNo = current + 1)}
-          aria-label="Next page">›</button
-        >
-      </span>
+      </div>
+      <select class="sortsel" bind:value={sort} aria-label="Sort campaigns">
+        <option value="active">Sort: recently active</option>
+        <option value="newest">Sort: newest</option>
+        <option value="progress">Sort: most progress</option>
+      </select>
+    </div>
+    <div class="shead">
+      <div class="slabel">All campaigns</div>
+      <span class="countpill">{filtered.length}</span>
     </div>
     {#if listError}
       <p class="note">Couldn't load the campaigns: {listError}</p>
@@ -501,11 +529,30 @@
     {:else if shown.length === 0}
       <p class="note">No campaign matches.</p>
     {:else}
-      <div class="tiles">
+      <div class="shelf">
         {#each shown as s (s.repoId)}
-          <CampaignCard stats={s} owned={isOwned(s)} />
+          <CampaignRow
+            stats={s}
+            owned={isOwned(s)}
+            viewer={viewer ?? ""}
+            busy={runner.busy}
+            onact={claimNext}
+          />
         {/each}
       </div>
+      {#if more > 0}
+        <button
+          type="button"
+          class="showmore"
+          onclick={() => (visibleCount += PER_PAGE)}
+          >Show {Math.min(PER_PAGE, more)} more campaign{Math.min(
+            PER_PAGE,
+            more,
+          ) === 1
+            ? ""
+            : "s"} ▾</button
+        >
+      {/if}
     {/if}
     {#if !listError && listFailed > 0}
       <p class="note partial">
@@ -703,26 +750,25 @@
     color: var(--ok);
     font-weight: 600;
   }
-  .searchbox {
+  /* The one search & filter bar above the listing. */
+  .filterbar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: 340px;
-    max-width: 100%;
-    box-sizing: border-box;
+    gap: 12px;
     background: var(--card);
-    border: 1px solid var(--line-input);
+    border: 1px solid var(--line);
     border-radius: 999px;
-    padding: 6px 16px;
+    box-shadow: var(--shadow-sm);
+    padding: 8px 18px;
   }
-  .searchbox:focus-within {
+  .filterbar:focus-within {
     border-color: var(--accent);
   }
   .glass {
     color: var(--ink-faint);
     font-size: 14px;
   }
-  .searchbox input {
+  .filterbar input {
     flex: 1;
     min-width: 0;
     border: 0;
@@ -731,20 +777,49 @@
     background: transparent;
     color: var(--ink);
   }
-  .searchbox input::placeholder {
+  .filterbar input::placeholder {
     color: var(--ink-faint);
   }
-  .pager {
+  .yoursopt {
+    color: var(--owner);
+  }
+  .seg > button.yoursopt.on {
+    color: var(--owner);
+  }
+  .sortsel {
+    flex: none;
+    font: 600 12px var(--font);
+    color: var(--ink-soft);
+    background: var(--card);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  .countpill {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: var(--bg-tint);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+  .shelf {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--ink-faint);
+    flex-direction: column;
+    gap: 14px;
   }
-  .tiles {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 12px;
+  .showmore {
+    align-self: center;
+    font: 600 12.5px var(--font);
+    color: var(--link);
+    background: none;
+    border: 0;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .showmore:hover {
+    text-decoration: underline;
   }
   .login-hint {
     text-align: center;

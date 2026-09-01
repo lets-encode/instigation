@@ -57,6 +57,9 @@
      scanned scores keep their true contrast (decision: theme port). */
   --facsimile-paper: #ffffff;
 
+  /* The warm mat a facsimile thumbnail sits on (campaign listing spines). */
+  --mat: #e9e5da;
+
   /* Status colours for validation and result messages: one semantic set
      (success / warning / error / info), used everywhere a state is signalled —
      pills, chips, fail boxes, attention badges, validation dots, banners.
@@ -202,6 +205,8 @@
   /* Page scans stay light — they are paper — but warmed a step so they do not
      glare against the dark surfaces. */
   --facsimile-paper: #f2f0ea;
+
+  --mat: #272c3e;
   --invert-ink: #131828;
   --scrim: rgba(12, 14, 23, .66);
 
