@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.26.0 – 2026-09-01
+
+- Volunteer board recomposed: centred layout, large next-task page preview, task types, per-task progress cells, contributors and last merge in the header.
+- Comments and task panels share one width; the comments panel shrinks to its content while a piece has no comments.
+- Piece rows: "View score" button, larger thumbnails; a single piece stays expanded.
+
 ## 0.25.0 – 2026-09-01
 
 - Volunteer view rebuilt: the next task as a hero card with claim and preview actions, three suggested alternatives, expandable piece rows, and the piece-scoped comments panel (sectioned per task, measure anchors, resizable) beside it.

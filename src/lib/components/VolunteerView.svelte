@@ -73,6 +73,8 @@
 
   const tintOf = (i: number) => `--piece-tint: var(--zone-${(i % 8) + 1})`;
   const pieceName = (p: PieceRef) => p.title || p.id;
+  // A single-piece campaign keeps its one piece expanded, with a larger cover.
+  const lone = $derived(pieces.length === 1);
 
   const actLabel = (c: BoardCard): string => {
     if (c.column === "ready")
@@ -278,53 +280,63 @@
         <span class="seclabel c-pieces">Pieces</span>
         {#each pieces as piece, index (piece.path)}
           {@const p = progress.get(piece.path)}
-          {@const open = expandedPiece === piece.path}
-          <div class="piece" class:open style={tintOf(index)}>
-            <div
-              class="piecerow"
-              role="button"
-              tabindex="0"
-              onclick={() => toggle(piece.path)}
-              onkeydown={(e) => {
-                if (e.target !== e.currentTarget) return;
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  toggle(piece.path);
-                }
-              }}
-              title={open ? "Collapse this piece" : "Show this piece's tasks"}
-            >
-              {@render thumb(piece.path, "small")}
-              <span class="piecename">{pieceName(piece)}</span>
-              <div class="piecebar">
-                <div
-                  style={`width:${p?.total ? Math.round((p.done / p.total) * 100) : 0}%`}
-                ></div>
-              </div>
-              {#if p && p.total > 0 && p.done === p.total}
-                <span class="piecedone complete">✓ complete</span>
-              {:else}
-                <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
-              {/if}
-              <span class="vspacer"></span>
-              <button
-                type="button"
-                class="scorelink"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onviewscore(index);
-                }}
-                title="Show every page of this piece's score, without opening a task."
-                >score →</button
-              >
-              <span class="pchev">{open ? "▾" : "▸"}</span>
+          {@const open = lone || expandedPiece === piece.path}
+          {#snippet piecehead()}
+            {@render thumb(piece.path, lone ? "mid" : "small")}
+            <span class="piecename">{pieceName(piece)}</span>
+            <div class="piecebar">
+              <div
+                style={`width:${p?.total ? Math.round((p.done / p.total) * 100) : 0}%`}
+              ></div>
             </div>
+            {#if p && p.total > 0 && p.done === p.total}
+              <span class="piecedone complete">✓ complete</span>
+            {:else}
+              <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
+            {/if}
+            <span class="vspacer"></span>
+            <button
+              type="button"
+              class="btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                onviewscore(index);
+              }}
+              title="Show every page of this piece's score, without opening a task."
+              >View score</button
+            >
+          {/snippet}
+          <div class="piece" class:open style={tintOf(index)}>
+            {#if lone}
+              <div class="piecerow lone">
+                {@render piecehead()}
+              </div>
+            {:else}
+              <div
+                class="piecerow"
+                role="button"
+                tabindex="0"
+                onclick={() => toggle(piece.path)}
+                onkeydown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggle(piece.path);
+                  }
+                }}
+                title={open ? "Collapse this piece" : "Show this piece's tasks"}
+              >
+                {@render piecehead()}
+                <span class="pchev">{open ? "▾" : "▸"}</span>
+              </div>
+            {/if}
             {#if open}
               <div class="piecetasks">
                 {#each pieceTasks(index) as card (card.task)}
                   {#if card.column === "blocked" || card.column === "done"}
                     <div class="taskrow still">
                       <span class="tasktitle">{card.title}</span>
+                      <span class="ttype">{typeOf(card)}</span>
                       <span class="vspacer"></span>
                       {#if card.column === "done"}
                         <span class="merged">✓ merged</span>
@@ -348,6 +360,7 @@
                       title="Open this task"
                     >
                       <span class="tasktitle">{card.title}</span>
+                      <span class="ttype">{typeOf(card)}</span>
                       <span class="vspacer"></span>
                       {#if card.nextUp}
                         <span class="taskpill next">your next task</span>
@@ -371,16 +384,15 @@
 
 <style>
   .volunteer {
-    flex: 1;
-    min-width: 0;
+    /* A fixed reading width: the host centres the column together with the
+       comments panel as one group. */
+    flex: none;
+    width: min(800px, 100%);
     min-height: 0;
     overflow-y: auto;
   }
   .vcol {
     width: 100%;
-    /* A reading width for the task and piece rows; the comments panel keeps
-       its place at the window's right edge. */
-    max-width: 1000px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -435,23 +447,32 @@
     display: block;
   }
   .paper.big {
-    width: 56px;
-    height: 74px;
+    width: 156px;
+    height: 208px;
+    border-radius: 3px;
+    box-shadow:
+      4px 4px 0 var(--mat),
+      var(--shadow-md);
+  }
+  .paper.mid {
+    width: 64px;
+    height: 85px;
     box-shadow: var(--shadow-sm);
   }
   .paper.small {
-    width: 28px;
-    height: 37px;
+    width: 44px;
+    height: 58px;
+    box-shadow: var(--shadow-sm);
   }
 
   .nextcard {
     display: flex;
     align-items: center;
-    gap: 18px;
+    gap: 22px;
     background: var(--card);
     border: 1.5px solid var(--info-line);
     border-radius: 14px;
-    padding: 16px 20px;
+    padding: 18px 22px;
     box-shadow: var(--shadow-md);
     cursor: pointer;
     transition: border-color 0.15s ease;
@@ -466,23 +487,23 @@
     min-width: 0;
   }
   .nexttitle {
-    font-size: 16px;
+    font-size: 17px;
     font-weight: 600;
     overflow-wrap: anywhere;
   }
   .nextcontext {
-    font-size: 12.5px;
+    font-size: 13px;
     color: var(--ink-soft);
   }
   .nexteffort {
-    font-size: 11.5px;
+    font-size: 12px;
     color: var(--ink-faint);
   }
   .nextacts {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    align-items: flex-end;
+    align-items: center;
     flex: none;
   }
   .previewlink {
@@ -542,19 +563,22 @@
     align-items: center;
     gap: 12px;
     background: color-mix(in srgb, var(--piece-tint) 8%, var(--card));
-    padding: 9px 14px;
+    padding: 10px 14px;
     cursor: pointer;
   }
+  .piecerow.lone {
+    cursor: default;
+  }
   .piecename {
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 600;
     flex: none;
   }
   .piecebar {
     flex: 1;
-    max-width: 220px;
-    height: 4px;
-    border-radius: 2px;
+    max-width: 280px;
+    height: 6px;
+    border-radius: 3px;
     background: color-mix(in srgb, var(--piece-tint) 22%, var(--card));
     overflow: hidden;
   }
@@ -570,15 +594,6 @@
   .piecedone.complete {
     color: var(--ok);
     font-weight: 600;
-  }
-  .scorelink {
-    font: 600 12px var(--font);
-    color: var(--link);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-    white-space: nowrap;
   }
   .pchev {
     font-size: 14px;
@@ -613,6 +628,11 @@
     font-size: 12.5px;
     font-weight: 600;
     overflow-wrap: anywhere;
+  }
+  .ttype {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    white-space: nowrap;
   }
   .taskrow.still .tasktitle {
     color: var(--ink-soft);

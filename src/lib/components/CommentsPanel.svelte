@@ -29,6 +29,7 @@
     targetTask = null,
     composerHint = "",
     inScore = false,
+    fitEmpty = false,
     onanchor,
     oncomment,
     onresolve,
@@ -52,6 +53,8 @@
     composerHint?: string;
     /** Anchor links read as in-view highlights instead of score links. */
     inScore?: boolean;
+    /** With no comments, take the content's height instead of the row's. */
+    fitEmpty?: boolean;
     /** Show a comment's measure range in the score. */
     onanchor: (comment: CommentRow) => void;
     oncomment: (
@@ -127,7 +130,11 @@
 </script>
 
 {#if panel.open}
-  <div class="cpwrap" style="width: {panel.width}px">
+  <div
+    class="cpwrap"
+    class:fit={fitEmpty && sections.length === 0}
+    style="width: {panel.width}px"
+  >
     <div
       class="handle"
       class:active={resizing}
@@ -212,6 +219,9 @@
     display: flex;
     min-height: 0;
     align-self: stretch;
+  }
+  .cpwrap.fit {
+    align-self: flex-start;
   }
   /* The host row's gap spaces the bar from the content; the right margin
      mirrors it towards the panel. */

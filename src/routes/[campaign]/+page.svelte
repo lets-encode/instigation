@@ -18,7 +18,7 @@
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { isPreTask, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { handle, isPreTask, preTaskRoute } from "$lib/campaign-graph.ts";
   import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
@@ -86,6 +86,15 @@
   let showInfo = $state(false);
   // The in-page task panel's width; its open state follows ?task=.
   let taskPanel = $state(readSidePanel("task"));
+  // The two side panels share one width (side-panels.ts); mirroring the live
+  // objects keeps a drag on either panel in step within the session. Writing
+  // an unchanged width does not re-trigger the effects.
+  $effect(() => {
+    taskPanel.width = commentsPanel.width;
+  });
+  $effect(() => {
+    commentsPanel.width = taskPanel.width;
+  });
   // The scores a viewer can read end to end: the pieces the tasks address,
   // named from the campaign's config where it names them.
   const previewPieces = $derived.by(() => {
@@ -241,6 +250,34 @@
     board.nextUp
       ? (allCards.find((c) => c.task === board.nextUp) ?? null)
       : null,
+  );
+
+  // ------------------------------------------------ the volunteer's header
+  // Everyone the history records, resolved to display handles, first seen
+  // first — the header's avatar row and contributor count.
+  const volContributors = $derived.by(() => {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const h of history) {
+      if (!h.user_id || seen.has(h.user_id)) continue;
+      seen.add(h.user_id);
+      names.push(handle(logins, h.user_id));
+    }
+    return names;
+  });
+  // The task merged last — the done column reads newest first.
+  const lastMerged = $derived(
+    board.columns.find((c) => c.key === "done")?.cards[0] ?? null,
+  );
+  // One header cell per task, in plan order: its board column drives the
+  // cell's fill (done / in validation / open). Rendered up to 48 tasks; larger
+  // campaigns keep the plain bar.
+  const mosaic = $derived(
+    taskDefs
+      .filter((t) => t.subtask_id === "")
+      .map(
+        (t) => allCards.find((c) => c.task === t.task_id)?.column ?? "ready",
+      ),
   );
 
   // ----------------------------------------- the volunteer's comments panel
@@ -935,63 +972,99 @@
         />
       {:else if !canPush}
         <div class="volwrap">
-          <div class="volhead">
-            <h1>{title || repo}</h1>
-            <span class="volspacer"></span>
-            <span class="volcount">{board.done} of {board.total} done</span>
-            <div class="volbar">
-              <div
-                style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
-              ></div>
+          <div class="volcenter">
+            <div class="volhead">
+              <div class="voltitle">
+                <h1>{title || repo}</h1>
+                {#if volContributors.length > 0}
+                  <div class="volmeta">
+                    <span class="avatars">
+                      {#each volContributors.slice(0, 5) as name (name)}
+                        <span class="avatar" title={name}>{initialOf(name)}</span>
+                      {/each}
+                    </span>
+                    <span class="volmetaline"
+                      >{volContributors.length}
+                      {volContributors.length === 1
+                        ? "contributor"
+                        : "contributors"}{lastMerged
+                        ? ` · last merged: ${lastMerged.title} · ${elapsed(lastMerged.finishedAt)}`
+                        : ""}</span
+                    >
+                  </div>
+                {/if}
+              </div>
+              <span class="volspacer"></span>
+              <span class="volcount">{board.done} of {board.total} done</span>
+              {#if mosaic.length > 0 && mosaic.length <= 48}
+                <span class="mosaic">
+                  {#each mosaic as column, i (i)}
+                    <span
+                      class="mcell"
+                      class:done={column === "done"}
+                      class:review={column === "validation"}
+                    ></span>
+                  {/each}
+                </span>
+              {:else}
+                <div class="volbar">
+                  <div
+                    style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+                  ></div>
+                </div>
+              {/if}
+              {#if volunteerScope && !commentsPanel.open && !detailCard}
+                <button
+                  type="button"
+                  class="cptoggle"
+                  title="Show the comments panel"
+                  onclick={() => {
+                    commentsPanel.open = true;
+                    writeSidePanel("comments", { ...commentsPanel });
+                  }}><PanelIcon /></button
+                >
+              {/if}
             </div>
-            {#if volunteerScope && !commentsPanel.open && !detailCard}
-              <button
-                type="button"
-                class="cptoggle"
-                title="Show the comments panel"
-                onclick={() => {
-                  commentsPanel.open = true;
-                  writeSidePanel("comments", { ...commentsPanel });
-                }}><PanelIcon /></button
-              >
-            {/if}
-          </div>
-          <div class="volrow">
-            <VolunteerView
-              {owner}
-              {repo}
-              cards={allCards}
-              {nextCard}
-              {taskDefs}
-              {locks}
-              {viewer}
-              pieces={previewPieces}
-              progress={pieceProgress}
-              pieceIndex={pieceIndexByTask}
-              busy={runner.busy}
-              bind:expandedPiece={volunteerPiece}
-              onact={actOnCard}
-              onopen={openTask}
-              onviewscore={viewScorePiece}
-            />
-            {#if detailCard}
-              {@render taskSide(detailCard)}
-            {:else if volunteerScope && commentsPanel.open}
-              <CommentsPanel
-                piece={volunteerScope.piece}
-                zone={(volunteerScope.index % 8) + 1}
-                cards={scopeCards}
-                {comments}
-                {logins}
+            <div class="volrow">
+              <VolunteerView
+                {owner}
+                {repo}
+                cards={allCards}
+                {nextCard}
+                {taskDefs}
+                {locks}
                 {viewer}
-                {canPush}
-                {runner}
-                bind:panel={commentsPanel}
-                onanchor={showCommentInScore}
-                oncomment={postComment}
-                onresolve={resolveCommentRow}
+                pieces={previewPieces}
+                progress={pieceProgress}
+                pieceIndex={pieceIndexByTask}
+                busy={runner.busy}
+                bind:expandedPiece={volunteerPiece}
+                onact={actOnCard}
+                onopen={openTask}
+                onviewscore={viewScorePiece}
               />
-            {/if}
+              {#if detailCard}
+                {@render taskSide(detailCard)}
+              {:else if volunteerScope && commentsPanel.open}
+                <div class="cpholder">
+                  <CommentsPanel
+                    piece={volunteerScope.piece}
+                    zone={(volunteerScope.index % 8) + 1}
+                    cards={scopeCards}
+                    {comments}
+                    {logins}
+                    {viewer}
+                    {canPush}
+                    {runner}
+                    fitEmpty
+                    bind:panel={commentsPanel}
+                    onanchor={showCommentInScore}
+                    oncomment={postComment}
+                    onresolve={resolveCommentRow}
+                  />
+                </div>
+              {/if}
+            </div>
           </div>
         </div>
       {:else}
@@ -1475,29 +1548,100 @@
     min-height: 0;
   }
 
-  /* The volunteer view: a full-width header row over the task column and the
-     comments panel beside it. */
+  /* The volunteer view: the header row, the task column and the comments
+     panel form one centred group; the group's width is the row's content
+     width (the fixed task column plus the panel). */
   .volwrap {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    align-items: center;
     width: 100%;
     padding: 18px 32px 8px;
     box-sizing: border-box;
+  }
+  .volcenter {
+    flex: 1;
+    min-height: 0;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
   .volhead {
     flex: none;
     display: flex;
     align-items: center;
     gap: 14px;
+    /* The header follows the row's width instead of contributing its own —
+       a long title wraps rather than widening the group. */
+    width: 0;
+    min-width: 100%;
+    box-sizing: border-box;
   }
   .volhead h1 {
     margin: 0;
     font-size: 22px;
     font-weight: 600;
     color: var(--ink);
+  }
+  .voltitle {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .volmeta {
+    display: flex;
+    align-items: center;
+  }
+  .avatars {
+    display: flex;
+  }
+  .avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    box-sizing: border-box;
+    background: var(--bg-tint);
+    border: 1.5px solid var(--card);
+    margin-right: -6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--ink-soft);
+  }
+  .volmetaline {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-left: 14px;
+  }
+  .mosaic {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    max-width: 240px;
+    justify-content: flex-end;
+  }
+  .mcell {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--card) 60%, transparent);
+    border: 1px solid var(--line-input);
+  }
+  .mcell.done {
+    background: linear-gradient(135deg, var(--blue), var(--green));
+    border: 0;
+  }
+  .mcell.review {
+    background: var(--warn-bg);
+    border-color: var(--warn-line);
   }
   .volspacer {
     flex: 1;
@@ -1525,6 +1669,15 @@
     min-height: 0;
     display: flex;
     gap: 14px;
+  }
+  /* The comments panel's top edge lines up with the next-task card, below
+     the task column's section label. */
+  .cpholder {
+    flex: none;
+    min-height: 0;
+    display: flex;
+    padding-top: 26px;
+    box-sizing: border-box;
   }
   .cptoggle {
     width: 28px;
