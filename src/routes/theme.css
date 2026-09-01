@@ -144,7 +144,9 @@
   --ink-faint: #8b93ad;
   --line: #2a3044;
   --bg: #151927;
-  --bg-alt: #0c0e17;
+  /* Kept a step above the recessed --bg-inset so full-bleed canvases retain
+     a slight tinge where the page glows fade out. */
+  --bg-alt: #131726;
   --bg-tint: #212739;
   --card: #1b1f2f;
   --topbar-bg: rgba(16, 19, 30, .9);
@@ -160,7 +162,8 @@
 
   --line-input: #3c455e;
   --orange-deep: #ffa76d;
-  --bg-inset: #0e101b;
+  /* One step below --bg-alt; the inset shadow carries the recession. */
+  --bg-inset: #101423;
 
   --glow-blue: rgba(109, 195, 255, .16);
   --glow-green: rgba(118, 222, 118, .13);
@@ -194,7 +197,7 @@
   --owner-bg: rgba(255, 167, 109, .15);
   --owner-line: #6e5530;
   --owner-track: rgba(255, 167, 109, .26);
-  --desk: #0e101b;
+  --desk: #101423;
 
   --accent-tint: rgba(126, 202, 253, .07);
   --accent-tint-strong: rgba(126, 202, 253, .16);

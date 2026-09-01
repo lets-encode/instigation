@@ -72,6 +72,28 @@ export function writeSidePanel(id: SidePanelId, state: SidePanelState): void {
 	}
 }
 
+// The task the panel showed last, kept per campaign so the board reopens it.
+const lastTaskKey = (campaign: string) => `lets-encode:last-task:${campaign}`;
+
+/** The task the panel showed last in this campaign, or null. */
+export function readLastTask(campaign: string): string | null {
+	try {
+		return store()?.getItem(lastTaskKey(campaign)) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/** Store the task the panel shows; null clears it. */
+export function writeLastTask(campaign: string, task: string | null): void {
+	try {
+		if (task === null) store()?.removeItem(lastTaskKey(campaign));
+		else store()?.setItem(lastTaskKey(campaign), task);
+	} catch {
+		/* full or blocked storage only costs the preference */
+	}
+}
+
 /** A dragged panel width, kept between the minimum and half the viewport. */
 export function clampPanelWidth(w: number, viewport: number): number {
 	return Math.round(Math.min(Math.max(w, PANEL_MIN), Math.max(PANEL_MIN, viewport / 2)));

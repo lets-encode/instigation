@@ -23,7 +23,12 @@
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
-  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import {
+    readSidePanel,
+    writeSidePanel,
+    readLastTask,
+    writeLastTask,
+  } from "$lib/side-panels.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import CommentsPanel from "$lib/components/CommentsPanel.svelte";
@@ -312,6 +317,7 @@
   );
   function openTask(task: string) {
     detailTask = task;
+    writeLastTask(campaign, task);
     goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
       replaceState: true,
       noScroll: true,
@@ -321,6 +327,7 @@
   // Close the task panel.
   function closeTask() {
     detailTask = null;
+    writeLastTask(campaign, null);
     goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 
@@ -626,13 +633,24 @@
   }
 
   // Deep links, read once after the first load: ?task= opens that task's
-  // detail.
+  // detail. On the owner's board the panel defaults open — to the task chosen
+  // last time, or the first card on the board.
   let deepLinked = false;
   $effect(() => {
     if (!loaded || deepLinked) return;
     deepLinked = true;
     const task = page.url.searchParams.get("task");
-    if (task && findRow(taskDefs, task, "")) detailTask = task;
+    if (task && findRow(taskDefs, task, "")) {
+      detailTask = task;
+      return;
+    }
+    if (!canPush) return;
+    const last = readLastTask(campaign);
+    detailTask =
+      last && allCards.some((c) => c.task === last)
+        ? last
+        : (displayColumns.find((c) => c.cards.length > 0)?.cards[0]?.task ??
+          null);
   });
 
   function claimCard(card: BoardCard) {
@@ -1110,6 +1128,76 @@
               onclick={actOnNext}>Claim the next task</button
             >
           </div>
+          {#if showInfo}
+            <div class="infoblock">
+              <div class="isec">
+                <span class="seclabel">Score</span>
+                {#if scoreHeadState === "loading"}
+                  <span class="muted inote">Loading the score header…</span>
+                {:else if scoreHeadState === "error"}
+                  <span class="muted inote">Could not read the score.</span>
+                {:else if scoreHeadState === "done" && !scoreHead}
+                  <span class="muted inote">The score has no MEI header.</span>
+                {:else if scoreHead}
+                  <div class="irow">
+                    <span>Title</span>
+                    <span>{scoreHead.title || "—"}</span>
+                  </div>
+                  <div class="irow">
+                    <span>Composer</span>
+                    <span>{scoreHead.composer || "—"}</span>
+                  </div>
+                  {#each scoreHead.contributors as c (c.role + c.name)}
+                    <div class="irow">
+                      <span>{c.role || "contributor"}</span>
+                      <span>{c.name}</span>
+                    </div>
+                  {/each}
+                {/if}
+                <div
+                  class="irow"
+                  title="Everyone the campaign history records: claims, submissions and validations."
+                >
+                  <span>Worked on this</span>
+                  <span>
+                    {#if workedOn.length}
+                      {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
+                          class="mono"
+                          href={`https://github.com/${logins[u] || u}`}
+                          target="_blank"
+                          rel="noreferrer">@{logins[u] || u}</a
+                        >{/each}
+                    {:else}—{/if}
+                  </span>
+                </div>
+              </div>
+              <div class="isec">
+                <span class="seclabel">Campaign</span>
+                <div class="irow">
+                  <span>About</span>
+                  <span>{description || "—"}</span>
+                </div>
+                <div class="irow">
+                  <span>Visibility</span>
+                  <span>{isPrivate ? "Private" : "Public"}</span>
+                </div>
+                <div
+                  class="irow"
+                  title="Contributions to this campaign are published under this license."
+                >
+                  <span>License</span>
+                  <span>{license || "—"}</span>
+                </div>
+                <div
+                  class="irow"
+                  title="Validation passes each task needs before it counts as validated."
+                >
+                  <span>Passes required</span>
+                  <span>{passThreshold}</span>
+                </div>
+              </div>
+            </div>
+          {/if}
           <div class="hero-stats">
             <span class="stat"><b class="c-ok">{board.done}</b> done</span>
             <span class="sep">·</span>
@@ -1196,77 +1284,6 @@
             </div>
           {/if}
         </div>
-
-        {#if showInfo}
-          <div class="infoblock">
-            <div class="isec">
-              <span class="seclabel">Score</span>
-              {#if scoreHeadState === "loading"}
-                <span class="muted inote">Loading the score header…</span>
-              {:else if scoreHeadState === "error"}
-                <span class="muted inote">Could not read the score.</span>
-              {:else if scoreHeadState === "done" && !scoreHead}
-                <span class="muted inote">The score has no MEI header.</span>
-              {:else if scoreHead}
-                <div class="irow">
-                  <span>Title</span>
-                  <span>{scoreHead.title || "—"}</span>
-                </div>
-                <div class="irow">
-                  <span>Composer</span>
-                  <span>{scoreHead.composer || "—"}</span>
-                </div>
-                {#each scoreHead.contributors as c (c.role + c.name)}
-                  <div class="irow">
-                    <span>{c.role || "contributor"}</span>
-                    <span>{c.name}</span>
-                  </div>
-                {/each}
-              {/if}
-              <div
-                class="irow"
-                title="Everyone the campaign history records: claims, submissions and validations."
-              >
-                <span>Worked on this</span>
-                <span>
-                  {#if workedOn.length}
-                    {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
-                        class="mono"
-                        href={`https://github.com/${logins[u] || u}`}
-                        target="_blank"
-                        rel="noreferrer">@{logins[u] || u}</a
-                      >{/each}
-                  {:else}—{/if}
-                </span>
-              </div>
-            </div>
-            <div class="isec">
-              <span class="seclabel">Campaign</span>
-              <div class="irow">
-                <span>About</span>
-                <span>{description || "—"}</span>
-              </div>
-              <div class="irow">
-                <span>Visibility</span>
-                <span>{isPrivate ? "Private" : "Public"}</span>
-              </div>
-              <div
-                class="irow"
-                title="Contributions to this campaign are published under this license."
-              >
-                <span>License</span>
-                <span>{license || "—"}</span>
-              </div>
-              <div
-                class="irow"
-                title="Validation passes each task needs before it counts as validated."
-              >
-                <span>Passes required</span>
-                <span>{passThreshold}</span>
-              </div>
-            </div>
-          </div>
-        {/if}
 
         <div class="instrow">
         {#if previewPieces.length > 0}
@@ -1390,38 +1407,37 @@
                             {@render slotDot(key)}
                           {/each}
                         </div>
-                        {#if card.counts.fails + card.counts.comments + card.counts.questions > 0}
-                          <div class="card-chips">
-                            {#if card.counts.fails > 0}
-                              <span class="chip chip-fail"
-                                >{card.counts.fails} fail{card.counts.fails ===
-                                1
-                                  ? ""
-                                  : "s"}</span
-                              >
-                            {/if}
-                            {#if card.counts.comments > 0}
-                              <span class="chip chip-note"
-                                >{card.counts.comments} comment{card.counts
-                                  .comments === 1
-                                  ? ""
-                                  : "s"}</span
-                              >
-                            {/if}
-                            {#if card.counts.questions > 0}
-                              <span class="chip chip-question"
-                                >{card.counts.questions} question{card.counts
-                                  .questions === 1
-                                  ? ""
-                                  : "s"}</span
-                              >
-                            {/if}
-                          </div>
-                        {/if}
                       {:else if card.column === "done"}
                         <div class="card-done">
                           <img class="hand-done" src="/green-hand.svg" alt="" />
                           {card.doneLine}
+                        </div>
+                      {/if}
+                      {#if card.column !== "done" && card.counts.fails + card.counts.comments + card.counts.questions > 0}
+                        <div class="card-chips">
+                          {#if card.counts.fails > 0}
+                            <span class="chip chip-fail"
+                              >{card.counts.fails} fail{card.counts.fails === 1
+                                ? ""
+                                : "s"}</span
+                            >
+                          {/if}
+                          {#if card.counts.comments > 0}
+                            <span class="chip chip-note"
+                              >{card.counts.comments} comment{card.counts
+                                .comments === 1
+                                ? ""
+                                : "s"}</span
+                            >
+                          {/if}
+                          {#if card.counts.questions > 0}
+                            <span class="chip chip-question"
+                              >{card.counts.questions} question{card.counts
+                                .questions === 1
+                                ? ""
+                                : "s"}</span
+                            >
+                          {/if}
                         </div>
                       {/if}
                     </div>
@@ -1698,35 +1714,35 @@
   /* Campaign info, collapsed into the header area behind the Info toggle. */
   .infoblock {
     flex: none;
-    margin: 0 32px 16px;
     padding: 14px 18px;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 18px 32px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px 56px;
   }
   .isec {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+    width: 400px;
+    min-width: 0;
   }
   .inote {
     font-size: 11px;
   }
+  /* A fixed label column with the value directly after it, left-aligned. */
   .irow {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 130px minmax(0, 1fr);
     gap: 10px;
     font-size: 12px;
   }
   .irow > span:first-child {
     color: var(--ink-faint);
-    flex: none;
   }
   .irow > :last-child {
-    text-align: right;
     overflow-wrap: anywhere;
   }
   .irow a {

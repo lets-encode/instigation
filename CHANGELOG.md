@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.28.0 – 2026-09-01
+
+- Instigator board: the task panel opens by default with the last-viewed task (or the first card); the info panel sits between the title and the stats bar, its values in a fixed label column; fail/comment/question chips show on every non-done card.
+- Piece rail widened and roomier, with dividing lines between pieces; counts read as words under the progress bar (3 open · 1 review), unresolved comments as a speech-bubble count.
+- Dark mode: the page canvas keeps a slight tinge where the glows fade out, and the recessed surfaces (board wells, rail, desk) are lightened a step — nothing sinks to near-black any more.
+
 ## 0.27.0 – 2026-09-01
 
 - The review, zones and setup pages lose their sidebars: the task's status, actions and validation controls sit in a task box pinned at the top of the comments panel.

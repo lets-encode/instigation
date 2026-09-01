@@ -72,6 +72,9 @@
     <span class="openpill">{openCount} open</span>
   </button>
   {#each pieces as piece, index (piece.path)}
+    {#if index > 0}
+      <span class="raildiv"></span>
+    {/if}
     {@const url = previews[piece.path]?.thumb}
     {@const count = attention.get(piece.path) ?? 0}
     {@const n = counts.get(piece.path)}
@@ -88,28 +91,42 @@
       </span>
       <span class="railbody">
         <span class="railname">{pieceName(piece)}</span>
+        <span class="railbar">
+          <span style={`width:${percent(piece.path)}%`}></span>
+        </span>
         <span class="railmeta">
-          <span class="railbar">
-            <span style={`width:${percent(piece.path)}%`}></span>
-          </span>
-          {#if n?.open}
-            <b class="rc rc-open" title="open">{n.open}</b>
+          {#if complete(piece.path)}
+            <span class="rc rc-done">✓ all done</span>
+          {:else}
+            {#if n?.open}
+              <b class="rc rc-open">{n.open} open</b>
+            {/if}
+            {#if n?.encoding}
+              <b class="rc rc-encoding">{n.encoding} encoding</b>
+            {/if}
+            {#if n?.validation}
+              <b class="rc rc-validation">{n.validation} review</b>
+            {/if}
           {/if}
-          {#if n?.encoding}
-            <b class="rc rc-encoding" title="encoding">{n.encoding}</b>
-          {/if}
-          {#if n?.validation}
-            <b class="rc rc-validation" title="awaiting validation">{n.validation}</b>
+          {#if count > 0}
+            <span class="attn" title="Unresolved fails, comments or questions">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path
+                  d="M14 7.7c0 2.9-2.7 5.2-6 5.2-.8 0-1.6-.1-2.3-.4L2.5 13.7l.9-2.6C2.5 10.2 2 9 2 7.7 2 4.8 4.7 2.5 8 2.5s6 2.3 6 5.2z"
+                /></svg
+              >{count}</span
+            >
           {/if}
         </span>
       </span>
-      {#if count > 0}
-        <span class="attnpill" title="Unresolved fails, comments or questions"
-          >{count}</span
-        >
-      {:else if complete(piece.path)}
-        <span class="railok" title="All tasks done">✓</span>
-      {/if}
     </button>
   {/each}
 </div>
@@ -117,14 +134,14 @@
 <style>
   .rail {
     flex: none;
-    width: 232px;
+    width: 288px;
     display: flex;
     flex-direction: column;
     gap: 6px;
     background: var(--bg-inset);
     box-shadow: var(--shadow-inset);
     border-radius: 12px;
-    padding: 8px;
+    padding: 10px;
     align-self: flex-start;
     max-height: 100%;
     overflow-y: auto;
@@ -132,8 +149,8 @@
   .railrow {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 6px 10px;
+    gap: 12px;
+    padding: 8px 12px;
     border-radius: 8px;
     border: 1.5px solid transparent;
     background: none;
@@ -141,6 +158,12 @@
     font-family: inherit;
     text-align: left;
     transition: border-color 0.15s ease;
+  }
+  .raildiv {
+    flex: none;
+    height: 1px;
+    margin: 0 10px;
+    background: var(--shade);
   }
   .railrow.all {
     padding: 8px 10px;
@@ -166,8 +189,8 @@
   }
   .paper {
     flex: none;
-    width: 24px;
-    height: 32px;
+    width: 28px;
+    height: 38px;
     background: var(--facsimile-paper);
     border: 1px solid var(--line);
     border-radius: 2px;
@@ -184,10 +207,10 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 5px;
   }
   .railname {
-    font-size: 12px;
+    font-size: 12.5px;
     font-weight: 600;
     color: var(--ink-soft);
     overflow: hidden;
@@ -201,24 +224,27 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
   }
   .railbar {
     display: block;
-    flex: 1;
-    min-width: 0;
     height: 4px;
     border-radius: 2px;
     background: color-mix(in srgb, var(--zone) 22%, var(--card));
     overflow: hidden;
   }
-  /* Not-done task counts, coloured like the board's column heads. */
+  /* Not-done task counts as words, coloured like the board's column heads. */
   .rc {
     flex: none;
-    font-size: 10px;
-    font-weight: 600;
+  }
+  .rc + .rc::before {
+    content: "·";
+    color: var(--line-input);
+    margin-right: 6px;
   }
   .rc-open {
-    color: var(--ink-faint);
+    color: var(--ink-soft);
   }
   .rc-encoding {
     color: var(--info);
@@ -226,25 +252,24 @@
   .rc-validation {
     color: var(--warn);
   }
+  .rc-done {
+    color: var(--ok);
+  }
   .railbar > span {
     display: block;
     height: 100%;
     background: linear-gradient(90deg, var(--blue), var(--green));
   }
-  .attnpill {
+  /* Unresolved fails, comments and questions, marked by the speech bubble. */
+  .attn {
     flex: none;
-    font-size: 10px;
-    font-weight: 600;
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     color: var(--danger);
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
-    border-radius: 999px;
-    padding: 1px 5px;
   }
-  .railok {
+  .attn svg {
     flex: none;
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--ok);
   }
 </style>
