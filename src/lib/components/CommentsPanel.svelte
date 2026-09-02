@@ -5,6 +5,11 @@
   state and width persist per browser (side-panels.ts). The host renders the
   button that reopens a closed panel.
 -->
+<script module lang="ts">
+  // Whether resolved threads are hidden; held for the session across pieces.
+  let hideResolved = $state(false);
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
@@ -72,16 +77,33 @@
   } = $props();
 
   type Section = { card: BoardCard; threads: Thread[] };
-  const sections = $derived(
+  const allSections = $derived(
     cards
       .map((card) => ({ card, threads: buildThreads(comments, card.task) }))
       .filter((s: Section) => s.threads.length > 0),
   );
   const count = $derived(
-    sections.reduce(
+    allSections.reduce(
       (n, s) => n + s.threads.reduce((m, t) => m + 1 + t.replies.length, 0),
       0,
     ),
+  );
+  // A thread is resolved with its root comment.
+  const resolvedCount = $derived(
+    allSections.reduce(
+      (n, s) => n + s.threads.filter((t) => t.root.resolved === "true").length,
+      0,
+    ),
+  );
+  const sections = $derived(
+    hideResolved
+      ? allSections
+          .map((s) => ({
+            card: s.card,
+            threads: s.threads.filter((t) => t.root.resolved !== "true"),
+          }))
+          .filter((s) => s.threads.length > 0)
+      : allSections,
   );
 
   const isReview = (card: BoardCard) => card.column === "validation";
@@ -163,6 +185,18 @@
       {#if header}
         <div class="pinhead">{@render header()}</div>
       {/if}
+      {#if resolvedCount > 0}
+        <div class="cpfilter">
+          <button
+            type="button"
+            class="chip-switch"
+            class:on={hideResolved}
+            onclick={() => (hideResolved = !hideResolved)}
+            title="Hide the threads whose comment or question is resolved"
+            ><span class="sw"></span>Hide resolved · {resolvedCount}</button
+          >
+        </div>
+      {/if}
       <div class="clist">
         {#each sections as s (s.card.task)}
           <div class="sechead" class:review={isReview(s.card)}>
@@ -200,7 +234,11 @@
           {/each}
         {/each}
         {#if sections.length === 0}
-          <div class="cnone">No comments on this piece yet.</div>
+          <div class="cnone">
+            {allSections.length === 0
+              ? "No comments on this piece yet."
+              : `${resolvedCount} resolved ${resolvedCount === 1 ? "thread" : "threads"} hidden.`}
+          </div>
         {/if}
       </div>
       {#if composerTask}
@@ -334,6 +372,12 @@
     flex: none;
     max-height: 55%;
     overflow-y: auto;
+  }
+  .cpfilter {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+    padding: 2px 2px 0;
   }
   .clist {
     flex: 1;
