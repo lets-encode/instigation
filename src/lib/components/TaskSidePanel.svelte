@@ -248,7 +248,7 @@
         <div class="tspfoot">
           {#if card.pre}
             <a
-              class="btn btn-primary"
+              class="btn btn-primary btn-pre"
               href={editorRoute}
               title={`Claims the task for you and opens the ${editorName}.`}
               >Claim &amp; open {editorName}</a
@@ -301,7 +301,7 @@
           <div class="tspfoot">
             <button
               type="button"
-              class="btn btn-primary"
+              class="btn btn-primary btn-review"
               onclick={() => onclaim(card.task, claimableSub)}
               disabled={runner.busy || claimPending}
               title="Reserve this validation slot for review."

@@ -130,7 +130,7 @@
       {#if next.action === "encode" || next.action === "review"}
         <button
           type="button"
-          class="btn btn-primary"
+          class="btn btn-primary {next.action === 'review' ? 'btn-review' : next.pre ? 'btn-pre' : 'btn-enc'}"
           disabled={busy}
           onclick={() => onact(stats, next)}>{actLabel(next)}</button
         >

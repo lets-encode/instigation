@@ -964,7 +964,7 @@
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="btn" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
         {/if}
         <button
           type="button"
@@ -1027,7 +1027,7 @@
           {/each}
           {#if canClaimValidation}
             <div class="sb-row one">
-              <button type="button" class="btn" onclick={() => claimValidation()} disabled={runner.busy}
+              <button type="button" class="btn btn-review" onclick={() => claimValidation()} disabled={runner.busy}
                 title="Reserve this subtask for validation.">Claim</button>
             </div>
           {:else if holdsValidation && !verdictPending}

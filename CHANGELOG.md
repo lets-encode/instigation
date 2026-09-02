@@ -8,6 +8,8 @@ parentheses.
 - Score preview: a two-page score opens with both pages side by side; a view or recto choice made by the user holds for the rest of the session.
 - Instigator board: every kanban card carries a score link that opens the score view at the task's page.
 - Score toolbars (score preview, zones editor): two fit buttons with icons, fit width and fit whole page; the whole-page fit is the default and the chosen fit follows the window size until the zoom slider is moved.
+- Volunteer view: the task mosaic in the header is one row per piece, cells in the piece's colour.
+- Claim buttons carry their stage colour: purple for preparation tasks, orange for review, blue for encoding.
 - Zones and setup views: the validation box shows only the action open to you (Claim, or Pass/Fail once you hold the slot) instead of disabled buttons.
 - Score preview: the rendered encoding uses pages of the facsimile's proportions (A4 without a facsimile), systems spread over the page when breaks are encoded, and one page size per score, grown until the densest page fits.
 

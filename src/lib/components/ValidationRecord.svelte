@@ -210,7 +210,7 @@
         {:else if r.key === "open" && r.claimable && variant !== "side"}
           <button
             type="button"
-            class="btn"
+            class="btn btn-review"
             onclick={() => onclaim(card.task, r.sub)}
             disabled={runner.busy || verdictPending(r.sub)}
             title="Reserve this validation slot for review."

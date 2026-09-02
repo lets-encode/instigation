@@ -277,13 +277,20 @@
   // One header cell per task, in plan order: its board column drives the
   // cell's fill (done / in validation / open). Rendered up to 48 tasks; larger
   // campaigns keep the plain bar.
-  const mosaic = $derived(
-    taskDefs
-      .filter((t) => t.subtask_id === "")
-      .map(
-        (t) => allCards.find((c) => c.task === t.task_id)?.column ?? "ready",
-      ),
-  );
+  // One cell per task, grouped into a row per piece in piece order.
+  const mosaic = $derived.by(() => {
+    const rows = new Map<number, ColumnKey[]>();
+    for (const t of taskDefs) {
+      if (t.subtask_id !== "") continue;
+      const index = pieceIndexByTask.get(t.task_id) ?? 0;
+      const column = allCards.find((c) => c.task === t.task_id)?.column ?? "ready";
+      rows.set(index, [...(rows.get(index) ?? []), column]);
+    }
+    return [...rows.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([index, cells]) => ({ index, cells }));
+  });
+  const mosaicTotal = $derived(mosaic.reduce((n, row) => n + row.cells.length, 0));
 
   // ----------------------------------------- the volunteer's comments panel
   let commentsPanel = $state(readSidePanel("comments"));
@@ -1020,14 +1027,22 @@
               </div>
               <span class="volspacer"></span>
               <span class="volcount">{board.done} of {board.total} done</span>
-              {#if mosaic.length > 0 && mosaic.length <= 48}
+              {#if mosaicTotal > 0 && mosaicTotal <= 48}
                 <span class="mosaic">
-                  {#each mosaic as column, i (i)}
+                  {#each mosaic as row (row.index)}
                     <span
-                      class="mcell"
-                      class:done={column === "done"}
-                      class:review={column === "validation"}
-                    ></span>
+                      class="mrow"
+                      style="--zone: var(--zone-{(row.index % 8) + 1})"
+                      title={previewPieces[row.index]?.title || previewPieces[row.index]?.id}
+                    >
+                      {#each row.cells as column, i (i)}
+                        <span
+                          class="mcell"
+                          class:done={column === "done"}
+                          class:review={column === "validation"}
+                        ></span>
+                      {/each}
+                    </span>
                   {/each}
                 </span>
               {:else}
@@ -1651,24 +1666,31 @@
     color: var(--ink-soft);
     margin-left: 14px;
   }
+  /* One row of cells per piece, in the piece's tint, stacked right-aligned. */
   .mosaic {
     flex: none;
     display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+  }
+  .mrow {
+    display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 3px;
     max-width: 240px;
-    justify-content: flex-end;
   }
   .mcell {
     width: 12px;
     height: 12px;
     border-radius: 3px;
     box-sizing: border-box;
-    background: color-mix(in srgb, var(--card) 60%, transparent);
-    border: 1px solid var(--line-input);
+    background: color-mix(in srgb, var(--zone) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line-input));
   }
   .mcell.done {
-    background: linear-gradient(135deg, var(--blue), var(--green));
+    background: var(--zone);
     border: 0;
   }
   .mcell.review {

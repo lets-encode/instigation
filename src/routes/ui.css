@@ -83,6 +83,46 @@ a.btn {
   border-color: transparent;
 }
 
+/* Claim buttons carry the colour of the stage they start: purple for
+   preparation tasks, orange for review; encoding keeps the blue primary. */
+.btn-primary.btn-pre {
+  background: var(--pre-btn);
+}
+.btn-primary.btn-pre:hover:not(:disabled) {
+  background: var(--pre-btn-hover);
+}
+.btn-primary.btn-review {
+  background: var(--warn-solid);
+}
+.btn-primary.btn-review:hover:not(:disabled) {
+  background: var(--warn-btn-hover);
+}
+.btn.btn-pre:not(.btn-primary) {
+  color: var(--pre);
+  border-color: var(--pre);
+}
+.btn.btn-pre:not(.btn-primary):hover:not(:disabled) {
+  color: var(--pre);
+  border-color: var(--pre);
+  background: var(--pre-wash);
+}
+.btn.btn-review:not(.btn-primary) {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.btn.btn-review:not(.btn-primary):hover:not(:disabled) {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: var(--warn-wash);
+}
+.btn.btn-enc:not(.btn-primary) {
+  color: var(--info);
+  border-color: var(--info);
+}
+.btn.btn-enc:not(.btn-primary):hover:not(:disabled) {
+  background: var(--info-bg);
+}
+
 /* Danger actions are outlines, never solid fills. */
 .btn-danger {
   color: var(--danger);

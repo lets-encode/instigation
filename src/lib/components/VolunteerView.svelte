@@ -88,6 +88,10 @@
     return "Open task";
   };
 
+  // The stage a claim starts, as the button's colour class.
+  const stageClass = (c: BoardCard) =>
+    c.column === "validation" ? "btn-review" : c.pre ? "btn-pre" : "btn-enc";
+
   const typeOf = (c: BoardCard) =>
     c.column === "validation" ? "validation" : c.typeLine.toLowerCase();
 
@@ -197,7 +201,7 @@
           <div class="nextacts">
             <button
               type="button"
-              class="btn btn-lg btn-primary"
+              class="btn btn-lg btn-primary {stageClass(nextCard)}"
               onclick={(e) => {
                 e.stopPropagation();
                 onact(nextCard);
@@ -257,7 +261,7 @@
             <span class="vspacer"></span>
             <button
               type="button"
-              class="btn"
+              class="btn {stageClass(card)}"
               onclick={(e) => {
                 e.stopPropagation();
                 onact(card);
