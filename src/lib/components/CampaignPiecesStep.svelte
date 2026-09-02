@@ -182,12 +182,12 @@
     if (piece) piece.zones = [];
   }
 
-  function copyFromPrevious() {
-    const previous = wizard.pieces[selected - 1];
-    if (!previous) return;
+  function copyFromPiece(index: number) {
+    const from = wizard.pieces[index];
+    if (!from || index === selected) return;
     // The title names this piece, so it is the one field not carried over.
     const title = wizard.pieces[selected].meta.title;
-    wizard.pieces[selected].meta = { ...copyMetadata(previous.meta), title };
+    wizard.pieces[selected].meta = { ...copyMetadata(from.meta), title };
   }
 
   function copyFromSource() {
@@ -441,9 +441,10 @@
   const piece = $derived(wizard.pieces[selected]);
   const label = $derived(piece ? piece.meta.title.trim() || piece.id : "");
   const covered = $derived(piece ? pagesCovered(piece) : []);
-  // A facsimile piece with no regions would produce no tasks at all.
+  // A facsimile piece with no regions would produce no tasks at all, so it
+  // blocks finishing unless marked as having none on purpose.
   const unmarked = $derived(
-    wizard.pieces.filter((p) => p.kind === "facsimile" && p.zones.length === 0),
+    wizard.pieces.filter((p) => p.kind === "facsimile" && p.zones.length === 0 && !p.noRegions),
   );
 
   const labelOf = (p: (typeof wizard.pieces)[number]) => p.meta.title.trim() || p.id;
@@ -453,7 +454,8 @@
       return p.pages ? `${p.pages} page${p.pages === 1 ? "" : "s"}` : "physical only";
     }
     const on = pagesCovered(p);
-    return on.length ? `pages ${formatRanges(on.map((s) => s + 1))}` : "no regions";
+    if (on.length) return `pages ${formatRanges(on.map((s) => s + 1))}`;
+    return p.noRegions ? "no regions, on purpose" : "no regions";
   };
 
   // The page count of a physical piece; empty or invalid input means unknown.
@@ -491,7 +493,7 @@
   onBack={previousStep}
   backDisabled={busy}
   onNext={finish}
-  nextDisabled={busy || !wizard.pieces.length}
+  nextDisabled={busy || !wizard.pieces.length || unmarked.length > 0}
   nextLabel={busy ? "Working…" : error ? "Retry" : "Finish ✓"}
   finish
 >
@@ -547,6 +549,18 @@
             >
               {confirmingClear ? "Really clear all regions?" : "Clear regions"}
             </button>
+            {#if !p.zones.length}
+              <button
+                type="button"
+                class="pill pill-sm"
+                class:on={p.noRegions}
+                onclick={() => (wizard.pieces[i].noRegions = !p.noRegions)}
+                disabled={busy}
+                title="This piece covers no regions of the source on purpose; it gets no tasks."
+              >
+                No regions on purpose
+              </button>
+            {/if}
           </div>
           {#if bulkNotice}
             <p class="msg-warn bulk-notice" role="status">{bulkNotice}</p>
@@ -577,6 +591,7 @@
   {/if}
 
   {#if piece}
+    <div class="piece-meta" style="--piece: {pieceColour(selected)}">
     <MetadataForm bind:meta={wizard.pieces[selected].meta} variant="piece">
       {#snippet heading()}
         <span class="meta-for">
@@ -588,10 +603,24 @@
           <button type="button" class="pill pill-sm" onclick={copyFromSource}>
             Copy from the source
           </button>
-          {#if selected > 0}
-            <button type="button" class="pill pill-sm" onclick={copyFromPrevious}>
-              Copy from previous piece
-            </button>
+          {#if wizard.pieces.length > 1}
+            <select
+              class="copy-select"
+              value=""
+              aria-label="Copy the metadata from another piece"
+              onchange={(e) => {
+                const el = e.currentTarget;
+                copyFromPiece(Number(el.value));
+                el.value = "";
+              }}
+            >
+              <option value="" disabled>Copy from piece…</option>
+              {#each wizard.pieces as other, i (other.id)}
+                {#if i !== selected}
+                  <option value={i}>{labelOf(other)}</option>
+                {/if}
+              {/each}
+            </select>
           {/if}
         </div>
       {/snippet}
@@ -604,6 +633,8 @@
           covers page{covered.length === 1 ? "" : "s"}
           {formatRanges(covered.map((p) => p + 1))}. Adjust its regions in the
           pane on the left.
+        {:else if piece.noRegions}
+          covers no regions on purpose and gets no tasks.
         {:else}
           has no regions marked yet. Mark them in the pane on the left.
         {/if}
@@ -636,6 +667,7 @@
         comes from the uploaded encoding <code>{piece.encodingName}</code>.
       </p>
     {/if}
+    </div>
   {:else}
     <p class="covered">Add a piece to describe what this campaign encodes.</p>
   {/if}
@@ -644,7 +676,8 @@
     <p class="msg-warn" role="status">
       {unmarked.map((p) => p.meta.title.trim() || p.id).join(", ")}
       {unmarked.length === 1 ? "has" : "have"} no regions marked, so
-      {unmarked.length === 1 ? "it" : "they"} would produce no tasks.
+      {unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark
+      regions, or mark the piece as having no regions on purpose, to finish.
     </p>
   {/if}
 
@@ -730,9 +763,27 @@
     color: var(--ink-faint);
     white-space: nowrap;
   }
+  /* The remove control stays quiet until hovered; the confirmation is the
+     same small size in the danger colour. */
   .delete {
     flex: none;
-    margin-right: 8px;
+    margin-right: 10px;
+    min-height: 22px;
+    font-size: 11.5px;
+    padding: 2px 9px;
+  }
+  .delete.btn-icon {
+    width: 22px;
+    font-size: 15px;
+    border-radius: 6px;
+    color: var(--ink-faint);
+    border-color: transparent;
+    background: transparent;
+  }
+  .delete.btn-icon:hover:not(:disabled) {
+    color: var(--danger);
+    border-color: var(--danger-line);
+    background: var(--danger-bg);
   }
   .piece-actions {
     display: flex;
@@ -743,6 +794,14 @@
   .piece-actions .pill:hover:not(:disabled):not(.confirming) {
     color: var(--piece);
     border-color: var(--piece);
+  }
+  /* The on state is an outline in the piece's colour, not the solid blue of
+     a selected view pill, which clashes with the piece tints. */
+  .piece-actions .pill.on {
+    font-weight: 600;
+    color: var(--piece);
+    border-color: var(--piece);
+    background: color-mix(in srgb, var(--piece) 10%, var(--card));
   }
   .piece-actions .confirming {
     color: var(--danger);
@@ -762,6 +821,25 @@
     gap: 8px;
     flex-wrap: wrap;
     margin-top: 11px;
+  }
+  /* Styled as a pill, like the copy button beside it. */
+  .copy-select {
+    font: 11.5px var(--font);
+    padding: 4px 11px;
+    color: var(--ink-soft);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    max-width: 220px;
+  }
+  /* The selected piece's metadata, framed in the piece's colour like its
+     entry in the list above. */
+  .piece-meta {
+    margin-top: 16px;
+    padding: 0 14px 14px;
+    border: 1.5px solid var(--piece);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--piece) 5%, var(--card));
   }
   .covered {
     margin: 12px 0 0;

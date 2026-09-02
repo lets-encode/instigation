@@ -9,6 +9,11 @@ parentheses.
 - Instigator board: every kanban card carries a score link that opens the score view at the task's page.
 - Score toolbars (score preview, zones editor): two fit buttons with icons, fit width and fit whole page; the whole-page fit is the default and the chosen fit follows the window size until the zoom slider is moved.
 - Comments panel: a switch hides resolved threads.
+- Wizard pieces step: metadata can be copied from any other piece, chosen from a dropdown, not only the previous one.
+- Wizard pieces step: Finish stays disabled while a facsimile piece has no regions, unless the piece is marked "No regions on purpose"; the selected piece's metadata sits in a box in the piece's colour, with the Short/Detailed/XML switch directly above the fields.
+- Region and measure drawing works in any direction, not only towards the lower right.
+- Wizard region editor: region edges snap to neighbouring regions while drawing, resizing or moving, so regions sit exactly side by side.
+- Wizard: the piece title field's placeholder no longer says "source", which names the whole book in the wizard.
 - Volunteer view: the task mosaic in the header is one row per piece, cells in the piece's colour.
 - Claim buttons carry their stage colour: purple for preparation tasks, orange for review, blue for encoding.
 - Zones and setup views: the validation box shows only the action open to you (Claim, or Pass/Fail once you hold the slot) instead of disabled buttons.

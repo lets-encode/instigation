@@ -831,9 +831,11 @@
       box.lrx = box.ulx + w;
       box.lry = box.uly + h;
     } else if (drag.kind === "draw") {
-      // Drawing drags the lower-right corner from the start point.
-      box.lrx = Math.max(box.ulx + 5, x);
-      box.lry = Math.max(box.uly + 5, y);
+      // Drawing spans the start point and the pointer, in any direction.
+      box.ulx = Math.min(drag.sx, x);
+      box.lrx = Math.max(drag.sx, x, box.ulx + 5);
+      box.uly = Math.min(drag.sy, y);
+      box.lry = Math.max(drag.sy, y, box.uly + 5);
     } else {
       // The grabbed edges follow the pointer; the opposite ones stay put.
       if (drag.edges.includes("w")) box.ulx = Math.min(drag.orig.lrx - 5, x);

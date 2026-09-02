@@ -99,25 +99,25 @@
 </script>
 
 <div class="metaform">
-<div class="views-row">
-  {#if heading}{@render heading()}{/if}
-  <div class="views" role="tablist" aria-label="Metadata detail">
-    {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
-      <button
-        type="button"
-        role="tab"
-        aria-selected={view === id}
-        class="pill"
-        class:pill-sm={heading !== undefined}
-        class:on={view === id}
-        onclick={() => show(id)}
-      >
-        {label}
-      </button>
-    {/each}
-  </div>
-</div>
+{#if heading}
+  <div class="views-row">{@render heading()}</div>
+{/if}
 {#if subhead}{@render subhead()}{/if}
+<div class="views" role="tablist" aria-label="Metadata detail">
+  {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
+    <button
+      type="button"
+      role="tab"
+      aria-selected={view === id}
+      class="pill"
+      class:pill-sm={heading !== undefined}
+      class:on={view === id}
+      onclick={() => show(id)}
+    >
+      {label}
+    </button>
+  {/each}
+</div>
 
 {#if view === "xml"}
   {#if externalEditor}
@@ -155,7 +155,11 @@
   <div class="fields">
     <label class="field">
       Title
-      <input class="input" bind:value={meta.title} placeholder="Title as printed on the source" />
+      <input
+        class="input"
+        bind:value={meta.title}
+        placeholder={variant === "piece" ? "Title of the piece, as printed" : "Title as printed on the source"}
+      />
     </label>
     {#if view === "short"}
       <label class="field">
@@ -276,13 +280,11 @@
     gap: 10px;
     margin-top: 16px;
   }
+  /* The view switch sits directly above the fields it switches. */
   .views {
     display: flex;
     gap: 6px;
-  }
-  /* With a heading on the row, the pills sit to its right edge. */
-  .views-row > :global(:first-child:not(.views)) {
-    flex: 1;
+    margin-top: 14px;
   }
   .fields {
     display: grid;

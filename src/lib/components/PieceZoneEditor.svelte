@@ -145,6 +145,40 @@
     };
   }
 
+  // An edge within a few screen pixels of another region's edge snaps to it,
+  // so regions sit exactly side by side instead of overlapping by a stray
+  // pixel, which would reject the region.
+  function snapToNeighbours(zone: PieceZone, surface: number, skip: { piece: number; zone: number }) {
+    const page = pages[surface];
+    if (!page) return;
+    const tolerance = 6 * (page.width / (svgWidths[surface] || 400));
+    const xs: number[] = [];
+    const ys: number[] = [];
+    pieces.forEach((pc, p) =>
+      pc.zones.forEach((o, z) => {
+        if (o.surface !== surface || (p === skip.piece && z === skip.zone)) return;
+        xs.push(o.ulx, o.lrx);
+        ys.push(o.uly, o.lry);
+      }),
+    );
+    const snap = (v: number, edges: number[]) => {
+      let best = v;
+      let dist = tolerance;
+      for (const edge of edges) {
+        const d = Math.abs(edge - v);
+        if (d < dist) {
+          dist = d;
+          best = edge;
+        }
+      }
+      return best;
+    };
+    zone.ulx = snap(zone.ulx, xs);
+    zone.lrx = snap(zone.lrx, xs);
+    zone.uly = snap(zone.uly, ys);
+    zone.lry = snap(zone.lry, ys);
+  }
+
   function pointerMove(e: PointerEvent) {
     if (!drag) return;
     const page = pages[drag.page];
@@ -169,10 +203,23 @@
       zone.uly = Math.max(0, Math.min(page.height - h, drag.origin.uly + (y - drag.sy)));
       zone.lrx = zone.ulx + w;
       zone.lry = zone.uly + h;
+      // Snapping shifts the whole region, keeping its size: whichever edge
+      // snaps decides the shift.
+      const snapped = { ...zone };
+      snapToNeighbours(snapped, drag.page, { piece: drag.piece, zone: drag.zone });
+      const dx = snapped.ulx !== zone.ulx ? snapped.ulx - zone.ulx : snapped.lrx - zone.lrx;
+      const dy = snapped.uly !== zone.uly ? snapped.uly - zone.uly : snapped.lry - zone.lry;
+      zone.ulx += dx;
+      zone.lrx += dx;
+      zone.uly += dy;
+      zone.lry += dy;
     } else if (drag.kind === "draw") {
-      // Drawing pulls the lower-right corner from where it started.
-      zone.lrx = Math.max(zone.ulx + minSize, x);
-      zone.lry = Math.max(zone.uly + minSize, y);
+      // Drawing spans the start point and the pointer, in any direction.
+      zone.ulx = Math.min(drag.sx, x);
+      zone.lrx = Math.max(drag.sx, x, zone.ulx + minSize);
+      zone.uly = Math.min(drag.sy, y);
+      zone.lry = Math.max(drag.sy, y, zone.uly + minSize);
+      snapToNeighbours(zone, drag.page, { piece: drag.piece, zone: drag.zone });
     } else {
       // Resizing moves the grabbed corner's two edges, never past the
       // opposite ones.
@@ -181,6 +228,7 @@
       else zone.lrx = Math.max(drag.origin.ulx + minSize, x);
       if (c.includes("n")) zone.uly = Math.min(drag.origin.lry - minSize, y);
       else zone.lry = Math.max(drag.origin.uly + minSize, y);
+      snapToNeighbours(zone, drag.page, { piece: drag.piece, zone: drag.zone });
     }
   }
 

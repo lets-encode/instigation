@@ -32,6 +32,11 @@ export interface Piece {
 	kind: PieceKind;
 	/** Regions this piece covers. Always empty for encoded and physical pieces. */
 	zones: PieceZone[];
+	/**
+	 * For a facsimile piece, that it deliberately covers no regions of the
+	 * source; such a piece produces no tasks.
+	 */
+	noRegions?: boolean;
 	meta: SourceMetadata;
 	/** For an encoded piece, the uploaded file it came from. */
 	encodingName?: string;
