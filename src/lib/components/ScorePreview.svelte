@@ -24,6 +24,7 @@
   import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
   import { getVerovio, loadedVerovio, renderPage } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
+  import FitIcon from "./FitIcon.svelte";
   import type { PreviewPane } from "$lib/preview-pane.ts";
 
   let {
@@ -96,7 +97,7 @@
     writePreviewPane(choice);
   }
 
-  const PV_ZOOM_MIN = 0.5;
+  const PV_ZOOM_MIN = 0.2;
   const PV_ZOOM_MAX = 4;
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
@@ -109,11 +110,44 @@
   const setPvZoomPos = (p: number) =>
     (pvZoom =
       Math.round(PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100) / 100);
+  // The fit in force, if any: it keeps the zoom at the fit as the pane
+  // resizes or the spread changes, until the slider is moved.
+  let pvFit = $state<"width" | "page" | null>("width");
 
   const pvPageTotal = $derived(
     preview ? Math.max(preview.facs?.length ?? 0, preview.pageCount) : 0,
   );
   const pvSpreads = $derived(buildSpreads(pvPageTotal, pvView, pvFirstOnRight));
+  // The scroll area's inner size, for the whole-page fit. Both panes share it.
+  let pvScrollW = $state(0);
+  let pvScrollH = $state(0);
+  // The zoom at which the current spread's pages fit the pane top to bottom:
+  // bounded by the tallest page shown, capped at 1 (the width fit). A rendered
+  // encoding page's aspect comes from its viewBox, since Verovio trims the
+  // page height to its content.
+  const pvFitPage = $derived.by(() => {
+    if (!preview || !pvScrollW || !pvScrollH) return 1;
+    // Each page's aspect, with the height it needs beyond the sheet: the
+    // border, plus the caption under a facsimile page.
+    const needs: { aspect: number; extra: number }[] = [];
+    for (const p of pvSpread.pages) {
+      const pg = facsVisible ? preview.facs?.[p] : undefined;
+      if (pg) needs.push({ aspect: pg.h / pg.w, extra: 18 });
+      const box = encVisible
+        ? /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(preview.svgs[p + 1] ?? "")
+        : null;
+      if (box) needs.push({ aspect: Number(box[2]) / Number(box[1]), extra: 2 });
+    }
+    if (!needs.length) return 1;
+    const cols = pvView === "double" ? 2 : 1;
+    const colW = (pvScrollW - 14 * (cols - 1)) / cols;
+    const z = Math.min(...needs.map((n) => (pvScrollH - n.extra) / (colW * n.aspect)));
+    return Math.min(1, Math.max(PV_ZOOM_MIN, Math.floor(z * 1000) / 1000));
+  });
+  $effect(() => {
+    if (pvFit === "width") pvZoom = 1;
+    else if (pvFit === "page") pvZoom = pvFitPage;
+  });
   const pvSpreadIndex = $derived(
     Math.max(
       0,
@@ -465,14 +499,27 @@
       max={PV_ZOOM_STOPS}
       step={1}
       value={pvZoomPos}
-      oninput={(e) => setPvZoomPos(Number((e.target as HTMLInputElement).value))}
+      oninput={(e) => {
+        setPvZoomPos(Number((e.target as HTMLInputElement).value));
+        pvFit = null;
+      }}
     />
     <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
     <button
       type="button"
-      class="tbtn"
-      onclick={() => (pvZoom = 1)}
-      title="Reset the zoom so a page fits the pane">Fit</button
+      class="tbtn tbtn-icon"
+      class:on={pvFit === "width"}
+      onclick={() => (pvFit = "width")}
+      aria-label="Fit the page width"
+      title="Fit the page width to the pane"><FitIcon kind="width" /></button
+    >
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      class:on={pvFit === "page"}
+      onclick={() => (pvFit = "page")}
+      aria-label="Fit the whole page"
+      title="Fit the whole page in the pane, top to bottom"><FitIcon kind="page" /></button
     >
     {@render trailing?.()}
   </div>
@@ -482,9 +529,18 @@
     {:else if preview.error}
       <p class="perr">{preview.error}</p>
     {:else}
+      <!-- Keyed on the pane choice so a pane that survives the switch is still
+           rebuilt: its size binding otherwise stops reporting once its
+           sibling pane is removed. -->
+      {#key pane}
       {#if facsVisible && preview.facs?.length}
         <div class="pane">
-          <div class="pv-scroll" class:noh={pvZoom <= 1}>
+          <div
+            class="pv-scroll"
+            class:noh={pvZoom <= 1}
+            bind:clientWidth={pvScrollW}
+            bind:clientHeight={pvScrollH}
+          >
             <div
               class="pv-spread"
               class:hug-right={pane === "both"}
@@ -553,7 +609,12 @@
       {/if}
       {#if encVisible && preview.pageCount > 0}
         <div class="pane">
-          <div class="pv-scroll" class:noh={pvZoom <= 1}>
+          <div
+            class="pv-scroll"
+            class:noh={pvZoom <= 1}
+            bind:clientWidth={pvScrollW}
+            bind:clientHeight={pvScrollH}
+          >
             <div
               class="pv-spread"
               class:hug-left={pane === "both"}
@@ -584,6 +645,7 @@
           <div class="pane-cap">Current encoding</div>
         </div>
       {/if}
+      {/key}
     {/if}
   </div>
 </div>

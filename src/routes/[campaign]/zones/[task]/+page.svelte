@@ -20,6 +20,7 @@
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
+  import FitIcon from "$lib/components/FitIcon.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -81,7 +82,7 @@
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the page overflows and its container scrolls horizontally.
-  const ZOOM_MIN = 0.5;
+  const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 4;
   let zoom = $state(1);
 
@@ -99,26 +100,33 @@
   let deskH = $state(0);
 
   // The zoom at which a whole page fits in the desk: bounded by the height
-  // (using the tallest page), capped at 1 (the width fit). 58 covers the
-  // desk padding and the page heading above each sheet.
+  // (using the tallest page), capped at 1 (the width fit). 76 covers the
+  // desk padding, the page heading above each sheet and the sheet's bottom
+  // margin.
   function fitZoom(): number {
     if (!pages.length || !deskW || !deskH) return 1;
     const aspect = Math.max(...pages.map((p) => p.height / p.width));
     const pagesW = deskW - 48;
     const colW = view === "double" ? (pagesW - 4) / 2 : pagesW;
-    const usableH = deskH - 58;
+    const usableH = deskH - 76;
     if (colW <= 0 || usableH <= 0) return 1;
     const z = usableH / (colW * aspect);
-    return Math.min(1, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+    return Math.min(1, Math.max(ZOOM_MIN, Math.floor(z * 1000) / 1000));
   }
 
-  // Open each freshly loaded task at the whole-page fit (the desk size is
-  // bound after the desk renders, so this cannot run inside load itself).
+  // The fit in force, if any: it keeps the zoom at the fit as the desk
+  // resizes or the view changes, until the slider is moved. Each freshly
+  // loaded task opens at the whole-page fit.
+  let fit = $state<"width" | "page" | null>("page");
   let zoomInitFor = $state<FacsimileTaskData | null>(null);
   $effect(() => {
-    if (!data || !pages.length || !deskW || !deskH || zoomInitFor === data) return;
+    if (!data || zoomInitFor === data) return;
     zoomInitFor = data;
-    zoom = fitZoom();
+    fit = "page";
+  });
+  $effect(() => {
+    if (fit === "width") zoom = 1;
+    else if (fit === "page") zoom = fitZoom();
   });
 
   // Book-style paging: show one spread at a time rather than every page.
@@ -1052,15 +1060,27 @@
         max={ZOOM_STOPS}
         step={1}
         value={zoomPos}
-        oninput={(e) => setZoomPos(Number((e.target as HTMLInputElement).value))}
+        oninput={(e) => {
+          setZoomPos(Number((e.target as HTMLInputElement).value));
+          fit = null;
+        }}
       />
       <span class="zval">{Math.round(zoom * 100)}%</span>
       <button
         type="button"
-        class="tbtn"
-        onclick={() => (zoom = fitZoom())}
-        disabled={zoom === fitZoom()}
-        title="Fit the whole page in the view">Fit</button
+        class="tbtn tbtn-icon"
+        class:on={fit === "width"}
+        onclick={() => (fit = "width")}
+        aria-label="Fit the page width"
+        title="Fit the page width to the view"><FitIcon kind="width" /></button
+      >
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        class:on={fit === "page"}
+        onclick={() => (fit = "page")}
+        aria-label="Fit the whole page"
+        title="Fit the whole page in the view, top to bottom"><FitIcon kind="page" /></button
       >
       <span class="vline"></span>
       {#if canEdit}

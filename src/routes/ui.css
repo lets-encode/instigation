@@ -195,6 +195,13 @@ a.btn {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* A .tbtn holding only a glyph. */
+.tbtn-icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 8px;
+  line-height: 0;
+}
 
 /* A small status chip, green by default. */
 .chip {
@@ -305,6 +312,9 @@ a.btn {
 }
 .zoomslider {
   width: 110px;
+  /* Gives way first when the toolbar runs out of room. */
+  min-width: 50px;
+  flex: 0 1 auto;
   accent-color: var(--accent);
   cursor: pointer;
 }
