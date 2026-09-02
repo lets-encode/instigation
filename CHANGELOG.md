@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.29.0 – 2026-09-01
+
+- Facsimile pre-tasks swapped: measure correction comes first, score setup second; a piece's encoding tasks now depend on the setup task. New campaigns only.
+
 ## 0.28.0 – 2026-09-01
 
 - Instigator board: the task panel opens by default with the last-viewed task (or the first card); the info panel sits between the title and the stats bar, its values in a fixed label column; fail/comment/question chips show on every non-done card.

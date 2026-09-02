@@ -143,15 +143,15 @@ test('configToYaml: committed images and the rights acknowledgement are recorded
 	assert.ok(yaml.includes('    zones: []\n'));
 });
 
-test('one facsimile piece: setup, then the measure pre-task, then its page task', () => {
+test('one facsimile piece: the measure pre-task, then setup, then its page task', () => {
 	const config = build(WORKED_EXAMPLE_FIELDS);
 	assert.equal(
 		buildTaskCsv(config),
 		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-			'P0001,,sources/piece-01/score.mei,score-setup,,,\n' +
-			'P0001,S0001,sources/piece-01/score.mei,score-setup,,,\n' +
-			'P0002,,sources/piece-01/score.mei,measure-zones,,,P0001\n' +
-			'P0002,S0001,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0001,,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0001,S0001,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0002,,sources/piece-01/score.mei,score-setup,,,P0001\n' +
+			'P0002,S0001,sources/piece-01/score.mei,score-setup,,,\n' +
 			'T0001,,sources/piece-01/score.mei,surface-1,,,P0002\n' +
 			'T0001,S0001,sources/piece-01/score.mei,surface-1,,,\n'
 	);
@@ -173,10 +173,10 @@ test('measured pages, not covered pages, decide the page tasks', () => {
 	assert.equal(
 		buildTaskCsv(config, { 'piece-01': [1, 3] }),
 		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
-			'P0001,,sources/piece-01/score.mei,score-setup,,,\n' +
-			'P0001,S0001,sources/piece-01/score.mei,score-setup,,,\n' +
-			'P0002,,sources/piece-01/score.mei,measure-zones,,,P0001\n' +
-			'P0002,S0001,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0001,,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0001,S0001,sources/piece-01/score.mei,measure-zones,,,\n' +
+			'P0002,,sources/piece-01/score.mei,score-setup,,,P0001\n' +
+			'P0002,S0001,sources/piece-01/score.mei,score-setup,,,\n' +
 			'T0001,,sources/piece-01/score.mei,surface-1,,,P0002\n' +
 			'T0001,S0001,sources/piece-01/score.mei,surface-1,,,\n' +
 			'T0002,,sources/piece-01/score.mei,surface-3,,,P0002\n' +
@@ -187,8 +187,8 @@ test('measured pages, not covered pages, decide the page tasks', () => {
 test('a facsimile piece with no measured page falls back to one whole-file task', () => {
 	const config = build({ pieces: [facsimile('piece-01', [])] });
 	assert.deepEqual(planTasks(config), [
-		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'score-setup', dependsOn: '' },
-		{ id: 'P0002', fragment: 'sources/piece-01/score.mei', locator: 'measure-zones', dependsOn: 'P0001' },
+		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'measure-zones', dependsOn: '' },
+		{ id: 'P0002', fragment: 'sources/piece-01/score.mei', locator: 'score-setup', dependsOn: 'P0001' },
 		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: '', dependsOn: 'P0002' }
 	]);
 });
@@ -198,14 +198,14 @@ test('several pieces: ids stay unique and every task addresses its own piece', (
 		pieces: [facsimile('piece-01', [1, 2]), encoded('piece-02'), facsimile('piece-03', [2, 3])]
 	});
 	assert.deepEqual(planTasks(config), [
-		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'score-setup', dependsOn: '' },
-		{ id: 'P0002', fragment: 'sources/piece-01/score.mei', locator: 'measure-zones', dependsOn: 'P0001' },
+		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'measure-zones', dependsOn: '' },
+		{ id: 'P0002', fragment: 'sources/piece-01/score.mei', locator: 'score-setup', dependsOn: 'P0001' },
 		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: 'surface-1', dependsOn: 'P0002' },
 		{ id: 'T0002', fragment: 'sources/piece-01/score.mei', locator: 'surface-2', dependsOn: 'P0002' },
 		// An encoded piece is already notated: one whole-file task, no pre-tasks.
 		{ id: 'T0003', fragment: 'sources/piece-02/score.mei', locator: '', dependsOn: '' },
-		{ id: 'P0003', fragment: 'sources/piece-03/score.mei', locator: 'score-setup', dependsOn: '' },
-		{ id: 'P0004', fragment: 'sources/piece-03/score.mei', locator: 'measure-zones', dependsOn: 'P0003' },
+		{ id: 'P0003', fragment: 'sources/piece-03/score.mei', locator: 'measure-zones', dependsOn: '' },
+		{ id: 'P0004', fragment: 'sources/piece-03/score.mei', locator: 'score-setup', dependsOn: 'P0003' },
 		{ id: 'T0004', fragment: 'sources/piece-03/score.mei', locator: 'surface-2', dependsOn: 'P0004' },
 		{ id: 'T0005', fragment: 'sources/piece-03/score.mei', locator: 'surface-3', dependsOn: 'P0004' }
 	]);
@@ -220,7 +220,7 @@ test('pre-task ids stay unique across mixed facsimile and physical pieces', () =
 	assert.equal(new Set(ids).size, ids.length);
 	assert.deepEqual(
 		planned.filter((task) => task.locator === 'score-setup').map((task) => task.id),
-		['P0001', 'P0003', 'P0004']
+		['P0002', 'P0003', 'P0005']
 	);
 });
 

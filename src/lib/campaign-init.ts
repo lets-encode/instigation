@@ -10,8 +10,8 @@
 // Produces, from a filled config:
 //   - config.yaml            (configToYaml)
 //   - sources/<piece>/score.mei  (one per piece; built by mei-facsimile.ts)
-//   - tracking/task.csv      (buildTaskCsv: per piece, a score-setup pre-task,
-//                             a measure-correction pre-task and one encoding
+//   - tracking/task.csv      (buildTaskCsv: per piece, a measure-correction
+//                             pre-task, a score-setup pre-task and one encoding
 //                             task per covered page for a facsimile piece; one
 //                             whole-file task for an encoded piece; a
 //                             score-setup pre-task plus per-page or whole-file
@@ -303,24 +303,24 @@ export interface PlannedTask {
 /**
  * The campaign's tasks, in table order.
  *
- * Each facsimile and physical piece opens with its own score-setup pre-task
- * (DESIGN.md §7a, locator `score-setup`), whose deliverable is the piece's
- * initial score definition — staves with their clefs and instrument labels,
- * key signature and meter.
- *
- * A facsimile piece follows with its measure-correction pre-task (locator
- * `measure-zones`, depending on the setup task) covering measure boxes and
- * numbers, page/system breaks and movement boundaries; its encoding is then
- * split into one task per page carrying measures (locator `surface-N`,
- * matching that page's `<pb>`), each depending on that piece's
- * measure-correction pre-task. A facsimile piece with no measured pages falls
+ * A facsimile piece opens with its measure-correction pre-task (DESIGN.md §7a,
+ * locator `measure-zones`) covering measure boxes and numbers, page/system
+ * breaks and movement boundaries. Its score-setup pre-task (locator
+ * `score-setup`, depending on the measure task) follows, delivering the
+ * piece's initial score definition — staves with their clefs and instrument
+ * labels, key signature and meter; its submission rebuilds the file and
+ * regenerates every measure body for that definition, which is why encoding
+ * waits for it. The encoding is then split into one task per page carrying
+ * measures (locator `surface-N`, matching that page's `<pb>`), each depending
+ * on that piece's setup task. A facsimile piece with no measured pages falls
  * back to a single whole-file encoding task.
  *
  * An encoded piece is already notated, so it gets one whole-file task and no
  * pre-tasks.
  *
  * A physical piece is transcribed from the source itself: there is no
- * facsimile to correct measures on, so no measure-correction pre-task. A known
+ * facsimile to correct measures on, so its score-setup pre-task is its only
+ * pre-task and opens with no dependency. A known
  * page count splits its encoding into one task per page (locator `surface-N`,
  * matching the blank score's `<pb>` markers); without one it gets a single
  * whole-file task. Either way its encoding depends on the setup task.
@@ -357,20 +357,20 @@ export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): Pla
 			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: '' });
 			continue;
 		}
-		const setup = preTaskId(++preTasks);
-		planned.push({ id: setup, fragment: piece.path, locator: 'score-setup', dependsOn: '' });
 		const pre = preTaskId(++preTasks);
-		planned.push({ id: pre, fragment: piece.path, locator: 'measure-zones', dependsOn: setup });
+		planned.push({ id: pre, fragment: piece.path, locator: 'measure-zones', dependsOn: '' });
+		const setup = preTaskId(++preTasks);
+		planned.push({ id: setup, fragment: piece.path, locator: 'score-setup', dependsOn: pre });
 		const pages = surfacesFor(piece, surfaces);
 		if (pages.length === 0) {
-			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: pre });
+			planned.push({ id: taskId(++tasks), fragment: piece.path, locator: '', dependsOn: setup });
 		} else {
 			for (const page of pages) {
 				planned.push({
 					id: taskId(++tasks),
 					fragment: piece.path,
 					locator: `surface-${page}`,
-					dependsOn: pre
+					dependsOn: setup
 				});
 			}
 		}
