@@ -24,9 +24,6 @@ import {
 	resolveLogins
 } from './campaign-tables.ts';
 import type { CommentRow, HistoryRow, LockRow, PieceNames, StateRow, TaskRow } from './campaign-tables.ts';
-import { parseMeiHeader } from './mei-header.ts';
-import { parseFacsimileMei } from './mei-facsimile.ts';
-import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 import type { ForgeClient } from './forge/types.ts';
 import { RateLimitError } from './forge/github-rest.ts';
 import type { RepoSummary } from './forge/github-rest.ts';
@@ -63,8 +60,6 @@ export interface CampaignStats {
 	staleAfterMinutes: number;
 	/** validation.allow_self_validation from config.yaml. */
 	allowSelfValidation: boolean;
-	/** A facsimile page image for the tile preview, or null. */
-	preview: { url: string; page: number } | null;
 	/** Fragment path → piece display name, from the config's pieces list. */
 	pieceNames: PieceNames;
 	// The raw tables, for the my-work projections.
@@ -204,28 +199,11 @@ export function invalidateStats(repoId?: number): void {
 	else cache.delete(repoId);
 }
 
-/**
- * Load one campaign's stats, cached per repo id for the session. `withPreview`
- * additionally fetches the first fragment's facsimile for a tile image (two
- * extra requests); a cached entry without a preview is upgraded when one is
- * asked for.
- */
-export function loadCampaignStats(
-	f: ForgeClient,
-	summary: RepoSummary,
-	withPreview = false
-): Promise<CampaignStats> {
+/** Load one campaign's stats, cached per repo id for the session. */
+export function loadCampaignStats(f: ForgeClient, summary: RepoSummary): Promise<CampaignStats> {
 	const cached = cache.get(summary.id);
-	if (cached) {
-		if (!withPreview) return cached;
-		const upgraded = cached.then(async (stats) => {
-			if (stats.preview) return stats;
-			return { ...stats, preview: await loadPreview(f, stats) };
-		});
-		cache.set(summary.id, upgraded);
-		return upgraded;
-	}
-	const loading = fetchStats(f, summary, withPreview);
+	if (cached) return cached;
+	const loading = fetchStats(f, summary);
 	cache.set(summary.id, loading);
 	loading.catch(() => cache.delete(summary.id));
 	return loading;
@@ -252,14 +230,14 @@ export interface CampaignListing {
 export async function loadAllCampaignStats(
 	f: ForgeClient,
 	topic: string,
-	opts: { withPreview?: boolean; onEach?: (stats: CampaignStats) => void } = {}
+	opts: { onEach?: (stats: CampaignStats) => void } = {}
 ): Promise<CampaignListing> {
 	const repos = await f.searchReposByTopic(topic);
 	const errors: unknown[] = [];
 	const all = await Promise.all(
 		repos.map(async (repo) => {
 			try {
-				const stats = await loadCampaignStats(f, repo, opts.withPreview ?? false);
+				const stats = await loadCampaignStats(f, repo);
 				opts.onEach?.(stats);
 				return stats;
 			} catch (err) {
@@ -279,11 +257,7 @@ export async function loadAllCampaignStats(
 	};
 }
 
-async function fetchStats(
-	f: ForgeClient,
-	summary: RepoSummary,
-	withPreview: boolean
-): Promise<CampaignStats> {
+async function fetchStats(f: ForgeClient, summary: RepoSummary): Promise<CampaignStats> {
 	const owner = summary.owner ?? summary.full_name.split('/')[0];
 	const repo = summary.name;
 	const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] = await Promise.all([
@@ -328,9 +302,7 @@ async function fetchStats(
 	const passThreshold = passThresholdOf(yaml, state.validationColumns.length);
 	const staleAfterMinutes = configNumber(yaml, 'stale_after_minutes', 0);
 
-	// The composer from config's source header; the score header is the
-	// fallback, read together with the preview to avoid an extra fetch.
-	let composer = configString(yaml, 'composer');
+	const composer = configString(yaml, 'composer');
 
 	const stats: CampaignStats = {
 		repoId: summary.id,
@@ -358,7 +330,6 @@ async function fetchStats(
 		createdAt: summary.created_at || history[0]?.timestamp || '',
 		staleAfterMinutes,
 		allowSelfValidation: configFlag(yaml, 'allow_self_validation'),
-		preview: null,
 		pieceNames: pieceNamesOf(configPieces(yaml)),
 		taskDefs,
 		rows: state.rows,
@@ -368,42 +339,7 @@ async function fetchStats(
 		comments,
 		passThreshold
 	};
-	if (withPreview) {
-		const loaded = await loadScoreExtras(f, stats);
-		stats.preview = loaded.preview;
-		if (!stats.composer) stats.composer = loaded.composer;
-	}
 	return stats;
-}
-
-// The first fragment's facsimile image (for the tile) and its header composer.
-async function loadScoreExtras(
-	f: ForgeClient,
-	stats: Pick<CampaignStats, 'owner' | 'repo' | 'taskDefs'>
-): Promise<{ preview: CampaignStats['preview']; composer: string }> {
-	const fragment = stats.taskDefs.find((t) => t.fragment)?.fragment;
-	if (!fragment) return { preview: null, composer: '' };
-	try {
-		const mei = await f.getRepoFile(stats.owner, stats.repo, fragment);
-		if (!mei) return { preview: null, composer: '' };
-		const composer = parseMeiHeader(mei)?.composer ?? '';
-		const model = parseFacsimileMei(mei);
-		const pageIndex = model.pages.findIndex((p) => p.image);
-		if (pageIndex < 0) return { preview: null, composer };
-		const urls = await resolveFacsimileImageUrls(f, stats.owner, stats.repo, fragment, [
-			model.pages[pageIndex].image
-		]);
-		return {
-			preview: urls[0] ? { url: urls[0], page: pageIndex + 1 } : null,
-			composer
-		};
-	} catch {
-		return { preview: null, composer: '' };
-	}
-}
-
-async function loadPreview(f: ForgeClient, stats: CampaignStats): Promise<CampaignStats['preview']> {
-	return (await loadScoreExtras(f, stats)).preview;
 }
 
 // ---------------------------------------------------------------------------

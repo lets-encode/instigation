@@ -5,6 +5,7 @@ parentheses.
 
 ## 0.30.0 – 2026-09-02
 
+- Removed the unused tile-preview path from the campaign stats loader.
 - Test suite: checks that the campaign repos' caller workflow never checks out or executes the PR head — it may reach the coordinator only as env data.
 - Score preview: a two-page score opens with both pages side by side; a view or recto choice made by the user holds for the rest of the session.
 - Instigator board: every kanban card carries a score link that opens the score view at the task's page.

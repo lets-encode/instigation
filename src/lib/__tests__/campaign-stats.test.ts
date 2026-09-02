@@ -75,7 +75,6 @@ const stats: CampaignStats = {
 	createdAt: '',
 	staleAfterMinutes: 120,
 	allowSelfValidation: false,
-	preview: null,
 	pieceNames: {},
 	taskDefs,
 	rows: state.rows,
