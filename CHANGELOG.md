@@ -7,7 +7,8 @@ parentheses.
 
 - Score preview: a two-page score opens with both pages side by side; a view or recto choice made by the user holds for the rest of the session.
 - Instigator board: every kanban card carries a score link that opens the score view at the task's page.
-- Score toolbars (score preview, zones editor): two fit buttons with icons, fit width and fit whole page; the chosen fit follows the window size until the zoom slider is moved.
+- Score toolbars (score preview, zones editor): two fit buttons with icons, fit width and fit whole page; the whole-page fit is the default and the chosen fit follows the window size until the zoom slider is moved.
+- Score preview: the rendered encoding uses pages of the facsimile's proportions (A4 without a facsimile), systems spread over the page when breaks are encoded, and one page size per score, grown until the densest page fits.
 
 ## 0.29.0 – 2026-09-01
 

@@ -11,7 +11,7 @@
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import { buildBlankScoreMei } from "$lib/mei-facsimile.ts";
   import type { ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
-  import { getVerovio, renderPage } from "$lib/verovio-render.ts";
+  import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
@@ -560,7 +560,7 @@
     getVerovio()
       .then((tk) => {
         if (dropped) return;
-        if (!tk.loadData(mei)) throw new Error("the score could not be rendered.");
+        if (!loadSnippet(tk, mei)) throw new Error("the score could not be rendered.");
         previewSvg = renderPage(tk, 1);
         previewError = "";
       })

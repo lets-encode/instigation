@@ -22,7 +22,7 @@
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
-  import { getVerovio, loadedVerovio, renderPage } from "$lib/verovio-render.ts";
+  import { getVerovio, loadedVerovio, loadScore, renderPage } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
   import FitIcon from "./FitIcon.svelte";
   import type { PreviewPane } from "$lib/preview-pane.ts";
@@ -112,7 +112,7 @@
       Math.round(PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100) / 100);
   // The fit in force, if any: it keeps the zoom at the fit as the pane
   // resizes or the spread changes, until the slider is moved.
-  let pvFit = $state<"width" | "page" | null>("width");
+  let pvFit = $state<"width" | "page" | null>("page");
 
   const pvPageTotal = $derived(
     preview ? Math.max(preview.facs?.length ?? 0, preview.pageCount) : 0,
@@ -349,15 +349,23 @@
         }
       }
 
-      // A score without facsimile pages is rendered as-is; a facsimile score
-      // only once its measures exist (stage A has nothing to render). With
-      // encoded breaks Verovio paginates on the <pb/> elements, so encoding
-      // pages line up with the facsimile pages.
+      // A score without facsimile pages is rendered on A4 pages; a facsimile
+      // score on pages of the facsimile's proportions, and only once its
+      // measures exist (stage A has nothing to render). With encoded breaks
+      // Verovio paginates on the <pb/> elements, so encoding pages line up
+      // with the facsimile pages.
       let pageCount = 0;
       if (!parsed.pages.length || parsed.hasMeasures) {
         const tk = await getVerovio();
-        tk.setOptions({ breaks: parsed.hasBreaks ? "encoded" : "auto" });
-        if (!tk.loadData(mei)) throw new Error(`Verovio could not parse ${path}.`);
+        const aspects = parsed.pages
+          .filter((pg) => pg.width > 0 && pg.height > 0)
+          .map((pg) => pg.height / pg.width)
+          .sort((a, b) => a - b);
+        const ok = loadScore(tk, mei, {
+          aspect: aspects.length ? aspects[Math.floor(aspects.length / 2)] : undefined,
+          encodedBreaks: parsed.hasBreaks,
+        });
+        if (!ok) throw new Error(`Verovio could not parse ${path}.`);
         pageCount = tk.getPageCount();
       }
 
