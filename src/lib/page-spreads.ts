@@ -10,6 +10,18 @@ export interface Spread {
 	lonelySide?: 'left' | 'right';
 }
 
+/**
+ * The view a freshly opened score starts in. A two-page score shows both
+ * pages side by side; anything else opens one page at a time with page 1 as
+ * a recto.
+ */
+export function defaultSpreadView(n: number): {
+	view: 'single' | 'double';
+	firstOnRight: boolean;
+} {
+	return n === 2 ? { view: 'double', firstOnRight: false } : { view: 'single', firstOnRight: true };
+}
+
 /** Slice `n` pages into spreads for the given view. */
 export function buildSpreads(
 	n: number,

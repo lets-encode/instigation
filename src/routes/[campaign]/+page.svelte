@@ -376,6 +376,16 @@
     const path = previewPieces[index]?.path;
     if (path) openScoreView(path, startPage);
   }
+  // A task's score view opens at its page when the task covers one surface.
+  const cardPage = (card: BoardCard) =>
+    /^surface-(\d+)$/.exec(card.locator)?.[1] ?? "";
+  function viewCardScore(card: BoardCard) {
+    const page = cardPage(card);
+    viewScorePiece(
+      pieceIndexByTask.get(card.task) ?? 0,
+      page ? Number(page) - 1 : undefined,
+    );
+  }
   // A comment anchor outside the score view: open it on the comment's piece,
   // at the anchored page, with the range highlighted.
   function showCommentInScore(c: CommentRow) {
@@ -834,11 +844,7 @@
     {resultBanner}
     bind:panel={taskPanel}
     onclose={closeTask}
-    onopenscore={() => {
-      const index = pieceIndexByTask.get(card.task) ?? 0;
-      const start = /^surface-(\d+)$/.exec(card.locator);
-      viewScorePiece(index, start ? Number(start[1]) - 1 : undefined);
-    }}
+    onopenscore={() => viewCardScore(card)}
     onshowanchor={showCommentInScore}
     onclaim={claimValidate}
     oneditor={editor}
@@ -1385,6 +1391,16 @@
                           ? `${card.typeLine} · ${card.passes} of ${card.threshold} passes`
                           : card.typeLine}
                         <span class="mono card-id">{card.task}</span>
+                        <button
+                          type="button"
+                          class="card-score"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            viewCardScore(card);
+                          }}
+                          title="Open the score at this task's pages"
+                          >{cardPage(card) ? `p. ${cardPage(card)} →` : "score →"}</button
+                        >
                       </div>
                       <TaskRunState task={card.task} />
                       {#if card.column === "blocked"}
@@ -2172,6 +2188,16 @@
     font-size: 10px;
     opacity: 0.8;
     margin-left: 4px;
+  }
+  .card-score {
+    font: 600 11px var(--font);
+    color: var(--info);
+    background: none;
+    border: 0;
+    padding: 0;
+    margin-left: 6px;
+    cursor: pointer;
+    white-space: nowrap;
   }
   .card-foot {
     font-size: 11.5px;

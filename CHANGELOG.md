@@ -3,6 +3,11 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.30.0 – 2026-09-02
+
+- Score preview: a two-page score opens with both pages side by side; a view or recto choice made by the user holds for the rest of the session.
+- Instigator board: every kanban card carries a score link that opens the score view at the task's page.
+
 ## 0.29.0 – 2026-09-01
 
 - Facsimile pre-tasks swapped: measure correction comes first, score setup second; a piece's encoding tasks now depend on the setup task. New campaigns only.

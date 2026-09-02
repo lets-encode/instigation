@@ -7,6 +7,13 @@
   A caller can pass a measure range to highlight, which marks those measures in
   both panes.
 -->
+<script module lang="ts">
+  // Once the user picks a view or flips the recto toggle, the choice holds for
+  // every score opened in this session; before that, each score opens in its
+  // default view. Module-level so it survives the component being remounted.
+  let viewChosen = false;
+</script>
+
 <script lang="ts">
   import { untrack } from "svelte";
   import type { Snippet } from "svelte";
@@ -14,7 +21,7 @@
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
-  import { buildSpreads } from "$lib/page-spreads.ts";
+  import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
   import { getVerovio, loadedVerovio, renderPage } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
   import type { PreviewPane } from "$lib/preview-pane.ts";
@@ -228,10 +235,12 @@
   }
   function pvSetView(v: "single" | "double") {
     pvView = v;
+    viewChosen = true;
     renderSpread();
   }
   function pvSetFirstOnRight(on: boolean) {
     pvFirstOnRight = on;
+    viewChosen = true;
     renderSpread();
   }
 
@@ -327,6 +336,7 @@
           svgs: {},
         };
         const total = Math.max(facs?.length ?? 0, pageCount);
+        if (!viewChosen) ({ view: pvView, firstOnRight: pvFirstOnRight } = defaultSpreadView(total));
         pvFirstVisible = Math.min(from, Math.max(0, total - 1));
         renderSpread();
       }
