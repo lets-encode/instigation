@@ -1025,15 +1025,16 @@
               )}</span
             >
           {/each}
-          {#if validation.status !== "completed" && validation.openSlots > 0}
-            <div class="sb-row three">
-              <button type="button" class="btn" onclick={() => claimValidation()} disabled={runner.busy || !canClaimValidation}
-                title={data?.allowSelfValidation
-                  ? "Reserve this subtask for validation."
-                  : "Reserve this subtask for validation. Encoders cannot validate their own work."}>Claim</button>
-              <button type="button" class="btn btn-primary btn-finish" onclick={() => validate("pass")} disabled={runner.busy || !holdsValidation || verdictPending}
+          {#if canClaimValidation}
+            <div class="sb-row one">
+              <button type="button" class="btn" onclick={() => claimValidation()} disabled={runner.busy}
+                title="Reserve this subtask for validation.">Claim</button>
+            </div>
+          {:else if holdsValidation && !verdictPending}
+            <div class="sb-row two">
+              <button type="button" class="btn btn-primary btn-finish" onclick={() => validate("pass")} disabled={runner.busy}
                 title="Record a passing verdict.">Pass</button>
-              <button type="button" class="btn btn-danger vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy || !holdsValidation || verdictPending}
+              <button type="button" class="btn btn-danger vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy}
                 title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
             </div>
           {/if}
@@ -1400,7 +1401,7 @@
     align-self: stretch;
   }
 
-  /* A control row filling the sidebar's width; .one/.three divide it into
+  /* A control row filling the sidebar's width; .one/.two divide it into
      that many equal cells. */
   .sb-row {
     align-self: stretch;
@@ -1409,15 +1410,15 @@
     gap: 6px;
   }
   .sb-row.one,
-  .sb-row.three {
+  .sb-row.two {
     display: grid;
     grid-template-columns: repeat(var(--cells), 1fr);
   }
   .sb-row.one {
     --cells: 1;
   }
-  .sb-row.three {
-    --cells: 3;
+  .sb-row.two {
+    --cells: 2;
   }
   .failnote {
     align-self: stretch;
