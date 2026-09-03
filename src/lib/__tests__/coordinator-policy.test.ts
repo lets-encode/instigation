@@ -7,6 +7,7 @@ import {
 	addedRowFromPatch,
 	appendedCommentsFromPatch,
 	classifyPullRequest,
+	touchesCampaignPaths,
 	pieceKindForPath,
 	resolveEncodingTask,
 	resolvedCommentFromPatch,
@@ -107,6 +108,8 @@ test('validation verdicts are exact, not pass/fail prefixes', () => {
 });
 
 test('pull requests are classified by their mutation table', () => {
+	assert.equal(touchesCampaignPaths(['README.md', 'docs/x.md']), false);
+	assert.equal(touchesCampaignPaths(['README.md', 'sources/piece-1/score.mei']), true);
 	assert.equal(classifyPullRequest(['tracking/lock.csv']), 'claim');
 	assert.equal(classifyPullRequest(['tracking/state.csv']), 'validation');
 	assert.equal(classifyPullRequest(['sources/score.mei']), 'encoding');

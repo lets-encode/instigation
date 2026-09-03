@@ -2,7 +2,11 @@
 // It branches on the triggering event (EVENT_NAME) and, for pull requests, on
 // the PR's changed paths, then hands the decision to the pure modules and
 // applies the result with optimistic concurrency. Every outcome — accepted,
-// rejected, reaped — is appended to the campaign's history table.
+// rejected, reaped — is appended to the campaign's history table, except the
+// rejection of a pull request that does not parse as any operation
+// (AUDIT_FREE_REJECTS) and the closing of a pull request over the per-author
+// cap. Scheduled runs reap stale locks and then process any open pull request
+// whose own run was lost (runCatchUp).
 // See DESIGN.md §4 (the caller) & §6 (PR contract).
 //
 // Runs in the BASE (campaign) repo's context with a write token. The pull
@@ -61,6 +65,7 @@ import {
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
   taskResetFromPatch,
+  touchesCampaignPaths,
   validationIntentFromPatch,
   validationVerdict,
 } from "../src/lib/coordinator-policy.ts";
@@ -68,31 +73,66 @@ import {
   getCommitMessage,
   getRepoFile,
   getRepoHead,
-  getPullRequestFiles,
-  getPullRequestDetails,
+  getPullRequest,
+  listOpenPullRequests,
   getCollaboratorCanPush,
   commitFiles,
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
 } from "../src/lib/forge/github-rest.ts";
-import type { FileChange } from "../src/lib/forge/github-rest.ts";
+import type {
+  FileChange,
+  OpenPullRequest,
+  PullRequestFile,
+} from "../src/lib/forge/github-rest.ts";
 import { validateMei } from "./mei-validate.ts";
 
 const token = process.env.GH_TOKEN ?? "";
 const [owner, repo] = (process.env.BASE_REPO ?? "").split("/");
 const eventName = process.env.EVENT_NAME ?? "";
-const prNumber = Number(process.env.PR_NUMBER);
+
+// The pull request being processed. A pull_request_target run binds it once
+// from the event's environment; the scheduled catch-up pass binds each open
+// pull request it picks up in turn, so the decision functions below always
+// see exactly one pull request.
+interface PullRequestContext {
+  number: number;
+  /** The author's numeric account id. */
+  author: string;
+  authorLogin: string;
+  headOwner: string;
+  headRepo: string;
+  headSha: string;
+  headRef: string;
+}
+let prNumber = 0;
 // The PR author's stable numeric account id — the identity written to the
 // tracking tables (lock.user_id, state.encoder, validate_status, history).
-const author = process.env.PR_AUTHOR ?? "";
+let author = "";
 // The PR author's login — for human-readable commit messages / co-author
 // trailers only, never as a stored identity. Falls back to the id if absent.
-const authorLogin = process.env.PR_AUTHOR_LOGIN ?? "";
-const authorLabel = authorLogin || author;
-const [headOwner, headRepo] = (process.env.HEAD_REPO ?? "").split("/");
-const headSha = process.env.HEAD_SHA ?? "";
-const headRef = process.env.HEAD_REF ?? "";
+let authorLogin = "";
+let authorLabel = "";
+let headOwner = "";
+let headRepo = "";
+let headSha = "";
+let headRef = "";
+// When the pull request was opened (GitHub's server time). Comment rows carry
+// it as their timestamp, so a discussion keeps the order the comments were
+// submitted in even when their runs finish in another order; lock, state and
+// history rows carry the processing time.
+let submittedAt = "";
+function bindPullRequest(pr: PullRequestContext): void {
+  prNumber = pr.number;
+  author = pr.author;
+  authorLogin = pr.authorLogin;
+  authorLabel = authorLogin || author;
+  headOwner = pr.headOwner;
+  headRepo = pr.headRepo;
+  headSha = pr.headSha;
+  headRef = pr.headRef;
+}
 
 const TASK_PATH = "tracking/task.csv";
 const STATE_PATH = "tracking/state.csv";
@@ -100,8 +140,19 @@ const LOCK_PATH = "tracking/lock.csv";
 const HISTORY_PATH = "tracking/history.csv";
 const COMMENT_PATH = "tracking/comment.csv";
 const CONFIG_PATH = "config.yaml";
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 5;
 const DEFAULT_STALE_MINUTES = 120;
+// Open non-draft pull requests one author may have on a campaign, counting
+// the one being processed; beyond it a pull request is closed unprocessed and
+// without a history row.
+const MAX_OPEN_PRS_PER_AUTHOR = 10;
+// The scheduled catch-up pass (runCatchUp) picks up open pull requests older
+// than the minimum age — a run of their own may still be under way before
+// that — and younger than the maximum, processing at most CATCHUP_MAX_PRS
+// campaign pull requests per pass.
+const CATCHUP_MIN_AGE_MS = 10 * 60_000;
+const CATCHUP_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const CATCHUP_MAX_PRS = 20;
 
 // A rejection's `reason` is the machine-readable code recorded in the history
 // table; `detail` is the human explanation behind it, for the PR comment only.
@@ -137,7 +188,25 @@ const REASON_TEXT: Record<string, string> = {
     "a parent comment must be a top-level question or addition, and only replies carry one",
   unknown_comment: "no such comment",
   already_resolved: "the comment is already resolved",
+  too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open pull requests on this campaign`,
 };
+
+// Rejections of pull requests that do not parse as any operation. They leave
+// no history row: the closed pull request and its comment are the record, and
+// the tables are not committed to for them. Every rejection of a well-formed
+// operation (a lost race, a failed machine-check, a wrong state) is appended
+// to history.csv.
+const AUDIT_FREE_REJECTS = new Set([
+  "malformed_claim",
+  "malformed_validation",
+  "malformed_comment",
+  "out_of_bounds",
+  "unknown_task",
+  "invalid_kind",
+  "invalid_target",
+]);
+const isAuditFree = (verdict: { ok: boolean; reason?: string }): boolean =>
+  !verdict.ok && AUDIT_FREE_REJECTS.has(verdict.reason ?? "");
 
 // "`code` — explanation" for a rejection comment; just the code when unmapped.
 const explainReason = (reason: string | undefined): string => {
@@ -156,6 +225,8 @@ const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
 // often the non-fast-forward commit failing because the branch head moved.
 // Every error is retried (up to MAX_ATTEMPTS): each attempt re-reads the
 // tables before writing, so retrying a transient read failure is equally safe.
+// Runs for different pull requests execute concurrently, so a random pause
+// before each retry spreads competing writers apart.
 async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
   for (let i = 0; ; i++) {
     try {
@@ -164,6 +235,9 @@ async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
       if (i === MAX_ATTEMPTS - 1) throw e;
       console.warn(
         `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
+      );
+      await new Promise((resolve) =>
+        setTimeout(resolve, 200 + Math.random() * 800),
       );
     }
   }
@@ -212,7 +286,7 @@ async function attemptClaim(
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { lock?: LockRow }> {
   const readStart = Date.now();
-  const { branch, sha } = await getRepoHead(token, owner, repo);
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
   const [taskCsv, stateCsv, lockCsv, historyCsv, configText] =
     await Promise.all([
       getRepoFile(token, owner, repo, TASK_PATH, sha),
@@ -267,10 +341,15 @@ async function attemptClaim(
     detail: verdict.ok ? "" : verdict.reason!,
     ...envelopeColumns(envelope),
   };
+  const auditFree = isAuditFree(verdict);
+  if (auditFree && removed.length === 0) return verdict;
   const files: FileChange[] = [
     {
       path: HISTORY_PATH,
-      content: appendHistory(historyCsv ?? "", [...reapedHistory, history]),
+      content: appendHistory(
+        historyCsv ?? "",
+        auditFree ? reapedHistory : [...reapedHistory, history],
+      ),
     },
   ];
   if (verdict.ok || removed.length) {
@@ -287,6 +366,7 @@ async function attemptClaim(
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
+    baseTreeSha: treeSha,
     branch,
   });
   logPhase("commit", commitStart);
@@ -294,7 +374,7 @@ async function attemptClaim(
 }
 
 async function runClaim(
-  files: Awaited<ReturnType<typeof getPullRequestFiles>>,
+  files: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<void> {
   const changedPaths = files.map((f) => f.filename);
@@ -477,7 +557,7 @@ async function decideValidation(
   sha: string,
   state: ParsedState,
   locks: LockRow[],
-  prFiles: Awaited<ReturnType<typeof getPullRequestFiles>>,
+  prFiles: PullRequestFile[],
   changedPaths: string[],
   now: string,
 ): Promise<
@@ -562,7 +642,7 @@ async function decideValidation(
       ...failComment!,
       comment_id: newCommentId(),
       author_id: author,
-      timestamp: now,
+      timestamp: submittedAt,
       resolved: "",
       parent_id: "",
     };
@@ -621,12 +701,12 @@ async function decideSendBack(
 // the commit races (caller retries); returns the verdict otherwise.
 async function attemptSubmit(
   kind: "encoding" | "validation",
-  prFiles: Awaited<ReturnType<typeof getPullRequestFiles>>,
+  prFiles: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict> {
   const changedPaths = prFiles.map((f) => f.filename);
   const readStart = Date.now();
-  const { branch, sha } = await getRepoHead(token, owner, repo);
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
   const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
     getRepoFile(token, owner, repo, TASK_PATH, sha),
     getRepoFile(token, owner, repo, STATE_PATH, sha),
@@ -653,6 +733,7 @@ async function attemptSubmit(
           now,
         );
   logPhase("decide", decideStart);
+  if (isAuditFree(outcome)) return outcome;
 
   const history: HistoryRow = {
     ...(outcome.history ?? {
@@ -676,6 +757,7 @@ async function attemptSubmit(
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
+    baseTreeSha: treeSha,
     branch,
   });
   logPhase("commit", commitStart);
@@ -684,7 +766,7 @@ async function attemptSubmit(
 
 async function runSubmit(
   kind: "encoding" | "validation",
-  files: Awaited<ReturnType<typeof getPullRequestFiles>>,
+  files: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<void> {
   const verdict = await withRetry(() => attemptSubmit(kind, files, envelope));
@@ -705,12 +787,12 @@ async function runSubmit(
 // Comment (a PR appending one discussion row to comment.csv, or resolving one)
 
 async function attemptComment(
-  prFiles: Awaited<ReturnType<typeof getPullRequestFiles>>,
+  prFiles: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { action: string }> {
   const changedPaths = prFiles.map((f) => f.filename);
   const readStart = Date.now();
-  const { branch, sha } = await getRepoHead(token, owner, repo);
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
   const [stateCsv, commentCsv, historyCsv] = await Promise.all([
     getRepoFile(token, owner, repo, STATE_PATH, sha),
     getRepoFile(token, owner, repo, COMMENT_PATH, sha),
@@ -736,7 +818,7 @@ async function attemptComment(
       added: added.length === 1 ? added[0] : null,
       author,
       changedPaths,
-      now,
+      now: submittedAt,
       newId: newCommentId(),
     });
     verdict = check;
@@ -756,6 +838,9 @@ async function attemptComment(
     verdict = { ok: false, reason: "malformed_comment" };
   }
 
+  if (!verdict.ok && isAuditFree(verdict)) {
+    return { ok: false, reason: verdict.reason, action };
+  }
   const row = verdict.ok ? verdict.row : null;
   const history: HistoryRow = {
     timestamp: now,
@@ -783,6 +868,7 @@ async function attemptComment(
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
+    baseTreeSha: treeSha,
     branch,
   });
   logPhase("commit", commitStart);
@@ -794,7 +880,7 @@ async function attemptComment(
 }
 
 async function runComment(
-  files: Awaited<ReturnType<typeof getPullRequestFiles>>,
+  files: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<void> {
   const verdict = await withRetry(() => attemptComment(files, envelope));
@@ -816,7 +902,7 @@ async function runComment(
 
 async function attemptReap(): Promise<void> {
   const readStart = Date.now();
-  const { branch, sha } = await getRepoHead(token, owner, repo);
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
   const [lockCsv, historyCsv, configText] = await Promise.all([
     getRepoFile(token, owner, repo, LOCK_PATH, sha),
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
@@ -858,7 +944,7 @@ async function attemptReap(): Promise<void> {
       { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", history) },
     ],
     `Release ${removed.length} stale lock(s): ${removed.map((l) => l.task_id).join(", ")}`,
-    { baseSha: sha, branch },
+    { baseSha: sha, baseTreeSha: treeSha, branch },
   );
   logPhase("commit", commitStart);
   console.log(`Released ${removed.length} stale lock(s).`);
@@ -874,32 +960,120 @@ async function runReap(): Promise<void> {
 // → comment, anything else → encoding. The boundary check inside each decision
 // rejects mixed or out-of-bounds PRs.
 
+// Process the bound pull request. `open` is the campaign's open pull request
+// list when the caller already holds it. Returns false when the pull request
+// is not a campaign operation and was left alone.
+async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
+  const readStart = Date.now();
+  const [{ body, files, createdAt }, openPrs] = await Promise.all([
+    getPullRequest(token, owner, repo, prNumber),
+    open ?? listOpenPullRequests(token, owner, repo),
+  ]);
+  logPhase("read_pr", readStart);
+  submittedAt = createdAt || new Date().toISOString();
+  const changedPaths = files.map((f) => f.filename);
+  // The caller's paths filter admits only campaign operations; the catch-up
+  // pass applies the same rule.
+  if (!touchesCampaignPaths(changedPaths)) {
+    console.log(`PR #${prNumber} changes no tracking or source file; left as is.`);
+    return false;
+  }
+  const openByAuthor = openPrs.filter(
+    (pr) => !pr.draft && String(pr.user.id) === author,
+  ).length;
+  if (openByAuthor > MAX_OPEN_PRS_PER_AUTHOR) {
+    await commentAndClosePr(
+      token,
+      owner,
+      repo,
+      prNumber,
+      `❌ Submission rejected: ${explainReason("too_many_open_prs")}. No changes were made.`,
+    );
+    return true;
+  }
+  // The PR body may carry the console command's envelope; treated as data,
+  // it feeds the command columns of the history row this run authors.
+  const envelope = envelopeFromPrBody(body);
+  const kind = classifyPullRequest(changedPaths);
+  if (kind === "claim") await runClaim(files, envelope);
+  else if (kind === "comment") await runComment(files, envelope);
+  else await runSubmit(kind, files, envelope);
+  return true;
+}
+
+// Only a completed run closes a pull request, so one whose run was lost —
+// cancelled, failed, refused by the caller's guard, or never delivered —
+// stays open. The scheduled pass processes those, oldest first, one after
+// another; a failure on one is logged and the next is still processed.
+// Drafts and pull requests from non-user accounts are left alone, as the
+// caller's guard leaves them; a pull request that is no campaign operation
+// is left alone too and does not count against the pass's budget.
+async function runCatchUp(): Promise<void> {
+  const open = await listOpenPullRequests(token, owner, repo);
+  const now = Date.now();
+  const due = open
+    .filter((pr) => {
+      const age = now - Date.parse(pr.created_at);
+      return (
+        !pr.draft &&
+        pr.user.type === "User" &&
+        age >= CATCHUP_MIN_AGE_MS &&
+        age <= CATCHUP_MAX_AGE_MS
+      );
+    })
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  if (due.length === 0) {
+    console.log("No open pull requests to catch up on.");
+    return;
+  }
+  // The open list shrinks as pull requests are closed, so the per-author cap
+  // sees the count as it stands when each one is processed.
+  let remaining = open;
+  let processed = 0;
+  for (const pr of due) {
+    if (processed >= CATCHUP_MAX_PRS) break;
+    const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split("/");
+    bindPullRequest({
+      number: pr.number,
+      author: String(pr.user.id),
+      authorLogin: pr.user.login,
+      headOwner: prHeadOwner ?? "",
+      headRepo: prHeadRepo ?? "",
+      headSha: pr.head.sha,
+      headRef: pr.head.ref,
+    });
+    console.log(`Catch-up: processing open PR #${pr.number} by ${authorLabel}.`);
+    try {
+      if (await processPullRequest(remaining)) {
+        processed++;
+        remaining = remaining.filter((p) => p.number !== pr.number);
+      }
+    } catch (e) {
+      console.error(`Catch-up: PR #${pr.number} failed: ${(e as Error).message}`);
+      process.exitCode = 1;
+    }
+  }
+}
+
 async function run(): Promise<void> {
   if (eventName === "schedule" || eventName === "workflow_dispatch") {
-    return runReap();
+    await runReap();
+    return runCatchUp();
   }
   if (eventName !== "pull_request_target") {
     throw new Error(`Unsupported event: ${eventName}`);
   }
-
-  const readStart = Date.now();
-  const details = await getPullRequestDetails(token, owner, repo, prNumber);
-  const files = await getPullRequestFiles(
-    token,
-    owner,
-    repo,
-    prNumber,
-    details.changedFiles,
-  );
-  logPhase("read_pr", readStart);
-  // The PR body may carry the console command's envelope; treated as data,
-  // it feeds the command columns of the history row this run authors.
-  const envelope = envelopeFromPrBody(details.body);
-  const changedPaths = files.map((f) => f.filename);
-  const kind = classifyPullRequest(changedPaths);
-  if (kind === "claim") return runClaim(files, envelope);
-  if (kind === "comment") return runComment(files, envelope);
-  return runSubmit(kind, files, envelope);
+  const [envHeadOwner, envHeadRepo] = (process.env.HEAD_REPO ?? "").split("/");
+  bindPullRequest({
+    number: Number(process.env.PR_NUMBER),
+    author: process.env.PR_AUTHOR ?? "",
+    authorLogin: process.env.PR_AUTHOR_LOGIN ?? "",
+    headOwner: envHeadOwner ?? "",
+    headRepo: envHeadRepo ?? "",
+    headSha: process.env.HEAD_SHA ?? "",
+    headRef: process.env.HEAD_REF ?? "",
+  });
+  await processPullRequest();
 }
 
 run()

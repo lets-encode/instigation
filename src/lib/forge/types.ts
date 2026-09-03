@@ -19,6 +19,8 @@ export type { FileChange, GitHubUser, RepoData, RepoSummary, RepoRef, WorkflowRu
 export interface RepoHead {
 	branch: string;
 	sha: string;
+	/** The tree of `sha`, the base a commit on this head is built from. */
+	treeSha: string;
 	canPush: boolean;
 }
 
@@ -125,6 +127,8 @@ export interface ForgeClient {
 	dispatchWorkflow(owner: string, repo: string, workflow: string, ref: string): Promise<void>;
 	/** A pull/merge request's current state: 'open' or 'closed'. */
 	getPullRequestState(owner: string, repo: string, number: number): Promise<string>;
+	/** Close a pull/merge request without merging it. */
+	closePullRequest(owner: string, repo: string, number: number): Promise<void>;
 	/** The most recent comment on a pull/merge request, or null. */
 	getLastIssueComment(owner: string, repo: string, number: number): Promise<string | null>;
 	/** The authenticated user's notification subscription for a repo, or null if unset. */

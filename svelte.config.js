@@ -52,9 +52,12 @@ const config = {
 					'https://avatars.githubusercontent.com',
 					'https://raw.githubusercontent.com'
 				],
+				// music-encoding.org: the MEI schema the pre-submission check
+				// validates against (src/lib/mei-check.ts).
 				'connect-src': [
 					'self',
 					'https://api.github.com',
+					'https://music-encoding.org',
 					detectorOrigin,
 					...(dev ? ['ws:'] : [])
 				],

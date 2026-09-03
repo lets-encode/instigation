@@ -345,7 +345,9 @@ test('openChangePr removes its prepared branch when PR creation fails', async (t
 		if (url.endsWith('/repos/lifecycle-owner/score') && method === 'GET') {
 			return Response.json({ default_branch: 'main', permissions: { push: true } });
 		}
-		if (url.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: 'base-sha' } });
+		if (url.endsWith('/branches/main')) {
+			return Response.json({ commit: { sha: 'base-sha', commit: { tree: { sha: 'base-tree' } } } });
+		}
 		if (url.endsWith('/git/refs') && method === 'POST') return Response.json({}, { status: 201 });
 		if (url.endsWith('/git/commits/base-sha')) return Response.json({ tree: { sha: 'base-tree' } });
 		if (url.endsWith('/git/trees')) return Response.json({ sha: 'new-tree' });

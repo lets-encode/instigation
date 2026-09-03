@@ -43,8 +43,10 @@ import type { CommandEnvelope } from './command-envelope.ts';
 import { parseFacsimileMei, buildFacsimileMei, buildBlankScoreMei } from './mei-facsimile.ts';
 import type { PageModel, ParsedFacsimile, ScoreDefModel } from './mei-facsimile.ts';
 import { pieceKindForPath } from './coordinator-policy.ts';
+import { splicePage, splicePageSpan } from './mei-page-splice.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 import { WorkflowRunWatch } from './run-watch.ts';
+import { checkMei } from './mei-check.ts';
 import type { ProgressUpdate } from './run-watch.ts';
 
 const TASK_PATH = 'tracking/task.csv';
@@ -208,7 +210,14 @@ async function muteOnce(ctx: CommandContext): Promise<void> {
 type PrProcessingResult =
 	| { state: 'closed'; verdict: string | null }
 	| { state: 'run_failed'; runUrl: string }
+	| { state: 'run_skipped' }
 	| { state: 'timeout' };
+
+// What the campaign workflow requires of a pull request before it runs at all
+// (the job-level guard in caller.yml); a pull request outside these gets a
+// skipped run instead of a verdict.
+export const RUN_REQUIREMENTS =
+	'a pull request must change at most two files, must not be a draft, and must come from a user account';
 
 async function waitForPrProcessed(
 	ctx: CommandContext,
@@ -261,10 +270,23 @@ async function waitForPrProcessed(
 			return { state: 'closed', verdict };
 		}
 		// A failed run never closes the PR — report the failure rather than
-		// letting the wait time out as if the run were merely slow.
+		// letting the wait time out as if the run were merely slow. A skipped
+		// run means the workflow's guard refused the PR before a runner started;
+		// the PR is closed here so its branch can be corrected and resubmitted
+		// at once, instead of waiting for the scheduled catch-up to close it. A
+		// cancelled run was replaced by one for a newer push to the same PR,
+		// which the PR-state poll goes on waiting for.
 		if (watch?.state.phase === 'completed' && watch.state.run.conclusion !== 'success') {
-			console.log('[pr] Actions run for PR', pr.number, 'failed:', watch.state.run.conclusion);
-			return { state: 'run_failed', runUrl: watch.state.run.html_url };
+			const { conclusion, html_url } = watch.state.run;
+			console.log('[pr] Actions run for PR', pr.number, conclusion);
+			if (conclusion === 'cancelled') {
+				watch = null;
+			} else if (conclusion === 'skipped') {
+				await f.closePullRequest(owner, repo, pr.number);
+				return { state: 'run_skipped' };
+			} else {
+				return { state: 'run_failed', runUrl: html_url };
+			}
 		}
 		delayMs = Math.min(3_000, Math.ceil(delayMs * 1.5));
 	}
@@ -303,6 +325,12 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
 	if (result.state === 'run_failed') {
 		return {
 			error: `The campaign automation run for PR #${prNumber} failed — see ${result.runUrl}.`,
+			prUrl
+		};
+	}
+	if (result.state === 'run_skipped') {
+		return {
+			error: `The campaign automation did not run for PR #${prNumber}: ${RUN_REQUIREMENTS}. The pull request was closed; correct the branch and submit again.`,
 			prUrl
 		};
 	}
@@ -677,19 +705,55 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 		const { forge: f, owner, repo, viewerLogin } = ctx;
 		return openAndFinishInBackground(ctx, `Encoding of ${task_id}`, `encode:${task_id}`, async () => {
 			await muteOnce(ctx);
-			const { branch: base, canPush } = await f.getRepoHead(owner, repo);
+			const [{ branch: base, canPush }, taskCsv] = await Promise.all([
+				f.getRepoHead(owner, repo),
+				f.getRepoFile(owner, repo, TASK_PATH)
+			]);
+			const task = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '');
+			if (!task) throw new Error(`Unknown task ${task_id}.`);
 			// The claim/editor flow put the encoding on `encode-<task_id>` — in the
 			// campaign repo for owners/collaborators, in the volunteer's fork
 			// otherwise — so the head is fully determined; nothing to guess.
-			let head: string;
+			const branch = `encode-${task_id}`;
+			let head = branch;
+			let workRepo = { owner, repo };
 			let forkHead: { owner: string; repo: string; branch: string } | undefined;
-			if (canPush) {
-				head = `encode-${task_id}`;
-			} else {
+			if (!canPush) {
 				const fork = await f.ensureFork(owner, repo);
-				const branch = `encode-${task_id}`;
 				head = `${fork.owner}:${branch}`;
+				workRepo = fork;
 				forkHead = { ...fork, branch };
+			}
+			// The branch holds mei-friend's commits. The score is assembled the way
+			// the automation assembles it — a page task contributes only its page,
+			// spliced into the campaign's score — and checked against the schema,
+			// so a failing submission is refused before a pull request is opened.
+			// GitHub's Contents API can briefly lag a push, so the read is retried.
+			let forkMei: string | null = null;
+			for (let attempt = 1; attempt <= 5 && forkMei == null; attempt++) {
+				if (attempt > 1) await sleep(1500);
+				forkMei = await f.getRepoFile(workRepo.owner, workRepo.repo, task.fragment, branch);
+			}
+			if (forkMei == null) throw new Error(`${task.fragment} is missing from the ${branch} branch.`);
+			let mei = forkMei;
+			if (task.locator.startsWith('surface-')) {
+				const [baseMei, configYaml] = await Promise.all([
+					f.getRepoFile(owner, repo, task.fragment),
+					f.getRepoFile(owner, repo, 'config.yaml')
+				]);
+				if (baseMei == null) throw new Error(`${task.fragment} is missing from the campaign.`);
+				try {
+					mei =
+						pieceKindForPath(configYaml, task.fragment) === 'physical-only'
+							? splicePageSpan(baseMei, forkMei, task.locator)
+							: splicePage(baseMei, forkMei, task.locator);
+				} catch (e) {
+					throw new Error(`page ${task.locator} cannot be joined into ${task.fragment}: ${(e as Error).message}`);
+				}
+			}
+			const meiError = await checkMei(mei);
+			if (meiError) {
+				throw new Error(`the encoding fails the MEI schema check (${meiError}). Fix it in mei-friend and submit again.`);
 			}
 			const body = `Submits the encoding of ${task_id} by ${viewerLogin}, edited in mei-friend. Opened from the campaign console.`;
 			console.log('[submitpr] opening PR', { head, base });
@@ -1179,6 +1243,8 @@ async function submitFacsimile(
 		if (content === current) {
 			return { ok: true, warn: true, message: 'Nothing to submit — the score already matches this step.' };
 		}
+		const meiError = await checkMei(content);
+		if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
 		ctx.progress({ step: 'Opening the correction PR…' });
 		const title = `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
@@ -1264,6 +1330,8 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 					message: 'Nothing to submit — the score already matches this setup.'
 				};
 			}
+			const meiError = await checkMei(content);
+			if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
 			ctx.progress({ step: 'Opening the setup PR…' });
 			const title = `Set up the score (${task_id})`;
 			const body = `${title}. Opened from the score setup editor.`;

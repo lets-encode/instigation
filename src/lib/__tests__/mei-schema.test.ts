@@ -3,8 +3,8 @@
 // the same code (scripts/mei-validate.ts). The other MEI tests assert on the
 // strings emitted; these assert that the strings are MEI.
 //
-// The check needs the schema (downloaded) and xmllint (installed), so these
-// tests skip rather than fail when either is unavailable.
+// The check needs the schema (downloaded) and the vendored library, so these
+// tests skip rather than fail when the schema is unavailable.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,13 +13,13 @@ import type { FacsimilePage, ScoreDefModel } from '../mei-facsimile.ts';
 import { buildPieceHead, buildSourceHead, emptySourceMetadata } from '../source-metadata.ts';
 import type { SourceMetadata } from '../source-metadata.ts';
 import { recordContribution } from '../mei-provenance.ts';
-import { meiSchemaPath, validateMei } from '../../../scripts/mei-validate.ts';
+import { loadMeiValidator, validateMei } from '../../../scripts/mei-validate.ts';
 
 // `skip` counts as a skip whenever it is present, so an available checker has to
 // pass `false` rather than an empty reason.
 let skip: string | false = false;
 try {
-	await meiSchemaPath();
+	await loadMeiValidator();
 } catch (e) {
 	skip = `MEI machine-check unavailable: ${(e as Error).message}`;
 }
@@ -200,7 +200,7 @@ test('a score rebuilt around a submitted score definition validates', { skip }, 
 
 test('a document carrying a DOCTYPE declaration is rejected outright', async () => {
 	// The rejection happens before the schema check, so it needs neither the
-	// downloaded schema nor xmllint — no skip.
+	// downloaded schema nor the library — no skip.
 	const check = await validateMei('<?xml version="1.0"?>\n<!DOCTYPE mei [<!ENTITY x "y">]>\n<mei/>');
 	assert.equal(check.ok, false);
 	assert.match(check.error, /DOCTYPE/);

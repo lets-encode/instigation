@@ -3,6 +3,20 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.32.0 – 2026-09-03
+
+- Console: a run cancelled because a newer push to the same pull request replaced it is no longer reported as a failure; the console keeps waiting for the pull request's verdict.
+- Console: when the campaign workflow's guard skips a pull request's run, the console names the requirement (at most two files, no draft, a user account), closes the pull request and asks for a corrected submission, instead of reporting a failed run.
+- Console: a zones, setup or encoding submission is checked against the MEI schema in the browser before its pull request opens (same validator and schema as the automation); a failing score is refused with the line and message. If the check itself cannot run, the submission proceeds and the automation decides.
+- Coordinator: comment rows carry the pull request's creation time as their timestamp, so a discussion keeps its submission order when runs finish in another order; locks, state and history keep the processing time.
+- Coordinator: scheduled runs process open pull requests whose own run was lost (cancelled, skipped or failed), oldest first, ten minutes to seven days old, at most twenty per pass; drafts and bot pull requests are left alone.
+- Coordinator: an author with more than ten open pull requests on a campaign has further ones closed unprocessed.
+- Coordinator: a pull request that does not parse as any operation (malformed, out of bounds, unknown task) is closed with its comment and writes no history row; rejections of well-formed operations still do.
+- MEI machine-check: runs in-process on a vendored WebAssembly build of libxml2 (`scripts/vendor/libxml2-wasm`, MIT); nothing is installed on the runner and the error text is unchanged.
+- Coordinator: the pull request and the first page of its files are read together, and the branch head is read with its tree in one call, so a run makes two fewer GitHub round trips.
+- Coordinator: up to five optimistic-concurrency attempts with a random pause between them, since runs for different pull requests now execute concurrently.
+- Test suite: the caller workflow test also checks that the central pointer is validated and never expanded into a command, and that pull request runs get their own concurrency group.
+
 ## 0.31.0 – 2026-09-03
 
 - Volunteer view: the task column scrolls again when its content is taller than the window.

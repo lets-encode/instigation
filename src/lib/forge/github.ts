@@ -32,6 +32,7 @@ export function createGitHubForge(token: string): ForgeClient {
 		openChangePr: (owner, repo, opts) => gh.openChangePr(token, owner, repo, opts),
 		dispatchWorkflow: (owner, repo, workflow, ref) => gh.dispatchWorkflow(token, owner, repo, workflow, ref),
 		getPullRequestState: (owner, repo, number) => gh.getPullRequestState(token, owner, repo, number),
+		closePullRequest: (owner, repo, number) => gh.closePullRequest(token, owner, repo, number),
 		getLastIssueComment: (owner, repo, number) => gh.getLastIssueComment(token, owner, repo, number),
 		listWorkflowRuns: (owner, repo, workflow, filter) => gh.listWorkflowRuns(token, owner, repo, workflow, filter),
 		getWorkflowRun: (owner, repo, runId) => gh.getWorkflowRun(token, owner, repo, runId),

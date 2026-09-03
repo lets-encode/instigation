@@ -622,14 +622,16 @@ export async function getDirDownloadUrls(
 }
 
 /**
- * Read a repo's default branch, its current head commit SHA, and whether the
- * authenticated user can push to it (drives the same-repo vs. fork PR path).
+ * Read a repo's default branch, its current head commit SHA and that commit's
+ * tree SHA, and whether the authenticated user can push to it (drives the
+ * same-repo vs. fork PR path). The tree SHA is what a commit built on this
+ * head starts from (`commitFiles`'s `baseTreeSha`).
  */
 export async function getRepoHead(
 	token: string,
 	owner: string,
 	repo: string
-): Promise<{ branch: string; sha: string; canPush: boolean }> {
+): Promise<{ branch: string; sha: string; treeSha: string; canPush: boolean }> {
 	// The branch name and push permission are memoised; the head SHA is read
 	// fresh on every call — callers rely on it for optimistic concurrency.
 	const key = `${owner}/${repo}`;
@@ -641,13 +643,17 @@ export async function getRepoHead(
 		info = { branch: repoRes.data.default_branch, canPush: Boolean(repoRes.data.permissions?.push) };
 		repoHeadInfoCache.set(key, { value: info, expires: Date.now() + RESOLVE_TTL_MS });
 	}
-	const refRes = await ghGet<{ object: { sha: string }; message?: string }>(
-		`${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${info.branch}`,
+	// The branch endpoint carries the head commit together with its tree, so
+	// one read serves both the optimistic-concurrency parent and the tree a
+	// commit on it is built from.
+	const branchRes = await ghGet<{ commit: { sha: string; commit: { tree: { sha: string } } }; message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/branches/${info.branch}`,
 		token
 	);
-	if (!refRes.ok)
-		throw new Error(`${refRes.data?.message || 'Failed to read branch ref'} (${refRes.status} GET ref heads/${info.branch})`);
-	return { branch: info.branch, sha: refRes.data.object.sha, canPush: info.canPush };
+	if (!branchRes.ok)
+		throw new Error(`${branchRes.data?.message || 'Failed to read branch'} (${branchRes.status} GET branches/${info.branch})`);
+	const head = branchRes.data.commit;
+	return { branch: info.branch, sha: head.sha, treeSha: head.commit.tree.sha, canPush: info.canPush };
 }
 
 /** A commit's message, or null when the commit cannot be read. */
@@ -772,27 +778,55 @@ export async function getPullRequestDetails(
 	owner: string,
 	repo: string,
 	number: number
-): Promise<{ body: string | null; changedFiles: number }> {
-	const data = await ghSend<{ body?: string | null; changed_files?: number }>(
+): Promise<{ body: string | null; changedFiles: number; createdAt: string }> {
+	const data = await ghSend<{ body?: string | null; changed_files?: number; created_at?: string }>(
 		'GET',
 		`/repos/${owner}/${repo}/pulls/${number}`,
 		token
 	);
-	return { body: data.body ?? null, changedFiles: data.changed_files ?? 0 };
+	return { body: data.body ?? null, changedFiles: data.changed_files ?? 0, createdAt: data.created_at ?? '' };
+}
+
+/** One changed file of a pull request, with its unified-diff patch when GitHub supplies one. */
+export interface PullRequestFile {
+	filename: string;
+	status: string;
+	patch?: string;
+}
+
+const PR_FILES_PER_PAGE = 100;
+
+async function pullRequestFilesPage(
+	token: string,
+	owner: string,
+	repo: string,
+	number: number,
+	page: number
+): Promise<PullRequestFile[]> {
+	const data = await ghSend<unknown>(
+		'GET',
+		`/repos/${owner}/${repo}/pulls/${number}/files?per_page=${PR_FILES_PER_PAGE}&page=${page}`,
+		token
+	);
+	if (!Array.isArray(data)) throw new Error('GitHub returned an invalid pull-request file list.');
+	return (data as PullRequestFile[]).map((f) => ({ filename: f.filename, status: f.status, patch: f.patch }));
 }
 
 /**
  * List every changed file in a pull request, including each file's unified-diff
  * patch. GitHub paginates this endpoint at 100 files and exposes at most 3,000;
  * a mismatch is rejected so the coordinator never validates a partial view.
+ * `firstPage` is the already-read first page, when the caller fetched it
+ * alongside the pull request itself.
  */
 export async function getPullRequestFiles(
 	token: string,
 	owner: string,
 	repo: string,
 	number: number,
-	expectedChangedFiles: number
-): Promise<Array<{ filename: string; status: string; patch?: string }>> {
+	expectedChangedFiles: number,
+	firstPage?: PullRequestFile[]
+): Promise<PullRequestFile[]> {
 	if (!Number.isInteger(expectedChangedFiles) || expectedChangedFiles < 0) {
 		throw new Error('Pull request reported an invalid changed-file count.');
 	}
@@ -800,24 +834,61 @@ export async function getPullRequestFiles(
 		throw new Error('Pull request changes more than GitHub’s 3,000-file inspection limit.');
 	}
 
-	const files: Array<{ filename: string; status: string; patch?: string }> = [];
-	const pages = Math.max(1, Math.ceil(expectedChangedFiles / 100));
-	for (let page = 1; page <= pages; page++) {
-		const data = await ghSend<unknown>(
-			'GET',
-			`/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
-			token
-		);
-		if (!Array.isArray(data)) throw new Error('GitHub returned an invalid pull-request file list.');
-		files.push(...(data as Array<{ filename: string; status: string; patch?: string }>));
+	const pages = Math.max(1, Math.ceil(expectedChangedFiles / PR_FILES_PER_PAGE));
+	const files = firstPage ? [...firstPage] : await pullRequestFilesPage(token, owner, repo, number, 1);
+	for (let page = 2; page <= pages; page++) {
+		files.push(...(await pullRequestFilesPage(token, owner, repo, number, page)));
 	}
 	if (files.length !== expectedChangedFiles) {
 		throw new Error(`Incomplete pull-request file list: expected ${expectedChangedFiles}, received ${files.length}.`);
 	}
-	return files.map((f) => ({
-		filename: f.filename,
-		status: f.status,
-		patch: f.patch
+	return files;
+}
+
+/**
+ * A pull request's body, creation time and complete changed-file list. The
+ * first page of files is read alongside the pull request itself; the
+ * request's changed-file count then says whether further pages follow.
+ */
+export async function getPullRequest(
+	token: string,
+	owner: string,
+	repo: string,
+	number: number
+): Promise<{ body: string | null; changedFiles: number; createdAt: string; files: PullRequestFile[] }> {
+	const [details, firstPage] = await Promise.all([
+		getPullRequestDetails(token, owner, repo, number),
+		pullRequestFilesPage(token, owner, repo, number, 1)
+	]);
+	const files = await getPullRequestFiles(token, owner, repo, number, details.changedFiles, firstPage);
+	return { ...details, files };
+}
+
+/** One open pull request, as the campaign automation reads it. */
+export interface OpenPullRequest {
+	number: number;
+	created_at: string;
+	draft: boolean;
+	/** GitHub account type: 'User', 'Bot' or 'Organization'. */
+	user: { id: number; login: string; type: string };
+	head: { sha: string; ref: string; repo: { full_name: string } | null };
+}
+
+/** The repository's newest open pull requests, newest first; 100 at most. */
+export async function listOpenPullRequests(token: string, owner: string, repo: string): Promise<OpenPullRequest[]> {
+	const { ok, data } = await ghGet<Array<OpenPullRequest> | { message?: string }>(
+		`${apiRoot(token)}/repos/${owner}/${repo}/pulls?state=open&per_page=100&sort=created&direction=desc`,
+		token
+	);
+	if (!ok || !Array.isArray(data)) {
+		throw new Error((data as { message?: string })?.message || 'Failed to list pull requests');
+	}
+	return data.map((pr) => ({
+		number: pr.number,
+		created_at: pr.created_at,
+		draft: Boolean(pr.draft),
+		user: { id: pr.user.id, login: pr.user.login, type: pr.user.type },
+		head: { sha: pr.head.sha, ref: pr.head.ref, repo: pr.head.repo ? { full_name: pr.head.repo.full_name } : null }
 	}));
 }
 
@@ -948,6 +1019,11 @@ export async function getWorkflowRunJobs(
 	}));
 }
 
+/** Close a pull request without merging it. */
+export async function closePullRequest(token: string, owner: string, repo: string, number: number): Promise<void> {
+	await ghSend('PATCH', `/repos/${owner}/${repo}/pulls/${number}`, token, { state: 'closed' });
+}
+
 /** Post a comment on a pull request and then close it (used to resolve claims). */
 export async function commentAndClosePr(
 	token: string,
@@ -957,7 +1033,7 @@ export async function commentAndClosePr(
 	body: string
 ): Promise<void> {
 	await ghSend('POST', `/repos/${owner}/${repo}/issues/${number}/comments`, token, { body });
-	await ghSend('PATCH', `/repos/${owner}/${repo}/pulls/${number}`, token, { state: 'closed' });
+	await closePullRequest(token, owner, repo, number);
 }
 
 /**
@@ -1012,12 +1088,15 @@ export async function commitFiles(
 	message: string,
 	{
 		baseSha,
+		baseTreeSha,
 		branch,
 		newBranch,
 		deletePaths = [],
 		onUpload
 	}: {
 		baseSha?: string;
+		/** The tree of `baseSha`, when already known; saves reading the commit. */
+		baseTreeSha?: string;
 		branch?: string;
 		newBranch?: string;
 		deletePaths?: string[];
@@ -1025,6 +1104,7 @@ export async function commitFiles(
 	} = {}
 ): Promise<string> {
 	if (newBranch && !baseSha) throw new Error('newBranch requires baseSha (the commit to branch from).');
+	if (baseTreeSha && !baseSha) throw new Error('baseTreeSha requires baseSha (the commit it belongs to).');
 	for (const file of files) {
 		const hasText = file.content != null;
 		const hasBinary = file.contentBase64 != null;
@@ -1044,7 +1124,8 @@ export async function commitFiles(
 		const ref = await ghSend<{ object: { sha: string } }>('GET', `${api}/git/ref/heads/${targetBranch}`, token);
 		headSha = ref.object.sha;
 	}
-	const headCommit = await ghSend<{ tree: { sha: string } }>('GET', `${api}/git/commits/${headSha}`, token);
+	const baseTree =
+		baseTreeSha ?? (await ghSend<{ tree: { sha: string } }>('GET', `${api}/git/commits/${headSha}`, token)).tree.sha;
 
 	// Text files go inline in the tree; binary files are uploaded as base64 blobs
 	// first (the tree API only accepts text inline) and referenced by SHA. An
@@ -1074,7 +1155,7 @@ export async function commitFiles(
 
 	// Build a tree off the current one, with our files added.
 	const tree = await ghSend<{ sha: string }>('POST', `${api}/git/trees`, token, {
-		base_tree: headCommit.tree.sha,
+		base_tree: baseTree,
 		tree: treeEntries
 	});
 

@@ -188,6 +188,15 @@ export function resolveEncodingTask(options: {
 	return held.length === 1 ? held[0] : undefined;
 }
 
+/**
+ * Whether a pull request changes a tracking table or a source — the paths the
+ * campaign workflow triggers on; any other pull request is not a campaign
+ * operation.
+ */
+export function touchesCampaignPaths(changedPaths: string[]): boolean {
+	return changedPaths.some((p) => p.startsWith('tracking/') || p.startsWith('sources/'));
+}
+
 export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
 	if (changedPaths.includes('tracking/lock.csv')) return 'claim';
 	if (changedPaths.includes('tracking/state.csv')) return 'validation';
