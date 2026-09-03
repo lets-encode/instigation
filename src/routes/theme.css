@@ -123,17 +123,20 @@
   /* For a shadow whose geometry is the rule's own. */
   --shade: rgba(31, 36, 51, .16);
 
-  /* Piece / zone colours for the region editors. Each piece is drawn in a
-     distinct hue; --zone-N is the stroke/label colour and --zone-N-fill the
-     translucent interior. Muted variants for dark mode are set below. */
-  --zone-1: #2563c9;
-  --zone-2: #1a9e6b;
-  --zone-3: #d9821a;
-  --zone-4: #b8479e;
-  --zone-5: #d1495b;
-  --zone-6: #6b6be0;
-  --zone-7: #4a8f2f;
-  --zone-8: #b07a1a;
+  /* Piece / zone colours for the region editors, rails, mosaics and piece
+     tints. Each piece is drawn in a distinct hue; --zone-N is the stroke/label
+     colour and --zone-N-fill the translucent interior. The hues are muted on
+     purpose: piece colours mark identity, while the saturated stage colours
+     (--pre, --warn, --info, --ok, --danger) carry meaning, and the two must
+     not be mistaken for each other. Dark-mode variants are set below. */
+  --zone-1: #5a7aa8;
+  --zone-2: #4f8a6a;
+  --zone-3: #b07a48;
+  --zone-4: #a3668f;
+  --zone-5: #b3665f;
+  --zone-6: #74749f;
+  --zone-7: #748c50;
+  --zone-8: #a08a52;
   --zone-fill-alpha: .18;
 }
 
@@ -221,14 +224,14 @@
   --invert-ink: #131828;
   --scrim: rgba(12, 14, 23, .66);
 
-  /* Muted piece hues so the coloured regions don't glare on the dark canvas. */
-  --zone-1: #6da2ec;
-  --zone-2: #5cbf95;
-  --zone-3: #e0a659;
-  --zone-4: #cd82bb;
-  --zone-5: #e0808c;
-  --zone-6: #9a9aec;
-  --zone-7: #8bbf6f;
-  --zone-8: #d0a45c;
+  /* Lighter muted piece hues, so regions and tints read on the dark canvas. */
+  --zone-1: #8ea8d0;
+  --zone-2: #8fbca4;
+  --zone-3: #d4ac86;
+  --zone-4: #c99bbb;
+  --zone-5: #d19a98;
+  --zone-6: #a8a8cf;
+  --zone-7: #a9bd8c;
+  --zone-8: #cdb88a;
   --zone-fill-alpha: .24;
 }

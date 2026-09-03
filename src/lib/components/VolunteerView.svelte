@@ -151,6 +151,16 @@
     cards
       .filter((c) => (pieceIndex.get(c.task) ?? 0) === index)
       .toSorted((a, b) => groupOrder[a.column] - groupOrder[b.column]);
+  // A piece's open work by stage: preparation and encoding tasks open to
+  // claim, and reviews with a free slot.
+  const stageCounts = (index: number) => {
+    const counts = { pre: 0, enc: 0, review: 0 };
+    for (const c of pieceTasks(index)) {
+      if (c.column === "ready") counts[c.pre ? "pre" : "enc"]++;
+      else if (c.column === "validation" && c.slots.some((s) => s.key === "open")) counts.review++;
+    }
+    return counts;
+  };
 
   function toggle(path: string) {
     expandedPiece = expandedPiece === path ? null : path;
@@ -164,6 +174,18 @@
       <img src={url} alt="" loading="lazy" />
     {/if}
   </span>
+{/snippet}
+
+{#snippet chips(card: BoardCard)}
+  {#if card.counts.fails > 0}
+    <span class="chip chip-fail">{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span>
+  {/if}
+  {#if card.counts.comments > 0}
+    <span class="chip chip-note">{card.counts.comments} comment{card.counts.comments === 1 ? "" : "s"}</span>
+  {/if}
+  {#if card.counts.questions > 0}
+    <span class="chip chip-question">{card.counts.questions} question{card.counts.questions === 1 ? "" : "s"}</span>
+  {/if}
 {/snippet}
 
 <div class="volunteer">
@@ -259,6 +281,7 @@
               )}</span
             >
             <span class="vspacer"></span>
+            {@render chips(card)}
             <button
               type="button"
               class="btn {stageClass(card)}"
@@ -286,6 +309,7 @@
           {@const p = progress.get(piece.path)}
           {@const open = lone || expandedPiece === piece.path}
           {#snippet piecehead()}
+            {@const open = stageCounts(index)}
             {@render thumb(piece.path, lone ? "mid" : "small")}
             <span class="piecename">{pieceName(piece)}</span>
             <div class="piecebar">
@@ -297,6 +321,15 @@
               <span class="piecedone complete">✓ complete</span>
             {:else}
               <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
+            {/if}
+            {#if open.pre > 0}
+              <span class="scount pre" title="{open.pre} preparation task{open.pre === 1 ? '' : 's'} open">{open.pre}</span>
+            {/if}
+            {#if open.review > 0}
+              <span class="scount review" title="{open.review} review{open.review === 1 ? '' : 's'} open">{open.review}</span>
+            {/if}
+            {#if open.enc > 0}
+              <span class="scount enc" title="{open.enc} encoding task{open.enc === 1 ? '' : 's'} open">{open.enc}</span>
             {/if}
             <span class="vspacer"></span>
             <button
@@ -366,6 +399,7 @@
                       <span class="tasktitle">{card.title}</span>
                       <span class="ttype">{typeOf(card)}</span>
                       <span class="vspacer"></span>
+                      {@render chips(card)}
                       {#if card.nextUp}
                         <span class="taskpill next">your next task</span>
                       {:else if card.column === "validation"}
@@ -394,6 +428,10 @@
     width: min(800px, 100%);
     min-height: 0;
     overflow-y: auto;
+    /* Room for the scrollbar beside the content, not over its right edge. */
+    scrollbar-gutter: stable;
+    padding-right: 10px;
+    box-sizing: border-box;
   }
   .vcol {
     width: 100%;
@@ -599,9 +637,39 @@
     color: var(--ok);
     font-weight: 600;
   }
+  /* Open work per stage, in the stage colours. */
+  .scount {
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 1px 7px;
+    border: 1px solid transparent;
+  }
+  .scount.pre {
+    color: var(--pre);
+    background: var(--pre-wash);
+    border-color: var(--pre);
+  }
+  .scount.review {
+    color: var(--warn);
+    background: var(--warn-bg);
+    border-color: var(--warn-line);
+  }
+  .scount.enc {
+    color: var(--info);
+    background: var(--info-bg);
+    border-color: var(--info-line);
+  }
+  .suggestion .chip,
+  .taskrow .chip {
+    padding: 2px 8px;
+  }
   .pchev {
-    font-size: 14px;
-    color: var(--ink-faint);
+    font-size: 20px;
+    line-height: 1;
+    width: 20px;
+    text-align: center;
+    color: var(--ink-soft);
     margin-left: 8px;
   }
   .piecetasks {

@@ -926,7 +926,7 @@
         </span>
       </div>
     {:else}
-    <div class="viewcol" class:inscore={!!scoreView}>
+    <div class="viewcol" class:capped={!!scoreView || !canPush}>
       {#if !resolved}
         <p class="msg muted">Finding the campaign…</p>
       {:else if loading}
@@ -1589,9 +1589,10 @@
     flex-direction: column;
     container-type: inline-size;
   }
-  /* The score view scrolls inside its panes, so the column must cap at the
-     window instead of growing to its content. */
-  .viewcol.inscore {
+  /* The score view scrolls inside its panes and the volunteer view inside its
+     task column, so the column must cap at the window instead of growing to
+     its content. */
+  .viewcol.capped {
     min-height: 0;
   }
 
@@ -2303,21 +2304,6 @@
     border-radius: 999px;
     padding: 2px 8px;
     white-space: nowrap;
-  }
-  .chip-fail {
-    color: var(--danger);
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
-  }
-  .chip-note {
-    color: var(--warn);
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
-  }
-  .chip-question {
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
   }
   .card-done {
     font-size: 11.5px;

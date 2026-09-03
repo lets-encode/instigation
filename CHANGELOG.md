@@ -3,6 +3,13 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.31.0 – 2026-09-03
+
+- Volunteer view: the task column scrolls again when its content is taller than the window.
+- Volunteer view: each piece row counts its open work per stage (purple preparation, orange review, blue encoding); task rows and suggestions show fail/comment/question chips.
+- Piece colours are muted, so they read as identity tints and cannot be mistaken for the saturated stage colours; the order is unchanged.
+- Measure corrector: a measure is deleted with a trashcan in the selected box's top-right corner, as in the wizard's region editor; the ✕ leaves the control pill.
+
 ## 0.30.0 – 2026-09-02
 
 - Removed the unused tile-preview path from the campaign stats loader.

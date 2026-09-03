@@ -262,6 +262,22 @@ a.btn {
   background: var(--danger-bg);
   border-color: var(--danger-line);
 }
+/* Attention chips on a task: fails, comments, questions. */
+.chip.chip-fail {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
+}
+.chip.chip-note {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+}
+.chip.chip-question {
+  color: var(--info);
+  background: var(--info-bg);
+  border-color: var(--info-line);
+}
 .chip .chip-dot {
   flex: none;
   width: 6px;

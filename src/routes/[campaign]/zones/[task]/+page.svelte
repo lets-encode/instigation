@@ -1242,6 +1242,35 @@
                         onkeydown={(e) => resizeKeydown(e, p, z, c.edges)}
                       />
                     {/each}
+                    <!-- A delete button pinned inside the box's top-right corner,
+                         drawn in screen pixels via the inverse-scale transform;
+                         it drops below the label when the box is too narrow. -->
+                    {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
+                    {@const bx = Math.max(b.ulx + 4 / sc, b.lrx - 27 / sc)}
+                    {@const by = bx < b.ulx + inset + lblW + 6 / sc
+                      ? b.uly + inset + fs * 1.55 + 6 / sc
+                      : b.uly + 7 / sc}
+                    <g
+                      class="delbtn"
+                      role="button"
+                      tabindex={0}
+                      aria-label={`Measure ${zone.label}: delete`}
+                      transform={`translate(${bx}, ${by}) scale(${1 / sc})`}
+                      onpointerdown={(e) => e.stopPropagation()}
+                      onclick={() => deleteZone(p, z)}
+                      onkeydown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          deleteZone(p, z);
+                        }
+                      }}
+                    >
+                      <title>Delete this measure</title>
+                      <rect width="20" height="20" rx="6" />
+                      <path
+                        d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
+                      />
+                    </g>
                   {/if}
                 {/each}
               </svg>
@@ -1292,8 +1321,6 @@
                       title={sectionLocked(p, z)
                         ? "The first measure always opens the first section"
                         : "Section beginning — starts a new movement/section (mdiv)"}>§</button>
-                    <button type="button" class="zdel" onclick={() => deleteZone(p, z)}
-                      title="Delete this measure">✕</button>
                   </div>
                 </div>
               {/if}
@@ -1815,7 +1842,7 @@
   }
 
   /* The per-zone controls: a floating pill inside the active box (number input ·
-     ↵ · § · ✕), in the box's upper third. The outer layer is a zero-size
+     ↵ · §), in the box's upper third. The outer layer is a zero-size
      anchor (zcTop keeps it inside the box); the pill hangs below it, centred,
      and re-enables the pointer. */
   .zc {
@@ -1874,9 +1901,24 @@
     color: var(--ink-faint);
     background: var(--bg-alt);
   }
-  .zc-inner .zdel {
-    border-color: var(--danger-line);
-    color: var(--danger);
+  .delbtn {
+    cursor: pointer;
+  }
+  .delbtn rect {
+    fill: var(--card);
+    stroke: var(--line-input);
+  }
+  .delbtn:hover rect,
+  .delbtn:focus-visible rect {
+    stroke: var(--danger);
+  }
+  .delbtn path {
+    fill: none;
+    stroke: var(--danger);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
   }
 
   .lockpill {
