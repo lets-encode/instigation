@@ -118,10 +118,10 @@ let headOwner = "";
 let headRepo = "";
 let headSha = "";
 let headRef = "";
-// When the pull request was opened (GitHub's server time). Comment rows carry
-// it as their timestamp, so a discussion keeps the order the comments were
-// submitted in even when their runs finish in another order; lock, state and
-// history rows carry the processing time.
+// When the pull request was opened (GitHub's server time). Discussion comment
+// rows carry it as their timestamp, so a discussion keeps the order the
+// comments were submitted in even when their runs finish in another order;
+// lock, state, history rows and a fail's comment carry the processing time.
 let submittedAt = "";
 function bindPullRequest(pr: PullRequestContext): void {
   prNumber = pr.number;
@@ -150,7 +150,7 @@ const MAX_OPEN_PRS_PER_AUTHOR = 10;
 // than the minimum age — a run of their own may still be under way before
 // that — and younger than the maximum, processing at most CATCHUP_MAX_PRS
 // campaign pull requests per pass.
-const CATCHUP_MIN_AGE_MS = 10 * 60_000;
+const CATCHUP_MIN_AGE_MS = 3 * 60_000;
 const CATCHUP_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const CATCHUP_MAX_PRS = 20;
 
@@ -400,11 +400,11 @@ async function runClaim(
     ? `✅ Claim accepted — ${target} locked for ${authorLabel} (${verdict.lock!.kind}).`
     : `❌ Claim rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
-  // Branch cleanup is independent of the comment/close pair and overlaps it.
-  await Promise.all([
-    commentAndClosePr(token, owner, repo, prNumber, body),
-    cleanupHeadBranch(),
-  ]);
+  // The branch is deleted only after the close: deleting the head branch of an
+  // open pull request closes it as well, and a close request racing that
+  // deletion fails with a validation error.
+  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
 
@@ -638,11 +638,13 @@ async function decideValidation(
     { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
   ];
   if (status === "fail") {
+    // The fail's comment is part of the verdict: it carries the verdict's own
+    // timestamp, which is what pairs the two in the tables.
     const authoredComment: CommentRow = {
       ...failComment!,
       comment_id: newCommentId(),
       author_id: author,
-      timestamp: submittedAt,
+      timestamp: now,
       resolved: "",
       parent_id: "",
     };
@@ -776,10 +778,8 @@ async function runSubmit(
     : `❌ Submission rejected: ${explainReason(verdict.reason)}. No changes were made.` +
       (verdict.detail ? ` ${verdict.detail}` : "");
   const closeStart = Date.now();
-  await Promise.all([
-    commentAndClosePr(token, owner, repo, prNumber, body),
-    shouldCleanupSubmission(kind, verdict.ok) ? cleanupHeadBranch() : null,
-  ]);
+  await commentAndClosePr(token, owner, repo, prNumber, body);
+  if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
 
@@ -890,10 +890,8 @@ async function runComment(
       : "✅ Comment recorded."
     : `❌ Comment rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
-  await Promise.all([
-    commentAndClosePr(token, owner, repo, prNumber, body),
-    cleanupHeadBranch(),
-  ]);
+  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
 

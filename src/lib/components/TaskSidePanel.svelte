@@ -217,7 +217,9 @@
             <span class="avatar">{initialOf(encoderLogin)}</span>
             <span class="subtext"
               >encoded by <b>{encoderLogin}</b>{taskState?.encoded_at
-                ? ` · ${elapsed(taskState.encoded_at)} ago`
+                ? elapsed(taskState.encoded_at) === "now"
+                  ? " · just now"
+                  : ` · ${elapsed(taskState.encoded_at)} ago`
                 : ""}</span
             >
           </div>

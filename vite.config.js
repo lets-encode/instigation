@@ -59,6 +59,12 @@ export default defineConfig(({ mode }) => {
 			watch: {
 				ignored: ['**/build/**']
 			},
+			// The browser-side MEI check (src/lib/mei-check.ts) imports the
+			// vendored libxml2-wasm from scripts/, outside the directories the
+			// dev server serves by default.
+			fs: {
+				allow: ['scripts/vendor']
+			},
 			// Mount the session broker under the SPA's own origin, mirroring the
 			// production Apache /auth/ ProxyPass (deploy/apache.conf) — its session cookie must be
 			// first-party. Run it with:  flask --app app run --port 7777  (in broker/)

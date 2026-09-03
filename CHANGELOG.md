@@ -7,9 +7,12 @@ parentheses.
 
 - Console: a run cancelled because a newer push to the same pull request replaced it is no longer reported as a failure; the console keeps waiting for the pull request's verdict.
 - Console: when the campaign workflow's guard skips a pull request's run, the console names the requirement (at most two files, no draft, a user account), closes the pull request and asks for a corrected submission, instead of reporting a failed run.
+- Task panel: a submission made within the last minute reads "just now" instead of "now ago".
+- Dev server: serves the vendored libxml2-wasm from `scripts/vendor`, so the browser-side MEI check also runs in development.
 - Console: a zones, setup or encoding submission is checked against the MEI schema in the browser before its pull request opens (same validator and schema as the automation); a failing score is refused with the line and message. If the check itself cannot run, the submission proceeds and the automation decides.
-- Coordinator: comment rows carry the pull request's creation time as their timestamp, so a discussion keeps its submission order when runs finish in another order; locks, state and history keep the processing time.
-- Coordinator: scheduled runs process open pull requests whose own run was lost (cancelled, skipped or failed), oldest first, ten minutes to seven days old, at most twenty per pass; drafts and bot pull requests are left alone.
+- Coordinator: a pull request's head branch is deleted only after the pull request is closed. Deleting it in parallel closed the pull request first and made the close request fail, which failed the run (and mailed the campaign owner) although the verdict had been recorded.
+- Coordinator: discussion comment rows carry the pull request's creation time as their timestamp, so a discussion keeps its submission order when runs finish in another order; locks, state, history and a fail's comment keep the processing time.
+- Coordinator: scheduled runs process open pull requests whose own run was lost (cancelled, skipped or failed), oldest first, three minutes to seven days old, at most twenty per pass; drafts and bot pull requests are left alone.
 - Coordinator: an author with more than ten open pull requests on a campaign has further ones closed unprocessed.
 - Coordinator: a pull request that does not parse as any operation (malformed, out of bounds, unknown task) is closed with its comment and writes no history row; rejections of well-formed operations still do.
 - MEI machine-check: runs in-process on a vendored WebAssembly build of libxml2 (`scripts/vendor/libxml2-wasm`, MIT); nothing is installed on the runner and the error text is unchanged.
