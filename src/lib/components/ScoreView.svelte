@@ -121,21 +121,22 @@
     <span class="sname">{piece.title || piece.id}</span>
     <span class="scamp">{campaignTitle}</span>
     <span class="sspacer"></span>
-    {#if !panel.open}
-      <button
-        type="button"
-        class="btn"
-        title="Show the comments panel"
-        onclick={() => {
-          panel.open = true;
-          writeSidePanel("comments", { ...panel });
-        }}
-      >
-        <PanelIcon />
-        Comments
-        <span class="countpill">{commentCount}</span>
-      </button>
-    {/if}
+        <button
+      type="button"
+      aria-pressed={panel.open}
+      class="btn"
+      title={panel.open
+        ? "Hide the comments panel"
+        : "Show the comments panel"}
+      onclick={() => {
+        panel.open = !panel.open;
+        writeSidePanel("comments", { ...panel });
+      }}
+    >
+      <PanelIcon />
+      Comments
+      <span class="countpill">{commentCount}</span>
+    </button>
   </div>
   <div class="srow">
     <div class="smain">

@@ -911,20 +911,21 @@
             {anchor}
           >
             {#snippet trailing()}
-              {#if !commentsPanel.open}
-                <button
-                  type="button"
-                  class="btn"
-                  title="Show the comments panel with the task's controls"
-                  onclick={() => {
-                    commentsPanel.open = true;
-                    writeSidePanel("comments", { ...commentsPanel });
-                  }}
-                >
-                  <PanelIcon />
-                  Comments
-                </button>
-              {/if}
+                            <button
+                type="button"
+                aria-pressed={commentsPanel.open}
+                class="btn"
+                title={commentsPanel.open
+                  ? "Hide the comments panel with the task's controls"
+                  : "Show the comments panel with the task's controls"}
+                onclick={() => {
+                  commentsPanel.open = !commentsPanel.open;
+                  writeSidePanel("comments", { ...commentsPanel });
+                }}
+              >
+                <PanelIcon />
+                Comments
+              </button>
             {/snippet}
           </ScorePreview>
         </div>

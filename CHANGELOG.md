@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- Volunteer view redesigned: the header carries the title, the viewer's own standing ("You: 2 done · 1 claimed") and the campaign count; the next-task card shows the task's own page cropped to its measures (the opening system for pieces without pages); every other open task is one list with kind filters (encoding, review, preparation); pieces are one table with a segmented progress bar (done, in review, rest) and labelled counts, expanding to their tasks.
+- Comments panel: 380px wide by default (minimum 280px); one control opens and closes it, the button outside the panel, in every view; in the volunteer view the group keeps its width when the panel is dragged wider, so the task column narrows instead.
+- Volunteer view: rows are plain containers with real title buttons and headings; pills, avatars and buttons are accessible by keyboard and screen reader; the view stacks below 700px; the next-task button is an outline while a task panel is open; blocked tasks read "waits for …", finished ones "done"; logged out, the button starts the login.
 - Accessibility (WCAG 2.2 AA): small controls are at least 24px tall (segmented controls, pills, chips, link-style buttons, score links, zoom sliders, the wizard's discard button, the spread checkbox).
 - Accessibility: every console route sets a page title; the next-step badge keeps dark text on its light-blue fill in the dark theme; decorative separators are hidden from assistive technology; section labels, board columns and task-box titles are headings; the campaign list has a hidden top-level heading; the search bar shows a focus ring; the comment composer has an accessible name.
 - Console: the top bar wraps below 560px and hides the login name; the campaign filter bar wraps on narrow screens.

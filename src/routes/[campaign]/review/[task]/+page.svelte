@@ -363,20 +363,21 @@
     </div>
   {:else}
     {#snippet reopenComments()}
-      {#if !commentsPanel.open}
-        <button
-          type="button"
-          class="btn"
-          title="Show the comments panel with the verdict controls"
-          onclick={() => {
-            commentsPanel.open = true;
-            writeSidePanel("comments", { ...commentsPanel });
-          }}
-        >
-          <PanelIcon />
-          Comments
-        </button>
-      {/if}
+            <button
+        type="button"
+        aria-pressed={commentsPanel.open}
+        class="btn"
+        title={commentsPanel.open
+          ? "Hide the comments panel with the verdict controls"
+          : "Show the comments panel with the verdict controls"}
+        onclick={() => {
+          commentsPanel.open = !commentsPanel.open;
+          writeSidePanel("comments", { ...commentsPanel });
+        }}
+      >
+        <PanelIcon />
+        Comments
+      </button>
     {/snippet}
     {#snippet taskBox()}
       <div class="taskbox" aria-label={`Review ${card.title}`}>

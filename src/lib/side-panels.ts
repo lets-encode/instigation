@@ -21,8 +21,8 @@ const KEYS: Record<SidePanelId, string> = {
 // width serves as the fallback where the shared key is not yet stored.
 const WIDTH_KEY = 'lets-encode:side-panel-width';
 
-export const PANEL_MIN = 240;
-const DEFAULT_WIDTH = 300;
+export const PANEL_MIN = 280;
+export const DEFAULT_PANEL_WIDTH = 380;
 
 const DEFAULT_OPEN: Record<SidePanelId, boolean> = {
 	comments: true,
@@ -46,8 +46,12 @@ function readPanelKey(id: SidePanelId): Record<string, unknown> {
 	}
 }
 
-/** The stored panel state, or its default where nothing valid is stored. */
-export function readSidePanel(id: SidePanelId): SidePanelState {
+/** The stored panel state, or its default where nothing valid is stored;
+    `fallbackOpen` replaces the panel's default open state. */
+export function readSidePanel(
+	id: SidePanelId,
+	fallbackOpen: boolean = DEFAULT_OPEN[id]
+): SidePanelState {
 	const p = readPanelKey(id);
 	let shared: unknown = null;
 	try {
@@ -57,8 +61,8 @@ export function readSidePanel(id: SidePanelId): SidePanelState {
 		/* an unreadable width falls back to the panel's own */
 	}
 	return {
-		open: typeof p.open === 'boolean' ? p.open : DEFAULT_OPEN[id],
-		width: width(shared, width(p.width, DEFAULT_WIDTH))
+		open: typeof p.open === 'boolean' ? p.open : fallbackOpen,
+		width: width(shared, width(p.width, DEFAULT_PANEL_WIDTH))
 	};
 }
 

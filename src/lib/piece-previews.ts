@@ -9,12 +9,25 @@
 import type { VerovioToolkit } from 'verovio/esm';
 import type { ForgeClient } from './forge/types.ts';
 import { parseFacsimileMei } from './mei-facsimile.ts';
+import type { MeasureBox } from './mei-facsimile.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 import { renderPage } from './verovio-render.ts';
+
+export interface PagePreview {
+	/** Download URL of the page image; '' = none reachable. */
+	url: string;
+	/** The surface's coordinate space, which the zones and the box use. */
+	width: number;
+	height: number;
+	/** The box around the page's measure zones; null without zones. */
+	box: MeasureBox | null;
+}
 
 export interface PiecePreview {
 	/** Download URL of the first facsimile page image; '' = none reachable. */
 	thumb: string;
+	/** Each facsimile page; empty without a facsimile. */
+	pages: PagePreview[];
 	/** Sanitised SVG of the opening system; '' = nothing rendered. */
 	incipit: string;
 	/** True while the score has facsimile pages but no measures yet. */
@@ -27,6 +40,7 @@ export interface PiecePreview {
 
 const EMPTY: PiecePreview = {
 	thumb: '',
+	pages: [],
 	incipit: '',
 	incipitPending: false,
 	pageMeasures: [],
@@ -66,14 +80,33 @@ async function loadPreview(
 	if (mei == null) return EMPTY;
 	const parsed = parseFacsimileMei(mei);
 
-	let thumb = '';
-	const pageIndex = parsed.pages.findIndex((page) => page.image);
-	if (pageIndex >= 0) {
-		const urls = await resolveFacsimileImageUrls(f, owner, repo, path, [
-			parsed.pages[pageIndex].image
-		]);
-		thumb = urls[0] ?? '';
-	}
+	const urls = parsed.pages.length
+		? await resolveFacsimileImageUrls(
+				f,
+				owner,
+				repo,
+				path,
+				parsed.pages.map((page) => page.image)
+			)
+		: [];
+	const pages: PagePreview[] = parsed.pages.map((page, i) => ({
+		url: urls[i] ?? '',
+		width: page.width,
+		height: page.height,
+		box: page.zones.reduce<MeasureBox | null>(
+			(box, zone) =>
+				box
+					? {
+							ulx: Math.min(box.ulx, zone.box.ulx),
+							uly: Math.min(box.uly, zone.box.uly),
+							lrx: Math.max(box.lrx, zone.box.lrx),
+							lry: Math.max(box.lry, zone.box.lry)
+						}
+					: { ...zone.box },
+			null
+		)
+	}));
+	const thumb = pages.find((page) => page.url)?.url ?? '';
 
 	const pageMeasures = parsed.pages.map((page) => page.zones.length);
 	const staves = parsed.scoreDef.staves.length;
@@ -81,9 +114,16 @@ async function loadPreview(
 	// A facsimile score renders only once its measures exist; a score without
 	// facsimile pages renders as-is.
 	if (parsed.pages.length && !parsed.hasMeasures) {
-		return { thumb, incipit: '', incipitPending: true, pageMeasures, staves };
+		return { thumb, pages, incipit: '', incipitPending: true, pageMeasures, staves };
 	}
-	return { thumb, incipit: await renderIncipit(mei), incipitPending: false, pageMeasures, staves };
+	return {
+		thumb,
+		pages,
+		incipit: await renderIncipit(mei),
+		incipitPending: false,
+		pageMeasures,
+		staves
+	};
 }
 
 // ---------------------------------------------------------------------------

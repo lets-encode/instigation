@@ -20,7 +20,6 @@
   import type { SidePanelState } from "$lib/side-panels.ts";
   import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
-  import PanelIcon from "./PanelIcon.svelte";
 
   let {
     piece,
@@ -150,10 +149,6 @@
     writeSidePanel("comments", { ...panel });
   }
 
-  function close() {
-    panel.open = false;
-    writeSidePanel("comments", { ...panel });
-  }
 </script>
 
 {#if panel.open}
@@ -178,9 +173,6 @@
         <span class="dot"></span>
         <span class="scopename">Comments · {piece.title || piece.id}</span>
         <span class="countpill">{count}</span>
-        <button type="button" class="iconbtn" title="Hide the comments panel" onclick={close}>
-          <PanelIcon />
-        </button>
       </div>
       {#if header}
         <div class="pinhead">{@render header()}</div>
@@ -351,20 +343,6 @@
     border-radius: 999px;
     padding: 1px 7px;
     color: var(--ink-soft);
-  }
-  .iconbtn {
-    width: 24px;
-    height: 24px;
-    border-radius: 7px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink-soft);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex: none;
-    padding: 0;
   }
   /* The pinned header keeps its controls in reach while the list scrolls;
      past its share of the panel it scrolls on its own. */
