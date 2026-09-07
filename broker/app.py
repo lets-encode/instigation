@@ -25,7 +25,7 @@ Config (environment variables, loaded from broker/.env if present):
   RATELIMIT_STORAGE_URI  flask-limiter counter storage (default: memory://,
                          which keeps counters per worker process)
 
-See README.md for setup, and deploy/apache.conf for the production mount.
+See README.md for setup, and the repository README §6 for the deployed mount.
 """
 
 import ipaddress
@@ -105,8 +105,8 @@ Session(app)
 
 # Behind a reverse proxy the client address Flask sees is the proxy's own, so
 # the per-client rate limits below would collapse into a single shared bucket.
-# PROXY_FIX_X_FOR names the number of proxies actually in front (1 for the
-# deploy/ Apache vhosts); X-Forwarded-For is then trusted that many hops deep.
+# PROXY_FIX_X_FOR names the number of proxies actually in front (1 behind the
+# institution's reverse proxy); X-Forwarded-For is then trusted that many hops deep.
 # Off by default: without a trusted proxy the header is client-supplied and
 # trivially spoofed.
 proxy_hops = int(getenv("PROXY_FIX_X_FOR") or "0")

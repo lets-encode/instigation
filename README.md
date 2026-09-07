@@ -114,21 +114,24 @@ npm run dev
 
 Open <http://localhost:5173>. The routes:
 
-- `/` — the landing: the full campaign list (search, sort, pagination and an
-  open-tasks filter) alongside the start card, unfinished setups and the
-  viewer's claimed work.
+- `/` — the project website (`static/index.html` and its files), including
+  the start-a-campaign form.
+- `/campaigns` — the SPA's landing: the full campaign list (search, sort,
+  pagination and an open-tasks filter) alongside the start card, unfinished
+  setups and the viewer's claimed work.
 - `/new` — the six-step campaign creation wizard (name, licence, upload,
   pages, source, pieces). On a clean creation you land on the new campaign's
   console.
-- `/dashboard` — the logged-in user's personal dashboard.
 - `/<campaign>` — the campaign console (the campaign name; the repo it
   addresses is resolved via the registry).
-- `/<campaign>/zones/<task>` — the measure-zone editor for one pre-task.
+- `/<campaign>/zones/<task>`, `/<campaign>/review/<task>`,
+  `/<campaign>/setup/<task>` — the zone editor, the review view and the score
+  setup view for one task.
 
 ## 5. Build / preview / test
 
 ```bash
-npm run build     # static site → ./build (SPA, spa.html fallback; website/ owns index.html)
+npm run build     # static site → ./website (the document root: website index.html at /, SPA fallback spa.html)
 npm run preview   # serve the built site locally
 npm test          # pure campaign-logic unit tests (no network)
 ```
@@ -149,33 +152,49 @@ Local development is the fourth world: the Vite dev server + a local Flask
 broker (section 4), with its own OAuth App whose callback is
 `http://localhost:5173/auth/authorize`.
 
-- **SPA + broker, one origin:** the broker's session cookie must be
-  first-party, so each instance serves its static build and its broker from
-  the same origin. The vhosts in `deploy/` (`apache.conf` for production —
-  the fully annotated one — plus `apache-staging.conf` and
-  `apache-testing.conf`) each serve `/opt/lets-encode/<instance>/current` and
-  proxy `/auth/` and `/registry/` to that instance's broker port, behind
-  **HTTPS**. They are name-based vhosts on one listen port, so the F5 must
-  forward all three hostnames.
-- **Server layout:** one git checkout per instance, kept on that instance's
-  branch. Each checkout runs its own broker (`PORT=<port> gunicorn -c
-gunicorn_config.py wsgi:app` in `broker/`), so sessions and the slug DB
-  (`broker/instance/`) are naturally separate.
-- **Deploying the SPA:** from the instance's checkout, on its branch:
+- **Server layout:** one git checkout of this repository per instance, kept on
+  that instance's branch. The web server's document root for the instance is
+  the checkout's `website/` directory. Each checkout runs its own broker
+  (`PORT=<port> gunicorn -c gunicorn_config.py wsgi:app` in `broker/`), so
+  sessions and the slug DB (`broker/instance/`) are naturally separate.
+- **Deploying:** in the instance's checkout, on its branch:
 
   ```bash
-  deploy/deploy.sh staging   # or production / testing
+  git pull
+  npm ci
+  npm run build                    # production
+  npm run build -- --mode staging  # or testing
   ```
 
-  The script refuses to build from the wrong branch, runs `npm ci` and the
-  mode's build, writes it to a fresh directory under
-  `/opt/lets-encode/<instance>/releases/`, and atomically repoints the
-  `current` symlink the vhost serves. It keeps the five newest releases;
-  rolling back is repointing `current` at an older one. Every `PUBLIC_*`
-  value — and the CSP in `svelte.config.js` — is baked in at build time, so a
-  config change needs a rebuild, not just a re-copy. The broker is not
-  touched: restart it separately when `broker/` changed.
-
+  The build empties `website/` and writes the SPA (`_app/`, `spa.html`) and
+  the project website (everything in `static/`) into it; requests arriving
+  during the build's few seconds get 404s. Every `PUBLIC_*` value — and the CSP
+  in `svelte.config.js` — is baked in at build time, so a config change needs
+  a rebuild. The broker is a separate process: restart it when `broker/`
+  changed.
+- **Web server requirements (institution-managed):** the SPA and its broker
+  must share one origin, because the broker's session cookie is first-party.
+  Each instance's virtual host therefore needs, behind **HTTPS**:
+  - document root `<checkout>/website`, with `index.html` as the directory
+    index so the project website answers `/`;
+  - a fallback to `/spa.html` for every path that is not an existing file
+    (Apache: `FallbackResource /spa.html`), so `/campaigns`, `/new` and
+    `/<campaign>` load the SPA shell;
+  - `/auth/` reverse-proxied to `http://127.0.0.1:<broker port>/` with the
+    `/auth` prefix stripped (`/auth/login` → `/login`), and `/registry/`
+    reverse-proxied to `http://127.0.0.1:<broker port>/registry/` with the
+    path unchanged. These must be matched before the document root, so the
+    SPA fallback cannot swallow them. `/registry/admin/` must be restricted to
+    institutional auth at the proxy (see `broker/README.md`);
+  - MIME types `application/wasm` for `.wasm` and `text/javascript` for
+    `.mjs` (the score renderer and the PDF worker refuse to load otherwise);
+  - `Cache-Control: no-cache` on `.html` files (the shell names hashed
+    bundles that a later build replaces) and
+    `Cache-Control: public, max-age=31536000, immutable` under
+    `/_app/immutable/`;
+  - if TLS terminates in front of the web server, the forwarded client
+    address passed on to the broker, with `PROXY_FIX_X_FOR=1` in the broker's
+    environment (see `broker/README.md`).
 - **Broker env, per instance:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
   `FLASK_SECRET`, `PORT`, and
   `REDIRECT_URL=https://<instance-origin>/auth/authorize` (see

@@ -16,9 +16,8 @@ import re
 
 # Names that can never be registered as campaign slugs. A campaign lives at
 # /<name> on the app's own origin, so every top-level path the origin serves —
-# SvelteKit routes, reverse-proxy mounts (deploy/apache.conf), and likely
-# future routes —
-# must be unregistrable. Paths containing characters outside [a-z0-9-] or
+# SvelteKit routes, reverse-proxy mounts (README.md §6), and likely future
+# routes — must be unregistrable. Paths containing characters outside [a-z0-9-] or
 # shorter than 3 characters (e.g. _app, favicon.svg, robots.txt, /c) already
 # fail the shape rules, so only plain word paths need listing here.
 # test_registry.py checks the routes and mounts against this list.
