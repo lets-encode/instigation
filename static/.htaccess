@@ -5,13 +5,3 @@
 # Serve existing files as-is and every other path with the SPA shell, so
 # client-side routes (/campaigns, /new, /<campaign>) resolve.
 FallbackResource /spa.html
-
-# Apache's mime.types predates both; without these the browser refuses to
-# instantiate the Verovio wasm module and to execute the pdf.js worker.
-AddType application/wasm .wasm
-AddType text/javascript  .mjs
-
-# The shell names hashed bundles that a later build replaces.
-<FilesMatch "\.html$">
-	Header set Cache-Control "no-cache"
-</FilesMatch>
