@@ -1,0 +1,17 @@
+# Copied into website/ (the document root) by the build. Applies only where
+# Apache allows overrides for this directory; the reverse-proxy mounts for the
+# session broker (/auth/, /registry/) cannot be set here — see README.md §6.
+
+# Serve existing files as-is and every other path with the SPA shell, so
+# client-side routes (/campaigns, /new, /<campaign>) resolve.
+FallbackResource /spa.html
+
+# Apache's mime.types predates both; without these the browser refuses to
+# instantiate the Verovio wasm module and to execute the pdf.js worker.
+AddType application/wasm .wasm
+AddType text/javascript  .mjs
+
+# The shell names hashed bundles that a later build replaces.
+<FilesMatch "\.html$">
+	Header set Cache-Control "no-cache"
+</FilesMatch>
