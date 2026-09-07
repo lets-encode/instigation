@@ -439,6 +439,29 @@
     border-radius: 12px;
     padding: 12px;
   }
+  /* Below 1100px the panel floats over the right edge of the board instead
+     of taking a share of its width; the drag handle is not needed there. */
+  @media (max-width: 1100px) {
+    .tspwrap {
+      position: fixed;
+      top: 56px;
+      right: 0;
+      bottom: 0;
+      /* The stored width still applies (inline); the viewport caps it. */
+      max-width: 94vw;
+      padding: 12px 12px 12px 0;
+      box-sizing: border-box;
+      z-index: 30;
+    }
+    .handle {
+      display: none;
+    }
+    .tsp {
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+  }
   .tspscroll {
     flex: 1;
     min-height: 0;

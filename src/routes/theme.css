@@ -2,9 +2,11 @@
    Let's Encode! — shared theme tokens for the instigation app.
    :root holds the light theme; [data-theme="dark"] overrides it.
    Direction 3b "Farbenspiel": the logo hands verbatim
-     (#6dc3ff / #76de76 / #ffa76d) carry meaning; text and buttons use
-   darkened mixes of the same hues. Ultramarine-slate surfaces; real depth
-   via --shadow (raised) and --shadow-inset (recessed).
+     (#6dc3ff / #76de76 / #ffa76d) carry meaning on surfaces, lines, glows
+   and progress; small text and solid fills use one deep tone per hue that
+   reads 4.5:1 on the canvas, the card and the hue's own wash. Light slate
+   surfaces; real depth via --shadow (raised) and --shadow-inset (recessed).
+   On recessed surfaces text is --ink or --ink-soft, never a stage colour.
    ========================================================================= */
 
 :root {
@@ -13,31 +15,31 @@
 
   --ink: #232838;
   --ink-soft: #4d5468;
-  --ink-faint: #767d92;
-  --line: #cdd3e1;
+  --ink-faint: #666d83;
+  --line: #c5ccdb;
   --bg: #ffffff;
-  --bg-alt: #d9dfee;
-  --bg-tint: #cfd7eb;
+  --bg-alt: #eef1f7;
+  --bg-tint: #e6eaf3;
   --card: #ffffff;
-  --topbar-bg: rgba(249, 250, 254, .94);
+  --topbar-bg: rgba(255, 255, 255, .78);
 
-  --accent: #1e6fd6;
-  --link: #1e6fd6;
+  --accent: #1b66c7;
+  --link: #1b66c7;
 
   /* Filled action buttons carry their own pair: the fill can differ from the
      accent used for text and borders, which needs more contrast on dark. */
-  --accent-btn: #1e6fd6;
+  --accent-btn: #1b66c7;
   --accent-btn-hover: #14539f;
-  --ok-btn: #279b57;
-  --ok-btn-hover: #1e7a44;
+  --ok-btn: #1e7a44;
+  --ok-btn-hover: #196538;
 
   /* Form control outlines, a step heavier than --line. */
-  --line-input: #aeb6cc;
+  --line-input: #9ea7bd;
   /* Functional orange: XML attribute names, piece highlights. */
-  --orange-deep: #d0742a;
+  --orange-deep: #ad561c;
   /* Recessed work surfaces: page grids, the XML editor, the corrector desk.
      Always paired with --shadow-inset. */
-  --bg-inset: #c9d1e1;
+  --bg-inset: #e3e7f0;
 
   /* Widest a full-bleed screen lets its content grow (the design canvas
      width). Beyond it the content centres and the viewport gains side
@@ -45,8 +47,8 @@
   --page-max: 1600px;
   /* The page-glow pair: radial washes of the blue and green hands, painted
      over --bg-alt on full-bleed canvases. */
-  --glow-blue: rgba(109, 195, 255, .42);
-  --glow-green: rgba(118, 222, 118, .32);
+  --glow-blue: rgba(109, 195, 255, .38);
+  --glow-green: rgba(118, 222, 118, .30);
   --shadow: 0 1px 2px rgba(31, 36, 51, .06), 0 12px 30px rgba(31, 36, 51, .13);
   /* Recessed surfaces sink; pairs with --bg-inset / --desk. */
   --shadow-inset: inset 0 1px 4px rgba(31, 36, 51, .11);
@@ -65,44 +67,48 @@
      pills, chips, fail boxes, attention badges, validation dots, banners.
      Each has a fill and a border to go with the text colour.
      Tints are pulled straight from the hand pastels. */
-  --ok: #279b57;
-  --ok-bg: #cef3ce;
+  --ok: #1e7a44;
+  --ok-bg: #e2f7e2;
   --ok-line: #85dd8f;
+  /* Solid fill under white text: lane headers, marks. */
+  --ok-solid: #1e7a44;
   /* A fainter green wash than --ok-bg, for boxes that hold readable text. */
   --ok-wash: #eefaee;
-  --warn: #d0742a;
-  --warn-bg: #ffe6d0;
+  --warn: #ad561c;
+  --warn-bg: #fff0e4;
   --warn-line: #f2c69a;
   /* A fainter orange wash than --warn-bg, for boxes that hold readable text. */
   --warn-wash: #fdf4ea;
   /* Solid fill for the attention badge; white text on it. */
-  --warn-solid: #d0742a;
-  --warn-btn-hover: #a85b1f;
-  --danger: #c03b28;
-  --danger-bg: #fbe2db;
+  --warn-solid: #ad561c;
+  --warn-btn-hover: #94491a;
+  --danger: #bb3624;
+  --danger-bg: #fde9e5;
   --danger-line: #efb7a8;
   /* Solid fill for the fail pin; white text on it. */
-  --danger-solid: #c03b28;
+  --danger-solid: #bb3624;
   /* A fainter red wash than --danger-bg, for boxes that hold readable text. */
   --danger-wash: #fdf1ee;
   /* Blue: work awaiting review, and anything else stated rather than warned. */
-  --info: #1e6fd6;
-  --info-bg: #cfe8ff;
+  --info: #1b66c7;
+  --info-bg: #e3f1ff;
   --info-line: #8cc9f5;
+  --info-solid: #1b66c7;
   /* Purple, marking preparation steps apart from encoding ones. */
-  --pre: #7f5ba6;
-  --pre-btn: #7f5ba6;
+  --pre: #7a56a3;
+  --pre-btn: #7a56a3;
   --pre-btn-hover: #654689;
-  --pre-wash: #f5f0fa;
+  --pre-wash: #f1ebf8;
+  --pre-solid: #7a56a3;
   /* Amber, marking the viewer's own campaigns and owner-only controls. */
-  --owner: #d0742a;
-  --owner-bg: #fdeede;
+  --owner: #ad561c;
+  --owner-bg: #fff0e4;
   --owner-line: #f0d2ab;
   /* Progress-bar track on the owner-amber card surface. */
   --owner-track: #f6ddbd;
   /* The measure corrector's desk: the surface the page sheets float on.
      Same value as --bg-inset; pairs with --shadow-inset. */
-  --desk: #c9d1e1;
+  --desk: #e3e7f0;
 
   /* Accent surfaces: a faint wash for rows and icons, a stronger one for the
      selected row, and the borders that go with them. */
@@ -112,7 +118,7 @@
   --accent-line-strong: #8cb2e4;
 
   /* A heavier border than --line, for control outlines rather than hairlines. */
-  --line-strong: #aeb6cc;
+  --line-strong: #9ea7bd;
   /* Text on a filled accent surface. */
   --invert-ink: #ffffff;
   /* Covers the page while a modal action runs. */
@@ -164,8 +170,8 @@
   /* Fills stay deeper on dark so white text keeps contrast. */
   --accent-btn: #2a72c8;
   --accent-btn-hover: #1e5ea8;
-  --ok-btn: #2b8a52;
-  --ok-btn-hover: #236f43;
+  --ok-btn: #26794a;
+  --ok-btn-hover: #1f653d;
 
   --line-input: #3c455e;
   --orange-deep: #ffa76d;
@@ -184,6 +190,7 @@
   --ok: #76de76;
   --ok-bg: rgba(118, 222, 118, .16);
   --ok-line: #3a7350;
+  --ok-solid: #26794a;
   --ok-wash: rgba(118, 222, 118, .07);
   --warn: #ffa76d;
   --warn-bg: rgba(255, 167, 109, .17);
@@ -195,15 +202,17 @@
   --danger: #f2765e;
   --danger-bg: rgba(242, 118, 94, .2);
   --danger-line: rgba(242, 118, 94, .45);
-  --danger-solid: #d95540;
+  --danger-solid: #c8452f;
   --danger-wash: rgba(242, 118, 94, .08);
   --info: #7ecafd;
   --info-bg: rgba(126, 202, 253, .18);
   --info-line: #46689a;
+  --info-solid: #2a72c8;
   --pre: #b899dd;
   --pre-btn: #8a67b5;
   --pre-btn-hover: #7454a0;
   --pre-wash: rgba(184, 153, 221, .1);
+  --pre-solid: #7f5ba6;
   --owner: #ffa76d;
   --owner-bg: rgba(255, 167, 109, .15);
   --owner-line: #6e5530;

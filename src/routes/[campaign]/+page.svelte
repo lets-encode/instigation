@@ -1313,6 +1313,7 @@
 
         <div class="instrow">
         {#if previewPieces.length > 0}
+          <div class="railslot">
           <PieceRail
             pieces={previewPieces}
             {owner}
@@ -1325,6 +1326,7 @@
             selected={selectedPiece}
             onselect={(sel) => (selectedPiece = sel)}
           />
+          </div>
         {/if}
         <div class="boardcol">
         {#if railPiece}
@@ -1365,8 +1367,8 @@
         {/if}
         <div class="board">
           {#each scopedColumns as col (col.key)}
-            <div class="bcol">
-              <div class="bcol-head c-{col.key}">
+            <div class="bcol c-{col.key}">
+              <div class="bcol-head">
                 <h2 class="bcol-name">{col.label}</h2>
                 <span class="bcol-count">{col.cards.length}</span>
               </div>
@@ -1963,6 +1965,28 @@
     gap: 14px;
     padding: 0 32px;
   }
+  .railslot {
+    flex: none;
+    display: flex;
+    min-height: 0;
+    align-self: flex-start;
+    max-height: 100%;
+  }
+  /* Below 1100px the rail moves above the board as a strip of piece chips
+     (PieceRail.svelte switches its own layout at the same width) and the
+     task panel floats over the board (TaskSidePanel.svelte), so the lanes
+     keep the width. */
+  @media (max-width: 1100px) {
+    .instrow {
+      flex-wrap: wrap;
+      padding: 0 20px;
+    }
+    .railslot {
+      flex-basis: 100%;
+      order: -1;
+      max-height: none;
+    }
+  }
   .boardcol {
     flex: 1;
     min-width: 0;
@@ -2040,65 +2064,74 @@
        shown with, so the dock panels stop growing before crushing it. */
     min-height: 170px;
     display: flex;
-    gap: 14px;
+    gap: 12px;
+    /* Lanes keep a readable width and the board scrolls sideways before
+       they are crushed; the stack below takes over on narrow containers. */
+    overflow-x: auto;
   }
+  .board > .bcol {
+    min-width: 200px;
+  }
+  /* A lane is the stage's colour: a solid header bar with white lettering
+     over a body in the stage's wash. The three lane tokens are set per
+     column key below. */
   .bcol {
+    --lane-solid: var(--ink-soft);
+    --lane-bg: var(--bg-tint);
+    --lane-line: var(--line);
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     min-height: 0;
+    background: var(--lane-bg);
+    border: 1px solid var(--lane-line);
+    border-radius: 12px;
+    overflow: hidden;
   }
   .bcol-head {
+    flex: none;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
-    padding: 0 4px;
+    padding: 7px 12px;
+    background: var(--lane-solid);
+    color: var(--invert-ink);
   }
   .bcol-name {
     margin: 0;
     font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-weight: 700;
+    letter-spacing: 0.02em;
   }
   .bcol-count {
     font-size: 11px;
-    font-weight: 600;
-    background: var(--track);
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.25);
     border-radius: 999px;
-    padding: 1px 7px;
+    padding: 1px 8px;
   }
-  .bcol-head.c-blocked {
-    color: var(--ink-faint);
+  .bcol.c-blocked {
+    --lane-solid: var(--ink-faint);
+    --lane-bg: var(--bg-inset);
   }
-  .bcol-head.c-ready {
-    color: var(--ink-soft);
+  .bcol.c-encoding {
+    --lane-solid: var(--info-solid);
+    --lane-bg: var(--info-bg);
+    --lane-line: var(--info-line);
   }
-  .bcol-head.c-encoding {
-    color: var(--info);
+  .bcol.c-validation {
+    --lane-solid: var(--warn-solid);
+    --lane-bg: var(--warn-bg);
+    --lane-line: var(--warn-line);
   }
-  .bcol-head.c-encoding .bcol-count {
-    background: var(--info-bg);
-  }
-  .bcol-head.c-validation {
-    color: var(--warn);
-  }
-  .bcol-head.c-validation .bcol-count {
-    background: var(--warn-bg);
-  }
-  .bcol-head.c-done {
-    color: var(--ok);
-  }
-  .bcol-head.c-done .bcol-count {
-    background: var(--ok-bg);
+  .bcol.c-done {
+    --lane-solid: var(--ok-solid);
+    --lane-bg: var(--ok-bg);
+    --lane-line: var(--ok-line);
   }
   .well {
-    background: var(--well);
-    box-shadow: var(--shadow-inset);
-    border: 1px dashed var(--line-strong);
-    border-radius: 14px;
     padding: 10px;
     display: flex;
     flex-direction: column;
@@ -2419,11 +2452,14 @@
      not only when the window itself is narrow. Stacked, the board scrolls
      as a whole instead of per column — the containment moves up with the
      scrolling, so the stack can't grow the view past the window either. */
-  @container (max-width: 1100px) {
+  @container (max-width: 640px) {
     .board {
       flex-direction: column;
       overflow-y: auto;
       contain: size;
+    }
+    .board > .bcol {
+      min-width: 0;
     }
     .bcol {
       min-height: auto;

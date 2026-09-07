@@ -430,7 +430,7 @@
   }
   .cnone {
     font-size: 11.5px;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     padding: 8px 2px;
   }
 </style>

@@ -270,6 +270,58 @@
     gap: 3px;
     color: var(--danger);
   }
+  /* Narrower windows: the thumbnail goes, then the rail turns into a strip
+     of piece chips above the board (the page wraps it there). */
+  @media (max-width: 1400px) {
+    .rail {
+      width: 232px;
+    }
+    .paper {
+      display: none;
+    }
+  }
+  @media (max-width: 1100px) {
+    .rail {
+      width: 100%;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 8px;
+      max-height: none;
+      overflow: visible;
+      box-sizing: border-box;
+    }
+    .raildiv {
+      display: none;
+    }
+    .railrow,
+    .railrow.all {
+      padding: 6px 12px;
+      gap: 8px;
+      border-radius: 999px;
+    }
+    .railrow.selected {
+      border-radius: 999px;
+    }
+    .railbar {
+      display: none;
+    }
+    .railbody {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }
+    .railname {
+      max-width: 220px;
+    }
+    .openpill {
+      margin-left: 6px;
+    }
+    .attn {
+      margin-left: 0;
+    }
+  }
   .attn svg {
     flex: none;
   }
