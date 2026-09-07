@@ -35,6 +35,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>New campaign · Let's Encode!</title>
+</svelte:head>
+
 <!--
   Every step renders the full workbench shell itself; this route only decides
   which step is on screen.

@@ -7,6 +7,7 @@
   ask for it again.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
@@ -215,14 +216,14 @@
       {#if handleCheck.state === "checking"}
         <span class="hint">Checking availability…</span>
       {:else if handleCheck.state === "held"}
-        <span class="hint hint-ok">✓ Reserved for this campaign</span>
+        <span class="hint hint-ok"><Icon name="check" size={12} /> Reserved for this campaign</span>
       {:else if handleCheck.state === "available"}
-        <span class="hint hint-ok">✓ Available</span>
+        <span class="hint hint-ok"><Icon name="check" size={12} /> Available</span>
       {:else if handleCheck.state === "taken"}
-        <span class="hint hint-err">✗ Already used by {handleCheck.by}</span>
+        <span class="hint hint-err"><Icon name="close" size={12} /> Already used by {handleCheck.by}</span>
       {:else if handleCheck.state === "draft"}
         <span class="hint hint-err">
-          ✗ Reserved by your unfinished setup of this campaign
+          <Icon name="close" size={12} /> Reserved by your unfinished setup of this campaign
         </span>
         {#if handleCheck.resumable}
           <a class="hint" href="/campaigns">
@@ -294,7 +295,7 @@
     <!-- Continue submits the form, so this step draws its own footer. -->
     {#snippet footer()}
       <button type="submit" class="btn btn-lg btn-primary" disabled={!canAdvance || claiming}>
-        {claiming ? "Reserving the name…" : "Continue →"}
+        {claiming ? "Reserving the name…" : "Continue"}{#if !claiming}<Icon name="arrow-right" />{/if}
       </button>
     {/snippet}
   </WizardCard>

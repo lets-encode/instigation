@@ -320,8 +320,9 @@
     <p class="note">
       There are no page images in this upload.
       {#if wizard.encodings.length}
-        Its {wizard.encodings.length} encoding(s) become pieces in their own
-        right, and need no pages chosen.
+        Its {wizard.encodings.length} encoding{wizard.encodings.length === 1
+          ? " becomes a piece in its own right and needs"
+          : "s become pieces in their own right and need"} no pages chosen.
       {/if}
       Continuing creates the campaign's repository.
     </p>

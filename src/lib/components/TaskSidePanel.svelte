@@ -6,6 +6,7 @@
   (side-panels.ts). Commands run through callbacks the campaign page passes in.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import type { Snippet } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
@@ -129,7 +130,7 @@
   // The task's page, linking the status line to the score and prefilling a
   // fail's anchor.
   const taskPage = $derived(/^surface-(\d+)$/.exec(card.locator)?.[1] ?? "");
-  const scoreLink = $derived(taskPage ? `p. ${taskPage} →` : "score →");
+  const scoreLink = $derived(taskPage ? `p. ${taskPage}` : "score");
 
   const threads = $derived(buildThreads(comments, card.task));
   const discussionCount = $derived(
@@ -182,13 +183,13 @@
     <div class="taskcard">
       <div class="tsphead">
         <span class="dot"></span>
-        <span class="tsptitle">{card.title}</span>
+        <h2 class="tsptitle">{card.title}</h2>
         <span class="tspid">{card.task}</span>
         <button
           type="button"
           class="closebtn"
           title="Close the task panel"
-          onclick={onclose}>✕</button
+          onclick={onclose}><Icon name="close" /></button
         >
       </div>
       <TaskRunState task={card.task} bar />
@@ -264,7 +265,7 @@
               title={auth.user
                 ? "Claims the task for you, then opens the score in mei-friend."
                 : "Log in to claim a task."}
-              >Claim &amp; open editor ↗</button
+              >Claim &amp; open editor <Icon name="external" /></button
             >
           {/if}
         </div>
@@ -294,7 +295,7 @@
               onclick={() => oneditor(card.task)}
               disabled={runner.busy}
               title="Opens the score in mei-friend."
-              >Open editor ↗</button
+              >Open editor <Icon name="external" /></button
             >
           </div>
         {/if}
@@ -478,6 +479,7 @@
     flex: none;
   }
   .tsptitle {
+    margin: 0;
     font-size: 12px;
     font-weight: 600;
     color: var(--ink);
@@ -523,7 +525,8 @@
     color: var(--info);
     background: none;
     border: 0;
-    padding: 0;
+    padding: 6px 0;
+    margin: -6px 0;
     cursor: pointer;
   }
   .section {
@@ -581,7 +584,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--info);
+    color: var(--ink-soft);
     padding: 4px 2px 0;
     display: flex;
     align-items: center;
@@ -611,7 +614,7 @@
   }
   .cnone {
     font-size: 11.5px;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     padding: 4px 2px;
   }
 

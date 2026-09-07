@@ -8,6 +8,7 @@
   are not kept between visits.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { goto } from "$app/navigation";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import {
@@ -108,7 +109,7 @@
           onclick={() => continueSetup(draft)}
           disabled={busy !== null}
         >
-          {busy === draft.handle ? "Working…" : "Resume →"}
+          {busy === draft.handle ? "Working…" : "Resume"}{#if busy !== draft.handle}<Icon name="arrow-right" size={12} />{/if}
         </button>
         <span class="spacer"></span>
         {#if confirming === draft.handle}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -762,6 +763,10 @@
   };
 </script>
 
+<svelte:head>
+  <title>{title || campaign} · Let's Encode!</title>
+</svelte:head>
+
 <svelte:window
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
@@ -785,7 +790,7 @@
       <span>
         {runner.result.error}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
         {/if}
       </span>
       <button type="button" class="dismiss" onclick={() => (runner.result = null)}
@@ -797,7 +802,7 @@
       <div class="banner-body">
         {runner.result.message}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
         {/if}
         {#if runner.result.meiFriendUrl}
           <div class="rawlink">
@@ -812,7 +817,7 @@
           </div>
           <span class="muted">
             <a href={runner.result.meiFriendUrl} target="_blank" rel="noreferrer"
-              >Open in mei-friend ↗</a
+              >Open in mei-friend <Icon name="external" size={12} /></a
             >
             (if the tab didn't open automatically)
           </span>
@@ -968,7 +973,7 @@
       {:else if manage && canPush}
         <div class="crumbrow">
           <button type="button" class="backlink" onclick={() => (manage = false)}
-            >← Back to the board</button
+            ><Icon name="arrow-left" /> Back to the board</button
           >
           <span class="bcsep">/</span>
           <span class="crumbtitle">{title || repo}</span>
@@ -977,9 +982,9 @@
           <span class="cspacer"></span>
           <span class="reapline">
             {#if lastReap}
-              Reaper last released a stale claim {elapsedLabel(lastReap.timestamp)}
+              Expired claims were last released {elapsedLabel(lastReap.timestamp)}
             {:else}
-              The reaper has not released any stale claims yet
+              No expired claims have been released yet
             {/if}
           </span>
           <button
@@ -987,7 +992,7 @@
             class="btn"
             onclick={() => reaper()}
             disabled={runner.busy}
-            title="Release claims that have gone stale">Run reaper now</button
+            title="Releases the claims whose lock has expired">Release expired claims now</button
           >
         </div>
         <PlanEditor
@@ -1114,7 +1119,7 @@
               class="mono slug"
               href={`https://github.com/${owner}/${repo}`}
               target="_blank"
-              rel="noreferrer">{owner}/{repo} ↗</a
+              rel="noreferrer">{owner}/{repo} <Icon name="external" size={12} /></a
             >
             <button
               type="button"
@@ -1125,7 +1130,7 @@
                 if (showInfo) loadScoreHead();
               }}
               title="Show or hide campaign information"
-              >ⓘ Info {showInfo ? "▾" : "▸"}</button
+              ><Icon name="info" /> Info <Icon name={showInfo ? "chevron-down" : "chevron-right"} size={12} /></button
             >
             <span class="cspacer"></span>
             {#if auth.user && canPush}
@@ -1134,7 +1139,7 @@
                 class="btn btn-lg managechip"
                 onclick={() => (manage = true)}
                 disabled={runner.busy}
-                title="Owner only — plan editor and reaper">⚙ Manage</button
+                title="Owner only: plan editor and expired-claim release"><Icon name="gear" /> Manage</button
               >
             {/if}
             <button
@@ -1232,7 +1237,7 @@
                 title="Show the tasks with unresolved fails, comments or questions."
                 ><b>{board.attention}</b> need{board.attention === 1
                   ? "s"
-                  : ""} attention {showAttention ? "▾" : "▸"}</button
+                  : ""} attention <Icon name={showAttention ? "chevron-down" : "chevron-right"} size={12} /></button
               >
             {:else}
               <span class="stat"><b>0</b> need attention</span>
@@ -1299,7 +1304,7 @@
                         : "s"}</span
                     >
                   {/if}
-                  <span class="attnchev">›</span>
+                  <span class="attnchev"><Icon name="chevron-right" /></span>
                 </button>
               {/each}
             </div>
@@ -1354,7 +1359,7 @@
               type="button"
               class="btn"
               onclick={() => viewScorePiece(railPiece.index)}
-              title="Show every page of this piece's score.">View score →</button
+              title="Show every page of this piece's score.">View score <Icon name="arrow-right" size={12} /></button
             >
           </div>
         {/if}
@@ -1362,7 +1367,7 @@
           {#each scopedColumns as col (col.key)}
             <div class="bcol">
               <div class="bcol-head c-{col.key}">
-                <span class="bcol-name">{col.label}</span>
+                <h2 class="bcol-name">{col.label}</h2>
                 <span class="bcol-count">{col.cards.length}</span>
               </div>
               <div class="well">
@@ -1414,7 +1419,7 @@
                             viewCardScore(card);
                           }}
                           title="Open the score at this task's pages"
-                          >{cardPage(card) ? `p. ${cardPage(card)} →` : "score →"}</button
+                          >{cardPage(card) ? `p. ${cardPage(card)}` : "score"} <Icon name="arrow-right" size={11} /></button
                         >
                       </div>
                       <TaskRunState task={card.task} />
@@ -1486,7 +1491,7 @@
         <div class="ticker">
           <span class="ticker-label">Activity</span>
           {#each board.ticker as t, i (i)}
-            {#if i > 0}<span class="ticker-sep">|</span>{/if}
+            {#if i > 0}<span class="ticker-sep" aria-hidden="true">|</span>{/if}
             <span class="ticker-entry"
               ><strong>{t.login}</strong>
               {t.text}
@@ -1827,6 +1832,9 @@
     color: var(--ink-faint);
     text-decoration: none;
     flex: none;
+    /* A 24px pointer target without moving the text. */
+    padding: 5px 0;
+    margin: -5px 0;
   }
   .slug:hover {
     text-decoration: underline;
@@ -1905,7 +1913,8 @@
     color: var(--danger);
     background: none;
     border: 0;
-    padding: 0;
+    padding: 5px 0;
+    margin: -5px 0;
     cursor: pointer;
     text-decoration: underline;
   }
@@ -2048,6 +2057,7 @@
     padding: 0 4px;
   }
   .bcol-name {
+    margin: 0;
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -2174,9 +2184,6 @@
     border-radius: 999px;
     white-space: nowrap;
   }
-  :global([data-theme="dark"]) .nextup-badge {
-    color: #fff;
-  }
   .justmoved-badge {
     position: absolute;
     top: -9px;
@@ -2217,8 +2224,8 @@
     color: var(--info);
     background: none;
     border: 0;
-    padding: 0;
-    margin-left: 6px;
+    padding: 6px 0;
+    margin: -6px 0 -6px 6px;
     cursor: pointer;
     white-space: nowrap;
   }

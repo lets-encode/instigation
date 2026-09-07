@@ -6,6 +6,7 @@
   counts towards the total.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import type { ProgressLog, ProgressStep } from "$lib/progress-log.svelte.ts";
 
   let { log }: { log: ProgressLog } = $props();
@@ -36,11 +37,11 @@
         <li class:failed={step.failed} class:running={step.endedAt === undefined}>
           <span class="mark" aria-hidden="true">
             {#if step.failed}
-              ×
+              <Icon name="close" size={12} />
             {:else if step.endedAt === undefined}
               <span class="spinner"></span>
             {:else}
-              ✓
+              <Icon name="check" size={12} />
             {/if}
           </span>
           <span class="what">

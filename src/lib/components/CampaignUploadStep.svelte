@@ -51,7 +51,7 @@
       : failed
         ? "Retry"
         : hasUpload
-          ? "Continue →"
+          ? "Continue"
           : "Continue without images",
   );
 

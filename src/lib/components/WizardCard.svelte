@@ -24,6 +24,7 @@
 </script>
 
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import type { Snippet } from "svelte";
   import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
@@ -48,7 +49,8 @@
     status,
     onBack,
     onNext,
-    nextLabel = "Continue →",
+    nextLabel = "Continue",
+    nextIcon = "arrow-right",
     nextDisabled = false,
     backDisabled = false,
     finish = false,
@@ -67,6 +69,8 @@
     onBack?: () => void;
     onNext?: () => void;
     nextLabel?: string;
+    /** The icon after the next label; null for none. */
+    nextIcon?: "arrow-right" | "check" | null;
     nextDisabled?: boolean;
     backDisabled?: boolean;
     /** Styles the primary button green, for the step that completes the flow. */
@@ -189,7 +193,7 @@
           >
             <span class="rail-chain">
               <span class="bubble" class:done class:active>
-                {done ? "✓" : i + 1}
+                {#if done}<Icon name="check" size={12} />{:else}{i + 1}{/if}
               </span>
               {#if i < WIZARD_STEPS.length - 1}
                 <span
@@ -316,7 +320,7 @@
             onclick={onNext}
             disabled={nextDisabled}
           >
-            {nextLabel}
+            {nextLabel}{#if nextIcon}<Icon name={nextIcon} />{/if}
           </button>
         {/if}
       {/if}
@@ -487,8 +491,11 @@
   }
   .discard {
     cursor: pointer;
-    margin-top: 8px;
+    margin-top: 3px;
     align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
     font: 12px var(--font);
     padding: 0;
     color: var(--ink-faint);

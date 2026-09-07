@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { untrack } from "svelte";
   import type { Snippet } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
@@ -413,7 +414,7 @@
           class:on={pane === "facs"}
           onclick={() => setPane("facs")}
           title="Show the page images of the source"
-          ><span class="ico" aria-hidden="true">▤</span><span class="lbl"
+          ><span class="ico" aria-hidden="true"><Icon name="facsimile" /></span><span class="lbl"
             >Facsimile</span
           ></button
         >
@@ -422,7 +423,7 @@
           class:on={pane === "enc"}
           onclick={() => setPane("enc")}
           title="Show the encoding rendered as notation"
-          ><span class="ico" aria-hidden="true">♪</span><span class="lbl"
+          ><span class="ico" aria-hidden="true"><Icon name="notes" /></span><span class="lbl"
             >Rendered encoding</span
           ></button
         >
@@ -431,7 +432,7 @@
           class:on={pane === "both"}
           onclick={() => setPane("both")}
           title="Show the facsimile and the rendered encoding next to each other"
-          ><span class="ico" aria-hidden="true">⧉</span><span class="lbl"
+          ><span class="ico" aria-hidden="true"><Icon name="side-by-side" /></span><span class="lbl"
             >Side by side</span
           ></button
         >
@@ -442,7 +443,7 @@
       class="btn btn-icon"
       onclick={() => pvGo(-1)}
       disabled={pvSpreadIndex <= 0}
-      aria-label="Previous page">‹</button
+      aria-label="Previous page"><Icon name="chevron-left" /></button
     >
     <span class="pglabel">{pvSpreadLabel}</span>
     <button
@@ -450,7 +451,7 @@
       class="btn btn-icon"
       onclick={() => pvGo(1)}
       disabled={pvSpreadIndex >= pvSpreads.length - 1}
-      aria-label="Next page">›</button
+      aria-label="Next page"><Icon name="chevron-right" /></button
     >
     <div class="seg" title="How many pages the viewer shows at once">
       <button
@@ -494,7 +495,7 @@
         type="button"
         class="tchip on"
         onclick={() => selectMeasure(selected)}
-        title="Clear the measure selection">m. {selected} ✕</button
+        title="Clear the measure selection">m. {selected} <Icon name="close" size={11} /></button
       >
     {/if}
     <span class="vline"></span>

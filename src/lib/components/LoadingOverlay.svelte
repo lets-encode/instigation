@@ -9,6 +9,7 @@
   surfaces it covers.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import type { ProgressLog } from "$lib/progress-log.svelte.ts";
 
@@ -29,7 +30,7 @@
 <div class="overlay" role={finished && error ? "alert" : "status"} aria-live="polite">
   <div class="overlay-card">
     {#if finished && error}
-      <div class="fail-mark" aria-hidden="true">✕</div>
+      <div class="fail-mark" aria-hidden="true"><Icon name="close" size={22} /></div>
       <p class="overlay-title failed">Failed</p>
       <p class="overlay-error">{error}</p>
     {:else if finished}

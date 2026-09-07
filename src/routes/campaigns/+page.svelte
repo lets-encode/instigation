@@ -8,6 +8,7 @@
   load serves the whole screen.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { goto } from "$app/navigation";
   import { auth, login } from "$lib/auth.svelte.ts";
   import {
@@ -309,6 +310,10 @@
   const more = $derived(filtered.length - shown.length);
 </script>
 
+<svelte:head>
+  <title>Campaigns · Let's Encode!</title>
+</svelte:head>
+
 {#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
@@ -319,6 +324,7 @@
 {/if}
 
 <div class="screen">
+  <h1 class="vh">Campaigns</h1>
   {#if runner.result}
     <div
       class="banner"
@@ -330,7 +336,7 @@
         {runner.result.error ?? runner.result.message}
         {#if runner.result.prUrl}
           <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View PR →</a
+            >View submission <Icon name="external" size={12} /></a
           >
         {/if}
       </span>
@@ -344,9 +350,9 @@
 
   {#if auth.user && (fix.length > 0 || openComments.length > 0)}
     <section class="block">
-      <div class="slabel danger">
+      <h2 class="slabel danger">
         <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your attention
-      </div>
+      </h2>
       <div class="rows">
         {#each fix as t (t.campaignSlug + t.task)}
           <a class="row attention" href={taskHref(t.campaignSlug, t.task)}>
@@ -359,7 +365,7 @@
               >
             {/if}
             <span class="spacer"></span>
-            <span class="golink red">Open task →</span>
+            <span class="golink red">Open task <Icon name="arrow-right" size={12} /></span>
           </a>
         {/each}
         {#each openComments as f (f.comment.comment_id || f.comment.timestamp + f.task)}
@@ -373,7 +379,7 @@
                 .body}”</span
             >
             <span class="spacer"></span>
-            <span class="golink">Reply →</span>
+            <span class="golink">Reply <Icon name="arrow-right" size={12} /></span>
           </a>
         {/each}
       </div>
@@ -383,7 +389,7 @@
   {#if auth.user}
     <section class="block">
       <div class="shead">
-        <div class="slabel">Your open work</div>
+        <h2 class="slabel">Your open work</h2>
         <span class="smeta"
           >{since ? `contributing since ${since} · ` : ""}{done.length} completed</span
         >
@@ -393,16 +399,16 @@
             type="button"
             class="expander"
             onclick={() => (showCompleted = !showCompleted)}
-            >{done.length} completed {showCompleted ? "▾" : "▸"}</button
+            >{done.length} completed <Icon name={showCompleted ? "chevron-down" : "chevron-right"} size={12} /></button
           >
         {/if}
       </div>
       <div class="rows">
         {#if listLoading && tasks.length === 0}
-          <p class="note">Looking for your claimed tasks…</p>
+          <p class="note">Loading your claimed tasks…</p>
         {:else if encoding.length === 0 && validating.length === 0 && awaiting.length === 0 && fix.length === 0}
           <p class="note">
-            Nothing in motion — claim a task from a campaign below.
+            No open work. Claim a task from a campaign below.
           </p>
         {/if}
         {#each encoding as t (t.campaignSlug + t.task)}
@@ -419,7 +425,7 @@
               type="button"
               class="btn"
               disabled={runner.busy}
-              onclick={() => openEditor(t)}>Open editor ↗</button
+              onclick={() => openEditor(t)}>Open editor <Icon name="external" /></button
             >
             <button
               type="button"
@@ -440,7 +446,7 @@
             >
             <span class="spacer"></span>
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
-              >Details →</a
+              >Details <Icon name="arrow-right" size={12} /></a
             >
           </div>
         {/each}
@@ -454,14 +460,14 @@
             >
             <span class="spacer"></span>
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
-              >Details →</a
+              >Details <Icon name="arrow-right" size={12} /></a
             >
           </div>
         {/each}
         {#if showCompleted}
           {#each done.slice(0, 10) as t (t.campaignSlug + t.task)}
             <a class="row donerow" href={taskHref(t.campaignSlug, t.task)}>
-              <span class="check">✓</span>
+              <span class="check"><Icon name="check" size={12} /></span>
               <span class="rowtitle">{taskLine(t)}</span>
               <span class="spacer"></span>
               <span class="rowmeta"
@@ -478,7 +484,7 @@
 
   <section class="block grow">
     <div class="filterbar">
-      <span class="glass">⌕</span>
+      <span class="glass"><Icon name="search" /></span>
       <input
         type="text"
         bind:value={search}
@@ -517,13 +523,13 @@
       </select>
     </div>
     <div class="shead">
-      <div class="slabel">All campaigns</div>
+      <h2 class="slabel">All campaigns</h2>
       <span class="countpill">{filtered.length}</span>
     </div>
     {#if listError}
       <p class="note">Couldn't load the campaigns: {listError}</p>
     {:else if listLoaded && stats.length === 0}
-      <p class="note">No campaigns yet. Be the first to create one!</p>
+      <p class="note">No campaigns yet. Create one with New campaign.</p>
     {:else if (listLoading || auth.status === "loading") && stats.length === 0}
       <p class="note">Loading campaigns…</p>
     {:else if shown.length === 0}
@@ -550,7 +556,7 @@
             more,
           ) === 1
             ? ""
-            : "s"} ▾</button
+            : "s"} <Icon name="chevron-down" size={12} /></button
         >
       {/if}
     {/if}
@@ -562,7 +568,7 @@
     {/if}
     {#if !auth.user && auth.status === "anonymous"}
       <p class="note login-hint">
-        Browsing works logged out —
+        Browsing works logged out:
         <button type="button" class="linkish" onclick={() => login()}
           >log in with GitHub</button
         > to claim a task or see your work here.
@@ -616,7 +622,17 @@
     gap: 12px;
     flex-wrap: wrap;
   }
+  /* Present to assistive technology only. */
+  .vh {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
   .slabel {
+    margin: 0;
     font-size: 12px;
     font-weight: 600;
     color: var(--ink-faint);
@@ -698,6 +714,14 @@
     color: var(--ink-faint);
     white-space: nowrap;
   }
+  @media (max-width: 560px) {
+    .row {
+      flex-wrap: wrap;
+    }
+    .rowmeta {
+      white-space: normal;
+    }
+  }
   .spacer {
     flex: 1;
   }
@@ -761,8 +785,17 @@
     box-shadow: var(--shadow-sm);
     padding: 8px 18px;
   }
+  /* The search input has no outline of its own; the bar shows the focus. */
   .filterbar:focus-within {
     border-color: var(--accent);
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  @media (max-width: 560px) {
+    .filterbar {
+      flex-wrap: wrap;
+      border-radius: 14px;
+    }
   }
   .glass {
     color: var(--ink-faint);
@@ -771,6 +804,7 @@
   .filterbar input {
     flex: 1;
     min-width: 0;
+    min-height: 24px;
     border: 0;
     outline: none;
     font: 400 13px var(--font);
@@ -788,6 +822,7 @@
   }
   .sortsel {
     flex: none;
+    max-width: 100%;
     font: 600 12px var(--font);
     color: var(--ink-soft);
     background: var(--card);

@@ -6,6 +6,7 @@
   new task table to the console, which runs the savePlan command.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
   import { typeLabel, handle } from "$lib/campaign-graph.ts";
   import type { Logins } from "$lib/campaign-graph.ts";
@@ -76,7 +77,7 @@
     const lock = locks.find(
       (l) => l.task_id === task && l.subtask_id === "" && l.kind === "encoding",
     );
-    if (row?.status === "completed") return { key: "done", label: "✓ completed" };
+    if (row?.status === "completed") return { key: "done", label: "completed" };
     if (row?.status === "validation_required")
       return { key: "validation", label: "validation" };
     if (lock) return { key: "encoding", label: "● encoding" };
@@ -293,7 +294,7 @@
               class="btn btn-icon"
               aria-label="Remove task"
               onclick={() => removeTask(i)}
-              disabled={busy}>✕</button
+              disabled={busy}><Icon name="close" /></button
             >
           {/if}
         </span>

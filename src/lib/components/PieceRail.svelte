@@ -5,6 +5,7 @@
   scopes the board to that piece.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import type { PieceRef } from "$lib/campaign-tables.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
@@ -96,7 +97,7 @@
         </span>
         <span class="railmeta">
           {#if complete(piece.path)}
-            <span class="rc rc-done">✓ all done</span>
+            <span class="rc rc-done"><Icon name="check" size={11} /> all done</span>
           {:else}
             {#if n?.open}
               <b class="rc rc-open">{n.open} open</b>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -968,6 +969,10 @@
   );
 </script>
 
+<svelte:head>
+  <title>Measure correction · {campaign} · Let's Encode!</title>
+</svelte:head>
+
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
 
 {#if runner.busy && runner.overlay}
@@ -1031,7 +1036,7 @@
         onclick={() => go(-1)}
         disabled={spreadIndex <= 0}
         aria-label="Previous page"
-        title="Previous page">‹</button
+        title="Previous page"><Icon name="chevron-left" /></button
       >
       <span class="pglabel">{spreadLabel}</span>
       <button
@@ -1040,7 +1045,7 @@
         onclick={() => go(1)}
         disabled={spreadIndex >= spreads.length - 1}
         aria-label="Next page"
-        title="Next page">›</button
+        title="Next page"><Icon name="chevron-right" /></button
       >
       <div class="seg" title="How many pages the desk shows at once">
         <button type="button" class:on={view === "single"} onclick={() => (view = "single")}>1 page</button>
@@ -1125,14 +1130,14 @@
       <div class="banner err bar">
         <span>
           {runner.result.error}
-          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
         </span>
       </div>
     {:else if runner.result && runner.result.ok && !runner.result.background}
       <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
         <span>
           {runner.result.message}
-          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
         </span>
       </div>
     {/if}
@@ -1337,7 +1342,7 @@
       {@const d = data!}
       <div class="taskbox">
         <div class="tbhead">
-          <span class="abtitle">Measure review</span>
+          <h2 class="abtitle">Measure review</h2>
           <code class="taskchip">{taskId}</code>
         </div>
         <div class="tbsection">
@@ -1419,7 +1424,7 @@
                   class="hand-pass"
                   src="/green-hand.svg"
                   alt=""
-                /> pass{:else}✗ fail{/if} · @{handle(logins, v.user)} · {elapsed(
+                /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(logins, v.user)} · {elapsed(
                 v.ts,
               )}</span
             >
@@ -1560,6 +1565,7 @@
     color: var(--ink-faint);
   }
   .abtitle {
+    margin: 0;
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
@@ -1604,6 +1610,12 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    min-height: 24px;
+  }
+  .checkline input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
     font-size: 12px;
     color: var(--ink-soft);
     white-space: nowrap;

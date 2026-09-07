@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { auth, initAuth, login, logout } from '$lib/auth.svelte.ts';
@@ -62,12 +63,12 @@
   <!-- Closing a screen lands one level up: the campaign view returns to the
        listing, the corrector to the campaign it belongs to. -->
   {#if inScore}
-    <a class="nav-link back" href={campaignHref}>← {page.params.campaign}</a>
+    <a class="nav-link back" href={campaignHref}><Icon name="arrow-left" /> {page.params.campaign}</a>
   {:else if inCampaign}
-    <a class="nav-link back" href="/campaigns">← All campaigns</a>
+    <a class="nav-link back" href="/campaigns"><Icon name="arrow-left" /> All campaigns</a>
   {:else if corrector}
     <a class="nav-link back" href={`/${page.params.campaign}`}
-      >← {page.params.campaign}</a
+      ><Icon name="arrow-left" /> {page.params.campaign}</a
     >
   {/if}
   <div class="topbar-right">
@@ -138,7 +139,7 @@
 
 <footer>
   <span>© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span>
-  <span class="fsep">·</span>
+  <span class="fsep" aria-hidden="true">·</span>
   <span>app last updated {__BUILD_DATE__}</span>
 </footer>
 
@@ -199,6 +200,21 @@
     font-size: 13px;
     color: var(--link);
     margin-left: 4px;
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+  }
+  @media (max-width: 560px) {
+    header {
+      height: auto;
+      min-height: 56px;
+      flex-wrap: wrap;
+      row-gap: 4px;
+      padding: 6px 12px;
+    }
+    .user > span {
+      display: none;
+    }
   }
   .user {
     display: flex;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -571,6 +572,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>Score setup · {campaign} · Let's Encode!</title>
+</svelte:head>
+
 {#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
@@ -629,14 +634,14 @@
         <div class="banner err bar">
           <span>
             {runner.result.error}
-            {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+            {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
           </span>
         </div>
       {:else if runner.result && runner.result.ok && !runner.result.background}
         <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
           <span>
             {runner.result.message}
-            {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>{/if}
+            {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
           </span>
         </div>
       {/if}
@@ -724,7 +729,7 @@
                       onclick={() => moveStaff(i, -1)}
                       disabled={i === 0}
                       aria-label={`Move staff ${i + 1} up`}
-                      title="Move this staff up">↑</button
+                      title="Move this staff up"><Icon name="arrow-up" /></button
                     >
                     <button
                       type="button"
@@ -732,7 +737,7 @@
                       onclick={() => moveStaff(i, 1)}
                       disabled={i === staves.length - 1}
                       aria-label={`Move staff ${i + 1} down`}
-                      title="Move this staff down">↓</button
+                      title="Move this staff down"><Icon name="arrow-down" /></button
                     >
                     <button
                       type="button"
@@ -740,7 +745,7 @@
                       onclick={() => removeStaff(i)}
                       disabled={staves.length <= 1}
                       aria-label={`Remove staff ${i + 1}`}
-                      title="Remove this staff">✕</button
+                      title="Remove this staff"><Icon name="close" /></button
                     >
                   </div>
                 </li>
@@ -800,7 +805,7 @@
                       class="btn btn-icon"
                       onclick={() => removeGroup(i)}
                       aria-label={`Remove group ${i + 1}`}
-                      title="Remove this group">✕</button
+                      title="Remove this group"><Icon name="close" /></button
                     >
                   </div>
                 </div>
@@ -934,7 +939,7 @@
           class="tbhead"
           title="Every encoding task of this piece waits for this setup."
         >
-          <span class="abtitle">Score setup</span>
+          <h2 class="abtitle">Score setup</h2>
           <code class="taskchip">{taskId}</code>
         </div>
         <div class="tbsection">
@@ -1020,7 +1025,7 @@
                   class="hand-pass"
                   src="/green-hand.svg"
                   alt=""
-                /> pass{:else}✗ fail{/if} · @{handle(logins, v.user)} · {elapsed(
+                /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(logins, v.user)} · {elapsed(
                 v.ts,
               )}</span
             >
@@ -1353,6 +1358,7 @@
     color: var(--ink-faint);
   }
   .abtitle {
+    margin: 0;
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;

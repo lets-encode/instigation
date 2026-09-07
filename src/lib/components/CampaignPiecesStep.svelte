@@ -494,7 +494,8 @@
   backDisabled={busy}
   onNext={finish}
   nextDisabled={busy || !wizard.pieces.length || unmarked.length > 0}
-  nextLabel={busy ? "Working…" : error ? "Retry" : "Finish ✓"}
+  nextLabel={busy ? "Working…" : error ? "Retry" : "Finish"}
+  nextIcon={busy ? null : error ? "arrow-right" : "check"}
   finish
 >
   <div class="pieces-head">

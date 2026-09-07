@@ -74,8 +74,8 @@
   );
   const anchorLabel = $derived(
     inScore
-      ? `◉ ${measureLabel}${comment.page ? ` — highlighted on page ${comment.page}` : ""}`
-      : `${measureLabel} — show in score →`,
+      ? `${measureLabel}${comment.page ? ` — highlighted on page ${comment.page}` : ""}`
+      : `${measureLabel} — show in score`,
   );
 </script>
 

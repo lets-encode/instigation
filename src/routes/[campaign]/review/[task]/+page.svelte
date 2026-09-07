@@ -7,6 +7,7 @@
   fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
@@ -273,6 +274,10 @@
     run((c) => invoke(commands.resolveComment, { comment_id }, c));
 </script>
 
+<svelte:head>
+  <title>{card ? `Review · ${card.title}` : 'Review'} · Let's Encode!</title>
+</svelte:head>
+
 {#if runner.busy && runner.overlay}
   <LoadingOverlay
     log={runner.log}
@@ -288,7 +293,7 @@
       <span>
         {runner.result.error}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
         {/if}
       </span>
       <button type="button" class="dismiss" onclick={() => (runner.result = null)}
@@ -300,7 +305,7 @@
       <span>
         {runner.result.message}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View PR →</a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
         {/if}
       </span>
       <button type="button" class="dismiss" onclick={() => (runner.result = null)}
@@ -376,7 +381,7 @@
     {#snippet taskBox()}
       <div class="taskbox" aria-label={`Review ${card.title}`}>
         <div class="tbhead">
-          <span class="tbtitle">{card.title}</span>
+          <h2 class="tbtitle">{card.title}</h2>
           <span class="taskchip"
             >{card.task}{taskDef.locator ? ` · ${taskDef.locator}` : ""}</span
           >
@@ -527,6 +532,7 @@
     padding: 9px 12px;
   }
   .tbtitle {
+    margin: 0;
     font-size: 12px;
     font-weight: 600;
   }

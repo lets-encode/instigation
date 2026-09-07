@@ -5,6 +5,7 @@
   claim button acts. The viewer's own campaigns render in amber.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { elapsed } from "$lib/campaign-board.ts";
   import { attentionCount, nextTask } from "$lib/campaign-stats.ts";
   import type { CampaignStats, NextTask } from "$lib/campaign-stats.ts";
@@ -76,7 +77,7 @@
       ? "Claim & open setup editor"
       : n.pre
         ? "Claim & open zone editor"
-        : "Claim & open editor ↗";
+        : "Claim & open editor";
   };
 
 </script>
@@ -132,11 +133,11 @@
           type="button"
           class="btn btn-primary {next.action === 'review' ? 'btn-review' : next.pre ? 'btn-pre' : 'btn-enc'}"
           disabled={busy}
-          onclick={() => onact(stats, next)}>{actLabel(next)}</button
+          onclick={() => onact(stats, next)}>{actLabel(next)}{#if actLabel(next) === "Claim & open editor"}<Icon name="external" />{/if}</button
         >
       {:else if next.action === "continue"}
         <a class="continue" href={`/${stats.name}?task=${encodeURIComponent(next.task)}`}
-          >Continue →</a
+          >Continue <Icon name="arrow-right" size={12} /></a
         >
       {/if}
     {:else}

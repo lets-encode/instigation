@@ -6,6 +6,7 @@
   suggestion rows and the task panel.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
@@ -82,7 +83,7 @@
         ? "Claim & open setup editor"
         : c.pre
           ? "Claim & open zone editor"
-          : "Claim & open editor ↗";
+          : "Claim & open editor";
     if (c.column === "validation" && c.slots.some((s) => s.claimable))
       return "Claim to review";
     return "Open task";
@@ -231,7 +232,7 @@
               disabled={busy || viewer === ""}
               title={viewer === ""
                 ? "Log in to claim a task."
-                : "The first task that is open for you."}>{actLabel(nextCard)}</button
+                : "The first task that is open for you."}>{actLabel(nextCard)}{#if actLabel(nextCard) === "Claim & open editor"}<Icon name="external" />{/if}</button
             >
             <button
               type="button"
@@ -318,7 +319,7 @@
               ></div>
             </div>
             {#if p && p.total > 0 && p.done === p.total}
-              <span class="piecedone complete">✓ complete</span>
+              <span class="piecedone complete"><Icon name="check" size={12} /> complete</span>
             {:else}
               <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
             {/if}
@@ -364,7 +365,7 @@
                 title={open ? "Collapse this piece" : "Show this piece's tasks"}
               >
                 {@render piecehead()}
-                <span class="pchev">{open ? "▾" : "▸"}</span>
+                <span class="pchev"><Icon name={open ? "chevron-down" : "chevron-right"} /></span>
               </div>
             {/if}
             {#if open}
@@ -376,7 +377,7 @@
                       <span class="ttype">{typeOf(card)}</span>
                       <span class="vspacer"></span>
                       {#if card.column === "done"}
-                        <span class="merged">✓ merged</span>
+                        <span class="merged"><Icon name="check" size={12} /> merged</span>
                       {:else}
                         <span class="taskpill">not ready yet</span>
                       {/if}
@@ -407,7 +408,7 @@
                       {:else}
                         <span class="taskpill">{cardPill(card, viewer)}</span>
                       {/if}
-                      <span class="tchev">›</span>
+                      <span class="tchev"><Icon name="chevron-right" /></span>
                     </div>
                   {/if}
                 {/each}

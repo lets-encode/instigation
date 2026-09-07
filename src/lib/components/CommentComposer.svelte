@@ -94,6 +94,7 @@
       <input
         bind:value={composerText}
         {placeholder}
+        aria-label="Comment text"
         onkeydown={(e) => {
           if (e.key === "Enter" && composerText.trim()) postComment();
         }}

@@ -1,11 +1,12 @@
 <!--
-  The task-anchored view of a background GitHub run: while a PR opened for
+  The task-anchored view of a background GitHub run: while a submission opened for
   this task is being processed, the task's kanban card, its panel and the
   editor views show a compact live state that settles in place when the
   verdict lands. Rejections additionally take the viewport over
   (PendingVerdicts.svelte).
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
   let {
@@ -25,7 +26,7 @@
   <div class="runstate {entry.state}" class:bar aria-live="polite">
     {#if entry.state === "opening"}
       <span class="spinner" aria-hidden="true"></span>
-      <span>opening the PR…</span>
+      <span>opening the submission…</span>
     {:else if entry.state === "processing"}
       <span class="spinner" aria-hidden="true"></span>
       <span
@@ -34,12 +35,12 @@
           href={entry.prUrl}
           target="_blank"
           rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}>PR #{entry.prNumber}</a
+          onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
         >…</span
       >
     {:else if entry.state === "accepted"}
-      <span class="mark" aria-hidden="true">✓</span>
-      <span>PR #{entry.prNumber} accepted</span>
+      <span class="mark" aria-hidden="true"><Icon name="check" size={12} /></span>
+      <span>submission #{entry.prNumber} accepted</span>
     {:else if entry.state === "timeout"}
       <span class="mark" aria-hidden="true">…</span>
       <span
@@ -47,12 +48,12 @@
           href={entry.prUrl}
           target="_blank"
           rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}>PR #{entry.prNumber}</a
+          onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
         > is still being processed</span
       >
     {:else}
-      <span class="mark" aria-hidden="true">✕</span>
-      <span>{entry.prNumber ? `PR #${entry.prNumber} rejected` : "submission failed"}</span>
+      <span class="mark" aria-hidden="true"><Icon name="close" size={12} /></span>
+      <span>{entry.prNumber ? `submission #${entry.prNumber} rejected` : "submission failed"}</span>
     {/if}
   </div>
 {/if}

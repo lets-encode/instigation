@@ -3,6 +3,15 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## Unreleased
+
+- Accessibility (WCAG 2.2 AA): small controls are at least 24px tall (segmented controls, pills, chips, link-style buttons, score links, zoom sliders, the wizard's discard button, the spread checkbox).
+- Accessibility: every console route sets a page title; the next-step badge keeps dark text on its light-blue fill in the dark theme; decorative separators are hidden from assistive technology; section labels, board columns and task-box titles are headings; the campaign list has a hidden top-level heading; the search bar shows a focus ring; the comment composer has an accessible name.
+- Console: the top bar wraps below 560px and hides the login name; the campaign filter bar wraps on narrow screens.
+- Icons: one SVG stroke set (`Icon.svelte`) replaces the unicode glyphs used as icons (arrows, chevrons, check, close, search, info, gear, pane switcher, staff reorder); text labels lose their trailing arrow characters.
+- Copy: background runs and result links say "submission" instead of "PR".
+- Copy: "Loading your claimed tasks…", "No open work.", "No campaigns yet. Create one with New campaign."; the Manage view says "expired claims" instead of "reaper"/"stale"; the pages step pluralises "encoding".
+
 ## 0.32.0 – 2026-09-03
 
 - Console: a run cancelled because a newer push to the same pull request replaced it is no longer reported as a failure; the console keeps waiting for the pull request's verdict.
