@@ -77,9 +77,9 @@
     const lock = locks.find(
       (l) => l.task_id === task && l.subtask_id === "" && l.kind === "encoding",
     );
-    if (row?.status === "completed") return { key: "done", label: "completed" };
+    if (row?.status === "completed") return { key: "done", label: "done" };
     if (row?.status === "validation_required")
-      return { key: "validation", label: "validation" };
+      return { key: "validation", label: "review" };
     if (lock) return { key: "encoding", label: "● encoding" };
     return { key: "open", label: "○ open" };
   };
@@ -343,7 +343,8 @@
     background: var(--info-bg);
     border: 1px solid var(--info-line);
     border-radius: 999px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
   }
   .pnote {
     font-size: 11.5px;
@@ -433,7 +434,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     margin-left: 4px;
   }
   .pchip.blue {
@@ -446,7 +448,8 @@
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
     white-space: nowrap;
   }
   .pstatus.s-done {

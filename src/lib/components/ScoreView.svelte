@@ -213,7 +213,8 @@
     background: var(--info-bg);
     border: 1px solid var(--info-line);
     border-radius: 999px;
-    padding: 0 7px;
+    line-height: 1;
+    padding: 2px 7px;
   }
   .srow {
     flex: 1;

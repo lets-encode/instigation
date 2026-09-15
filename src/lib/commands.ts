@@ -217,7 +217,7 @@ type PrProcessingResult =
 // (the job-level guard in caller.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
-	'a pull request must change at most two files, must not be a draft, and must come from a user account';
+	'a submission must change at most two files, must not be a draft, and must come from a user account';
 
 async function waitForPrProcessed(
 	ctx: CommandContext,
@@ -229,7 +229,7 @@ async function waitForPrProcessed(
 	}
 ): Promise<PrProcessingResult> {
 	const { forge: f, owner, repo } = ctx;
-	ctx.progress({ step: `Campaign automation is processing PR #${pr.number}…` });
+	ctx.progress({ step: `Campaign automation is processing submission #${pr.number}…` });
 	console.log('[pr] waiting for automation to process PR', pr.number);
 	// Best-effort narration of the Actions run the PR triggered, identified by
 	// the PR's head commit. A watch failure never fails the command — the PR
@@ -319,27 +319,27 @@ function verdictResult(result: PrProcessingResult, prNumber: number, prUrl: stri
 			ok: true,
 			warn: true,
 			prUrl,
-			message: `${fallback} PR #${prNumber} is still being processed — refresh the tables in a moment.`
+			message: `${fallback} Submission #${prNumber} is still being processed — refresh the tables in a moment.`
 		};
 	}
 	if (result.state === 'run_failed') {
 		return {
-			error: `The campaign automation run for PR #${prNumber} failed — see ${result.runUrl}.`,
+			error: `The campaign automation run for submission #${prNumber} failed — see ${result.runUrl}.`,
 			prUrl
 		};
 	}
 	if (result.state === 'run_skipped') {
 		return {
-			error: `The campaign automation did not run for PR #${prNumber}: ${RUN_REQUIREMENTS}. The pull request was closed; correct the branch and submit again.`,
+			error: `The campaign automation did not run for submission #${prNumber}: ${RUN_REQUIREMENTS}. The submission was closed; correct it and submit again.`,
 			prUrl
 		};
 	}
 	if (!result.verdict) {
-		return { error: `PR #${prNumber} closed without a coordinator verdict.`, prUrl };
+		return { error: `Submission #${prNumber} closed without a coordinator verdict.`, prUrl };
 	}
 	if (result.verdict.startsWith('❌')) return { error: result.verdict, prUrl };
 	if (!result.verdict.startsWith('✅')) {
-		return { error: `PR #${prNumber} closed with an unrecognised coordinator verdict.`, prUrl };
+		return { error: `Submission #${prNumber} closed with an unrecognised coordinator verdict.`, prUrl };
 	}
 	return { ok: true, prUrl, message: result.verdict };
 }
@@ -481,7 +481,7 @@ async function claimAndWait(
 	envelope: CommandEnvelope | null
 ): Promise<Result> {
 	try {
-		ctx.progress({ step: 'Opening claim PR…' });
+		ctx.progress({ step: 'Opening the claim…' });
 		const pr = await openClaimPr(ctx, task_id, subtask_id, kind, envelope);
 		console.log('[claim] claim PR opened', pr.number, pr.html_url);
 		let verdict: PrProcessingResult;
@@ -492,7 +492,7 @@ async function claimAndWait(
 			verdict = { state: 'timeout' };
 		}
 		const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
-		return verdictResult(verdict, pr.number, pr.html_url, `Opened claim PR #${pr.number} for ${target} (${kind}).`);
+		return verdictResult(verdict, pr.number, pr.html_url, `Claim #${pr.number} opened for ${target} (${kind === 'validation' ? 'review' : kind}).`);
 	} catch (e) {
 		return { error: `Claim failed: ${(e as Error).message}` };
 	}
@@ -670,12 +670,12 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			let prUrl: string | undefined;
 			let message = 'Opening the score in mei-friend. After committing there, use “Submit encoding”.';
 			if (task.status === 'encoding_required' && !mine) {
-				ctx.progress({ step: 'Opening the encoding claim PR…' });
+				ctx.progress({ step: 'Opening the encoding claim…' });
 				const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
 				console.log('[editor] encoding claim PR opened', pr.number, pr.html_url);
 				prUrl = pr.html_url;
 				const verdict = await waitForPrProcessed(ctx, pr);
-				const res = verdictResult(verdict, pr.number, pr.html_url, `Opened encoding claim PR #${pr.number}.`);
+				const res = verdictResult(verdict, pr.number, pr.html_url, `Encoding claim #${pr.number} opened.`);
 				if (res?.error) {
 					return { error: `The encoding claim was rejected — ${res.error}`, prUrl };
 				}
@@ -734,7 +734,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
 				if (attempt > 1) await sleep(1500);
 				forkMei = await f.getRepoFile(workRepo.owner, workRepo.repo, task.fragment, branch);
 			}
-			if (forkMei == null) throw new Error(`${task.fragment} is missing from the ${branch} branch.`);
+			if (forkMei == null) throw new Error(`${task.fragment} is missing from the submitted encoding.`);
 			let mei = forkMei;
 			if (task.locator.startsWith('surface-')) {
 				const [baseMei, configYaml] = await Promise.all([
@@ -793,12 +793,12 @@ const submitValidation: CommandDef<
 	async run({ task_id, subtask_id, verdict, comment }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
 		if (verdict !== 'pass' && verdict !== 'fail') {
-			return { error: `Invalid validation verdict: ${verdict}.` };
+			return { error: `Invalid review verdict: ${verdict}.` };
 		}
 		if (verdict === 'fail' && !comment?.body.trim()) {
 			return { error: 'A fail needs a comment saying why — nothing was submitted.' };
 		}
-		const label = `Validation of ${task_id}/${subtask_id} (${verdict})`;
+		const label = `Review of ${task_id}/${subtask_id} (${verdict})`;
 		return openAndFinishInBackground(ctx, label, `validate:${task_id}/${subtask_id}`, async () => {
 			await muteOnce(ctx);
 			const state = parseStateCsv((await f.getRepoFile(owner, repo, STATE_PATH)) ?? '');
@@ -806,7 +806,7 @@ const submitValidation: CommandDef<
 			if (!row) throw new Error(`unknown subtask ${task_id}/${subtask_id}.`);
 			const slot = state.validationColumns.find((c) => (row[c] ?? '') === '');
 			if (!slot) {
-				throw new Error(`no open validation slot on ${task_id}/${subtask_id}.`);
+				throw new Error(`no open review slot on ${task_id}/${subtask_id}.`);
 			}
 			row[slot] = verdict; // the Action re-authors this to `verdict|user|time`
 			const files = [{ path: STATE_PATH, content: serializeStateCsv(state) }];
@@ -989,7 +989,7 @@ const PLAN_REJECTIONS: Record<string, string> = {
 	duplicate_row: 'The plan lists the same task twice.',
 	missing_task_id: 'A task row has no id.',
 	missing_fragment: 'Every task needs a score file (fragment).',
-	orphan_subtask: 'A validation subtask points at a task that is not in the plan.',
+	orphan_subtask: 'A review subtask points at a task that is not in the plan.',
 	unknown_dependency: 'A task depends on a task that is not in the plan.',
 	dependency_cycle: 'The dependencies run in a circle — no task could ever be claimed.',
 	task_in_progress:
@@ -1008,7 +1008,7 @@ const savePlan: CommandDef<{ tasks: TaskRow[] }, Result> = {
 		try {
 			ctx.progress({ step: 'Checking the plan against the current tables…' });
 			const { sha, canPush } = await f.getRepoHead(owner, repo);
-			if (!canPush) return { error: 'Only someone with push access can edit the plan.' };
+			if (!canPush) return { error: 'Only the campaign owner can edit the plan.' };
 			const [taskCsv, stateCsv, lockCsv] = await Promise.all([
 				f.getRepoFile(owner, repo, TASK_PATH, sha),
 				f.getRepoFile(owner, repo, STATE_PATH, sha),
@@ -1245,7 +1245,7 @@ async function submitFacsimile(
 		}
 		const meiError = await checkMei(content);
 		if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
-		ctx.progress({ step: 'Opening the correction PR…' });
+		ctx.progress({ step: 'Opening the correction submission…' });
 		const title = `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
 		console.log('[zones] opening PR', { task_id });
@@ -1332,7 +1332,7 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 			}
 			const meiError = await checkMei(content);
 			if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
-			ctx.progress({ step: 'Opening the setup PR…' });
+			ctx.progress({ step: 'Opening the setup submission…' });
 			const title = `Set up the score (${task_id})`;
 			const body = `${title}. Opened from the score setup editor.`;
 			console.log('[setup] opening PR', { task_id });

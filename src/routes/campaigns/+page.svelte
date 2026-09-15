@@ -391,7 +391,7 @@
       <div class="shead">
         <h2 class="slabel">Your open work</h2>
         <span class="smeta"
-          >{since ? `contributing since ${since} · ` : ""}{done.length} completed</span
+          >{since ? `contributing since ${since} · ` : ""}{done.length} done</span
         >
         <span class="spacer"></span>
         {#if done.length > 0}
@@ -399,7 +399,7 @@
             type="button"
             class="expander"
             onclick={() => (showCompleted = !showCompleted)}
-            >{done.length} completed <Icon name={showCompleted ? "chevron-down" : "chevron-right"} size={12} /></button
+            >{done.length} done <Icon name={showCompleted ? "chevron-down" : "chevron-right"} size={12} /></button
           >
         {/if}
       </div>
@@ -438,7 +438,7 @@
         {#each validating as t (t.campaignSlug + t.task)}
           <div class="row">
             <span class="rowtitle">{taskLine(t)}</span>
-            <span class="pill grey">validating</span>
+            <span class="pill grey">reviewing</span>
             <span class="rowmeta"
               >claimed {ago(t.claimedAt)}{expiresIn(t)
                 ? ` · ${expiresIn(t)}`
@@ -453,10 +453,10 @@
         {#each awaiting as t (t.campaignSlug + t.task)}
           <div class="row">
             <span class="rowtitle">{taskLine(t)}</span>
-            <span class="pill green">awaiting validation</span>
+            <span class="pill green">awaiting review</span>
             <span class="rowmeta"
               >{t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}{t.passes}
-              of {t.threshold} passes</span
+              of {t.threshold} reviews</span
             >
             <span class="spacer"></span>
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
@@ -471,7 +471,7 @@
               <span class="rowtitle">{taskLine(t)}</span>
               <span class="spacer"></span>
               <span class="rowmeta"
-                >passed {t.passes} of {t.threshold}{t.submittedAt
+                >{t.passes} of {t.threshold} reviews{t.submittedAt
                   ? ` · ${ago(t.submittedAt)}`
                   : ""}</span
               >
@@ -721,7 +721,8 @@
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 9px;
+    line-height: 1;
+    padding: 3px 9px;
     white-space: nowrap;
   }
   .pill.red {
@@ -828,7 +829,8 @@
     color: var(--ink-soft);
     background: var(--bg-tint);
     border-radius: 999px;
-    padding: 1px 8px;
+    line-height: 1;
+    padding: 3px 8px;
   }
   .shelf {
     display: flex;

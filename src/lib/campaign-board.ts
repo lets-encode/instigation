@@ -53,7 +53,7 @@ export function cardTitle(fragment: string, locator: string, names: PieceNames =
 	const page = /^surface-(\d+)$/.exec(locator);
 	if (page) return `${pieceLabel(fragment, names)} · p. ${page[1]}`;
 	if (locator === 'score-setup') return `${pieceLabel(fragment, names)} · setup`;
-	if (isPreTask(locator)) return `${pieceLabel(fragment, names)} · measures`;
+	if (isPreTask(locator)) return `${pieceLabel(fragment, names)} · measure correction`;
 	return pieceLabel(fragment, names);
 }
 
@@ -216,7 +216,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
 	blocked: 'Blocked',
 	ready: 'Open',
 	encoding: 'Encoding',
-	validation: 'Validation',
+	validation: 'Review',
 	done: 'Done'
 };
 
@@ -227,7 +227,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
  */
 export function cardPill(card: BoardCard, viewer = ''): string {
 	const kind =
-		card.locator === 'score-setup' ? 'setup' : card.pre ? 'measures' : '';
+		card.locator === 'score-setup' ? 'setup' : card.pre ? 'measure correction' : '';
 	const prefix = kind ? `${kind} · ` : '';
 	switch (card.column) {
 		case 'blocked':
@@ -242,7 +242,7 @@ export function cardPill(card: BoardCard, viewer = ''): string {
 		case 'validation': {
 			const reviewing =
 				viewer !== '' && card.slots.some((s) => s.key === 'review' && s.user === viewer);
-			return `validation · ${card.passes}/${card.threshold}${reviewing ? ' · reviewing' : ''}`;
+			return `review · ${card.passes}/${card.threshold}${reviewing ? ' · reviewing' : ''}`;
 		}
 		case 'done':
 			return card.threshold > 0 ? `done · ${card.passes}/${card.threshold}` : 'done';
@@ -256,11 +256,11 @@ function tickerText(h: HistoryRow, title: string, locator = ''): string | null {
 		case 'claim_encoding':
 			return `claimed ${title}`;
 		case 'claim_validation':
-			return `claimed a validation on ${title}`;
+			return `claimed a review on ${title}`;
 		case 'submit_encoding':
 			return `submitted the encoding of ${title}`;
 		case 'submit_validation':
-			return h.detail === 'fail' ? `failed a validation on ${title}` : `passed a validation on ${title}`;
+			return h.detail === 'fail' ? `failed a review on ${title}` : `passed a review on ${title}`;
 		case 'send_back':
 			return `sent ${title} back for ${sendBackTarget(locator)}`;
 		case 'submit_comment':
@@ -347,8 +347,8 @@ export function buildBoard(
 			counts,
 			doneLine:
 				n.kind === 'pre' || n.threshold === 0
-					? `finished by ${handle(logins, state?.encoder ?? '') || '—'}`
-					: `${n.passes} of ${n.threshold} validations`,
+					? `encoded by ${handle(logins, state?.encoder ?? '') || '—'}`
+					: `${n.passes} of ${n.threshold} reviews`,
 			finishedAt: column === 'done' ? finishedAt(d, n.task) : '',
 			nextUp: n.nextUp,
 			slots: n.slots

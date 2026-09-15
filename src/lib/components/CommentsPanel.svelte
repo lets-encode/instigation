@@ -341,7 +341,8 @@
     font-weight: 600;
     background: var(--card);
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     color: var(--ink-soft);
   }
   /* The pinned header keeps its controls in reach while the list scrolls;
@@ -390,7 +391,8 @@
     letter-spacing: 0;
     text-transform: none;
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     color: var(--info);
     background: var(--info-bg);
     border: 1px solid var(--info-line);

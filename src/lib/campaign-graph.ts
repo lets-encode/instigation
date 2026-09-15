@@ -43,11 +43,11 @@ export type StatusKey =
 	| 'open';
 
 const STATUS_LABELS: Record<StatusKey, string> = {
-	completed: '✓ completed',
+	completed: '✓ done',
 	encoding_required: 'encoding required',
 	encoding: '● encoding',
 	claimed: '● claimed',
-	validation_required: 'validation',
+	validation_required: 'review',
 	pending: 'pending',
 	blocked: 'blocked',
 	pass: '✓ pass',
@@ -260,7 +260,7 @@ function slotState(d: GraphData, row: StateRow, slot: number, viewer = '', login
 		return { key: verdict as StatusKey, sub: `@${handle(logins, user)} · ${verdict}`, running: false, user, ts };
 	}
 	if (cell !== '') {
-		return { key: 'pending', sub: 'invalid validation data', running: false, user: '', ts: '' };
+		return { key: 'pending', sub: 'invalid review data', running: false, user: '', ts: '' };
 	}
 	const lock = validationLockForSlot(d, row, slot);
 	if (lock) {

@@ -102,6 +102,27 @@
   $effect(() => {
     commentsPanel.width = taskPanel.width;
   });
+  // The board row's layout steps, all judged against the task panel's docked
+  // width whether it is docked or floating: the panel docks only while four
+  // lanes fit beside the dot rail, and the rail takes its wide form only
+  // while four lanes fit beside it with the panel docked. The space the
+  // panel frees when it floats therefore changes neither.
+  let instrowBox = $state<DOMRectReadOnly | null>(null);
+  const instrowWidth = $derived(instrowBox?.width ?? 0);
+  let windowWidth = $state(0);
+  /** Four 200px lanes with 1px borders and three 12px gaps. */
+  const LANES_WIDTH = 844;
+  const ROW_GAP = 14;
+  /** The rail's two widths (PieceRail.svelte). */
+  const RAIL_WIDE = 168;
+  const RAIL_DOTS = 38;
+  const rowBesidePanel = $derived(instrowWidth - taskPanel.width - ROW_GAP);
+  const railCompact = $derived(
+    instrowWidth > 0 && rowBesidePanel < RAIL_WIDE + ROW_GAP + LANES_WIDTH,
+  );
+  const panelFloats = $derived(
+    instrowWidth > 0 && rowBesidePanel < RAIL_DOTS + ROW_GAP + LANES_WIDTH,
+  );
   // The scores a viewer can read end to end: the pieces the tasks address,
   // named from the campaign's config where it names them.
   const previewPieces = $derived.by(() => {
@@ -707,7 +728,7 @@
       },
       {
         key: "validation" as ColumnKey,
-        label: "Awaiting validation",
+        label: "Awaiting review",
         cards: validation?.cards ?? [],
       },
       {
@@ -754,6 +775,7 @@
 </svelte:head>
 
 <svelte:window
+  bind:innerWidth={windowWidth}
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
     if (scoreView) closeScoreView();
@@ -826,9 +848,10 @@
   <span class="dot {key}" aria-label={key} title={key}></span>
 {/snippet}
 
-{#snippet taskSide(card: BoardCard)}
+{#snippet taskSide(card: BoardCard, floating: boolean)}
   <TaskSidePanel
     {card}
+    {floating}
     pieceName={pieceNameOf(card.task)}
     zone={zoneOf(card.task)}
     {campaign}
@@ -1045,7 +1068,7 @@
                 onviewscore={viewScorePiece}
               />
               {#if detailCard}
-                {@render taskSide(detailCard)}
+                {@render taskSide(detailCard, windowWidth < 1100)}
               {:else if volunteerScope && commentsPanel.open}
                 <div class="cpholder">
                   <CommentsPanel
@@ -1139,7 +1162,7 @@
                 {/if}
                 <div
                   class="irow"
-                  title="Everyone the campaign history records: claims, submissions and validations."
+                  title="Everyone the campaign history records: claims, submissions and reviews."
                 >
                   <span>Worked on this</span>
                   <span>
@@ -1173,9 +1196,9 @@
                 </div>
                 <div
                   class="irow"
-                  title="Validation passes each task needs before it counts as validated."
+                  title="Passing reviews each task needs before it counts as done."
                 >
-                  <span>Passes required</span>
+                  <span>Reviews required</span>
                   <span>{passThreshold}</span>
                 </div>
               </div>
@@ -1268,13 +1291,12 @@
           {/if}
         </div>
 
-        <div class="instrow">
+        <div class="instrow" bind:contentRect={instrowBox}>
         {#if previewPieces.length > 0}
           <div class="railslot">
           <PieceRail
             pieces={previewPieces}
-            {owner}
-            {repo}
+            compact={railCompact}
             progress={pieceProgress}
             counts={railCounts}
             attention={attentionByPiece}
@@ -1311,7 +1333,7 @@
               {#if stripPreview?.incipit}
                 {@html stripPreview.incipit}
               {:else if stripPreview?.incipitPending}
-                <span class="ctxincnote">incipit appears after the preparation tasks</span>
+                <span class="ctxincnote">incipit appears after the setup tasks</span>
               {/if}
             </div>
             <button
@@ -1359,7 +1381,7 @@
                       title="Open this task"
                     >
                       {#if card.nextUp}
-                        <span class="nextup-badge">next step</span>
+                        <span class="nextup-badge">next task</span>
                       {/if}
                       {#if recentlyFinished.has(card.task)}
                         <span class="justmoved-badge">just submitted</span>
@@ -1367,7 +1389,7 @@
                       <div class="card-title">{card.title}</div>
                       <div class="card-type">
                         {card.column === "validation"
-                          ? `${card.typeLine} · ${card.passes} of ${card.threshold} passes`
+                          ? `${card.typeLine} · ${card.passes} of ${card.threshold} reviews`
                           : card.typeLine}
                         <span class="mono card-id">{card.task}</span>
                         <button
@@ -1443,7 +1465,7 @@
         </div>
         </div>
         {#if detailCard}
-          {@render taskSide(detailCard)}
+          {@render taskSide(detailCard, panelFloats)}
         {/if}
         </div>
 
@@ -1902,10 +1924,9 @@
     align-self: flex-start;
     max-height: 100%;
   }
-  /* Below 1100px the rail moves above the board as a strip of piece chips
-     (PieceRail.svelte switches its own layout at the same width) and the
-     task panel floats over the board (TaskSidePanel.svelte), so the lanes
-     keep the width. */
+  /* The volunteer view's task panel floats over the view below 1100px
+     (TaskSidePanel.svelte); the board's floats as soon as docking it would
+     stack the lanes (panelFloats). */
   @media (max-width: 1100px) {
     /* The task panel floats over the view at this width (TaskSidePanel.svelte)
        and takes no share of the group. */
@@ -1913,13 +1934,7 @@
       max-width: 800px;
     }
     .instrow {
-      flex-wrap: wrap;
       padding: 0 20px;
-    }
-    .railslot {
-      flex-basis: 100%;
-      order: -1;
-      max-height: none;
     }
   }
   .boardcol {
@@ -1928,6 +1943,9 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    /* The board's stacking query measures this column, which the rail and
+       the task panel narrow independently of the window. */
+    container-type: inline-size;
   }
   /* The scoped piece's preview over the columns. */
   .ctxstrip {
@@ -2000,10 +2018,9 @@
     min-height: 170px;
     display: flex;
     gap: 12px;
-    /* Lanes keep a readable width and the board scrolls sideways before
-       they are crushed; the stack below takes over on narrow containers. */
-    overflow-x: auto;
   }
+  /* Lanes keep a readable width; the board never scrolls sideways, the
+     stack below takes over as soon as four lanes no longer fit. */
   .board > .bcol {
     min-width: 200px;
   }
@@ -2045,7 +2062,8 @@
     font-weight: 700;
     background: rgba(255, 255, 255, 0.25);
     border-radius: 999px;
-    padding: 1px 8px;
+    line-height: 1;
+    padding: 3px 8px;
   }
   .bcol.c-blocked {
     --lane-solid: var(--ink-faint);
@@ -2148,7 +2166,8 @@
     font-size: 9px;
     font-weight: 600;
     letter-spacing: 0.03em;
-    padding: 2px 9px;
+    line-height: 1;
+    padding: 3px 9px;
     border-radius: 999px;
     white-space: nowrap;
   }
@@ -2161,7 +2180,8 @@
     font-size: 9px;
     font-weight: 600;
     letter-spacing: 0.03em;
-    padding: 2px 9px;
+    line-height: 1;
+    padding: 3px 9px;
     border-radius: 999px;
     white-space: nowrap;
   }
@@ -2277,7 +2297,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 8px;
+    line-height: 1;
+    padding: 3px 8px;
     white-space: nowrap;
   }
   .card-done {
@@ -2373,7 +2394,8 @@
     background: var(--owner-bg);
     border: 1px solid var(--owner-line);
     border-radius: 999px;
-    padding: 2px 10px;
+    line-height: 1;
+    padding: 3px 10px;
   }
   .reapline {
     font-size: 12.5px;
@@ -2383,11 +2405,14 @@
     text-overflow: ellipsis;
   }
   /* --------------------------------------------------------- responsive */
-  /* Container-based, so the board also stacks when a side panel narrows it,
-     not only when the window itself is narrow. Stacked, the board scrolls
-     as a whole instead of per column — the containment moves up with the
-     scrolling, so the stack can't grow the view past the window either. */
-  @container (max-width: 640px) {
+  /* Measured on the board column, so the board also stacks when a side
+     panel narrows it, not only when the window itself is narrow. The
+     threshold is four 200px lanes with their 1px borders and three 12px
+     gaps. Stacked, the board
+     scrolls as a whole instead of per column — the containment moves up
+     with the scrolling, so the stack can't grow the view past the window
+     either. */
+  @container (max-width: 843px) {
     .board {
       flex-direction: column;
       overflow-y: auto;

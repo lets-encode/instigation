@@ -3,8 +3,9 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
-## Unreleased
+## 0.33.0 – 2026-09-15
 
+- Board stacks its lanes instead of scrolling sideways; the task panel floats and the piece rail shrinks to dots before that happens. Piece rail shows per-category counts as cards.
 - SPA config is committed in `instances-config/` and the build mode follows the checked-out branch.
 - Sign-in banner names the unreachable broker instead of showing a JSON parse error.
 - Build output moves to `website/`, the project website to `static/`; `deploy/` removed.
@@ -17,10 +18,11 @@ parentheses.
 - Top bar and campaign filter bar wrap on narrow screens.
 - Palette: lighter surfaces, one deep tone per stage colour for 4.5:1 text contrast.
 - Board lanes are coloured as their stage; the dashed well is gone.
-- Board scrolls sideways before stacking; the piece rail shrinks below 1400px and 1100px.
 - One SVG icon set replaces the unicode glyphs.
 - Copy says "submission" instead of "PR".
 - Copy: plainer empty-state and Manage-view wording.
+- Status pills are shorter with centred text.
+- UI text: "review" replaces "validation", "measure correction" names the pre-task, "done" is the final state.
 
 ## 0.32.0 – 2026-09-03
 

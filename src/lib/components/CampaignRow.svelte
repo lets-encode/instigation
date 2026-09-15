@@ -115,7 +115,7 @@
         <span class="incstrip">{@html preview.incipit}</span>
       {:else}
         <span class="incnote">
-          {preview?.incipitPending ? "incipit appears after the preparation tasks" : "no preview"}
+          {preview?.incipitPending ? "incipit appears after the setup tasks" : "no preview"}
         </span>
       {/if}
     </span>
@@ -124,7 +124,7 @@
     {#if next}
       <span
         class="microlabel"
-        class:k-validation={next.kind === "validation"}
+        class:k-validation={next.kind === "review"}
         class:k-pre={next.pre}>Next task · {next.kind}</span
       >
       <span class="nexttitle">{next.title}</span>
@@ -144,7 +144,7 @@
       <span class="microlabel">Next task</span>
       <span class="nonote"
         >{stats.total > 0 && stats.done === stats.total
-          ? "campaign complete"
+          ? "campaign done"
           : "no open tasks"}</span
       >
     {/if}
@@ -231,7 +231,8 @@
     font-size: 10.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 1px 8px;
+    line-height: 1;
+    padding: 3px 8px;
     white-space: nowrap;
   }
   .yours {

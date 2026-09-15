@@ -190,7 +190,8 @@
     font-size: 10.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     flex: none;
   }
   .kindpill.question {

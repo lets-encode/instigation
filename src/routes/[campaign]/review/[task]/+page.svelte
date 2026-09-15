@@ -392,7 +392,7 @@
         <div class="tbstatus">
           <span class="pill s-{card.statusKey}">
             {card.statusKey === "validation_required"
-              ? `validation · ${card.passes} of ${card.threshold} passes`
+              ? `review · ${card.passes} of ${card.threshold} reviews`
               : statusPill(card.statusKey, card.pre)}
           </span>
         </div>
@@ -563,7 +563,8 @@
     gap: 4px;
     font-weight: 600;
     font-size: 11px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
     border-radius: 999px;
     white-space: nowrap;
     background: var(--bg-alt);

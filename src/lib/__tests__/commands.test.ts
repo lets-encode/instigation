@@ -104,7 +104,7 @@ test('submitValidation rejects an invalid verdict before opening a PR', async ()
 		context(fakeForge({}))
 	);
 
-	assert.equal(result.error, 'Invalid validation verdict: passing.');
+	assert.equal(result.error, 'Invalid review verdict: passing.');
 });
 
 test('a headless claim carries its envelope and cleans its fork branch after acceptance', async () => {
@@ -170,7 +170,7 @@ test('a failed automation run surfaces as an error while the PR stays open', asy
 		invoke(commands.claimTask, { task_id: 'P0001' }, context(forge))
 	);
 
-	assert.match(result.error ?? '', /automation run for PR #21 failed/);
+	assert.match(result.error ?? '', /automation run for submission #21 failed/);
 	assert.match(result.error ?? '', /example\.test\/run\/7/);
 });
 
@@ -205,7 +205,7 @@ test('a skipped automation run is explained and its PR closed by the console', a
 		invoke(commands.claimTask, { task_id: 'P0001' }, context(forge))
 	);
 
-	assert.match(result.error ?? '', /did not run for PR #22: a pull request must change at most two files/);
+	assert.match(result.error ?? '', /did not run for submission #22: a submission must change at most two files/);
 	assert.match(result.error ?? '', /was closed/);
 	assert.equal(closed, 1);
 });
@@ -227,7 +227,7 @@ test('a closed PR without a coordinator verdict fails closed', async () => {
 		invoke(commands.claimTask, { task_id: 'P0001' }, context(forge))
 	);
 
-	assert.equal(result.error, 'PR #13 closed without a coordinator verdict.');
+	assert.equal(result.error, 'Submission #13 closed without a coordinator verdict.');
 	assert.equal(result.warn, undefined);
 });
 

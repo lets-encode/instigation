@@ -1,30 +1,25 @@
 <!--
-  The instigator's piece rail: "All pieces" plus one row per piece — mini
-  facsimile thumbnail, name, a thin progress bar in the piece's colour, and an
-  attention count (or a check when complete) on the right. Selecting a row
-  scopes the board to that piece.
+  The instigator's piece rail: "All pieces" plus one bordered card per piece —
+  the name with an unresolved-comment count, and its task counts per board
+  category as labelled cells. Compact, the rail is a strip of dots, one per
+  piece in its colour, with the name and counts in the dot's tooltip.
+  Selecting a card or dot scopes the board to that piece.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
-  import { readForge } from "$lib/command-runner.svelte.ts";
   import type { PieceRef } from "$lib/campaign-tables.ts";
-  import { piecePreview } from "$lib/piece-previews.ts";
-  import type { PiecePreview } from "$lib/piece-previews.ts";
 
   let {
     pieces,
-    owner,
-    repo,
     progress,
     counts,
     attention,
     openCount,
     selected,
+    compact,
     onselect,
   }: {
     pieces: PieceRef[];
-    owner: string;
-    repo: string;
     /** Fragment path → tasks done / tasks total. */
     progress: Map<string, { done: number; total: number }>;
     /** Fragment path → not-done tasks per board category. */
@@ -35,98 +30,85 @@
     openCount: number;
     /** The piece path the board is scoped to, or "all". */
     selected: "all" | string;
+    /** Dots only; the page decides from the board row's width. */
+    compact: boolean;
     onselect: (selected: "all" | string) => void;
   } = $props();
 
   const pieceName = (p: PieceRef) => p.title || p.id;
-  const percent = (path: string) => {
-    const p = progress.get(path);
-    return p?.total ? Math.round((p.done / p.total) * 100) : 0;
-  };
   const complete = (path: string) => {
     const p = progress.get(path);
     return !!p && p.total > 0 && p.done === p.total;
   };
-
-  let previews = $state<Record<string, PiecePreview>>({});
-  $effect(() => {
-    const f = readForge();
-    for (const piece of pieces) {
-      const path = piece.path;
-      if (previews[path]) continue;
-      piecePreview(f, owner, repo, path).then((preview) => {
-        previews[path] = preview;
-      });
-    }
-  });
+  // The four board categories, in the board's column order.
+  const cells = (path: string) => {
+    const n = counts.get(path);
+    return [
+      { key: "open", label: "open", n: n?.open ?? 0 },
+      { key: "encoding", label: "encoding", n: n?.encoding ?? 0 },
+      { key: "validation", label: "review", n: n?.validation ?? 0 },
+      { key: "done", label: "done", n: progress.get(path)?.done ?? 0 },
+    ];
+  };
+  const tooltip = (piece: PieceRef) => {
+    const parts = cells(piece.path).map((c) => `${c.n} ${c.label}`);
+    const a = attention.get(piece.path) ?? 0;
+    if (a > 0) parts.push(`${a} unresolved`);
+    return `${pieceName(piece)} · ${parts.join(" · ")}`;
+  };
 </script>
 
-<div class="rail">
+<div class="rail" class:compact>
   <button
     type="button"
     class="railrow all"
     class:selected={selected === "all"}
     onclick={() => onselect("all")}
-    title="Show every piece's tasks on the board"
+    title="All pieces · {openCount} open"
   >
-    All pieces
+    <span class="dot"></span>
+    <span class="railname">All pieces</span>
     <span class="openpill">{openCount} open</span>
   </button>
   {#each pieces as piece, index (piece.path)}
-    {#if index > 0}
-      <span class="raildiv"></span>
-    {/if}
-    {@const url = previews[piece.path]?.thumb}
     {@const count = attention.get(piece.path) ?? 0}
-    {@const n = counts.get(piece.path)}
     <button
       type="button"
       class="railrow"
       class:selected={selected === piece.path}
       style="--zone: var(--zone-{(index % 8) + 1})"
       onclick={() => onselect(piece.path)}
-      title="Scope the board to this piece"
+      title={tooltip(piece)}
     >
-      <span class="paper">
-        {#if url}<img src={url} alt="" loading="lazy" />{/if}
-      </span>
-      <span class="railbody">
+      <span class="railtop">
+        <span class="dot"></span>
         <span class="railname">{pieceName(piece)}</span>
-        <span class="railbar">
-          <span style={`width:${percent(piece.path)}%`}></span>
-        </span>
-        <span class="railmeta">
-          {#if complete(piece.path)}
-            <span class="rc rc-done"><Icon name="check" size={11} /> all done</span>
-          {:else}
-            {#if n?.open}
-              <b class="rc rc-open">{n.open} open</b>
-            {/if}
-            {#if n?.encoding}
-              <b class="rc rc-encoding">{n.encoding} encoding</b>
-            {/if}
-            {#if n?.validation}
-              <b class="rc rc-validation">{n.validation} review</b>
-            {/if}
-          {/if}
-          {#if count > 0}
-            <span class="attn" title="Unresolved fails, comments or questions">
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M14 7.7c0 2.9-2.7 5.2-6 5.2-.8 0-1.6-.1-2.3-.4L2.5 13.7l.9-2.6C2.5 10.2 2 9 2 7.7 2 4.8 4.7 2.5 8 2.5s6 2.3 6 5.2z"
-                /></svg
-              >{count}</span
-            >
-          {/if}
-        </span>
+        {#if count > 0}
+          <span class="attn">
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><path
+                d="M14 7.7c0 2.9-2.7 5.2-6 5.2-.8 0-1.6-.1-2.3-.4L2.5 13.7l.9-2.6C2.5 10.2 2 9 2 7.7 2 4.8 4.7 2.5 8 2.5s6 2.3 6 5.2z"
+              /></svg
+            >{count}</span
+          >
+        {:else if complete(piece.path)}
+          <span class="alldone"><Icon name="check" size={11} /></span>
+        {/if}
+      </span>
+      <span class="railgrid">
+        {#each cells(piece.path) as cell (cell.key)}
+          <span class="rc rc-{cell.key}" class:zero={cell.n === 0}
+            ><b>{cell.n}</b> {cell.label}</span
+          >
+        {/each}
       </span>
     </button>
   {/each}
@@ -135,39 +117,36 @@
 <style>
   .rail {
     flex: none;
-    width: 288px;
+    width: 168px;
     display: flex;
     flex-direction: column;
     gap: 6px;
     background: var(--bg-inset);
     box-shadow: var(--shadow-inset);
     border-radius: 12px;
-    padding: 10px;
+    padding: 8px;
     align-self: flex-start;
     max-height: 100%;
     overflow-y: auto;
+    box-sizing: border-box;
   }
   .railrow {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 12px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 9px;
     border-radius: 8px;
-    border: 1.5px solid transparent;
-    background: none;
+    border: 1px solid var(--line);
+    background: var(--card);
     cursor: pointer;
     font-family: inherit;
     text-align: left;
     transition: border-color 0.15s ease;
   }
-  .raildiv {
-    flex: none;
-    height: 1px;
-    margin: 0 10px;
-    background: var(--shade);
-  }
   .railrow.all {
-    padding: 8px 10px;
+    flex-direction: row;
+    align-items: center;
+    padding: 6px 9px;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink-soft);
@@ -176,9 +155,10 @@
     border-color: var(--line-input);
   }
   .railrow.selected {
-    background: var(--card);
     border-color: var(--zone, var(--line-strong));
-    box-shadow: var(--shadow-sm);
+    box-shadow:
+      0 0 0 1px var(--zone, var(--line-strong)),
+      var(--shadow-sm);
   }
   .openpill {
     margin-left: auto;
@@ -188,29 +168,26 @@
     border-radius: 999px;
     padding: 1px 7px;
   }
-  .paper {
-    flex: none;
-    width: 28px;
-    height: 38px;
-    background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .paper img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .railbody {
-    flex: 1;
-    min-width: 0;
+  .railtop {
     display: flex;
-    flex-direction: column;
-    gap: 5px;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  /* The piece's tint, as on its board cards. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--zone);
+  }
+  .all .dot {
+    display: none;
   }
   .railname {
+    flex: 1;
+    min-width: 0;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink-soft);
@@ -221,28 +198,19 @@
   .railrow.selected .railname {
     color: var(--ink);
   }
-  .railmeta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  /* Counts as "N label" cells in two columns, coloured like the board's
+     column heads. */
+  .railgrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 6px;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 500;
+    white-space: nowrap;
   }
-  .railbar {
-    display: block;
-    height: 4px;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--zone) 22%, var(--card));
-    overflow: hidden;
-  }
-  /* Not-done task counts as words, coloured like the board's column heads. */
-  .rc {
-    flex: none;
-  }
-  .rc + .rc::before {
-    content: "·";
-    color: var(--line-input);
-    margin-right: 6px;
+  .rc b {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
   .rc-open {
     color: var(--ink-soft);
@@ -256,73 +224,80 @@
   .rc-done {
     color: var(--ok);
   }
-  .railbar > span {
-    display: block;
-    height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--green));
+  .rc.zero {
+    color: var(--ink-faint);
+    opacity: 0.6;
+  }
+  .rc.zero b {
+    font-weight: 500;
   }
   /* Unresolved fails, comments and questions, marked by the speech bubble. */
   .attn {
     flex: none;
-    margin-left: auto;
     display: inline-flex;
     align-items: center;
     gap: 3px;
+    font-size: 11px;
+    font-weight: 600;
     color: var(--danger);
-  }
-  /* Narrower windows: the thumbnail goes, then the rail turns into a strip
-     of piece chips above the board (the page wraps it there). */
-  @media (max-width: 1400px) {
-    .rail {
-      width: 232px;
-    }
-    .paper {
-      display: none;
-    }
-  }
-  @media (max-width: 1100px) {
-    .rail {
-      width: 100%;
-      flex-direction: row;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
-      padding: 8px;
-      max-height: none;
-      overflow: visible;
-      box-sizing: border-box;
-    }
-    .raildiv {
-      display: none;
-    }
-    .railrow,
-    .railrow.all {
-      padding: 6px 12px;
-      gap: 8px;
-      border-radius: 999px;
-    }
-    .railrow.selected {
-      border-radius: 999px;
-    }
-    .railbar {
-      display: none;
-    }
-    .railbody {
-      flex-direction: row;
-      align-items: center;
-      gap: 8px;
-    }
-    .railname {
-      max-width: 220px;
-    }
-    .openpill {
-      margin-left: 6px;
-    }
-    .attn {
-      margin-left: 0;
-    }
   }
   .attn svg {
     flex: none;
+  }
+  .alldone {
+    flex: none;
+    display: inline-flex;
+    color: var(--ok);
+  }
+  /* Compact: a strip of dots, one per piece in its colour, a ring for
+     "All pieces", a red mark for unresolved comments. Names and counts are
+     in the tooltips. */
+  .rail.compact {
+    width: auto;
+    gap: 2px;
+    padding: 5px;
+  }
+  .compact .railrow,
+  .compact .railrow.all {
+    position: relative;
+    padding: 6px;
+    border-color: transparent;
+    background: none;
+  }
+  .compact .railrow:hover {
+    background: var(--bg-tint);
+  }
+  .compact .railrow.selected {
+    background: var(--card);
+    border-color: var(--zone, var(--line-strong));
+    box-shadow: none;
+  }
+  .compact .railname,
+  .compact .openpill,
+  .compact .railgrid,
+  .compact .alldone,
+  .compact .attn svg {
+    display: none;
+  }
+  .compact .dot,
+  .compact .all .dot {
+    display: block;
+    width: 14px;
+    height: 14px;
+  }
+  .compact .all .dot {
+    box-sizing: border-box;
+    background: none;
+    border: 3px solid var(--ink-soft);
+  }
+  .compact .attn {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    font-size: 0;
   }
 </style>

@@ -154,7 +154,7 @@ test('nextTask: an open validation slot the viewer may take → review', () => {
 	assert.equal(next?.action, 'review');
 	assert.equal(next?.subtask, 'S0001');
 	assert.equal(next?.title, 'a · p. 3');
-	assert.equal(next?.kind, 'validation');
+	assert.equal(next?.kind, 'review');
 });
 
 test('nextTask: an unclaimed, unblocked encoding task → encode', () => {
@@ -181,7 +181,7 @@ test("nextTask: work the viewer already holds → continue, not a claim", () => 
 				'T0003,S0001,9,2026-08-01T10:00:00Z,validation\n'
 		)
 	};
-	assert.equal(nextTask(reviewing, '9')?.kind, 'validation');
+	assert.equal(nextTask(reviewing, '9')?.kind, 'review');
 });
 
 test('nextTask: tasks open only to others show without an action', () => {
@@ -198,7 +198,7 @@ test('nextTask: logged out, the first task open to anyone, without an action', (
 	const next = nextTask(stats, '');
 	assert.equal(next?.task, 'T0003');
 	assert.equal(next?.action, '');
-	assert.equal(next?.kind, 'validation');
+	assert.equal(next?.kind, 'review');
 });
 
 test('nextTask: nothing open → null', () => {

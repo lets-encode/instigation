@@ -121,7 +121,7 @@ export interface NextTask {
 	/** The open review slot's subtask id (action 'review'); '' otherwise. */
 	subtask: string;
 	/** The work's stage, for labelling the suggestion. */
-	kind: 'score setup' | 'measure correction' | 'encoding' | 'validation';
+	kind: 'score setup' | 'measure correction' | 'encoding' | 'review';
 }
 
 const workKind = (locator: string): NextTask['kind'] =>
@@ -163,14 +163,14 @@ export function nextTask(stats: CampaignStats, viewer: string): NextTask | null 
 		if (mine.statusKey === 'encoding_required')
 			return { ...base, action: 'encode', subtask: '', kind: workKind(base.locator) };
 		const slot = mine.slots.find((s) => s.claimable);
-		if (slot) return { ...base, action: 'review', subtask: slot.sub, kind: 'validation' };
+		if (slot) return { ...base, action: 'review', subtask: slot.sub, kind: 'review' };
 		// Held work: the lock says whether the viewer encodes or validates.
 		const held = stats.locks.find((l) => l.task_id === mine.task && l.user_id === viewer);
 		return {
 			...base,
 			action: 'continue',
 			subtask: '',
-			kind: held?.kind === 'validation' ? 'validation' : workKind(base.locator)
+			kind: held?.kind === 'validation' ? 'review' : workKind(base.locator)
 		};
 	}
 	const open = nodes.find(
@@ -184,7 +184,7 @@ export function nextTask(stats: CampaignStats, viewer: string): NextTask | null 
 		...base,
 		action: '',
 		subtask: '',
-		kind: open.statusKey === 'validation_required' ? 'validation' : workKind(base.locator)
+		kind: open.statusKey === 'validation_required' ? 'review' : workKind(base.locator)
 	};
 }
 

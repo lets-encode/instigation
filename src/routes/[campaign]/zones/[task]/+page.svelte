@@ -1343,7 +1343,7 @@
       {@const d = data!}
       <div class="taskbox">
         <div class="tbhead">
-          <h2 class="abtitle">Measure review</h2>
+          <h2 class="abtitle">Measure correction</h2>
           <code class="taskchip">{taskId}</code>
         </div>
         <div class="tbsection">
@@ -1354,12 +1354,12 @@
         {#if canEdit}
           <span class="lockpill ok">you hold this task</span>
         {:else if d.status === "completed"}
-          <span class="lockpill grey">completed — read-only</span>
+          <span class="lockpill grey">done — read-only</span>
         {:else if d.status !== "encoding_required"}
           {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
-            <span class="lockpill red">validation failed — read-only</span>
+            <span class="lockpill red">review failed — read-only</span>
           {:else}
-            <span class="lockpill amber">submitted — awaiting validation, read-only</span>
+            <span class="lockpill amber">submitted — awaiting review, read-only</span>
           {/if}
         {:else if d.blockedBy}
           <span class="lockpill grey">waits for {d.blockedBy} — read-only</span>
@@ -1376,7 +1376,7 @@
           class="btn btn-primary submitbtn"
           onclick={() => submit()}
           disabled={runner.busy || !canEdit}
-          title="Submit the corrected measures, breaks and movements for validation"
+          title="Submit the corrected measures, breaks and movements for review"
         >
           Submit corrections
         </button>
@@ -1401,22 +1401,22 @@
 
       {#if validation && submitted}
         <div class="tbsection sb-validation">
-          <span class="sb-label">Validation</span>
+          <span class="sb-label">Review</span>
           <span class="vstatus">
             {#if validation.status === "completed"}
-              Validation complete
+              Review done
             {:else if verdictPending}
               Your verdict is being processed…
             {:else if validation.lockUser}
-              {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
+              {holdsValidation ? "You are reviewing" : `@${lockUserLogin || validation.lockUser} reviewing`}
             {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
               Failed — send it back to redo the correction
             {:else if selfValidation}
               Your own submission
             {:else if alreadyValidated}
-              You validated this — another volunteer is needed
+              You reviewed this — another volunteer is needed
             {:else}
-              Awaiting validation
+              Awaiting review
             {/if}
           </span>
           {#each validation.verdicts as v, i (i)}
@@ -1433,7 +1433,7 @@
           {#if canClaimValidation}
             <div class="sb-row one">
               <button type="button" class="btn btn-review" onclick={() => claimValidation()} disabled={runner.busy}
-                title="Reserve this subtask for validation.">Claim</button>
+                title="Reserve this review slot.">Claim to review</button>
             </div>
           {:else if holdsValidation && !verdictPending}
             <div class="sb-row two">
@@ -1469,7 +1469,7 @@
               class="btn btn-danger sendbackbtn"
               onclick={() => sendBack()}
               disabled={runner.busy || sendBackPending}
-              title="Return the task to measure correction: attribution and validations reset."
+              title="Return the task to measure correction: attribution and reviews reset."
               >Send back to measure correction</button
             >
           {/if}
@@ -1939,7 +1939,8 @@
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 10px;
+    line-height: 1;
+    padding: 3px 10px;
   }
   .lockpill.ok {
     color: var(--ok);

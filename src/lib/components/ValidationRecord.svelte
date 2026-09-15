@@ -133,7 +133,7 @@
 
 {#if rows.length > 0 || orphanFails.length > 0}
 <div class="rsec">
-  <div class="rlabel">Validation record</div>
+  <div class="rlabel">Review record</div>
   {#each rows as r (r.sub + "/" + r.slot)}
     {#if r.key === "fail"}
       <div class="failbox">
@@ -187,7 +187,7 @@
               class="btn btn-danger"
               onclick={() => onsendback(card.task)}
               disabled={runner.busy || sendBackPending}
-              title={`Return the task to ${sendBackTarget(card.locator)}: attribution and validations reset.`}
+              title={`Return the task to ${sendBackTarget(card.locator)}: attribution and reviews reset.`}
               >{`Send back ${card.pre ? "to" : "for"} ${sendBackTarget(card.locator)}`}</button
             >
           {/if}
@@ -213,7 +213,7 @@
             class="btn btn-review"
             onclick={() => onclaim(card.task, r.sub)}
             disabled={runner.busy || verdictPending(r.sub)}
-            title="Reserve this validation slot for review."
+            title="Reserve this review slot."
             >Claim to review</button
           >
         {:else if r.key === "open"}
@@ -353,7 +353,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 8px;
+    line-height: 1;
+    padding: 3px 8px;
     white-space: nowrap;
   }
   .chip-question {

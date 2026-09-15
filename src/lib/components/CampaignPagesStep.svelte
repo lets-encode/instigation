@@ -503,6 +503,7 @@
     background: var(--card);
     border: 1px solid var(--line-strong);
     border-radius: 999px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
   }
 </style>

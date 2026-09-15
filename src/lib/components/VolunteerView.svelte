@@ -84,7 +84,7 @@
   const KINDS: { key: Kind; label: string }[] = [
     { key: "enc", label: "Encoding" },
     { key: "review", label: "Review" },
-    { key: "pre", label: "Preparation" },
+    { key: "pre", label: "Setup" },
   ];
   let kinds = $state<Record<Kind, boolean>>({ enc: true, review: true, pre: true });
   const listed = $derived(openCards.filter((c) => kinds[kindOf(c)]));
@@ -118,7 +118,7 @@
     if (viewer === "") return "Log in with GitHub to claim this task.";
     if (c.column === "validation") return "Takes a review slot on this task.";
     if (c.pre) return "Claims this task for you and opens its editor.";
-    return "Claims this section for you and opens mei-friend in a new tab.";
+    return "Claims this task for you and opens mei-friend in a new tab.";
   };
 
   // The stage a claim starts, as the button's colour class.
@@ -177,7 +177,7 @@
       depCard?.column === "done" &&
       !depCard.pre
     )
-      parts.push("continues where the previous section ended");
+      parts.push("continues where the previous task ended");
     return parts.join(" · ");
   });
 
@@ -346,7 +346,7 @@
                   type="button"
                   class="btn {stageClass(card)}"
                   onclick={() => onact(card)}
-                  disabled={busy}>Claim</button
+                  disabled={busy}>Claim to encode</button
                 >
               {/if}
             </div>
@@ -401,7 +401,7 @@
                   {/if}
                 </div>
                 {#if p && p.total > 0 && p.done === p.total}
-                  <span class="piecedone complete"><Icon name="check" size={12} /> complete</span>
+                  <span class="piecedone complete"><Icon name="check" size={12} /> done</span>
                 {:else}
                   <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
                 {/if}
@@ -412,7 +412,7 @@
                   <span class="scount review">{counts.review} review{counts.review === 1 ? "" : "s"}</span>
                 {/if}
                 {#if counts.pre > 0}
-                  <span class="scount pre">{counts.pre} preparation</span>
+                  <span class="scount pre">{counts.pre} setup</span>
                 {/if}
                 <span class="vspacer"></span>
                 <button
@@ -531,7 +531,8 @@
     font-weight: 600;
     background: var(--bg-tint);
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     letter-spacing: 0;
   }
 
@@ -642,7 +643,8 @@
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid var(--line);
     border-radius: 999px;
-    padding: 2px 8px;
+    line-height: 1;
+    padding: 3px 8px;
   }
   .nextbody {
     display: flex;
@@ -806,7 +808,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 1px 8px;
+    line-height: 1;
+    padding: 3px 8px;
     border: 1px solid transparent;
     white-space: nowrap;
   }
@@ -871,7 +874,8 @@
   .taskpill {
     font-weight: 600;
     font-size: 11px;
-    padding: 2px 9px;
+    line-height: 1;
+    padding: 3px 9px;
     border-radius: 999px;
     white-space: nowrap;
     background: var(--bg-alt);
