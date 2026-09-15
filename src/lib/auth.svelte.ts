@@ -54,9 +54,14 @@ export async function initAuth(): Promise<void> {
 		resolved = await createForge(SESSION).getAuthenticatedUser();
 	} catch (e) {
 		// A failed session check must not leave the app stuck on "loading":
-		// continue anonymously and surface the error.
+		// continue anonymously and surface the error. A SyntaxError means the
+		// response was not JSON: the broker mount is not served on this origin
+		// and a page (the SPA fallback) came back instead of session data.
 		clear();
-		auth.error = (e as Error).message;
+		auth.error =
+			e instanceof SyntaxError
+				? `the session service at ${provider.brokerUrl} is not answering on this server.`
+				: (e as Error).message;
 		return;
 	}
 	if (!resolved) {
