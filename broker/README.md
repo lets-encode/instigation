@@ -47,7 +47,7 @@ and `DELETE /registry/admin/slugs/<name>` (tombstone a name; the row is kept,
 so the name stays occupied).
 
 **`/registry/admin/` must be protected by institutional auth at the reverse
-proxy** before requests reach the broker (see `deploy/apache.conf`). The
+proxy** before requests reach the broker (see `README.md` §6). The
 built-in `ADMIN_TOKEN` bearer check is defence in depth and a dev/local
 fallback, not the primary control: one shared secret, no rotation, no audit
 trail. The routes serve only when `ADMIN_TOKEN` and `ADMIN_ROUTES_ENABLED=1`
@@ -66,8 +66,8 @@ The broker **must share the SPA's origin** — the session cookie
 (`HttpOnly; Secure; SameSite=Lax`) has to be first-party. Mount it under a path
 of the SPA's origin:
 
-- production: Apache proxies `/auth/` and `/registry/` to the broker (see
-  `deploy/apache.conf`),
+- deployed: the reverse proxy passes `/auth/` and `/registry/` to the broker
+  (see `README.md` §6),
 - development: the Vite dev server proxies `/auth` and `/registry` (see
   `vite.config.js`).
 
@@ -87,9 +87,9 @@ Environment variables:
 | `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
 | `SESSION_DIR` | optional: session file directory |
 | `DB_PATH` | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it |
-| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `deploy/apache.conf`) |
+| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `README.md` §6) |
 | `ADMIN_ROUTES_ENABLED` | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503 |
-| `PROXY_FIX_X_FOR` | optional: the number of reverse proxies in front (1 behind the `deploy/` Apache vhosts); when set, X-Forwarded-For supplies the client address the rate limits key on. Leave unset without a trusted proxy — the header would be spoofable |
+| `PROXY_FIX_X_FOR` | optional: the number of reverse proxies in front (1 behind the institution's reverse proxy); when set, X-Forwarded-For supplies the client address the rate limits key on. Leave unset without a trusted proxy — the header would be spoofable |
 | `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes) |
 
 The broker loads these from its process environment. The simplest way locally is a
@@ -111,15 +111,15 @@ pip install -r requirements.txt
 # development (reads broker/.env; the Vite proxy makes it same-origin)
 flask --app app run --port 7777
 
-# deployed (behind the reverse proxy — see deploy/)
+# deployed (behind the reverse proxy — see README.md §6)
 PORT=7777 gunicorn -c gunicorn_config.py wsgi:app
 ```
 
 `wsgi.py` is a thin shim re-exporting `app`, so service managers can point at the
 conventional `wsgi:app` target. `gunicorn_config.py` binds to loopback on
 `PORT` (default 7777); each deployed instance runs its own broker on its own
-port — production 7777, staging 7778, testing 7779, matching the Apache
-ProxyPass targets in `deploy/`. Only the proxy needs to reach the bind
+port — production 7777, staging 7778, testing 7779, matching the reverse
+proxy's targets (`README.md` §6). Only the proxy needs to reach the bind
 address, so it stays on loopback.
 
 ## Test
@@ -152,7 +152,7 @@ they are reported separately from GitHub primary or secondary limits.
 - **Trust the forwarded client IP** — behind a proxy every request appears to
   come from that proxy, which would turn the rate limits into one bucket shared
   by all users. Set `PROXY_FIX_X_FOR` to the number of proxies in front (1 for
-  the `deploy/` Apache vhosts) and the app wraps itself in werkzeug's
+  the institution's reverse proxy) and the app wraps itself in werkzeug's
   `ProxyFix`; left unset, X-Forwarded-For is not trusted and the per-client
   limits collapse into that single shared bucket. Confirm
   `request.remote_addr` resolves to a real client.

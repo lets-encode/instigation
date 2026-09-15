@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- Sign-in: when the session check receives a page instead of JSON (the broker mount is not proxied on the origin), the banner names the unreachable service instead of showing the JSON parse error.
+- Build output moves to `website/`, the deployed document root; the project website (refreshed from lets-encode.github.io; the start-a-campaign form and the link to `/campaigns` are withdrawn for now, the site is identical to upstream) moves into `static/` and is copied into it by the build. `deploy/` (release script and Apache vhosts) removed; the web server requirements are listed in README §6, and `static/.htaccess` carries the SPA fallback.
+- Tests: the caller.yml safety checks read the workflow from the template repository on GitHub instead of a local checkout.
 - Volunteer view redesigned: the header carries the title, the viewer's own standing ("You: 2 done · 1 claimed") and the campaign count; the next-task card shows the task's own page cropped to its measures (the opening system for pieces without pages); every other open task is one list with kind filters (encoding, review, preparation); pieces are one table with a segmented progress bar (done, in review, rest) and labelled counts, expanding to their tasks.
 - Comments panel: 380px wide by default (minimum 280px); one control opens and closes it, the button outside the panel, in every view; in the volunteer view the group keeps its width when the panel is dragged wider, so the task column narrows instead.
 - Volunteer view: rows are plain containers with real title buttons and headings; pills, avatars and buttons are accessible by keyboard and screen reader; the view stacks below 700px; the next-task button is an outline while a task panel is open; blocked tasks read "waits for …", finished ones "done"; logged out, the button starts the login.

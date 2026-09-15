@@ -23,10 +23,12 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		// Static SPA: all routes are client-rendered and served via the fallback,
-		// so the dynamic /campaign/[campaign] route resolves without a server.
-		// Named spa.html (not index.html) so the project website's index.html
-		// can sit at the docroot root and own "/".
-		adapter: adapter({ fallback: 'spa.html' }),
+		// so the dynamic /[campaign] route resolves without a server. The output
+		// directory website/ is the web server's document root; the adapter
+		// empties it on every build. The project website lives in static/ and is
+		// copied in verbatim, so its index.html owns "/" — which is why the SPA
+		// fallback is named spa.html, not index.html.
+		adapter: adapter({ pages: 'website', fallback: 'spa.html' }),
 		// Strict CSP as defence in depth: the forge token lives server-side in
 		// the broker session, but scripts on the page could still act through
 		// the authenticated proxy — allow only our own scripts and the exact

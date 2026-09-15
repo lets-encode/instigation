@@ -1,5 +1,184 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" width="141.11163mm" height="40.581127mm" viewBox="0 0 141.11163 40.581127" version="1.1" id="logo-static" inkscape:version="1.4 (e7c3feb1, 2024-10-09)" sodipodi:docname="lets-encode.svg">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Let's Encode! Crowd-encoding and validation of music scores</title>
+<meta name="description" content="Let's Encode! is a citizen-science project for crowd-based encoding and validation of music scores in the MEI format, with a family of free, browser-based tools for different levels of expertise — from the mei-friend MEI-XML editor to graphical interfaces that need no MEI knowledge.">
+
+<!-- Open Graph / social preview -->
+<meta property="og:title" content="Let's Encode!">
+<meta property="og:description" content="Crowd-based encoding and validation of music scores in the MEI format.">
+<meta property="og:type" content="website">
+
+<meta name="color-scheme" content="light dark">
+<script>
+  // Theme: a saved choice (from the bulb toggle) wins; otherwise follow the
+  // machine's colour-scheme setting. Runs before first paint so there's no
+  // wrong-theme flash. Only the user's explicit pick is stored, under a single
+  // localStorage key — a functional preference, no tracking.
+  (function () {
+    var stored = null;
+    try { stored = localStorage.getItem("theme"); } catch (e) {}
+    var dark = stored
+      ? stored === "dark"
+      : (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+    var theme = dark ? "dark" : "light";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  })();
+</script>
+
+<!-- Favicons (blue hand + note, isolated from the project logo) -->
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<span id="top" aria-hidden="true"></span>
+
+<!-- ====================== TOP BAR ====================== -->
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Let's Encode! — back to top"><span class="brand-logo" title="Let's Encode! Crowd-encoding and validation of music scores"><img class="brand-logo-img brand-logo-rest" src="assets/logos/lets-encode-nav.png" alt="" width="1120" height="400"><img class="brand-logo-img brand-logo-rest-dark" src="assets/logos/lets-encode-cream.png" alt="" width="1120" height="400"><img class="brand-logo-img brand-logo-hover" src="assets/logo.svg" alt="" width="1391" height="400"><img class="brand-logo-img brand-logo-hover-dark" src="assets/logo-dark.svg" alt="" width="1391" height="400"></span><span class="brand-text" aria-hidden="true">Let's Encode!</span></a>
+    <div class="topbar-right">
+      <nav class="nav" id="primary-nav" aria-label="Primary">
+        <a href="#about">About</a>
+        <a href="#goals">Goals</a>
+        <a href="#get-involved">Get involved</a>
+        <a href="#team">Team</a>
+        <a href="#advisory">Advisory board</a>
+        <a href="#funding">Funding</a>
+      </nav>
+      <button class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false" title="Toggle light / dark theme">
+        <svg class="bulb" viewBox="-2 -2 28 28" width="22" height="22" aria-hidden="true" focusable="false">
+          <g class="bulb-rays" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <line x1="12" y1="-1.8" x2="12" y2="2"/>
+            <line x1="21.8" y1="2.2" x2="18.9" y2="5.1"/>
+            <line x1="2.2" y1="2.2" x2="5.1" y2="5.1"/>
+            <line x1="24.6" y1="11" x2="20.8" y2="11"/>
+            <line x1="-0.6" y1="11" x2="3.2" y2="11"/>
+          </g>
+          <path class="bulb-glass" d="M12 2.6a6.2 6.2 0 0 0-3.8 11.1c.75.58 1.25 1.4 1.35 2.35h4.9c.1-.95.6-1.77 1.35-2.35A6.2 6.2 0 0 0 12 2.6Z"/>
+          <path class="bulb-filament" d="M10 12.7 12 10l2 2.7"/>
+          <g class="bulb-base" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+            <path d="M9.6 16.2v1.6h4.8v-1.6"/>
+            <line x1="10.4" y1="20" x2="13.6" y2="20"/>
+          </g>
+        </svg>
+      </button>
+      <button class="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="primary-nav">
+        <span class="nav-toggle-bars" aria-hidden="true"></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ====================== HERO ====================== -->
+  <section class="hero" aria-labelledby="hero-heading">
+    <a class="hero-corner hero-corner-left" href="https://iwk.mdw.ac.at" target="_blank" rel="noopener" title="Department of Music Acoustics – Wiener Klangstil">
+      <img src="assets/logos/IWK-logo2018-P281-short.svg" alt="IWK – Department of Music Acoustics – Wiener Klangstil" title="Department of Music Acoustics – Wiener Klangstil">
+    </a>
+    <a class="hero-corner hero-corner-right" href="https://mdw.ac.at" target="_blank" rel="noopener" title="mdw – University of Music and Performing Arts Vienna">
+      <img src="assets/logos/MDW_Logo_englisch281.svg" alt="mdw – University of Music and Performing Arts Vienna" title="mdw – University of Music and Performing Arts Vienna">
+    </a>
+    <div class="wrap">
+      <h1 id="hero-heading" class="visually-hidden" style="position:absolute;left:-9999px;">Let's Encode!</h1>
+      <!--
+        The logo SVG is INLINED below so its built-in animation can be triggered
+        by lets-encode-logo.js (which toggles the `.play` class on <svg id="svg1">).
+        Do NOT replace this with <img src="lets-encode-logo.svg"> — that shows the
+        static logo only. The static logo also renders fine with JS disabled.
+      -->
+      <div class="logo" role="img" aria-label="Let's Encode! logo: three cartoon hands interacting with the words, a musical note, and a thumbs-up." title="Let's Encode! Crowd-encoding and validation of music scores">
+<svg xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" width="141.11163mm" height="40.581127mm" viewBox="0 0 141.11163 40.581127" version="1.1" id="svg1" inkscape:version="1.4 (e7c3feb1, 2024-10-09)" sodipodi:docname="lets-encode.svg">
+  <sodipodi:namedview id="namedview1" pagecolor="#ffffff" bordercolor="#000000" borderopacity="0.25" inkscape:showpageshadow="2" inkscape:pageopacity="0.0" inkscape:pagecheckerboard="0" inkscape:deskcolor="#d1d1d1" inkscape:document-units="mm" inkscape:zoom="0.82136644" inkscape:cx="118.09589" inkscape:cy="206.97218" inkscape:current-layer="layer1"/>
+  <defs id="defs1"><style type="text/css"><![CDATA[
+/* --- Let's Encode: subtle, serialized hand animations --- */
+#orange-hand, #blue-hand, #green-hand, #apostrophe, #note {
+  transform-box: fill-box;
+}
+
+/* 1) Orange hand twiddles the apostrophe (subtle horizontal wobble) */
+#orange-hand {
+  transform-origin: 70% 85%;
+}
+@keyframes orange-twiddle {
+  0%   { transform: rotate(0deg) scaleX(1); }
+  35%  { transform: rotate(-2.5deg) scaleX(0.97); }
+  70%  { transform: rotate(1.5deg) scaleX(0.99); }
+  100% { transform: rotate(0deg) scaleX(1); }
+}
+#apostrophe {
+  /* Pivot from the top so the bottom-right (where the orange hand grips it)
+     swings on a long lever arm and stays in contact instead of gapping. */
+  transform-origin: 100% 0%;
+}
+@keyframes apostrophe-twiddle {
+  0%   { transform: rotate(0deg); }
+  35%  { transform: rotate(-7deg); }
+  70%  { transform: rotate(2.5deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* 2) Blue hand boops the note (subtle downward dip) */
+#blue-hand {
+  transform-origin: 25% 15%;
+}
+@keyframes blue-boop {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  45%  { transform: translate(0.8px, 1px) rotate(1deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+#note {
+  transform-origin: 50% 100%;
+}
+@keyframes note-boop {
+  0%   { transform: translateY(0); }
+  45%  { transform: translateY(1.2px); }
+  75%  { transform: translateY(-0.3px); }
+  100% { transform: translateY(0); }
+}
+
+/* 3) Green hand pops the thumbs-up (subtle scale) */
+#green-hand {
+  transform-origin: 50% 90%;
+}
+@keyframes green-pop {
+  0%   { transform: scale(1) rotate(0deg); }
+  40%  { transform: scale(1.035) rotate(-1.5deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #orange-hand, #blue-hand, #green-hand, #apostrophe, #note { animation: none; }
+}
+
+/* The automated combo: the full staggered orange -> blue -> green sequence,
+   played while the root <svg> has class "play" (JS re-adds it on a bounded
+   random timer). */
+#svg1.play #orange-hand { animation: orange-twiddle 0.55s ease-in-out 0s 1 both; }
+#svg1.play #apostrophe  { animation: apostrophe-twiddle 0.55s ease-in-out 0s 1 both; }
+#svg1.play #blue-hand   { animation: blue-boop 0.50s cubic-bezier(0.34, 1.4, 0.64, 1) 0.275s 1 both; }
+#svg1.play #note        { animation: note-boop 0.50s cubic-bezier(0.34, 1.4, 0.64, 1) 0.275s 1 both; }
+#svg1.play #green-hand  { animation: green-pop 0.45s cubic-bezier(0.34, 1.5, 0.64, 1) 0.525s 1 both; }
+
+/* Individual hover replay: JS adds .play-orange / .play-blue / .play-green when
+   the cursor enters that hand or its companion glyph, then removes it when the
+   gesture ends. Each plays its own full gesture once — no stagger, no hold. */
+#svg1.play-orange #orange-hand { animation: orange-twiddle 0.55s ease-in-out 0s 1 both; }
+#svg1.play-orange #apostrophe  { animation: apostrophe-twiddle 0.55s ease-in-out 0s 1 both; }
+#svg1.play-blue   #blue-hand   { animation: blue-boop 0.50s cubic-bezier(0.34, 1.4, 0.64, 1) 0s 1 both; }
+#svg1.play-blue   #note        { animation: note-boop 0.50s cubic-bezier(0.34, 1.4, 0.64, 1) 0s 1 both; }
+#svg1.play-green  #green-hand  { animation: green-pop 0.45s cubic-bezier(0.34, 1.5, 0.64, 1) 0s 1 both; }
+
+]]></style></defs>
   <g inkscape:label="Layer 1" inkscape:groupmode="layer" id="layer1" transform="translate(-73.818741,-93.662498)">
     <g class="blue-hand" id="blue-hand"><g id="g31" transform="matrix(0.49406185,0.48471606,-0.48471606,0.49406185,301.88844,151.90373)">
       <path style="fill:#6dc3ff;fill-opacity:1;stroke:#0000ff;stroke-width:0.329372;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;paint-order:fill markers stroke" d="m -617.54269,222.38588 c -4.28784,0.25411 -7.18007,3.96084 -10.3468,6.39653 -8.60674,7.58765 -20.51045,9.76613 -29.28604,17.07396 -5.32159,4.75696 -8.95052,11.13235 -11.7936,17.6044 -0.48805,1.70716 -0.51818,0.65441 -0.3916,-0.48285 0.12762,-2.94514 1.51344,-5.75934 2.00735,-8.70989 -0.18897,-2.44295 -3.3562,-2.23168 -4.93091,-1.29755 -6.2653,2.93112 -9.55507,9.87912 -9.98558,16.52953 -0.68964,8.75181 -0.26574,18.35777 5.01248,25.75301 2.22445,3.05257 6.3245,5.13626 10.07933,4.04741 1.68932,-1.23407 0.11813,-3.49118 -0.16157,-5.06715 -0.64618,-1.89207 -1.38539,-4.13019 -1.41682,-6.08032 2.8819,5.76458 5.92774,11.99025 11.78971,15.28294 6.36848,3.65268 13.34732,7.06016 20.87988,6.82754 6.00132,-0.0657 12.13749,0.13071 17.99837,-1.34004 6.28708,-1.89967 12.52492,-6.57516 13.83277,-13.34031 0.37704,-1.86029 0.32746,-4.93853 -2.17808,-5.13857 -0.57106,-0.1536 -1.93147,0.36945 -1.98009,-0.0738 2.39035,-1.9681 5.57023,-2.93903 7.47325,-5.53118 3.05192,-3.67616 3.74673,-8.97825 2.57638,-13.50427 -0.7482,-2.58326 -3.30926,-4.09439 -5.91018,-4.08612 -1.03701,-0.11171 -2.09839,-0.27579 -3.04047,-0.74835 12.05731,-1.4497 24.2711,-0.88068 36.2945,-2.64673 4.0563,-0.57551 8.36862,-2.48485 9.96338,-6.54391 1.87779,-4.19658 -1.35414,-8.86887 -5.29686,-10.39571 -4.58395,-1.84977 -9.68841,-1.03204 -14.50329,-1.20462 -15.07836,0.16239 -30.20292,0.69007 -45.24638,-0.0339 -1.10827,-0.0932 -2.20899,-0.32225 -3.25891,-0.68991 4.19071,-0.54497 8.51719,-0.0387 12.64983,-0.97982 3.8182,-1.89226 4.96507,-6.62259 5.38991,-10.51543 0.41177,-3.63193 -0.15357,-7.78254 -3.25664,-10.14891 -0.7804,-0.78377 -1.8896,-1.03644 -2.96332,-0.956 z" id="path31" transform="matrix(0.26458333,0,0,0.26458333,-28.491819,30.034714)"/>
@@ -42,3 +221,319 @@
     </g>
   </g></g>
 </svg>
+
+      </div>
+
+      <p class="tagline">Crowd-encoding the world's music scores, one note at a time.</p>
+      <p class="lede">
+        Let's Encode! is a citizen-science project that helps anyone turn sheet music
+        into rich, machine-readable encodings in the <a href="https://music-encoding.org" target="_blank" rel="noopener"><abbr title="Music Encoding Initiative">MEI</abbr>
+        format</a> — no specialist training required.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#get-involved">Get involved</a>
+        <a class="btn btn-ghost" href="#about">Learn more</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== ABOUT ====================== -->
+  <section id="about" aria-labelledby="about-heading">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">About the project</p>
+        <h2 id="about-heading" aria-label="Making music readable by machines">Making music readable by <span class="gw">machine<span class="gx side r hold" style="--s:1.5em;--r:28deg;--hb:-.4em;--ovl:.5em;--lift:.16em"><span class="gly">s</span><span class="hand"><img class="hpic hpic-day" src="assets/hands/measure-blue.svg" alt="" aria-hidden="true"><img class="hpic hpic-night" src="assets/hands/measure-blue-dark.svg" alt="" aria-hidden="true"></span></span></span></h2>
+      </div>
+      <div class="prose">
+        <p>
+          Digital music scores are essential tools in both performance and musicology.
+          But standard PDFs and scanned sheet music can't easily be processed by computers:
+          musicians instantly grasp their meaning, yet the music <em>semantics</em> stay
+          hidden from machines.
+        </p>
+        <p>
+          Let's Encode! builds infrastructure for crowd-based encoding and validation of
+          music scores — a range of free, browser-based tools pitched at different levels
+          of technical expertise, from the
+          <a href="https://mei-friend.mdw.ac.at" target="_blank" rel="noopener">mei-friend</a>
+          MEI-XML editor to graphical interfaces that need no MEI knowledge at all, so the right person can
+          use the right tool for the right task. This lets interested people take part in
+          digitising music — without extensive technical knowledge or administrative
+          barriers — and helps build a shared, openly reusable library of encoded music.
+        </p>
+        <p>We've tried to remove every obstacle between you and the music you want to encode:</p>
+        <ul>
+          <li><strong>Free and open source</strong> — no fees; our software is openly licensed, and you choose how your encodings are shared, with open, reuse-friendly licences recommended.</li>
+          <li><strong>Nothing to install</strong> — our tools run entirely in your browser, on whatever device you already have.</li>
+          <li><strong>You're in charge</strong> — campaigns are user-directed, so you can <em>start and manage</em> your own campaign as well as taking part in someone else's — all from your browser.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== GOALS ====================== -->
+  <section id="goals" class="alt" aria-labelledby="goals-heading">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">What we're working towards</p>
+        <h2 id="goals-heading" aria-label="Project goals">Project <span class="gw">goa<span class="gx above twiddle" style="--s:1.2em;--hx:0%;--dx:.58em;--r:-15deg;--dip:.5em;--ox:50%;--oy:32%;--spin:-1"><span class="gly">l</span><span class="hand"><img class="hpic" src="assets/hands/pinch-orange.svg" alt="" aria-hidden="true"></span></span>s</span></h2>
+        <p>We investigate ways to make semantic music-encoding technologies accessible to diverse communities. Early collaborations include:</p>
+      </div>
+      <ul class="goals">
+        <li>
+          <strong>Chamber orchestras</strong> encoding performance scores of public-domain
+          works, reducing licensing fees and building reusable editions.
+        </li>
+        <li>
+          <strong>Music societies</strong> preserving cultural heritage — lute-music archives,
+          klezmer collections, and the work of underrepresented composers.
+        </li>
+        <li>
+          <strong>RISM users</strong> creating melodic incipits for the Répertoire International
+          des Sources Musicales to enrich and improve its collections.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ====================== GET INVOLVED (future) ====================== -->
+  <section id="get-involved" aria-labelledby="involved-heading">
+    <div class="wrap">
+      <div class="callout">
+        <span class="badge">Coming soon</span>
+        <h2 id="involved-heading" aria-label="Start or join a campaign">Start or join a <span class="gw">cam<span class="gx below nudge" style="--s:1.4em;--hx:60%;--dip:.20em;--ox:50%;--oy:100%;--hr:-8deg;--gr:6deg"><span class="gly">p</span><span class="hand"><img class="hpic" src="assets/hands/thumb-green.svg" alt="" aria-hidden="true"></span></span>aign</span></h2>
+        <p>
+          Soon you'll be able to launch your own encoding campaign or join one already under
+          way — contributing encodings, validating others' work, and watching a collection
+          come to life. We're building it now.
+        </p>
+        <a class="btn btn-primary" href="mailto:weigl@mdw.ac.at?subject=Let's%20Encode%21%20Keep%20me%20posted">Keep me posted</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== TEAM ====================== -->
+  <section id="team" class="alt" aria-labelledby="team-heading">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Who we are</p>
+        <h2 id="team-heading" aria-label="Team"><span class="gw">Tea<span class="gx side r wave" style="--s:1.4em;--r:5deg;--hb:0em;--ovl:-.06em;--ox:110%;--oy:90%"><span class="gly">m</span><span class="hand"><img class="hpic hpic-day" src="assets/hands/wave-pink.svg" alt="" aria-hidden="true"><img class="hpic hpic-night" src="assets/hands/wave-pink-dark.svg" alt="" aria-hidden="true"></span></span></span></h2>
+      </div>
+      <ul class="people">
+        <li>
+          <span class="name"><a href="https://iwk.mdw.ac.at/david-weigl" target="_blank" rel="noopener">David M. Weigl</a> (P.I.)</span>
+          <span class="role"><a href="https://iwk.mdw.ac.at" target="_blank" rel="noopener">Department of Music Acoustics – Wiener Klangstil</a>, <a href="https://mdw.ac.at" target="_blank" rel="noopener">mdw</a></span>
+        </li>
+        <li>
+          <span class="name"><a href="https://github.com/ohwjd" target="_blank" rel="noopener">Julia Jaklin</a> (R.A.)</span>
+          <span class="role"><a href="https://mdw.ac.at" target="_blank" rel="noopener">Department of Music Acoustics – Wiener Klangstil</a>, <a href="https://mdw.ac.at" target="_blank" rel="noopener">mdw</a></span>
+        </li>
+        <li>
+          <span class="name">PhD researcher</span>
+          <span class="role">Starting Autumn 2026</span>
+        </li>
+        <li>
+          <span class="name">PhD researcher</span>
+          <span class="role">Starting April 2027</span>
+        </li>
+      </ul>
+
+      <div class="section-head" style="margin-top:2.5rem;">
+        <h3>Project partners</h3>
+      </div>
+      <ul class="people">
+        <li>
+          <span class="name"><a href="https://www.mdw.ac.at/ikm/abfalter/" target="_blank" rel="noopener">Dagmar Abfalter</a></span>
+          <span class="role"><a href="https://www.mdw.ac.at/ikm" target="_blank" rel="noopener">Department of Cultural Management and Gender Studies</a>, <a href="https://mdw.ac.at" target="_blank" rel="noopener">mdw</a></span>
+        </li>
+        <li>
+          <span class="name"><a href="https://www.mdw.ac.at/bib/kontakt/cv/" target="_blank" rel="noopener">Michael Staudinger</a></span>
+          <span class="role"><a href="https://www.mdw.ac.at/bib" target="_blank" rel="noopener">University Library</a>, <a href="https://mdw.ac.at" target="_blank" rel="noopener">mdw</a></span>
+        </li>
+        <li>
+          <span class="name"><a href="https://iwk.mdw.ac.at/werner-goebl" target="_blank" rel="noopener">Werner Goebl</a></span>
+          <span class="role"><a href="https://iwk.mdw.ac.at" target="_blank" rel="noopener">Department of Music Acoustics – Wiener Klangstil</a>, <a href="https://mdw.ac.at" target="_blank" rel="noopener">mdw</a></span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ====================== ADVISORY BOARD ====================== -->
+  <section id="advisory" aria-labelledby="advisory-heading">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Guidance &amp; community voices</p>
+        <h2 id="advisory-heading" aria-label="Advisory board"><span class="gx under shake" style="--s:1.3em;--r:-2deg;--dip:0em;--ox:150%;--oy:50%"><span class="gly">Advisory board</span><span class="hand"><img class="hpic" src="assets/hands/handshake.svg" alt="" aria-hidden="true"></span></span></h2>
+        <p>Our advisory board guides the project's direction and represents the communities partnering in this research.</p>
+      </div>
+      <ul class="people">
+        <li>
+          <span class="name"><a href="https://annakijas.com/" target="_blank" rel="noopener">Anna E. Kijas</a></span>
+          <span class="role"><a href="https://tischlibrary.tufts.edu/our-locations/tisch-branches/lilly-music-library" target="_blank" rel="noopener">Lilly Music Library</a>, <a href="https://www.tufts.edu" target="_blank" rel="noopener">Tufts University</a> (USA) · <a href="https://rebalancing-music-canon.com/" target="_blank" rel="noopener">Rebalancing the Music Canon</a></span>
+        </li>
+        <li>
+          <span class="name"><a href="https://klezmerinstitute.org/our-team/" target="_blank" rel="noopener">Christina Crowder &amp;<br>Clara Byom</a></span>
+          <span class="role"><a href="https://klezmerinstitute.org/" target="_blank" rel="noopener">Klezmer Institute</a> (USA) · <a href="https://klezmerarchive.org/" target="_blank" rel="noopener">Klezmer Archive</a></span>
+        </li>
+        <li>
+          <span class="name"><a href="https://eng.ox.ac.uk/people/david-lewis" target="_blank" rel="noopener">David Lewis</a></span>
+          <span class="role"><a href="https://oerc.ox.ac.uk" target="_blank" rel="noopener">Oxford e-Research Centre</a> &amp; <a href="https://gold.ac.uk" target="_blank" rel="noopener">Goldsmiths, University of London</a> (UK) · <a href="https://igor.gold.ac.uk/isms/ecolm/" target="_blank" rel="noopener"><abbr title="Electronic Corpus of Lute Music">ECOLM</abbr></a></span>
+        </li>
+        <li>
+          <span class="name">Laurent Pugin</span>
+          <span class="role"><a href="https://rism.digital" target="_blank" rel="noopener">RISM Digital Center</a> (Switzerland) · <a href="https://rism.online" target="_blank" rel="noopener">RISM Online</a></span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ====================== FUNDING & INSTITUTIONS ====================== -->
+  <section id="funding" class="alt funding" aria-labelledby="funding-heading">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Funding &amp; acknowledgements</p>
+        <h2 id="funding-heading" aria-label="Supported by the Austrian Science Fund">Supported by the Austrian Science <span class="gw"><span class="gx below lift" style="--s:.95em;--hx:50%;--dx:-.06em;--dip:.35em;--r:10deg"><span class="gly">Fun</span><span class="hand"><img class="hpic hpic-day" src="assets/hands/palm-gold.svg" alt="" aria-hidden="true"><img class="hpic hpic-night" src="assets/hands/palm-gold-dark.svg" alt="" aria-hidden="true"></span></span>d</span></h2>
+        <p>
+          We gratefully acknowledge funding by the <a href="https://www.fwf.ac.at" target="_blank" rel="noopener">Austrian Science Fund (FWF)</a>.<br>
+        </p>
+      </div>
+
+      <dl class="fund-meta">
+        <div>
+          <dt>Funder</dt>
+          <dd><a href="https://www.fwf.ac.at" target="_blank" rel="noopener">Austrian Science Fund (FWF)</a><br/><a href="https://doi.org/10.55776/PAT2277625" target="_blank" rel="noopener">PAT 2277625</a></dd>
+        </div>
+        <div>
+          <dt>Duration</dt>
+          <dd>May 2026 – April 2030</dd>
+        </div>
+        <div>
+          <dt>Research areas</dt>
+          <dd>50% Other Humanities · 50% Computer Sciences</dd>
+        </div>
+      </dl>
+
+      <ul class="logos" style="margin-top:2.5rem;">
+        <li>
+          <a href="https://iwk.mdw.ac.at" target="_blank" rel="noopener" title="Department of Music Acoustics – Wiener Klangstil">
+            <img src="assets/logos/IWK-logo2018-P281-short.svg" alt="IWK – Department of Music Acoustics – Wiener Klangstil" title="Department of Music Acoustics – Wiener Klangstil">
+          </a>
+        </li>
+        <li>
+          <a href="https://mdw.ac.at" target="_blank" rel="noopener" title="mdw – University of Music and Performing Arts Vienna">
+            <img src="assets/logos/MDW_Logo_englisch281.svg" alt="mdw – University of Music and Performing Arts Vienna" title="mdw – University of Music and Performing Arts Vienna">
+          </a>
+        </li>
+        <li>
+          <a href="https://www.fwf.ac.at" target="_blank" rel="noopener" title="FWF – Austrian Science Fund">
+            <img src="assets/logos/FWF_Logo_Zusatz_Dunkelblau_RGB_EN.svg" alt="FWF – Austrian Science Fund" title="FWF – Austrian Science Fund">
+          </a>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<!-- ====================== FOOTER ====================== -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-left">
+      <span>© <span id="year">2026</span> <a href="#top">Let's Encode!</a> · <a href="https://mdw.ac.at" target="_blank" rel="noopener">mdw — University of Music and Performing Arts Vienna</a></span>
+      <span class="footer-updated">Last updated: <time id="last-updated" datetime="2026-08-21">21 August 2026</time></span>
+    </div>
+    <span>
+      <a href="https://iwk.mdw.ac.at/lets-encode" target="_blank" rel="noopener">Project page</a>
+      &nbsp;·&nbsp;
+      <a href="https://mei-friend.mdw.ac.at" target="_blank" rel="noopener">mei-friend</a>
+      &nbsp;·&nbsp;
+      <a href="https://doi.org/10.55776/PAT2277625" target="_blank" rel="noopener">Funding</a>
+      &nbsp;·&nbsp;
+      <a href="https://iwk.mdw.ac.at/impressum/" target="_blank" rel="noopener">Imprint</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  // "Last updated" reflects the deployed file's Last-Modified time (≈ deploy date
+  // on GitHub Pages), so it stays current with no manual upkeep. Falls back to the
+  // date baked into the markup if the timestamp is missing/unparseable.
+  (function () {
+    var el = document.getElementById("last-updated");
+    if (!el) return;
+    var d = new Date(document.lastModified);
+    if (isNaN(d)) return;
+    el.dateTime = d.toISOString().slice(0, 10);
+    el.textContent = d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  })();
+
+  // Theme bulb toggle. Tapping it flips light/dark and saves the choice to
+  // localStorage so it's restored on the next visit. Until the user makes a
+  // choice we keep tracking the machine's colour-scheme setting live; once a
+  // choice is saved, that pick wins over the system setting.
+  (function () {
+    var btn = document.querySelector(".theme-toggle");
+    if (!btn) return;
+    var root = document.documentElement;
+
+    function stored() {
+      try { return localStorage.getItem("theme"); } catch (e) { return null; }
+    }
+
+    function apply(theme) {
+      root.dataset.theme = theme;
+      root.style.colorScheme = theme;
+      var dark = theme === "dark";
+      btn.setAttribute("aria-pressed", dark ? "true" : "false");
+      btn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+    }
+
+    apply(root.dataset.theme || "light");
+
+    btn.addEventListener("click", function () {
+      var next = root.dataset.theme === "dark" ? "light" : "dark";
+      apply(next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+
+    if (window.matchMedia) {
+      var mq = matchMedia("(prefers-color-scheme: dark)");
+      var onChange = function (e) {
+        if (!stored()) apply(e.matches ? "dark" : "light"); // system change only matters pre-choice
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    }
+  })();
+
+  // Mobile burger menu: toggles the primary nav dropdown.
+  (function () {
+    var btn = document.querySelector(".nav-toggle");
+    var nav = document.getElementById("primary-nav");
+    if (!btn || !nav) return;
+    function setOpen(open) {
+      nav.classList.toggle("open", open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+    }
+    btn.addEventListener("click", function () {
+      setOpen(!nav.classList.contains("open"));
+    });
+    nav.addEventListener("click", function (e) {
+      if (e.target.closest("a")) setOpen(false); // close after choosing a link
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") setOpen(false);
+    });
+    document.addEventListener("click", function (e) {
+      if (!nav.contains(e.target) && !btn.contains(e.target)) setOpen(false); // close on outside click
+    });
+  })();
+</script>
+<!-- Animated-logo driver: plays the hand sequence, then loops every 8–16s.
+     Respects prefers-reduced-motion and pauses on hidden tabs. -->
+<script src="lets-encode-logo.js" defer></script>
+</body>
+</html>

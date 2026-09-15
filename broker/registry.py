@@ -7,9 +7,8 @@ rename/transfer-proof reference the SPA resolves in the background. One SQLite
 table (see slug_db.py); no campaign content, no analytics.
 
 Mounted by app.py under /registry, on the same origin as the SPA (the Vite dev
-proxy and the production reverse proxy pass the path through unchanged, see
-deploy/apache.conf). Claiming and registering a
-name require the GitHub session — only logged-in users can create campaigns —
+proxy and the deployed reverse proxy pass the path through unchanged, see
+README.md §6). Claiming and registering a name require the GitHub session — only logged-in users can create campaigns —
 while the resolver is public, so logged-out visitors can browse campaigns.
 
 A name is taken in two steps, because a campaign's setup takes a while and the
@@ -47,7 +46,7 @@ Route map (paths relative to the /registry mount):
 Admin routes are gated by the ADMIN_TOKEN bearer check — a dev/local fallback
 and defence in depth, not a production auth system. In production the reverse
 proxy must enforce institutional auth for /registry/admin/ before requests
-reach the broker (see deploy/apache.conf). The routes serve only when
+reach the broker (see README.md §6). The routes serve only when
 ADMIN_TOKEN and ADMIN_ROUTES_ENABLED=1 are both set; otherwise they return 503
 (fail closed).
 """

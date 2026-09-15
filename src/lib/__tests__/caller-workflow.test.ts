@@ -1,18 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { RUN_REQUIREMENTS } from '../commands.ts';
 
 // The campaign repos' workflow runs on pull_request_target with a write token,
 // so its safety rests on never executing anything from the fork: the PR head
 // may be passed to the coordinator as data (env), but no step may check it out
 // or expand it into a command. These checks pin that invariant, which the
-// workflow otherwise states only in comments.
-const workflow = readFileSync(
-	fileURLToPath(new URL('../../../../user-repo-template/.github/workflows/caller.yml', import.meta.url)),
-	'utf8'
-);
+// workflow otherwise states only in comments. The workflow is read from the
+// template repository on GitHub, so the test does not depend on a local
+// checkout of the template.
+const workflowUrl =
+	'https://raw.githubusercontent.com/lets-encode/user-repo-template/main/.github/workflows/caller.yml';
+const response = await fetch(workflowUrl);
+assert.ok(response.ok, `fetching ${workflowUrl}: ${response.status}`);
+const workflow = await response.text();
 const lines = workflow.split('\n');
 const indentOf = (line: string) => line.length - line.trimStart().length;
 
