@@ -2,6 +2,25 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+// Each deployed instance builds from its own branch (README §6); the branch
+// selects the .env.<mode> overlay, so `npm run build` takes no --mode flag.
+// Any other branch builds in development mode; a detached HEAD has no branch
+// and must name the mode on the command line.
+const branchModes = { main: 'production', staging: 'staging', testing: 'testing' };
+
+function modeForBranch() {
+	const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+		encoding: 'utf8'
+	}).trim();
+	if (branch === 'HEAD') {
+		throw new Error('detached HEAD: pass --mode production|staging|testing to vite build');
+	}
+	const mode = branchModes[branch];
+	if (!mode) console.log(`branch "${branch}" is not deployed; building in development mode`);
+	return mode ?? 'development';
+}
 
 // The project website's index.html (static/) answers "/" on the dev server,
 // as mod_dir's DirectoryIndex does deployed. Vite serves the other static/
@@ -18,11 +37,22 @@ const serveWebsiteIndex = () => ({
 	}
 });
 
-export default defineConfig(({ mode }) => {
-	// svelte.config.js loads the PUBLIC_ env itself but has no access to Vite's
-	// mode; pass it through so both read the same .env files.
-	process.env.VITE_CONFIG_MODE = mode;
+export default defineConfig(({ command, mode }) => {
+	if (command === 'build') {
+		// A --mode on the command line overrides the branch-derived mode. The
+		// decision is stored in the environment because SvelteKit's build forks
+		// child processes that load this config again without the command
+		// line; they inherit the parent's choice instead of deriving their own.
+		const cliMode = process.argv.some(
+			(a) => a === '--mode' || a === '-m' || a.startsWith('--mode=')
+		);
+		mode = process.env.INSTIGATION_BUILD_MODE ??= cliMode ? mode : modeForBranch();
+	}
 	return {
+		mode,
+		// The .env files live in instances-config/ with services.json; svelte.config.js
+		// points SvelteKit's env loader at the same directory.
+		envDir: 'instances-config',
 		plugins: [serveWebsiteIndex(), sveltekit()],
 		define: {
 			// The footer's "app last updated" date, fixed at build time.

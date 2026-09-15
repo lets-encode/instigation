@@ -5,21 +5,22 @@ parentheses.
 
 ## Unreleased
 
-- Sign-in: when the session check receives a page instead of JSON (the broker mount is not proxied on the origin), the banner names the unreachable service instead of showing the JSON parse error.
-- Build output moves to `website/`, the deployed document root; the project website (refreshed from lets-encode.github.io; the start-a-campaign form and the link to `/campaigns` are withdrawn for now, the site is identical to upstream) moves into `static/` and is copied into it by the build. `deploy/` (release script and Apache vhosts) removed; the web server requirements are listed in README §6, and `static/.htaccess` carries the SPA fallback.
-- Tests: the caller.yml safety checks read the workflow from the template repository on GitHub instead of a local checkout.
-- Volunteer view redesigned: the header carries the title, the viewer's own standing ("You: 2 done · 1 claimed") and the campaign count; the next-task card shows the task's own page cropped to its measures (the opening system for pieces without pages); every other open task is one list with kind filters (encoding, review, preparation); pieces are one table with a segmented progress bar (done, in review, rest) and labelled counts, expanding to their tasks.
-- Comments panel: 380px wide by default (minimum 280px); one control opens and closes it, the button outside the panel, in every view; in the volunteer view the group keeps its width when the panel is dragged wider, so the task column narrows instead.
-- Volunteer view: rows are plain containers with real title buttons and headings; pills, avatars and buttons are accessible by keyboard and screen reader; the view stacks below 700px; the next-task button is an outline while a task panel is open; blocked tasks read "waits for …", finished ones "done"; logged out, the button starts the login.
-- Accessibility (WCAG 2.2 AA): small controls are at least 24px tall (segmented controls, pills, chips, link-style buttons, score links, zoom sliders, the wizard's discard button, the spread checkbox).
-- Accessibility: every console route sets a page title; the next-step badge keeps dark text on its light-blue fill in the dark theme; decorative separators are hidden from assistive technology; section labels, board columns and task-box titles are headings; the campaign list has a hidden top-level heading; the search bar shows a focus ring; the comment composer has an accessible name.
-- Console: the top bar wraps below 560px and hides the login name; the campaign filter bar wraps on narrow screens.
-- Palette: the canvas, tint and recessed surfaces are lighter (#eef1f7 / #e6eaf3 / #e3e7f0); each stage colour has one deep tone for small text and solid fills (blue #1b66c7, orange #ad561c, green #1e7a44, purple #7a56a3, red #bb3624) and a lighter wash, so 11px text reads 4.5:1 on canvas, card and wash while the hand tints stay for fills, glows and progress. Faint ink is #666d83. Dark-theme solid fills deepened for white labels.
-- Board: each lane is coloured as its stage, a solid header bar with the count over a body in the stage's wash; the dashed well is gone.
-- Board layout: lanes keep at least 200px and the board scrolls sideways before stacking (stack below 640px of container width). Below 1400px the piece rail drops its thumbnails; below 1100px it becomes a strip of piece chips above the board and the task panel floats over the board's right edge.
-- Icons: one SVG stroke set (`Icon.svelte`) replaces the unicode glyphs used as icons (arrows, chevrons, check, close, search, info, gear, pane switcher, staff reorder); text labels lose their trailing arrow characters.
-- Copy: background runs and result links say "submission" instead of "PR".
-- Copy: "Loading your claimed tasks…", "No open work.", "No campaigns yet. Create one with New campaign."; the Manage view says "expired claims" instead of "reaper"/"stale"; the pages step pluralises "encoding".
+- SPA config is committed in `instances-config/` and the build mode follows the checked-out branch.
+- Sign-in banner names the unreachable broker instead of showing a JSON parse error.
+- Build output moves to `website/`, the project website to `static/`; `deploy/` removed.
+- Tests read caller.yml from the template repository on GitHub.
+- Volunteer view redesigned: next-task card, filterable open-task list, pieces table.
+- Comments panel: 380px default width, one toggle button outside the panel in every view.
+- Volunteer view is keyboard- and screen-reader-accessible and stacks below 700px.
+- Small controls are at least 24px tall (WCAG 2.2 AA).
+- Accessibility: page titles, heading structure, focus ring on search, hidden decorative separators.
+- Top bar and campaign filter bar wrap on narrow screens.
+- Palette: lighter surfaces, one deep tone per stage colour for 4.5:1 text contrast.
+- Board lanes are coloured as their stage; the dashed well is gone.
+- Board scrolls sideways before stacking; the piece rail shrinks below 1400px and 1100px.
+- One SVG icon set replaces the unicode glyphs.
+- Copy says "submission" instead of "PR".
+- Copy: plainer empty-state and Manage-view wording.
 
 ## 0.32.0 – 2026-09-03
 
