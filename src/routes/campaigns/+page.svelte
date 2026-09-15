@@ -668,10 +668,16 @@
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 10px 16px;
+    padding: 6px 16px;
+    min-height: 42px;
+    box-sizing: border-box;
     color: inherit;
     text-decoration: none;
     min-width: 0;
+  }
+  .row .btn {
+    min-height: 0;
+    padding: 4px 10px;
   }
   a.row:hover {
     border-color: var(--info-line);

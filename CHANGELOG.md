@@ -18,6 +18,7 @@ parentheses.
 - Top bar and campaign filter bar wrap on narrow screens.
 - Palette: lighter surfaces, one deep tone per stage colour for 4.5:1 text contrast.
 - Board lanes are coloured as their stage; the dashed well is gone.
+- Open-work rows on landing page share one height; their buttons are compact.
 - One SVG icon set replaces the unicode glyphs.
 - Copy says "submission" instead of "PR".
 - Copy: plainer empty-state and Manage-view wording.
@@ -228,7 +229,7 @@ parentheses.
 ## 0.9.0 – 2026-07-20
 
 - Node UI improvements: movable nodes, per-page task when adding a facsimile, node-stack centering, better zooming. (`6b47b77`, `f90dcee`, `b5ad8c9`, `4a7bda2`)
-- Moved unit tests to src/lib/__tests__/ and normalized test imports. (`0a4a295`)
+- Moved unit tests to src/lib/**tests**/ and normalized test imports. (`0a4a295`)
 - Comment reformatting and edits. (`eae49d7`)
 
 ## 0.8.0 – 2026-07-17
