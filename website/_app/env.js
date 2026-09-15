@@ -1,0 +1,1 @@
+export const env={PUBLIC_FORGE:"github",PUBLIC_MEASURE_DETECTOR_URL:"https://measure-detector.edirom.de",PUBLIC_MEI_FRIEND_URL:"https://mei-friend.mdw.ac.at",PUBLIC_TEMPLATE_OWNER:"lets-encode",PUBLIC_TEMPLATE_REPO:"user-repo-template",PUBLIC_REPO_TOPIC:"lets-encode-platform"}

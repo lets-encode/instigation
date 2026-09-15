@@ -1,0 +1,7 @@
+# Copied into website/ (the document root) by the build. Applies only where
+# Apache allows overrides for this directory; the reverse-proxy mounts for the
+# session broker (/auth/, /registry/) cannot be set here — see README.md §6.
+
+# Serve existing files as-is and every other path with the SPA shell, so
+# client-side routes (/campaigns, /new, /<campaign>) resolve.
+FallbackResource /spa.html
