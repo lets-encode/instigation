@@ -4,6 +4,7 @@
 // live in that provider's module, not here.
 
 import { env } from '$env/dynamic/public';
+import services from '../../../instances-config/services.json';
 
 export interface ProviderConfig {
 	/** Which ForgeClient implementation to use (see forge/index.ts). */
@@ -42,11 +43,10 @@ export const provider: ProviderConfig = {
 export const registryUrl = env.PUBLIC_REGISTRY_URL || '/registry';
 
 /** The mei-friend instance volunteers are handed off to for editing. */
-export const meiFriendUrl = env.PUBLIC_MEI_FRIEND_URL || 'https://mei-friend.mdw.ac.at';
+export const meiFriendUrl = services.meiFriendUrl;
 
 /** The edirom measure-detector used to scaffold a score from page images. */
-export const measureDetectorUrl =
-	env.PUBLIC_MEASURE_DETECTOR_URL || 'https://measure-detector.edirom.de';
+export const measureDetectorUrl = services.measureDetectorUrl;
 
 /**
  * The central automation pointer written into each new campaign's config.yaml

@@ -1,14 +1,11 @@
 node_modules/
 /build
 /.svelte-kit
-.env
 .DS_Store
 broker/__pycache__/
 broker/instance/
 broker/.env
-.env.staging
-.env.testing
-.env.production
-.env.development
+instances-config/.env.local
+instances-config/.env.*.local
 .impeccable
 /website

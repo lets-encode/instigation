@@ -55,39 +55,31 @@ repositories. Private campaigns would need the broader `repo` scope.
 
 ## 3. Configure the SPA
 
-```bash
-cp .env.example .env
-```
+All SPA configuration lives in `instances-config/`, committed and public — nothing in it
+is secret; the OAuth credentials live only in the broker's env (next step).
 
-Fill in `.env` (all `PUBLIC_`, none secret — read at build/dev time by Vite):
+- `instances-config/.env` — the values shared by every deployment: the campaign template
+  repo (`PUBLIC_TEMPLATE_OWNER`, `PUBLIC_TEMPLATE_REPO`), the forge, and the
+  optional mount paths and automation pointer. Vite loads it in every mode.
+- `instances-config/.env.production`, `.env.staging`, `.env.testing`,
+  `.env.development` — the overlay for one deployment, holding only what
+  differs: today the `PUBLIC_REPO_TOPIC` that isolates each instance's campaign
+  repos. For builds, `vite.config.js` picks the overlay from the checked-out
+  branch (section 6); `npm run dev` uses `.env.development`.
+- `instances-config/services.json` — the external services the app talks to (the
+  mei-friend instance volunteers are handed off to, the measure detector that
+  scaffolds scores). Read by the app and by `svelte.config.js`, which lists
+  the detector in the CSP.
+- `instances-config/.env.local` and `instances-config/.env.<mode>.local` — personal overrides,
+  gitignored, loaded on top of the committed files.
 
-```
-PUBLIC_TEMPLATE_OWNER=your-username
-PUBLIC_TEMPLATE_REPO=your-template-repo
-PUBLIC_REPO_TOPIC=created-with-lets-encode-instigation-platform
-PUBLIC_FORGE=github
-PUBLIC_MEI_FRIEND_URL=https://mei-friend.mdw.ac.at
-PUBLIC_MEASURE_DETECTOR_URL=https://measure-detector.edirom.de
-#PUBLIC_BROKER_URL=/auth
-#PUBLIC_REGISTRY_URL=/registry
-#PUBLIC_AUTOMATION_REPO=lets-encode/instigation
-#PUBLIC_AUTOMATION_REF=main
-#PUBLIC_AUTOMATION_PATH=scripts/coordinator.ts
-```
-
-The OAuth credentials live only in the broker's env (next step). The SPA reaches
-the broker at `PUBLIC_BROKER_URL` (default `/auth`) and the name registry at
-`PUBLIC_REGISTRY_URL` (default `/registry`) — both proxied to the broker by the
-Vite dev server, and by Apache in production. `PUBLIC_AUTOMATION_*` is the
-central automation pointer written into each new campaign's `config.yaml`; pin
-`PUBLIC_AUTOMATION_REF` to a commit SHA for production releases. See
-`.env.example` for the full commentary.
-
-Vite loads `.env` in every mode and overlays `.env.<mode>` (`development`,
-`production`, `staging`, `testing`) on top, so a mode file holds only the
-variables whose values differ for that deployment. `svelte.config.js` reads the
-same files (via `VITE_CONFIG_MODE`, passed through in `vite.config.js`) to
-build the CSP.
+Every value is baked in at build time (`$env/dynamic/public`), so a change
+needs a rebuild. The SPA reaches the broker at `PUBLIC_BROKER_URL` (default
+`/auth`) and the name registry at `PUBLIC_REGISTRY_URL` (default `/registry`) —
+both proxied to the broker by the Vite dev server, and by Apache in production.
+`PUBLIC_AUTOMATION_*` is the central automation pointer written into each new
+campaign's `config.yaml`; pin `PUBLIC_AUTOMATION_REF` to a commit SHA for
+production releases. See the comments in `instances-config/.env` for the full commentary.
 
 ## 4. Run locally (two processes)
 
@@ -161,15 +153,19 @@ broker (section 4), with its own OAuth App whose callback is
   ```bash
   git pull
   npm ci
-  npm run build                    # production
-  npm run build -- --mode staging  # or testing
+  npm run build
   ```
 
-  The build empties `website/` and writes the SPA (`_app/`, `spa.html`) and
-  the project website (everything in `static/`) into it; requests arriving
-  during the build's few seconds get 404s. Every `PUBLIC_*` value — and the CSP
-  in `svelte.config.js` — is baked in at build time, so a config change needs
-  a rebuild. The broker is a separate process: restart it when `broker/`
+  The same commands on every instance: `vite.config.js` reads the checked-out
+  branch and builds `main` in production mode, `staging` in staging mode and
+  `testing` in testing mode, loading that `instances-config/.env.<mode>` overlay (section 3).
+  Any other branch builds in development mode; a detached HEAD refuses to
+  build without an explicit `--mode`, which always wins over the branch. The
+  build empties `website/` and writes the SPA (`_app/`, `spa.html`) and the
+  project website (everything in `static/`) into it; requests arriving during
+  the build's few seconds get 404s. Every `PUBLIC_*` value — and the CSP in
+  `svelte.config.js` — is baked in at build time, so a config change needs a
+  rebuild. The broker is a separate process: restart it when `broker/`
   changed.
 - **Web server requirements (institution-managed):** the SPA and its broker
   must share one origin, because the broker's session cookie is first-party.

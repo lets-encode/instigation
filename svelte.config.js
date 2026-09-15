@@ -1,27 +1,23 @@
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-import { loadEnv } from 'vite';
+import { readFileSync } from 'node:fs';
 
-// Hosts the app talks to are deployment config — read them from the same env
-// files Vite gives the app. VITE_CONFIG_MODE carries Vite's mode over from
-// vite.config.js (NODE_ENV is 'production' for every build, regardless of
-// mode). The session broker needs no CSP entry: it is mounted on the SPA's
-// own origin, covered by 'self'.
-const env = loadEnv(
-	process.env.VITE_CONFIG_MODE ?? process.env.NODE_ENV ?? 'production',
-	process.cwd(),
-	'PUBLIC_'
+// External services the app talks to, shared with src/lib/forge/config.ts.
+// The session broker needs no CSP entry: it is mounted on the SPA's own
+// origin, covered by 'self'.
+const services = JSON.parse(
+	readFileSync(new URL('./instances-config/services.json', import.meta.url), 'utf8')
 );
 // The measure-detector the campaign scaffolder POSTs page images to.
-const detectorOrigin = new URL(
-	env.PUBLIC_MEASURE_DETECTOR_URL || 'https://measure-detector.edirom.de'
-).origin;
+const detectorOrigin = new URL(services.measureDetectorUrl).origin;
 const dev = process.env.NODE_ENV === 'development';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
+		// The PUBLIC_ env files are read from instances-config/ (same directory as Vite's envDir).
+		env: { dir: 'instances-config' },
 		// Static SPA: all routes are client-rendered and served via the fallback,
 		// so the dynamic /[campaign] route resolves without a server. The output
 		// directory website/ is the web server's document root; the adapter
