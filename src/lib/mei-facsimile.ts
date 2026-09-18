@@ -60,6 +60,12 @@ export interface PageModel {
 	width: number;
 	height: number;
 	zones: ZoneModel[];
+	/**
+	 * Staff boxes, written as `<zone type="staff">` and referenced by nothing
+	 * in the body. Present on pieces prepared by OMR, whose layout task
+	 * corrects them and whose transcription crops them.
+	 */
+	staves?: MeasureBox[];
 }
 
 /** One staff of the score definition. */
@@ -276,15 +282,19 @@ function buildScoreDefXml(scoreDef: ScoreDefModel): string {
 	);
 }
 
-// A seed measure's body: one staff per staffDef, each holding a resting layer.
-function seedStaves(staffCount: number): string {
+// A seed measure's body: one staff per staffDef, each holding a resting
+// layer — or, for `empty`, a layer with nothing in it, which renders as bare
+// staff lines and leaves the measure's content to come.
+function seedStaves(staffCount: number, empty = false): string {
 	return Array.from(
 		{ length: Math.max(1, staffCount) },
 		(_, i) =>
 			`                  <staff n="${i + 1}">\n` +
-			`                     <layer n="1">\n` +
-			`                        <mRest/>\n` +
-			`                     </layer>\n` +
+			(empty
+				? `                     <layer n="1"/>\n`
+				: `                     <layer n="1">\n` +
+					`                        <mRest/>\n` +
+					`                     </layer>\n`) +
 			`                  </staff>\n`
 	).join('');
 }
@@ -292,15 +302,19 @@ function seedStaves(staffCount: number): string {
 /**
  * Emit the model as MEI. Stage A (`{}`) contains facsimile zones only; stage C
  * (`{ withBreaks: true }`) adds measures, page/system breaks and movements.
+ * `emptyMeasures` gives each measure its staves with empty layers instead of
+ * rests: the piece's notation arrives later, from transcription, and nothing
+ * is seeded in its place.
  * Every element carries a deterministic xml:id (surface-1, zone-1-2,
  * measure-3, staff-4, …) so rebuilds are stable and diffable.
  */
 export function buildFacsimileMei(
 	model: FacsimileModel,
-	opts: { withBreaks?: boolean } = {}
+	opts: { withBreaks?: boolean; emptyMeasures?: boolean } = {}
 ): string {
 	const withBreaks = Boolean(opts.withBreaks);
 	const withMeasures = withBreaks;
+	const body = seedStaves((model.scoreDef ?? DEFAULT_SCORE_DEF).staves.length, opts.emptyMeasures);
 	const scoreDef = model.scoreDef ?? DEFAULT_SCORE_DEF;
 	const surfaces: string[] = [];
 	// Section content grouped per movement: mdivParts[k] holds <mdiv> k+1's lines.
@@ -339,8 +353,15 @@ export function buildFacsimileMei(
 			}
 			parts.push(
 				`               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}" facs="#${zoneId}">\n` +
-					seedStaves(scoreDef.staves.length) +
+					body +
 					`               </measure>`
+			);
+		});
+		(page.staves ?? []).forEach((box, si) => {
+			zones.push(
+				`            <zone xml:id="staff-zone-${p}-${si + 1}" type="staff" ` +
+					`ulx="${Math.round(box.ulx)}" uly="${Math.round(box.uly)}" ` +
+					`lrx="${Math.round(box.lrx)}" lry="${Math.round(box.lry)}"/>`
 			);
 		});
 
@@ -428,6 +449,16 @@ export function buildBlankScoreMei(
 		`   </music>\n` +
 		`</mei>`
 	);
+}
+
+/**
+ * Swap every `<scoreDef>` block of an MEI document for one built from the
+ * model, leaving the measures as they are. Used for a piece whose measures
+ * hold notation a rebuild would discard.
+ */
+export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
+	const block = buildScoreDefXml(scoreDef).trim();
+	return mei.replace(/<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/g, () => block);
 }
 
 // One attribute's value from an XML tag string, unescaped; null if absent.
@@ -588,15 +619,20 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 		if (!graphic) continue;
 		const zones: ZoneModel[] = [];
 		const boxesOnly: MeasureBox[] = [];
+		const staves: MeasureBox[] = [];
 		for (const zoneMatch of body.matchAll(/<zone\b[^>]*>/g)) {
 			const tag = zoneMatch[0];
-			if (attr(tag, 'type') !== 'measure') continue;
 			const box = {
 				ulx: Number(attr(tag, 'ulx') ?? 0),
 				uly: Number(attr(tag, 'uly') ?? 0),
 				lrx: Number(attr(tag, 'lrx') ?? 0),
 				lry: Number(attr(tag, 'lry') ?? 0)
 			};
+			if (attr(tag, 'type') === 'staff') {
+				staves.push(box);
+				continue;
+			}
+			if (attr(tag, 'type') !== 'measure') continue;
 			label = attr(tag, 'n') ?? nextLabel(label);
 			const id = attr(tag, 'xml:id') ?? '';
 			zones.push({ box, label, pb: pbZones.has(id), sb: sbZones.has(id), mdiv: mdivZones.has(id) });
@@ -616,7 +652,8 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 			image: attr(graphic, 'target') ?? '',
 			width: Number(attr(graphic, 'width') ?? 0),
 			height: Number(attr(graphic, 'height') ?? 0),
-			zones
+			zones,
+			...(staves.length ? { staves } : {})
 		});
 	}
 

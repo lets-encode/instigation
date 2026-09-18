@@ -8,7 +8,9 @@
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { lookupSlug, resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
-  import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
+  import { findRow, pieceNamesOf,
+    piecePreparationsOf,
+  } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
     StateRow,
@@ -178,8 +180,9 @@
     allowSelfValidation,
   });
   const pieceNames = $derived(pieceNamesOf(pieces));
+  const piecePreparations = $derived(piecePreparationsOf(pieces));
   const board = $derived(
-    buildBoard(graphData, comments, history, viewer, logins, pieceNames),
+    buildBoard(graphData, comments, history, viewer, logins, pieceNames, Date.now(), piecePreparations),
   );
   const allCards = $derived(board.columns.flatMap((c) => c.cards));
   // Per-piece task progress, for the piece tiles.

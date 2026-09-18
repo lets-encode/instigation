@@ -98,7 +98,7 @@
       : g.task.task_id;
   const sizeOf = (g: Group): string => {
     if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
-    if (g.task.locator === "measure-zones") return "all pages";
+    if (g.task.locator === "measure-zones" || g.task.locator === "omr-layout") return "all pages";
     if (g.task.locator === "score-setup") return "score definition";
     return "whole file";
   };

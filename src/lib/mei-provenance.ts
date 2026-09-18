@@ -97,6 +97,18 @@ function withChange(head: string, c: Contribution): string {
 }
 
 /**
+ * Record applications in the score's <appInfo>, each once, matched by name.
+ * The score is returned unchanged when it has no <meiHead>.
+ */
+export function recordApplications(mei: string, names: string[]): string {
+	const match = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(mei);
+	if (!match) return mei;
+	let head = match[0];
+	for (const name of names) if (name.trim()) head = withApplication(head, name.trim());
+	return mei.slice(0, match.index) + head + mei.slice(match.index + match[0].length);
+}
+
+/**
  * Record a contribution in the score's header. The score is returned unchanged
  * when it has no <meiHead>.
  */

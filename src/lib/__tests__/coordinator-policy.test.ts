@@ -8,6 +8,7 @@ import {
 	appendedCommentsFromPatch,
 	classifyPullRequest,
 	touchesCampaignPaths,
+	pieceFieldForPath,
 	pieceKindForPath,
 	resolveEncodingTask,
 	resolvedCommentFromPatch,
@@ -261,5 +262,23 @@ test('pieceKindForPath reads the piece kind from the canonical config shape', ()
 	assert.equal(pieceKindForPath(config, 'sources/piece-01/score.mei'), 'facsimile');
 	assert.equal(pieceKindForPath(config, 'sources/piece-02/score.mei'), 'physical-only');
 	assert.equal(pieceKindForPath(config, 'sources/piece-09/score.mei'), null);
+	assert.equal(pieceKindForPath(null, 'sources/piece-01/score.mei'), null);
+});
+
+test('pieceFieldForPath reads one quoted field of the piece at a path', () => {
+	const config =
+		'pieces:\n' +
+		'  - id: "piece-01"\n' +
+		'    kind: "facsimile"\n' +
+		'    preparation: "omr"\n' +
+		'    path: "sources/piece-01/score.mei"\n' +
+		'  - id: "piece-02"\n' +
+		'    kind: "physical-only"\n' +
+		'    path: "sources/piece-02/score.mei"\n';
+	assert.equal(pieceFieldForPath(config, 'sources/piece-01/score.mei', 'preparation'), 'omr');
+	assert.equal(pieceKindForPath(config, 'sources/piece-01/score.mei'), 'facsimile');
+	// A piece without the field, and a path no piece carries.
+	assert.equal(pieceFieldForPath(config, 'sources/piece-02/score.mei', 'preparation'), null);
+	assert.equal(pieceFieldForPath(config, 'sources/piece-03/score.mei', 'kind'), null);
 	assert.equal(pieceKindForPath(null, 'sources/piece-01/score.mei'), null);
 });

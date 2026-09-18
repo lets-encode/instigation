@@ -14,6 +14,7 @@
   import CampaignPagesStep from "$lib/components/CampaignPagesStep.svelte";
   import CampaignSourceStep from "$lib/components/CampaignSourceStep.svelte";
   import CampaignPiecesStep from "$lib/components/CampaignPiecesStep.svelte";
+  import CampaignPreparationStep from "$lib/components/CampaignPreparationStep.svelte";
   import WizardCard from "$lib/components/WizardCard.svelte";
 
   // Mirror the wizard's entries into the browser as they change, so a setup
@@ -67,8 +68,10 @@
   <CampaignPagesStep />
 {:else if wizard.step === "source"}
   <CampaignSourceStep />
-{:else}
+{:else if wizard.step === "pieces"}
   <CampaignPiecesStep />
+{:else}
+  <CampaignPreparationStep />
 {/if}
 
 <style>

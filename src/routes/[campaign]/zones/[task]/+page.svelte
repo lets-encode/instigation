@@ -7,7 +7,7 @@
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FacsimileTaskData, CampaignTables } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
-  import { handle } from "$lib/campaign-graph.ts";
+  import { handle, sendBackTarget, typeLabel } from "$lib/campaign-graph.ts";
   import { elapsed } from "$lib/campaign-board.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
@@ -22,6 +22,10 @@
   import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
+  import { createOmrClient } from "$lib/omr-client.ts";
+  import { layoutBoxes, LAYOUT_PARAMETERS, type CocoLayout } from "$lib/omr-layout.ts";
+  import { provider, omr as omrModels } from "$lib/forge/config.ts";
+  import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -49,6 +53,8 @@
     sb: boolean;
     mdiv: boolean;
   };
+  // A staff box of an OMR-prepared piece: geometry only.
+  type EditStaff = { box: MeasureBox };
   type EditPage = {
     image: string;
     width: number;
@@ -58,7 +64,11 @@
     // browser refused the request — e.g. a CSP img-src that omits the raw host).
     failed: boolean;
     zones: EditZone[];
+    staves: EditStaff[];
   };
+  // The two box layers. Measure-correction tasks have measures only; a
+  // layout task (OMR) edits staves too, one layer at a time.
+  type Layer = "measures" | "staves";
 
   let loading = $state(false);
   // Whether a load has been attempted for the current params; a failed load
@@ -66,6 +76,21 @@
   let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let data = $state<FacsimileTaskData | null>(null);
+  // The task's kind: measure correction, or layout correction for an
+  // OMR-prepared piece. Both are edited here.
+  const taskTitle = $derived(typeLabel(data?.locator ?? "measure-zones"));
+  const stage = $derived(sendBackTarget(data?.locator ?? "measure-zones"));
+  const omr = $derived(data?.locator === "omr-layout");
+  // Which layer the pointer edits; the other is drawn but inert.
+  let tool = $state<Layer>("measures");
+  function setTool(value: Layer) {
+    tool = value;
+    selected = null;
+    hovered = null;
+  }
+  // A page's boxes in a layer, for the geometry code shared by both.
+  const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
+    layer === "staves" ? pages[p].staves : pages[p].zones;
   // The campaign tables behind the comments panel; refreshed on their own so
   // a posted comment never reloads the editor.
   let tables = $state<CampaignTables | null>(null);
@@ -203,6 +228,11 @@
     renumber();
   }
 
+  // Staves are kept top to bottom, then left to right.
+  function resortStaves(p: number) {
+    pages[p].staves.sort((a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx);
+  }
+
   async function load() {
     const f = forge();
     if (!f) return;
@@ -236,6 +266,7 @@
           sb: z.sb,
           mdiv: z.mdiv,
         })),
+        staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
       }));
       // A label that differs from what automatic numbering would produce is an
       // override (e.g. 10a/10b) — keep it through renumbering.
@@ -560,6 +591,7 @@
         sb: z.sb,
         mdiv: z.mdiv,
       })),
+      ...(omr ? { staves: pg.staves.map((s) => ({ ...s.box })) } : {}),
     }));
   }
 
@@ -567,12 +599,118 @@
     run(
       (c) =>
         invoke(
-          commands.submitZones,
+          omr ? commands.submitOmrLayout : commands.submitZones,
           { task_id: taskId, pages: toPageModels() },
           c,
         ),
       { overviewOnSuccess: true },
     );
+
+  // ------------------------------------------------------------------------
+  // Layout detection (OMR-prepared pieces)
+  //
+  // A layout task's boxes come from the Musibot layout model, run through
+  // the broker's relay when the claim holder opens a task whose score carries
+  // no zones yet; the task box offers a redo. Page bytes are read through the
+  // forge API; the result is seeded like measure detection's: reading order,
+  // continuous numbering, a system start on every row but the page's first.
+  let detectedFor = $state<string | null>(null);
+  $effect(() => {
+    if (
+      omr &&
+      canEdit &&
+      data &&
+      !runner.busy &&
+      detectedFor !== taskId &&
+      pages.length > 0 &&
+      pages.every((pg) => pg.zones.length === 0 && pg.staves.length === 0)
+    ) {
+      detectedFor = taskId;
+      detectLayout();
+    }
+  });
+  // Detecting again replaces every box, so the button arms on the first
+  // press and runs on the second.
+  let confirmingDetect = $state(false);
+  function detectAgain() {
+    if (!confirmingDetect) {
+      confirmingDetect = true;
+      return;
+    }
+    confirmingDetect = false;
+    detectLayout();
+  }
+
+  function seedLayout() {
+    for (const pg of pages) {
+      const rows = readingOrderRows(pg.zones.map((z) => z.box));
+      const byBox = new Map(pg.zones.map((z) => [z.box, z]));
+      pg.zones = rows.flatMap((row, r) =>
+        row.map((box, i) => ({ ...byBox.get(box)!, sb: i === 0 && r > 0 })),
+      );
+      pg.staves.sort((a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx);
+    }
+    renumber();
+  }
+
+  async function detectLayout() {
+    const f = forge();
+    if (!f || !data) return;
+    const fragment = data.fragment;
+    const client = createOmrClient(provider.brokerUrl);
+    await runner.run(async () => {
+      try {
+        runner.log.step("Checking the recognition service");
+        await client.requirePipelines([omrModels.layoutModel]);
+        let measures = 0;
+        let staves = 0;
+        for (const [p, pg] of pages.entries()) {
+          runner.log.step(`Detecting the layout of page ${p + 1} of ${pages.length}`);
+          const path = resolveRepoRelativeTarget(fragment, pg.image);
+          const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
+          if (!image) throw new Error(`the image of page ${p + 1} (${pg.image}) could not be read.`);
+          const layout = await client.withPage(async (pageId) => {
+            await client.upload(pageId, { "image.jpg": image });
+            const execution = await client.run(
+              pageId,
+              omrModels.layoutModel,
+              ["image.jpg"],
+              LAYOUT_PARAMETERS,
+            );
+            if (execution.state !== "completed") {
+              throw new Error(
+                `the layout model failed on page ${p + 1}: ${execution.error ?? execution.state}.`,
+              );
+            }
+            const files = await client.download(pageId, ["layout.json"]);
+            return JSON.parse(await files["layout.json"].text()) as CocoLayout;
+          });
+          const boxes = layoutBoxes(layout, pg);
+          pages[p].zones = boxes.measures.map((box) => ({
+            box,
+            override: null,
+            label: "",
+            sb: false,
+            mdiv: false,
+          }));
+          pages[p].staves = boxes.staves.map((box) => ({ box }));
+          measures += boxes.measures.length;
+          staves += boxes.staves.length;
+          runner.log.detail(`${boxes.staves.length} staves, ${boxes.measures.length} measures`);
+        }
+        seedLayout();
+        selected = null;
+        hovered = null;
+        resetHistory();
+        return {
+          ok: true,
+          message: `Layout detected: ${staves} staves and ${measures} measures on ${pages.length} page(s). Correct the boxes, then submit.`,
+        };
+      } catch (e) {
+        return { error: `Layout detection failed: ${(e as Error).message}` };
+      }
+    });
+  }
 
   // ------------------------------------------------------------------------
   // Undo / redo
@@ -587,6 +725,7 @@
     return src.map((pg) => ({
       ...pg,
       zones: pg.zones.map((z) => ({ ...z, box: { ...z.box } })),
+      staves: pg.staves.map((s) => ({ box: { ...s.box } })),
     }));
   }
 
@@ -606,12 +745,14 @@
     historyIndex = history.length - 1;
   }
 
-  // After a geometry change: re-sort the page into reading order, keep the
-  // same zone selected across the re-sort (its index may change) so further
-  // edits need no extra click, then record the step.
-  function commitGeometry(p: number, zone: EditZone) {
-    resort(p);
-    selected = { p, z: pages[p].zones.indexOf(zone) };
+  // After a geometry change: re-sort the page's layer, keep the same box
+  // selected across the re-sort (its index may change) so further edits need
+  // no extra click, then record the step.
+  function commitGeometry(p: number, z: number) {
+    const item = items(p)[z];
+    if (tool === "staves") resortStaves(p);
+    else resort(p);
+    selected = { p, z: items(p).indexOf(item) };
     commit();
   }
 
@@ -706,6 +847,7 @@
   }
   type Drag = {
     kind: "move" | "resize" | "draw";
+    layer: Layer;
     p: number;
     z: number;
     sx: number;
@@ -754,7 +896,7 @@
     e.stopPropagation();
     selected = { p, z };
     const { x, y } = svgXY(e, p);
-    drag = { kind, p, z, sx: x, sy: y, orig: { ...pages[p].zones[z].box }, moved: false, edges };
+    drag = { kind, layer: tool, p, z, sx: x, sy: y, orig: { ...items(p)[z].box }, moved: false, edges };
   }
 
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -768,7 +910,7 @@
     e.preventDefault();
     e.stopPropagation();
     selected = { p, z };
-    const box = pages[p].zones[z].box;
+    const box = items(p)[z].box;
     const pg = pages[p];
     const step = e.shiftKey ? 10 : 2;
     const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
@@ -779,7 +921,7 @@
     box.uly = Math.max(0, Math.min(pg.height - h, box.uly + dy));
     box.lrx = box.ulx + w;
     box.lry = box.uly + h;
-    commitGeometry(p, pages[p].zones[z]);
+    commitGeometry(p, z);
   }
 
   // Arrow keys on a focused resize handle move that handle's edges.
@@ -787,7 +929,7 @@
     if (!canEdit || !e.key.startsWith("Arrow")) return;
     e.preventDefault();
     e.stopPropagation();
-    const box = pages[p].zones[z].box;
+    const box = items(p)[z].box;
     const pg = pages[p];
     const step = e.shiftKey ? 10 : 2;
     const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
@@ -796,7 +938,7 @@
     if (edges.includes("e")) box.lrx = Math.min(pg.width, Math.max(box.ulx + 5, box.lrx + dx));
     if (edges.includes("n")) box.uly = Math.max(0, Math.min(box.lry - 5, box.uly + dy));
     if (edges.includes("s")) box.lry = Math.min(pg.height, Math.max(box.uly + 5, box.lry + dy));
-    commitGeometry(p, pages[p].zones[z]);
+    commitGeometry(p, z);
   }
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
@@ -804,16 +946,12 @@
     hovered = null;
     if (!canEdit) return;
     const { x, y } = svgXY(e, p);
-    pages[p].zones.push({
-      box: { ulx: x, uly: y, lrx: x, lry: y },
-      override: null,
-      label: "",
-      sb: false,
-      mdiv: false,
-    });
-    const z = pages[p].zones.length - 1;
+    const box = { ulx: x, uly: y, lrx: x, lry: y };
+    if (tool === "staves") pages[p].staves.push({ box });
+    else pages[p].zones.push({ box, override: null, label: "", sb: false, mdiv: false });
+    const z = items(p).length - 1;
     selected = { p, z };
-    drag = { kind: "draw", p, z, sx: x, sy: y, orig: { ulx: x, uly: y, lrx: x, lry: y }, moved: false, edges: "" };
+    drag = { kind: "draw", layer: tool, p, z, sx: x, sy: y, orig: { ...box }, moved: false, edges: "" };
   }
 
   function pointerMove(e: PointerEvent) {
@@ -822,7 +960,7 @@
     const dx = x - drag.sx;
     const dy = y - drag.sy;
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
-    const box = pages[drag.p].zones[drag.z].box;
+    const box = items(drag.p, drag.layer)[drag.z].box;
     const pg = pages[drag.p];
     if (drag.kind === "move") {
       const w = drag.orig.lrx - drag.orig.ulx;
@@ -848,33 +986,32 @@
 
   function pointerUp() {
     if (!drag) return;
-    const { kind, p, z, moved } = drag;
+    const { kind, layer, p, z, moved } = drag;
     drag = null;
     if (kind === "draw") {
-      const box = pages[p].zones[z].box;
+      const box = items(p, layer)[z].box;
       // A tiny drawn box was just a background click — drop it.
       if (box.lrx - box.ulx < 8 || box.lry - box.uly < 8) {
-        pages[p].zones.splice(z, 1);
+        items(p, layer).splice(z, 1);
         selected = null;
         return;
       }
     }
     if (kind !== "draw" && !moved) return; // plain select / handle click, no move
-    commitGeometry(p, pages[p].zones[z]);
+    commitGeometry(p, z);
   }
 
   function deleteSelected() {
-    if (!selected || !canEdit) return;
-    pages[selected.p].zones.splice(selected.z, 1);
-    resort(selected.p);
-    selected = null;
-    commit();
+    if (!selected) return;
+    deleteZone(selected.p, selected.z);
   }
 
+  // Remove a box of the active layer.
   function deleteZone(p: number, z: number) {
     if (!canEdit) return;
-    pages[p].zones.splice(z, 1);
-    resort(p);
+    items(p).splice(z, 1);
+    if (tool === "staves") resortStaves(p);
+    else resort(p);
     selected = null;
     hovered = null;
     commit();
@@ -916,7 +1053,18 @@
     return entries;
   }
 
+  // Same for the staff layer: the selected staff paints last.
+  function staffPaintOrder(pg: EditPage, p: number): { staff: EditStaff; s: number }[] {
+    const entries = pg.staves.map((staff, s) => ({ staff, s }));
+    if (tool === "staves" && selected?.p === p) {
+      const i = entries.findIndex((e) => e.s === selected!.z);
+      if (i >= 0) entries.push(entries.splice(i, 1)[0]);
+    }
+    return entries;
+  }
+
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
+  const staffCount = $derived(pages.reduce((n, p) => n + p.staves.length, 0));
   const movementCount = $derived(
     1 +
       pages.reduce(
@@ -960,17 +1108,18 @@
     [
       ...(canEdit
         ? [
-            "drag on the page to draw a measure · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)",
+            `drag on the page to draw a ${tool === "staves" ? "staff" : "measure"} · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)`,
           ]
         : []),
       "⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages",
       "purple = movement start",
+      ...(omr ? ["amber = staff"] : []),
     ].join("\n"),
   );
 </script>
 
 <svelte:head>
-  <title>Measure correction · {campaign} · Let's Encode!</title>
+  <title>{taskTitle} · {campaign} · Let's Encode!</title>
 </svelte:head>
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
@@ -1089,6 +1238,13 @@
         aria-label="Fit the whole page"
         title="Fit the whole page in the view, top to bottom"><FitIcon kind="page" /></button
       >
+      {#if omr && canEdit}
+        <span class="vline"></span>
+        <div class="seg" title="Which boxes the pointer edits; the other layer stays visible">
+          <button type="button" class:on={tool === "measures"} onclick={() => setTool("measures")}>Measures</button>
+          <button type="button" class:on={tool === "staves"} onclick={() => setTool("staves")}>Staves</button>
+        </div>
+      {/if}
       <span class="vline"></span>
       {#if canEdit}
         <button
@@ -1173,14 +1329,35 @@
                     onerror={() => (pages[p].failed = true)}
                   />
                 {/if}
+                {#each staffPaintOrder(pg, p) as { staff, s } (s)}
+                  <rect
+                    class="staff"
+                    class:passive={tool !== "staves"}
+                    class:selected={tool === "staves" && selected?.p === p && selected?.z === s}
+                    vector-effect="non-scaling-stroke"
+                    role="button"
+                    tabindex={tool === "staves" ? 0 : -1}
+                    aria-label={`Staff ${s + 1}: select, drag or resize`}
+                    x={staff.box.ulx}
+                    y={staff.box.uly}
+                    width={staff.box.lrx - staff.box.ulx}
+                    height={staff.box.lry - staff.box.uly}
+                    onpointerdown={(e) => startZoneDrag(e, p, s, "move")}
+                    onkeydown={(e) => zoneKeydown(e, p, s)}
+                  />
+                  {#if canEdit && tool === "staves" && selected?.p === p && selected?.z === s}
+                    {@render handles(p, s, staff.box, `Staff ${s + 1}`, 0, 0)}
+                  {/if}
+                {/each}
                 {#each paintOrder(pg, p) as { zone, z } (z)}
                   <rect
                     class="zone"
-                    class:selected={selected?.p === p && selected?.z === z}
+                    class:passive={tool === "staves"}
+                    class:selected={tool === "measures" && selected?.p === p && selected?.z === z}
                     class:mdivstart={startsMovement(p, z)}
                     vector-effect="non-scaling-stroke"
                     role="button"
-                    tabindex={0}
+                    tabindex={tool === "measures" ? 0 : -1}
                     aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
                     x={zone.box.ulx}
                     y={zone.box.uly}
@@ -1207,81 +1384,13 @@
                     text-anchor="middle"
                     font-size={fs}
                   >{lbl}</text>
-                  {#if canEdit && selected?.p === p && selected?.z === z}
-                    {@const r = Math.max(8, pg.width / 120)}
-                    {@const b = zone.box}
-                    {#each [
-                      { edges: "n", name: "top edge", x: b.ulx + r, y: b.uly - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
-                      { edges: "s", name: "bottom edge", x: b.ulx + r, y: b.lry - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
-                      { edges: "w", name: "left edge", x: b.ulx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
-                      { edges: "e", name: "right edge", x: b.lrx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
-                    ] as s (s.edges)}
-                      <rect
-                        class="edge {resizeCursor(s.edges)}"
-                        role="button"
-                        tabindex={0}
-                        aria-label={`Measure ${zone.label}: resize (${s.name})`}
-                        x={s.x}
-                        y={s.y}
-                        width={s.w}
-                        height={s.h}
-                        onpointerdown={(e) => startZoneDrag(e, p, z, "resize", s.edges)}
-                        onkeydown={(e) => resizeKeydown(e, p, z, s.edges)}
-                      />
-                    {/each}
-                    {#each [
-                      { edges: "nw", name: "top-left corner", cx: b.ulx, cy: b.uly },
-                      { edges: "ne", name: "top-right corner", cx: b.lrx, cy: b.uly },
-                      { edges: "sw", name: "bottom-left corner", cx: b.ulx, cy: b.lry },
-                      { edges: "se", name: "bottom-right corner", cx: b.lrx, cy: b.lry },
-                    ] as c (c.edges)}
-                      <circle
-                        class="handle {resizeCursor(c.edges)}"
-                        vector-effect="non-scaling-stroke"
-                        role="button"
-                        tabindex={0}
-                        aria-label={`Measure ${zone.label}: resize (${c.name})`}
-                        cx={c.cx}
-                        cy={c.cy}
-                        r={r}
-                        onpointerdown={(e) => startZoneDrag(e, p, z, "resize", c.edges)}
-                        onkeydown={(e) => resizeKeydown(e, p, z, c.edges)}
-                      />
-                    {/each}
-                    <!-- A delete button pinned inside the box's top-right corner,
-                         drawn in screen pixels via the inverse-scale transform;
-                         it drops below the label when the box is too narrow. -->
-                    {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
-                    {@const bx = Math.max(b.ulx + 4 / sc, b.lrx - 27 / sc)}
-                    {@const by = bx < b.ulx + inset + lblW + 6 / sc
-                      ? b.uly + inset + fs * 1.55 + 6 / sc
-                      : b.uly + 7 / sc}
-                    <g
-                      class="delbtn"
-                      role="button"
-                      tabindex={0}
-                      aria-label={`Measure ${zone.label}: delete`}
-                      transform={`translate(${bx}, ${by}) scale(${1 / sc})`}
-                      onpointerdown={(e) => e.stopPropagation()}
-                      onclick={() => deleteZone(p, z)}
-                      onkeydown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          deleteZone(p, z);
-                        }
-                      }}
-                    >
-                      <title>Delete this measure</title>
-                      <rect width="20" height="20" rx="6" />
-                      <path
-                        d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
-                      />
-                    </g>
+                  {#if canEdit && tool === "measures" && selected?.p === p && selected?.z === z}
+                    {@render handles(p, z, zone.box, `Measure ${zone.label}`, inset + lblW, inset + fs * 1.55)}
                   {/if}
                 {/each}
               </svg>
 
-              {#if canEdit && active && active.p === p && pg.zones[active.z]}
+              {#if canEdit && tool === "measures" && active && active.p === p && pg.zones[active.z]}
                 {@const z = active.z}
                 {@const zone = pg.zones[z]}
                 {@const box = zone.box}
@@ -1338,17 +1447,90 @@
     </div>
     </div>
 
+    <!-- The resize handles and delete button of the selected box in the
+         active layer, shared by measures and staves. `labelW`/`labelH` are the
+         label's extent inside the box, so the delete button drops below it
+         when the box is too narrow for both; 0 for a box without a label. -->
+    {#snippet handles(p: number, z: number, b: MeasureBox, name: string, labelW: number, labelH: number)}
+      {@const pg = pages[p]}
+      {@const r = Math.max(8, pg.width / 120)}
+      {#each [
+        { edges: "n", side: "top edge", x: b.ulx + r, y: b.uly - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
+        { edges: "s", side: "bottom edge", x: b.ulx + r, y: b.lry - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
+        { edges: "w", side: "left edge", x: b.ulx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
+        { edges: "e", side: "right edge", x: b.lrx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
+      ] as e (e.edges)}
+        <rect
+          class="edge {resizeCursor(e.edges)}"
+          role="button"
+          tabindex={0}
+          aria-label={`${name}: resize (${e.side})`}
+          x={e.x}
+          y={e.y}
+          width={e.w}
+          height={e.h}
+          onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", e.edges)}
+          onkeydown={(ev) => resizeKeydown(ev, p, z, e.edges)}
+        />
+      {/each}
+      {#each [
+        { edges: "nw", side: "top-left corner", cx: b.ulx, cy: b.uly },
+        { edges: "ne", side: "top-right corner", cx: b.lrx, cy: b.uly },
+        { edges: "sw", side: "bottom-left corner", cx: b.ulx, cy: b.lry },
+        { edges: "se", side: "bottom-right corner", cx: b.lrx, cy: b.lry },
+      ] as c (c.edges)}
+        <circle
+          class="handle {resizeCursor(c.edges)}"
+          vector-effect="non-scaling-stroke"
+          role="button"
+          tabindex={0}
+          aria-label={`${name}: resize (${c.side})`}
+          cx={c.cx}
+          cy={c.cy}
+          r={r}
+          onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", c.edges)}
+          onkeydown={(ev) => resizeKeydown(ev, p, z, c.edges)}
+        />
+      {/each}
+      <!-- A delete button pinned inside the box's top-right corner, drawn in
+           screen pixels via the inverse-scale transform. -->
+      {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
+      {@const bx = Math.max(b.ulx + 4 / sc, b.lrx - 27 / sc)}
+      {@const by = labelW && bx < b.ulx + labelW + 6 / sc ? b.uly + labelH + 6 / sc : b.uly + 7 / sc}
+      <g
+        class="delbtn"
+        role="button"
+        tabindex={0}
+        aria-label={`${name}: delete`}
+        transform={`translate(${bx}, ${by}) scale(${1 / sc})`}
+        onpointerdown={(ev) => ev.stopPropagation()}
+        onclick={() => deleteZone(p, z)}
+        onkeydown={(ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            deleteZone(p, z);
+          }
+        }}
+      >
+        <title>Delete this {name.split(" ")[0].toLowerCase()}</title>
+        <rect width="20" height="20" rx="6" />
+        <path
+          d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
+        />
+      </g>
+    {/snippet}
+
     {#snippet taskBox()}
       <!-- The snippet renders only while `data` is loaded (see its host). -->
       {@const d = data!}
       <div class="taskbox">
         <div class="tbhead">
-          <h2 class="abtitle">Measure correction</h2>
+          <h2 class="abtitle">{taskTitle}</h2>
           <code class="taskchip">{taskId}</code>
         </div>
         <div class="tbsection">
         <span class="abcount">
-          {measureCount} measure{measureCount === 1 ? "" : "s"}
+          {#if omr}{staffCount} {staffCount === 1 ? "staff" : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1 ? "" : "s"}
           · {movementCount} movement{movementCount === 1 ? "" : "s"}
         </span>
         {#if canEdit}
@@ -1371,12 +1553,27 @@
           <span class="lockpill amber">unclaimed — read-only</span>
           <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
         {/if}
+        {#if omr && canEdit}
+          <button
+            type="button"
+            class="btn"
+            class:btn-danger={confirmingDetect}
+            onclick={() => detectAgain()}
+            onblur={() => (confirmingDetect = false)}
+            disabled={runner.busy}
+            title="Run the layout model on every page again. Every staff and measure box is replaced."
+          >
+            {confirmingDetect ? "Replace all boxes?" : "Detect layout again"}
+          </button>
+        {/if}
         <button
           type="button"
           class="btn btn-primary submitbtn"
           onclick={() => submit()}
           disabled={runner.busy || !canEdit}
-          title="Submit the corrected measures, breaks and movements for review"
+          title={omr
+            ? "Submit the corrected staves, measures, breaks and movements for review"
+            : "Submit the corrected measures, breaks and movements for review"}
         >
           Submit corrections
         </button>
@@ -1469,8 +1666,8 @@
               class="btn btn-danger sendbackbtn"
               onclick={() => sendBack()}
               disabled={runner.busy || sendBackPending}
-              title="Return the task to measure correction: attribution and reviews reset."
-              >Send back to measure correction</button
+              title="Return the task to {stage}: attribution and reviews reset."
+              >Send back to {stage}</button
             >
           {/if}
         </div>
@@ -1820,6 +2017,24 @@
     stroke: rgba(139, 95, 191, 0.9);
     fill: rgba(139, 95, 191, 0.14);
     stroke-width: 3.5;
+  }
+  /* Amber, dashed, for staff boxes: a third hue outside the region palette. */
+  .staff {
+    fill: rgba(180, 116, 26, 0.08);
+    stroke: rgba(180, 116, 26, 0.9);
+    stroke-width: 1.5;
+    stroke-dasharray: 6 4;
+    cursor: pointer;
+  }
+  .staff.selected {
+    fill: rgba(180, 116, 26, 0.18);
+    stroke-width: 2.5;
+  }
+  /* The layer the tool does not edit: visible, not interactive. */
+  .zone.passive,
+  .staff.passive {
+    pointer-events: none;
+    opacity: 0.6;
   }
   .labelbg {
     fill: rgba(255, 255, 255, 0.88);

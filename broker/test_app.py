@@ -202,6 +202,80 @@ class BrokerTest(unittest.TestCase):
                 response = self.client.get("/iiif?url=https://ex.test/m")
         self.assertEqual(response.status_code, 400)
 
+    def test_omr_api_is_gated_configured_and_allowlisted(self):
+        self.assertEqual(self.client.get("/omr/api/pipelines").status_code, 401)
+        self.authenticate()
+        with patch.object(broker, "MUSIBOT_TOKEN", None):
+            response = self.client.get("/omr/api/pipelines")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["source"], "musibot")
+
+        with patch.object(broker, "MUSIBOT_TOKEN", "musibot-token"):
+            # The page listing and any unlisted endpoint are refused before
+            # anything reaches the service.
+            with patch.object(broker.requests, "request") as upstream:
+                self.assertEqual(self.client.get("/omr/api/musicorpus-pages").status_code, 404)
+                self.assertEqual(self.client.post("/omr/api/public-sessions").status_code, 404)
+                self.assertEqual(
+                    self.client.get("/omr/api/musicorpus-pages/abc/pipeline-executions").status_code,
+                    404,
+                )
+                upstream.assert_not_called()
+
+            relayed = SimpleNamespace(
+                status_code=201,
+                content=b'{"page_id":"p1","executions":[]}',
+                headers={"content-type": "application/json"},
+            )
+            with patch.object(broker.requests, "request", return_value=relayed) as upstream:
+                response = self.client.post(
+                    "/omr/api/musicorpus-pages/p1/pipeline-executions",
+                    data=b'{"pipeline_name":"mzk-staff"}',
+                    content_type="application/json",
+                )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()["page_id"], "p1")
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "musibot")
+        method, url = upstream.call_args.args
+        self.assertEqual((method, url), ("POST", f"{broker.MUSIBOT_URL}/musicorpus-pages/p1/pipeline-executions"))
+        headers = upstream.call_args.kwargs["headers"]
+        # The Musibot token goes upstream; the session's GitHub token never does.
+        self.assertEqual(headers["Authorization"], "Bearer musibot-token")
+        self.assertEqual(upstream.call_args.kwargs["data"], b'{"pipeline_name":"mzk-staff"}')
+
+    def test_omr_blob_is_restricted_to_the_service_host_and_capped(self):
+        self.assertEqual(self.client.get("/omr/blob?url=https://x.test/f").status_code, 401)
+        self.authenticate()
+        for url in ("https://evil.test/f", f"http://{broker.MUSIBOT_HOST}/f", ""):
+            with patch.object(broker.requests, "get") as upstream:
+                self.assertEqual(self.client.get(f"/omr/blob?url={url}").status_code, 400, url)
+                upstream.assert_not_called()
+
+        signed = f"https://{broker.MUSIBOT_HOST}/bucket/p1/image.jpg?X-Amz-Signature=abc"
+        with patch.object(broker.requests, "put", return_value=SimpleNamespace(ok=True, status_code=200, close=lambda: None)) as upstream:
+            response = self.client.put(f"/omr/blob?url={signed}", data=b"jpeg", content_type="image/jpeg")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(upstream.call_args.args[0], signed)
+        self.assertEqual(upstream.call_args.kwargs["data"], b"jpeg")
+        self.assertEqual(upstream.call_args.kwargs["headers"]["Content-Type"], "image/jpeg")
+
+        with patch.object(broker.requests, "put") as upstream:
+            response = self.client.put(
+                f"/omr/blob?url={signed}",
+                data=b"x" * (broker.OMR_MAX_BYTES + 1),
+                content_type="image/jpeg",
+            )
+            self.assertEqual(response.status_code, 413)
+            upstream.assert_not_called()
+
+        downloaded = self.iiif_response(b"<score-partwise/>", "application/xml")
+        with patch.object(broker.requests, "get", return_value=downloaded) as upstream:
+            response = self.client.get(f"/omr/blob?url={signed}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"<score-partwise/>")
+        self.assertEqual(response.headers["Content-Type"], "application/xml")
+        self.assertNotIn("Authorization", upstream.call_args.kwargs.get("headers", {}))
+
     def test_cross_origin_writes_are_rejected(self):
         # reject_cross_origin_writes runs before any route: a POST whose Origin
         # names another host is refused even without a session.

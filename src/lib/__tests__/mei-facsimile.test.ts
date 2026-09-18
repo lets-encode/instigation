@@ -13,7 +13,8 @@ import {
 	DEFAULT_SCORE_DEF,
 	type FacsimilePage,
 	type FacsimileModel,
-	type ScoreDefModel
+	type ScoreDefModel,
+	replaceScoreDef
 } from '../mei-facsimile.ts';
 
 // A minimal header for the generated scores; production headers come from
@@ -104,6 +105,58 @@ test('parseFacsimileMei round-trips the model through both active stages', () =>
 		{ withBreaks: true }
 	);
 	assert.equal(rebuilt, buildFacsimileMei(m, { withBreaks: true }));
+});
+
+test('staff zones are written as type="staff", round-trip, and reference nothing', () => {
+	const m = model();
+	m.pages[0].staves = [
+		{ ulx: 100, uly: 300, lrx: 1000, lry: 360 },
+		{ ulx: 100, uly: 420, lrx: 1000, lry: 480 }
+	];
+	const mei = buildFacsimileMei(m);
+	assert.equal(SyntaxValidator.validate(mei), true);
+	assert.ok(mei.includes('<zone xml:id="staff-zone-1-1" type="staff" ulx="100" uly="300" lrx="1000" lry="360"/>'));
+	assert.equal((mei.match(/<zone /g) ?? []).length, 5);
+	assert.equal((mei.match(/#staff-zone/g) ?? []).length, 0);
+
+	const parsed = parseFacsimileMei(mei);
+	assert.deepEqual(parsed.pages[0].staves, m.pages[0].staves);
+	// A page without staff zones parses without the field, as before.
+	assert.equal(parsed.pages[1].staves, undefined);
+	assert.equal(buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }), mei);
+});
+
+test('emptyMeasures: stage C measures hold staves with empty layers, no rests', () => {
+	const mei = buildFacsimileMei(model(), { withBreaks: true, emptyMeasures: true });
+	assert.equal(SyntaxValidator.validate(mei), true);
+	assert.equal((mei.match(/<measure /g) ?? []).length, 3);
+	assert.equal((mei.match(/<mRest/g) ?? []).length, 0);
+	// One empty layer per measure (addXmlIds gives each its xml:id).
+	assert.equal((mei.match(/<layer\b[^>]*\/>/g) ?? []).length, 3);
+	const parsed = parseFacsimileMei(mei);
+	assert.equal(parsed.hasMeasures, true);
+	assert.equal(parsed.hasBreaks, true);
+});
+
+test('replaceScoreDef swaps every <scoreDef> and leaves the measures alone', () => {
+	const m = model();
+	m.pages[1].zones[0].mdiv = true;
+	const mei = buildFacsimileMei(m, { withBreaks: true, emptyMeasures: true });
+	const scoreDef = {
+		...DEFAULT_SCORE_DEF,
+		staves: [
+			{ ...DEFAULT_SCORE_DEF.staves[0] },
+			{ ...DEFAULT_SCORE_DEF.staves[0], clefShape: 'F', clefLine: 4 }
+		],
+		keysig: '2f'
+	};
+	const replaced = replaceScoreDef(mei, scoreDef);
+	assert.equal((replaced.match(/<scoreDef keysig="2f">/g) ?? []).length, 2);
+	assert.equal((replaced.match(/<staffDef /g) ?? []).length, 4);
+	assert.equal(parseFacsimileMei(replaced).scoreDef.staves.length, 2);
+	// Measures are untouched: the same count, still with their single empty layer each.
+	assert.equal((replaced.match(/<measure /g) ?? []).length, 3);
+	assert.equal(replaced.replace(/<scoreDef[\s\S]*?<\/scoreDef>/g, ''), mei.replace(/<scoreDef[\s\S]*?<\/scoreDef>/g, ''));
 });
 
 test('movements: a flagged zone opens a new <mdiv>; flags round-trip', () => {

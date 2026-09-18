@@ -14,7 +14,7 @@ import {
 } from './campaign-graph.ts';
 import type { GraphData, Logins, NodeSlot, StatusKey } from './campaign-graph.ts';
 import { findRow, isFinalValidation } from './campaign-tables.ts';
-import type { CommentRow, HistoryRow, PieceNames } from './campaign-tables.ts';
+import type { CommentRow, HistoryRow, PieceNames, PiecePreparations } from './campaign-tables.ts';
 
 // ---------------------------------------------------------------------------
 // Shared display helpers
@@ -53,6 +53,7 @@ export function cardTitle(fragment: string, locator: string, names: PieceNames =
 	const page = /^surface-(\d+)$/.exec(locator);
 	if (page) return `${pieceLabel(fragment, names)} · p. ${page[1]}`;
 	if (locator === 'score-setup') return `${pieceLabel(fragment, names)} · setup`;
+	if (locator === 'omr-layout') return `${pieceLabel(fragment, names)} · layout correction`;
 	if (isPreTask(locator)) return `${pieceLabel(fragment, names)} · measure correction`;
 	return pieceLabel(fragment, names);
 }
@@ -227,7 +228,13 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
  */
 export function cardPill(card: BoardCard, viewer = ''): string {
 	const kind =
-		card.locator === 'score-setup' ? 'setup' : card.pre ? 'measure correction' : '';
+		card.locator === 'score-setup'
+			? 'setup'
+			: card.locator === 'omr-layout'
+				? 'layout correction'
+				: card.pre
+					? 'measure correction'
+					: '';
 	const prefix = kind ? `${kind} · ` : '';
 	switch (card.column) {
 		case 'blocked':
@@ -305,7 +312,8 @@ export function buildBoard(
 	viewer = '',
 	logins: Logins = {},
 	names: PieceNames = {},
-	now = Date.now()
+	now = Date.now(),
+	preparations: PiecePreparations = {}
 ): Board {
 	const nodes = buildGraph(d, viewer, logins);
 	const columns: BoardColumn[] = (Object.keys(COLUMN_LABELS) as ColumnKey[]).map((key) => ({
@@ -327,7 +335,13 @@ export function buildBoard(
 			task: n.task,
 			column,
 			title: cardTitle(def.fragment, def.locator, names),
-			typeLine: n.kind === 'pre' ? typeLabel(def.locator) : 'Encoding',
+			// A page of an OMR-prepared piece starts from a transcription draft.
+			typeLine:
+				n.kind === 'pre'
+					? typeLabel(def.locator)
+					: preparations[def.fragment] === 'omr' && /^surface-\d+$/.test(def.locator)
+						? 'Correct the draft'
+						: 'Encoding',
 			pre: n.kind === 'pre',
 			locator: def.locator,
 			statusKey: n.statusKey,

@@ -3,6 +3,14 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 0.34.0 – 2026-09-18
+
+- Encoding tasks of an OMR piece ("Correct the draft · page N" on the board) start from a transcription: when the task is opened, the page's staves are cropped, transcribed with the Musibot staff pipeline, stitched into a page score, converted with verovio, inserted into the page's measures and committed to the task branch before mei-friend opens; mismatches and failed staves are reported.
+- Score setup of an OMR piece: staff count from the layout and editable while the piece holds no notation; clefs pre-filled from the system with the most staves, key and meter from the first system, when the task is opened (redo button). The submission rebuilds the empty measures for the definition, or replaces the definition alone once transcriptions are in.
+- Zone editor: a layout-correction task runs the Musibot layout model when its claim holder opens it, shows staff boxes as a second, editable layer (Measures/Staves tool), and submits staff zones with empty measures (`campaign.submitOmrLayout`).
+- Broker relays the Musibot OMR service at `/omr` (login-gated, a fixed set of endpoints, file transfers restricted to the service's host; `MUSIBOT_URL`, `MUSIBOT_TOKEN`); the console gets a client for it and the models are pinned in `services.json`. Nothing calls it yet.
+- Wizard: a Preparation step after Pieces chooses measure detection or optical music recognition for the facsimile pieces and finishes the setup; measure detection now runs on Finish, not while pieces are marked. OMR pieces get a layout pre-task (`omr-layout`) instead of measure correction; recognition itself is not wired up yet. Steps with nothing to do are left out of the step rail.
+
 ## 0.33.0 – 2026-09-15
 
 - Board stacks its lanes instead of scrolling sideways; the task panel floats and the piece rail shrinks to dots before that happens. Piece rail shows per-category counts as cards.

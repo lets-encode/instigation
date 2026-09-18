@@ -276,6 +276,8 @@ export interface PieceRef {
 	path: string;
 	/** The piece's header title; '' when unset. */
 	title: string;
+	/** How the piece is prepared ('measure-detection', 'omr'); absent when the config states none. */
+	preparation?: string;
 }
 
 /**
@@ -289,9 +291,26 @@ export function configPieces(yaml: string | null): PieceRef[] {
 	for (const entry of block.split(/^ {2}- /m).slice(1)) {
 		const path = configString(entry, 'path');
 		// The only `title:` in an entry is its header's.
-		if (path) pieces.push({ id: configString(entry, 'id'), path, title: configString(entry, 'title') });
+		if (path) {
+			const preparation = configString(entry, 'preparation');
+			pieces.push({
+				id: configString(entry, 'id'),
+				path,
+				title: configString(entry, 'title'),
+				...(preparation ? { preparation } : {})
+			});
+		}
 	}
 	return pieces;
+}
+
+/** Fragment path → the piece's preparation, for the pieces that state one. */
+export type PiecePreparations = Record<string, string>;
+
+export function piecePreparationsOf(pieces: PieceRef[]): PiecePreparations {
+	const preparations: PiecePreparations = {};
+	for (const p of pieces) if (p.preparation) preparations[p.path] = p.preparation;
+	return preparations;
 }
 
 /** Fragment path → piece display name, for task titles. */

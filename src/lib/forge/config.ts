@@ -5,6 +5,7 @@
 
 import { env } from '$env/dynamic/public';
 import services from '../../../instances-config/services.json';
+import type { OmrPipeline } from '../omr-client.ts';
 
 export interface ProviderConfig {
 	/** Which ForgeClient implementation to use (see forge/index.ts). */
@@ -47,6 +48,13 @@ export const meiFriendUrl = services.meiFriendUrl;
 
 /** The edirom measure-detector used to scaffold a score from page images. */
 export const measureDetectorUrl = services.measureDetectorUrl;
+
+/**
+ * The Musibot models the OMR preparation runs, pinned by version and reached
+ * through the broker's /omr relay: the layout model (page image → staff and
+ * measure boxes) and the staff pipeline (one staff crop → MusicXML).
+ */
+export const omr: { layoutModel: OmrPipeline; staffPipeline: OmrPipeline } = services.omr;
 
 /**
  * The central automation pointer written into each new campaign's config.yaml

@@ -6,20 +6,28 @@ import type { CommandEnvelope } from './command-envelope.ts';
 export type PullRequestKind = 'claim' | 'validation' | 'comment' | 'encoding';
 
 /**
- * The kind of the config.yaml piece whose path is `path`, or null when no
- * piece carries it. Reads the canonical shape configToYaml emits — each piece
- * entry opens with `- id:` and lists `kind:` and `path:` as quoted scalars —
- * so the coordinator can tell a physical piece (page spans joined wholesale)
- * from a facsimile one (measures matched by id) without a YAML parser.
+ * One quoted scalar field (`kind`, `preparation`, …) of the config.yaml piece
+ * whose path is `path`, or null when no piece carries the path or the piece
+ * has no such field. Reads the canonical shape configToYaml emits — each
+ * piece entry opens with `- id:` and lists its fields as quoted scalars — so
+ * the coordinator and the console need no YAML parser.
  */
-export function pieceKindForPath(configText: string | null, path: string): string | null {
+export function pieceFieldForPath(configText: string | null, path: string, key: string): string | null {
 	for (const entry of (configText ?? '').split(/^\s*- id:/m).slice(1)) {
-		const kind = /^\s*kind:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
 		const entryPath = /^\s*path:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
-		if (!kind || !entryPath) continue;
-		if (JSON.parse(`"${entryPath[1]}"`) === path) return JSON.parse(`"${kind[1]}"`);
+		if (!entryPath || JSON.parse(`"${entryPath[1]}"`) !== path) continue;
+		const value = new RegExp(`^\\s*${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"`, 'm').exec(entry);
+		return value ? JSON.parse(`"${value[1]}"`) : null;
 	}
 	return null;
+}
+
+/**
+ * The kind of the piece at `path`: a physical piece's page spans are joined
+ * wholesale, a facsimile piece's measures are matched by id.
+ */
+export function pieceKindForPath(configText: string | null, path: string): string | null {
+	return pieceFieldForPath(configText, path, 'kind');
 }
 
 /** Return the sole added CSV row in a patch that removes no rows. */

@@ -15,6 +15,7 @@
 // committed the campaign, the record is removed. So every record here describes
 // something that can be continued.
 
+import type { Preparation } from './campaign-init.ts';
 import type { EncodingSource, PageImage } from './prepare-images.ts';
 import type { SourceMetadata } from './source-metadata.ts';
 import type { Piece } from './pieces.ts';
@@ -40,6 +41,8 @@ export interface DraftEntries {
 	encodings: EncodingSource[];
 	source: SourceMetadata;
 	pieces: Piece[];
+	/** How facsimile pieces are prepared; absent in records stored before it existed. */
+	preparation?: Preparation;
 }
 
 export interface WizardDraft {
@@ -71,7 +74,8 @@ const STEP_IDS: readonly WizardStepId[] = [
 	'upload',
 	'pages',
 	'source',
-	'pieces'
+	'pieces',
+	'preparation'
 ];
 
 // Storage is read through this so the module can be used where there is none.

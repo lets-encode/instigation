@@ -121,7 +121,7 @@ export interface NextTask {
 	/** The open review slot's subtask id (action 'review'); '' otherwise. */
 	subtask: string;
 	/** The work's stage, for labelling the suggestion. */
-	kind: 'score setup' | 'measure correction' | 'encoding' | 'review';
+	kind: 'score setup' | 'measure correction' | 'layout correction' | 'encoding' | 'review';
 }
 
 const workKind = (locator: string): NextTask['kind'] =>
@@ -129,7 +129,9 @@ const workKind = (locator: string): NextTask['kind'] =>
 		? 'score setup'
 		: locator === 'measure-zones'
 			? 'measure correction'
-			: 'encoding';
+			: locator === 'omr-layout'
+				? 'layout correction'
+				: 'encoding';
 
 /**
  * The campaign's suggested next task: the first task the viewer can act on

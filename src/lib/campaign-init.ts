@@ -11,8 +11,9 @@
 //   - config.yaml            (configToYaml)
 //   - sources/<piece>/score.mei  (one per piece; built by mei-facsimile.ts)
 //   - tracking/task.csv      (buildTaskCsv: per piece, a measure-correction
-//                             pre-task, a score-setup pre-task and one encoding
-//                             task per covered page for a facsimile piece; one
+//                             or layout pre-task, a score-setup pre-task and
+//                             one encoding task per covered page for a
+//                             facsimile piece; one
 //                             whole-file task for an encoded piece; a
 //                             score-setup pre-task plus per-page or whole-file
 //                             tasks for a physical piece; each with a
@@ -59,10 +60,22 @@ export interface ConfigPiece {
 	path: string;
 	/** Regions this piece covers. Empty for encoded and physical pieces. */
 	zones: ConfigZone[];
+	/**
+	 * For a facsimile piece, how its score is prepared before encoding:
+	 * 'measure-detection' (measure boxes detected at creation and corrected in
+	 * the measure-correction pre-task) or 'omr' (staff and measure boxes from
+	 * the Musibot layout model, corrected in the layout pre-task; encoding
+	 * starts from its transcription). Unset means 'measure-detection'.
+	 */
+	preparation?: string;
 	/** For a physical piece, how many pages of the source it spans; unset = unknown. */
 	pages?: number;
 	header: { title: string; composer: string };
 }
+
+/** The ways a facsimile piece's score can be prepared before encoding. */
+export const PREPARATIONS = ['measure-detection', 'omr'] as const;
+export type Preparation = (typeof PREPARATIONS)[number];
 
 /** A schema-v3 campaign config object. */
 export interface CampaignConfig {
@@ -150,6 +163,14 @@ export function assertSupported(config: CampaignConfig): void {
 			);
 		}
 		if (!piece.path) throw new Error(`Piece ${piece.id} has no path.`);
+		if (
+			piece.preparation !== undefined &&
+			!PREPARATIONS.includes(piece.preparation as Preparation)
+		) {
+			throw new Error(
+				`Unsupported piece preparation: ${piece.preparation} (only 'measure-detection' and 'omr' are implemented).`
+			);
+		}
 	}
 	// Two pieces sharing a path would make a submission ambiguous: the
 	// coordinator resolves a task by its fragment path alone.
@@ -233,6 +254,7 @@ export function configToYaml(config: CampaignConfig): string {
 			return (
 				`  - id: ${yamlStr(piece.id)}\n` +
 				`    kind: ${yamlStr(piece.kind)}\n` +
+				(piece.preparation ? `    preparation: ${yamlStr(piece.preparation)}\n` : '') +
 				`    path: ${yamlStr(piece.path)}\n` +
 				(piece.pages ? `    pages: ${piece.pages}\n` : '') +
 				`    zones:${zones ? `\n${zones}` : ' []\n'}` +
@@ -305,7 +327,10 @@ export interface PlannedTask {
  *
  * A facsimile piece opens with its measure-correction pre-task (DESIGN.md §7a,
  * locator `measure-zones`) covering measure boxes and numbers, page/system
- * breaks and movement boundaries. Its score-setup pre-task (locator
+ * breaks and movement boundaries — or, when prepared by OMR, with its layout
+ * pre-task (locator `omr-layout`), which covers staff boxes as well and whose
+ * measures come from the layout model rather than from detection at creation.
+ * Its score-setup pre-task (locator
  * `score-setup`, depending on the measure task) follows, delivering the
  * piece's initial score definition — staves with their clefs and instrument
  * labels, key signature and meter; its submission rebuilds the file and
@@ -358,7 +383,8 @@ export function planTasks(config: CampaignConfig, surfaces?: PieceSurfaces): Pla
 			continue;
 		}
 		const pre = preTaskId(++preTasks);
-		planned.push({ id: pre, fragment: piece.path, locator: 'measure-zones', dependsOn: '' });
+		const locator = piece.preparation === 'omr' ? 'omr-layout' : 'measure-zones';
+		planned.push({ id: pre, fragment: piece.path, locator, dependsOn: '' });
 		const setup = preTaskId(++preTasks);
 		planned.push({ id: setup, fragment: piece.path, locator: 'score-setup', dependsOn: pre });
 		const pages = surfacesFor(piece, surfaces);

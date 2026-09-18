@@ -40,14 +40,15 @@ import { sendBackTarget } from './campaign-graph.ts';
 import type { TaskRow, StateRow, LockRow, HistoryRow, CommentRow, PieceRef } from './campaign-tables.ts';
 import { appendEnvelopeToPrBody, envelopeColumns } from './command-envelope.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
-import { parseFacsimileMei, buildFacsimileMei, buildBlankScoreMei } from './mei-facsimile.ts';
+import { parseFacsimileMei, buildFacsimileMei, buildBlankScoreMei, replaceScoreDef } from './mei-facsimile.ts';
 import type { PageModel, ParsedFacsimile, ScoreDefModel } from './mei-facsimile.ts';
-import { pieceKindForPath } from './coordinator-policy.ts';
+import { pieceFieldForPath, pieceKindForPath } from './coordinator-policy.ts';
 import { splicePage, splicePageSpan } from './mei-page-splice.ts';
 import { resolveFacsimileImageUrls } from './facsimile-images.ts';
 import { WorkflowRunWatch } from './run-watch.ts';
 import { checkMei } from './mei-check.ts';
 import type { ProgressUpdate } from './run-watch.ts';
+import type { OmrModels } from './omr-page-draft.ts';
 
 const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
@@ -71,6 +72,10 @@ export interface CommandContext {
 	viewerLogin: string;
 	/** Editor instance used for the mei-friend hand-off. */
 	meiFriendUrl?: string;
+	/** The session broker's mount, for the OMR relay; unset when the caller has no broker. */
+	brokerUrl?: string;
+	/** The OMR models, pinned by version; unset when OMR is not configured. */
+	omr?: OmrModels;
 	/**
 	 * Progress for a busy indicator: `step` opens a new stage, `detail` says
 	 * which part of the running stage is being worked on. Pass a no-op when
@@ -616,13 +621,15 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 	async run({ task_id }, ctx, envelope) {
 		const { forge: f, owner, repo, viewer } = ctx;
 		try {
-			const [taskCsv, stateCsv] = await Promise.all([
+			const [taskCsv, stateCsv, configYaml] = await Promise.all([
 				f.getRepoFile(owner, repo, TASK_PATH),
-				f.getRepoFile(owner, repo, STATE_PATH)
+				f.getRepoFile(owner, repo, STATE_PATH),
+				f.getRepoFile(owner, repo, 'config.yaml')
 			]);
-			const fragment = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '')?.fragment;
+			const taskDef = findRow(parseTaskCsv(taskCsv ?? ''), task_id, '');
+			const fragment = taskDef?.fragment;
 			const task = findRow(parseStateCsv(stateCsv ?? '').rows, task_id, '');
-			if (!fragment || !task) return { error: `Unknown task ${task_id}.` };
+			if (!taskDef || !fragment || !task) return { error: `Unknown task ${task_id}.` };
 
 			ctx.progress({ step: 'Preparing the score for mei-friend…' });
 			const { sha, canPush } = await f.getRepoHead(owner, repo);
@@ -636,6 +643,8 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			// sides always agree without guessing.
 			const ref = `encode-${task_id}`;
 			const workRepo = canPush ? { owner, repo } : await f.ensureFork(owner, repo);
+			// Whether the branch now sits at the head with nothing of its own on it.
+			let fresh = true;
 			try {
 				await f.createBranch(workRepo.owner, workRepo.repo, ref, sha);
 				console.log('[editor] created branch', ref, 'in', `${workRepo.owner}/${workRepo.repo}`, 'at', sha);
@@ -645,10 +654,40 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 				// (e.g. created before the init commit), fast-forward it to the
 				// current head; a branch with its own commits — work in progress —
 				// is left untouched.
-				const ffed = await f.fastForwardBranch(workRepo.owner, workRepo.repo, ref, sha);
-				console.log('[editor] branch', ref, 'already existed; fast-forward to', sha, '=>', ffed);
+				fresh = await f.fastForwardBranch(workRepo.owner, workRepo.repo, ref, sha);
+				console.log('[editor] branch', ref, 'already existed; fast-forward to', sha, '=>', fresh);
 			}
 			const meiParam = '&connect=true';
+
+			// A page task of an OMR-prepared piece starts from a transcription of
+			// its page, committed to the fresh branch before mei-friend opens. A
+			// branch with work in progress keeps it.
+			let draft: { note: string; warn: boolean } | null = null;
+			const pageNo = Number(/^surface-(\d+)$/.exec(taskDef.locator)?.[1]);
+			if (fresh && pageNo && pieceFieldForPath(configYaml, fragment, 'preparation') === 'omr') {
+				if (!ctx.brokerUrl || !ctx.omr) {
+					return { error: 'This page needs a transcription draft, but OMR is not configured here.' };
+				}
+				ctx.progress({ step: 'Preparing the transcription draft…' });
+				try {
+					const { draftPage } = await import('./omr-page-draft.ts');
+					draft = await draftPage({
+						forge: f,
+						owner,
+						repo,
+						headSha: sha,
+						workRepo,
+						branch: ref,
+						fragment,
+						page: pageNo,
+						brokerUrl: ctx.brokerUrl,
+						models: ctx.omr,
+						progress: (detail) => ctx.progress({ detail })
+					});
+				} catch (e) {
+					return { error: `Could not prepare the transcription draft: ${(e as Error).message}` };
+				}
+			}
 
 			// The branch ref was created or moved a moment ago, and GitHub's
 			// Contents API can briefly lag ref updates — retry the lookup rather
@@ -669,6 +708,8 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			);
 			let prUrl: string | undefined;
 			let message = 'Opening the score in mei-friend. After committing there, use “Submit encoding”.';
+			if (draft) message = `${draft.note} ${message}`;
+			const warn = draft?.warn || undefined;
 			if (task.status === 'encoding_required' && !mine) {
 				ctx.progress({ step: 'Opening the encoding claim…' });
 				const pr = await openClaimPr(ctx, task_id, '', 'encoding', envelope);
@@ -684,10 +725,10 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 					// instead of opening a tab for a task that may not be theirs.
 					return { ok: true, warn: true, meiFriendUrl: url, prUrl, message: `${res.message}` };
 				}
-				message = `${res?.message} Opening the score in mei-friend — after committing there, use “Submit encoding”.`;
-				return { ok: true, meiFriendUrl: url, prUrl, message };
+				message = `${res?.message} ${draft ? `${draft.note} ` : ''}Opening the score in mei-friend — after committing there, use “Submit encoding”.`;
+				return { ok: true, warn, meiFriendUrl: url, prUrl, message };
 			}
-			return { ok: true, meiFriendUrl: url, prUrl, message };
+			return { ok: true, warn, meiFriendUrl: url, prUrl, message };
 		} catch (e) {
 			return { error: `Open in mei-friend failed: ${(e as Error).message}` };
 		}
@@ -1090,6 +1131,9 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
 // ---------------------------------------------------------------------------
 // The facsimile pre-task commands (zone editor)
 
+/** Whether a score holds notation in its measures rather than seeds or empty layers. */
+const hasNotation = (mei: string): boolean => /<(note|rest|chord|space|beam|tuplet)\b/.test(mei);
+
 /** Everything the zone editor needs about a facsimile pre-task. */
 export interface FacsimileTaskData {
 	model: ParsedFacsimile;
@@ -1097,6 +1141,10 @@ export interface FacsimileTaskData {
 	imageUrls: string[];
 	fragment: string;
 	locator: string;
+	/** The piece's preparation from config.yaml: 'measure-detection' or 'omr'. */
+	preparation: string;
+	/** Whether the score holds any notation (notes, rests, chords). */
+	hasNotation: boolean;
 	status: string;
 	/** Whether the viewer holds the task's active encoding lock (may edit/submit). */
 	holdsLock: boolean;
@@ -1185,6 +1233,8 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
 			imageUrls,
 			fragment: task.fragment,
 			locator: task.locator,
+			preparation: pieceFieldForPath(configYaml, task.fragment, 'preparation') ?? 'measure-detection',
+			hasNotation: hasNotation(mei),
 			status: taskState?.status ?? '',
 			holdsLock,
 			encodingLockUser: encodingLock?.user_id ?? '',
@@ -1219,11 +1269,15 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // elements the previous one lacked. That guaranteed diff is what makes the
 // caller's path-filtered pull_request_target trigger; an identical file would
 // open an empty PR that never runs the automation.
+//
+// A layout submission (an OMR-prepared piece) carries staff zones as well
+// and leaves the measures empty: the notation comes from transcription later.
 async function submitFacsimile(
 	ctx: CommandContext,
 	task_id: string,
 	pages: PageModel[],
-	envelope: CommandEnvelope | null
+	envelope: CommandEnvelope | null,
+	layout = false
 ): Promise<Result> {
 	const { forge: f, owner, repo } = ctx;
 	try {
@@ -1236,7 +1290,7 @@ async function submitFacsimile(
 		const parsed = parseFacsimileMei(current);
 		const content = buildFacsimileMei(
 			{ headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
-			{ withBreaks: true }
+			{ withBreaks: true, emptyMeasures: layout }
 		);
 		// A no-op would open an empty PR the path-filtered caller never runs;
 		// guard against that rather than leaving the console polling forever.
@@ -1246,11 +1300,11 @@ async function submitFacsimile(
 		const meiError = await checkMei(content);
 		if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
 		ctx.progress({ step: 'Opening the correction submission…' });
-		const title = `Correct measure zones (${task_id})`;
+		const title = layout ? `Correct the layout (${task_id})` : `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
 		console.log('[zones] opening PR', { task_id });
 		const pr = await f.openChangePr(owner, repo, {
-			branch: `zones-${task_id}-${rand()}`,
+			branch: `${layout ? 'layout' : 'zones'}-${task_id}-${rand()}`,
 			files: [{ path: fragment, content }],
 			message: title,
 			title,
@@ -1284,12 +1338,34 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 		submitFacsimile(ctx, task_id, pages, envelope)
 };
 
+// Layout correction: submit the corrected staff and measure boxes of an
+// OMR-prepared piece at stage C with empty measures — the breaks and
+// movements as for measure correction, the staff zones alongside. The
+// validation subtask reviews the boxes.
+const submitOmrLayout: CommandDef<{ task_id: string; pages: PageModel[] }, Result> = {
+	id: 'campaign.submitOmrLayout',
+	version: 1,
+	log: 'pr',
+	envelopeInput: ({ task_id, pages }) => ({
+		task_id,
+		staves: pages.reduce((n, p) => n + (p.staves?.length ?? 0), 0),
+		measures: pages.reduce((n, p) => n + p.zones.length, 0),
+		systems: pages.reduce((n, p) => n + p.zones.filter((z) => z.sb).length, 0),
+		movements: 1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0)
+	}),
+	run: ({ task_id, pages }, ctx, envelope) =>
+		submitFacsimile(ctx, task_id, pages, envelope, true)
+};
+
 // Score setup: submit the piece's initial score definition — staves with their
 // clefs and instrument labels, key signature and meter — by rebuilding the
 // score around it. A facsimile piece is rebuilt at the stage it is already at,
 // with its header, pages and breaks carried over; a physical piece's blank
-// score is rebuilt with its page count read from the file's <pb> markers. The
-// validation subtask reviews the entered values.
+// score is rebuilt with its page count read from the file's <pb> markers. An
+// OMR-prepared piece is rebuilt with empty measures while it holds no
+// notation, so its staff count can still change; once transcriptions are in
+// its measures only its <scoreDef> is replaced, since a rebuild would discard
+// them. The validation subtask reviews the entered values.
 const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel }, Result> = {
 	id: 'campaign.submitScoreSetup',
 	version: 1,
@@ -1314,13 +1390,21 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 			const current = await f.getRepoFile(owner, repo, fragment);
 			if (current == null) return { error: `Could not read ${fragment}.` };
 			const parsed = parseFacsimileMei(current);
+			const omr = pieceFieldForPath(configYaml, fragment, 'preparation') === 'omr';
 			const content =
-				pieceKindForPath(configYaml, fragment) === 'physical-only'
-					? buildBlankScoreMei(parsed.headXml, (current.match(/<pb\b/g) ?? []).length, scoreDef)
-					: buildFacsimileMei(
-							{ headXml: parsed.headXml, scoreDef, pages: parsed.pages },
-							{ withBreaks: parsed.hasBreaks }
-						);
+				omr && hasNotation(current)
+					? replaceScoreDef(current, scoreDef)
+					: omr
+						? buildFacsimileMei(
+								{ headXml: parsed.headXml, scoreDef, pages: parsed.pages },
+								{ withBreaks: parsed.hasBreaks, emptyMeasures: true }
+							)
+						: pieceKindForPath(configYaml, fragment) === 'physical-only'
+						? buildBlankScoreMei(parsed.headXml, (current.match(/<pb\b/g) ?? []).length, scoreDef)
+						: buildFacsimileMei(
+								{ headXml: parsed.headXml, scoreDef, pages: parsed.pages },
+								{ withBreaks: parsed.hasBreaks }
+							);
 			// A no-op would open an empty PR the path-filtered caller never runs;
 			// guard against that rather than leaving the console polling forever.
 			if (content === current) {
@@ -1370,5 +1454,6 @@ export const commands = {
 	readFacsimile,
 	claimTask,
 	submitZones,
+	submitOmrLayout,
 	submitScoreSetup
 };

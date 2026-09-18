@@ -20,6 +20,12 @@ mutations and notification muting.
   rules out both a CSP host allowlist and direct browser fetches (many IIIF
   servers send no CORS headers); relaying same-origin solves both. Login-gated
   and rate-limited; no credentials are attached upstream.
+- `/omr/api/<path>` and `/omr/blob?url=…` — relay the Musibot OMR service for
+  the console's OMR preparation: a fixed set of API endpoints (create page,
+  presigned file URLs, start and poll an execution, delete page, list
+  pipelines) with the institutional token attached server-side, and file
+  transfers to and from the presigned URLs on the service's host. Login-gated
+  and rate-limited; answers 503 unless `MUSIBOT_TOKEN` is set.
 - `/registry/…` — the campaign name registry blueprint: the name → (forge,
   repo id) mapping behind every campaign address, with the claim/register
   lifecycle around it. Claiming and registering are login-gated; resolving a
@@ -91,6 +97,8 @@ Environment variables:
 | `ADMIN_ROUTES_ENABLED` | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503 |
 | `PROXY_FIX_X_FOR` | optional: the number of reverse proxies in front (1 behind the institution's reverse proxy); when set, X-Forwarded-For supplies the client address the rate limits key on. Leave unset without a trusted proxy — the header would be spoofable |
 | `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes) |
+| `MUSIBOT_URL` | optional: the Musibot OMR API the `/omr` relay forwards to (default `https://quest.ms.mff.cuni.cz/musibot/api`) |
+| `MUSIBOT_TOKEN` | the Musibot API token (**secret**, only here); without it `/omr` answers 503 and the OMR preparation cannot run |
 
 The broker loads these from its process environment. The simplest way locally is a
 `broker/.env` file (auto-loaded via python-dotenv, and gitignored):

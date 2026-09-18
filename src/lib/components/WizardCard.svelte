@@ -4,12 +4,12 @@
   XML) gets the three-zone workbench: material pane in the centre, work card
   fixed on the right, so the primary action always sits bottom-right. A step
   without material gets its card centered in the freed area instead, with a
-  "Step N of 6" kicker — the upload step widens that to a bare hero column for
+  "Step N of M" kicker — the upload step widens that to a bare hero column for
   its dropzone.
 
   The rail is derived from the wizard store: completed steps show a one-line
   summary of what they collected and navigate back on click; upcoming steps are
-  disabled.
+  disabled; steps with nothing to do for this campaign are left out.
 
   The footer is built here from the handlers a step passes, so the buttons are
   written once. A step whose controls do not fit that shape — the name step,
@@ -34,6 +34,7 @@
   import {
     WIZARD_STEPS,
     draftStatus,
+    isSkipped,
     resetWizard,
     stepIndex,
     wizard,
@@ -79,7 +80,12 @@
     footer?: Snippet;
   } = $props();
 
-  const current = $derived(stepIndex(step));
+  // Whether a step is skipped follows from the upload, so steps are left out
+  // only once the upload step is done; before that the whole flow is listed.
+  const steps = $derived(
+    WIZARD_STEPS.filter((s) => !(isSkipped(s.id) && stepIndex(step) > stepIndex("upload"))),
+  );
+  const current = $derived(steps.findIndex((s) => s.id === step));
 
   // One-line summaries for the rail's completed steps, read from the store.
   const uploadSummary = $derived.by(() => {
@@ -111,6 +117,7 @@
         : "",
     source: sourceSummary,
     pieces: "",
+    preparation: "",
   });
 
   // "Draft saved · just now": a clock that only needs to be roughly right, so
@@ -180,7 +187,7 @@
     </div>
 
     <ol class="steps">
-      {#each WIZARD_STEPS as s, i (s.id)}
+      {#each steps as s, i (s.id)}
         {@const done = i < current}
         {@const active = i === current}
         <li>
@@ -195,7 +202,7 @@
               <span class="bubble" class:done class:active>
                 {#if done}<Icon name="check" size={12} />{:else}{i + 1}{/if}
               </span>
-              {#if i < WIZARD_STEPS.length - 1}
+              {#if i < steps.length - 1}
                 <span
                   class="connector"
                   class:done
@@ -276,7 +283,7 @@
 {#snippet workCard(solo: boolean)}
   <section class="card" class:solo class:wide={solo && step === "upload"} aria-label={heading}>
     {#if solo}
-      <div class="kicker">Step {current + 1} of {WIZARD_STEPS.length}</div>
+      <div class="kicker">Step {current + 1} of {steps.length}</div>
     {/if}
     <h1>{heading}</h1>
     {#if intro}<p class="intro">{intro}</p>{/if}

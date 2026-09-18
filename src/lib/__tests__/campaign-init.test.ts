@@ -167,6 +167,21 @@ test('one facsimile piece: the measure pre-task, then setup, then its page task'
 	);
 });
 
+test('an OMR-prepared facsimile piece opens with the layout pre-task instead', () => {
+	const piece = { ...facsimile('piece-01', [1, 2]), preparation: 'omr' };
+	assert.deepEqual(planTasks(build({ pieces: [piece] })), [
+		{ id: 'P0001', fragment: 'sources/piece-01/score.mei', locator: 'omr-layout', dependsOn: '' },
+		{ id: 'P0002', fragment: 'sources/piece-01/score.mei', locator: 'score-setup', dependsOn: 'P0001' },
+		{ id: 'T0001', fragment: 'sources/piece-01/score.mei', locator: 'surface-1', dependsOn: 'P0002' },
+		{ id: 'T0002', fragment: 'sources/piece-01/score.mei', locator: 'surface-2', dependsOn: 'P0002' }
+	]);
+});
+
+test('configToYaml: a facsimile piece records its preparation', () => {
+	const yaml = configToYaml(build({ pieces: [{ ...facsimile('piece-01', [1]), preparation: 'omr' }] }));
+	assert.match(yaml, /    kind: "facsimile"\n    preparation: "omr"\n    path: /);
+});
+
 test('measured pages, not covered pages, decide the page tasks', () => {
 	const config = build({ pieces: [facsimile('piece-01', [1, 2, 3])] });
 	// The detector found measures only on pages 1 and 3.
@@ -319,6 +334,11 @@ test('assertSupported: rejects unsupported schema, strategy and piece shapes', (
 	const unsupportedKind = build({ pieces: [encoded('piece-01')] });
 	unsupportedKind.pieces[0].kind = 'musicxml';
 	assert.throws(() => assertSupported(unsupportedKind), /piece kind/);
+
+	const unsupportedPreparation = build({
+		pieces: [{ ...facsimile('piece-01', [1]), preparation: 'guesswork' }]
+	});
+	assert.throws(() => assertSupported(unsupportedPreparation), /piece preparation/);
 
 	// A shared path would make a submission ambiguous: the coordinator resolves
 	// a task by its fragment path alone.

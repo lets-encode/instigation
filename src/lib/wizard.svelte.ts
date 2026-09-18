@@ -9,6 +9,7 @@
 // What is collected is also mirrored into the browser's storage as a draft, so a
 // setup that is interrupted can be continued; see wizard-draft.ts.
 
+import type { Preparation } from './campaign-init.ts';
 import type { EncodingSource, PageCandidate, PageImage } from './prepare-images.ts';
 import { emptySourceMetadata, type SourceMetadata } from './source-metadata.ts';
 import type { Piece } from './pieces.ts';
@@ -28,7 +29,8 @@ export const WIZARD_STEPS = [
 	{ id: 'upload', label: 'Upload' },
 	{ id: 'pages', label: 'Pages' },
 	{ id: 'source', label: 'Source' },
-	{ id: 'pieces', label: 'Pieces' }
+	{ id: 'pieces', label: 'Pieces' },
+	{ id: 'preparation', label: 'Preparation' }
 ] as const;
 
 export type WizardStepId = (typeof WIZARD_STEPS)[number]['id'];
@@ -119,6 +121,12 @@ export const wizard = $state<{
 	source: SourceMetadata;
 	/** The works within the source; one MEI and one task group each. */
 	pieces: Piece[];
+	/**
+	 * How the facsimile pieces are prepared: measure boxes detected when the
+	 * campaign is finished, or staff and measure boxes recognised in each
+	 * piece's layout task with encoding starting from a transcription.
+	 */
+	preparation: Preparation;
 }>({
 	step: 'name',
 	handle: '',
@@ -135,20 +143,29 @@ export const wizard = $state<{
 	images: [],
 	encodings: [],
 	source: emptySourceMetadata(),
-	pieces: []
+	pieces: [],
+	preparation: 'measure-detection'
 });
 
 export const stepIndex = (id: WizardStepId) => WIZARD_STEPS.findIndex((s) => s.id === id);
 
-// The pages step exists to choose between page images; an upload that offers
-// none has nothing to choose, so navigation passes over it in both directions.
-// The repository it would have created is created by the upload step instead.
-const skipped = (id: WizardStepId) => id === 'pages' && wizard.candidates.length === 0;
+/**
+ * Whether a step has nothing to do for this campaign, so navigation and the
+ * step rail pass over it. The pages step exists to choose between page images;
+ * an upload that offers none has nothing to choose (the repository it would
+ * have created is created by the upload step instead). The preparation step
+ * decides how facsimile pieces get their measures; without page images —
+ * committed, or still to be chosen from the upload — there are none, and the
+ * pieces step finishes the setup.
+ */
+export const isSkipped = (id: WizardStepId): boolean =>
+	(id === 'pages' && wizard.candidates.length === 0) ||
+	(id === 'preparation' && wizard.images.length === 0 && wizard.candidates.length === 0);
 
 /** Advance to the next step (passing over steps with nothing to do), if there is one. */
 export function nextStep(): void {
 	for (let i = stepIndex(wizard.step) + 1; i < WIZARD_STEPS.length; i++) {
-		if (skipped(WIZARD_STEPS[i].id)) continue;
+		if (isSkipped(WIZARD_STEPS[i].id)) continue;
 		wizard.step = WIZARD_STEPS[i].id;
 		break;
 	}
@@ -158,7 +175,7 @@ export function nextStep(): void {
 /** Return to the previous step (passing over steps with nothing to do), if there is one. */
 export function previousStep(): void {
 	for (let i = stepIndex(wizard.step) - 1; i >= 0; i--) {
-		if (skipped(WIZARD_STEPS[i].id)) continue;
+		if (isSkipped(WIZARD_STEPS[i].id)) continue;
 		wizard.step = WIZARD_STEPS[i].id;
 		break;
 	}
@@ -185,6 +202,7 @@ export function resetWizard(): void {
 	wizard.encodings = [];
 	wizard.source = emptySourceMetadata();
 	wizard.pieces = [];
+	wizard.preparation = 'measure-detection';
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +250,8 @@ export function draftSnapshot(): DraftSnapshot {
 			imagePaths: wizard.images.map((image) => image.path),
 			encodings: wizard.encodings.map((encoding) => ({ ...encoding })),
 			source: $state.snapshot(wizard.source),
-			pieces: $state.snapshot(wizard.pieces)
+			pieces: $state.snapshot(wizard.pieces),
+			preparation: wizard.preparation
 		}
 	};
 }
@@ -282,6 +301,7 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
 		meta: { ...emptySourceMetadata(), ...piece.meta }
 	}));
 	wizard.encodings = entries.encodings;
+	wizard.preparation = entries.preparation ?? 'measure-detection';
 	wizard.images = images;
 	// Picked files are not part of a draft; the upload step collects them again.
 	// The candidate pages read from them go the same way.

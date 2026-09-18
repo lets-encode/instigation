@@ -10,8 +10,14 @@
   import { elapsed } from "$lib/campaign-board.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
-  import { buildBlankScoreMei } from "$lib/mei-facsimile.ts";
-  import type { ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
+  import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
+  import type { MeasureBox, ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
+  import { createOmrClient } from "$lib/omr-client.ts";
+  import { staffCountOf, staffCrops, stavesBySystem } from "$lib/omr-layout.ts";
+  import { proposeScoreDef } from "$lib/omr-musicxml.ts";
+  import { cropStaves, transcribeStaves } from "$lib/omr-transcribe.ts";
+  import { provider, omr as omrModels } from "$lib/forge/config.ts";
+  import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
   import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
@@ -172,6 +178,13 @@
         d.model.scoreDef.meterSym === "" ? "numeric" : (d.model.scoreDef.meterSym as "common" | "cut");
       meterCount = d.model.scoreDef.meterCount;
       meterUnit = d.model.scoreDef.meterUnit;
+      // An OMR-prepared piece still at the default definition opens with the
+      // staff count its layout has; the clefs, key and meter follow from
+      // recognition once the task is held.
+      unset = JSON.stringify(d.model.scoreDef) === JSON.stringify(DEFAULT_SCORE_DEF);
+      if (d.preparation === "omr" && unset) {
+        staves = Array.from({ length: staffCountOf(layoutPagesOf(d)) }, plainStaff);
+      }
     } catch (e) {
       if (!stale()) loadError = `Could not load ${task}: ${(e as Error).message}`;
     } finally {
@@ -494,24 +507,132 @@
       { overviewOnSuccess: true },
     );
 
+  // ------------------------------------------------------------------------
+  // Pre-fill from recognition (OMR-prepared pieces)
+  //
+  // The staff count starts from the layout correction: the staves per system
+  // most systems have. Clefs come from transcribing the system with the most
+  // staves (a first system may leave a staff out, a resting voice above a
+  // piano introduction), key and meter from the piece's first system, where
+  // signatures are printed — once when the claim holder opens a task whose
+  // definition is still the default; a redo is offered. Labels and groups are
+  // not recognised and stay as entered. The count stays editable until the
+  // piece holds notation, since the setup submission rebuilds empty measures
+  // for it until then.
+  const omr = $derived(data?.preparation === "omr");
+  // Whether the file still carries the default definition (set on load).
+  let unset = $state(false);
+  const layoutPagesOf = (d: FacsimileTaskData) =>
+    d.model.pages.map((pg) => ({ measures: pg.zones.map((z) => z.box), staves: pg.staves ?? [] }));
+  let prefilledFor = $state<string | null>(null);
+  $effect(() => {
+    if (omr && canEdit && data && unset && !runner.busy && prefilledFor !== taskId) {
+      prefilledFor = taskId;
+      fillFromRecognition();
+    }
+  });
+  let confirmingFill = $state(false);
+  function fillAgain() {
+    if (!confirmingFill) {
+      confirmingFill = true;
+      return;
+    }
+    confirmingFill = false;
+    fillFromRecognition();
+  }
+
+  function applyProposal(proposal: ScoreDefModel) {
+    // A clef per staff the layout has; a staff beyond the recognised system
+    // keeps its own. Labels stay.
+    staves = staves.map((s, i) =>
+      proposal.staves[i] ? { ...proposal.staves[i], label: s.label } : s,
+    );
+    keysig = proposal.keysig;
+    meterType = proposal.meterSym === "" ? "numeric" : (proposal.meterSym as "common" | "cut");
+    meterCount = proposal.meterCount;
+    meterUnit = proposal.meterUnit;
+  }
+
+  async function fillFromRecognition() {
+    const f = forge();
+    if (!f || !data) return;
+    const d = data;
+    const client = createOmrClient(provider.brokerUrl);
+    await runner.run(async () => {
+      try {
+        runner.log.step("Checking the recognition service");
+        await client.requirePipelines([omrModels.staffPipeline]);
+        // The first system that holds staves, and the one with the most.
+        type System = { p: number; index: number; staves: MeasureBox[] };
+        let first: System | null = null;
+        let fullest: System | null = null;
+        for (const [p, pg] of layoutPagesOf(d).entries()) {
+          for (const [index, system] of stavesBySystem(pg.measures, pg.staves).entries()) {
+            if (!system.length) continue;
+            first ??= { p, index, staves: system };
+            if (!fullest || system.length > fullest.staves.length) fullest = { p, index, staves: system };
+          }
+        }
+        if (!first || !fullest) throw new Error("the layout has no system with staves.");
+        const same = first.p === fullest.p && first.index === fullest.index;
+        const images = new Map<number, Blob>();
+        const cropsOf = async (system: System) => {
+          const pg = d.model.pages[system.p];
+          if (!images.has(system.p)) {
+            const path = resolveRepoRelativeTarget(d.fragment, pg.image);
+            const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
+            if (!image) throw new Error(`the image of page ${system.p + 1} could not be read.`);
+            images.set(system.p, image);
+          }
+          return cropStaves(images.get(system.p)!, staffCrops(system.staves, pg));
+        };
+        runner.log.step(
+          same
+            ? `Cropping ${first.staves.length} staves of page ${first.p + 1}`
+            : `Cropping ${fullest.staves.length + first.staves.length} staves of pages ${fullest.p + 1} and ${first.p + 1}`,
+        );
+        const fullestCrops = await cropsOf(fullest);
+        const firstCrops = same ? [] : await cropsOf(first);
+        runner.log.step(same ? "Transcribing the first system" : "Transcribing the fullest and the first system");
+        const xmls = await transcribeStaves(client, omrModels.staffPipeline, [...fullestCrops, ...firstCrops]);
+        const fullestXmls = xmls.slice(0, fullestCrops.length);
+        const proposal = proposeScoreDef(fullestXmls, xmls.slice(fullestCrops.length));
+        applyProposal(proposal);
+        const failed = xmls.filter((x) => x === null).length;
+        const clefs = proposal.staves
+          .map((s) => `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`)
+          .join(", ");
+        const meter = proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
+        return {
+          ok: true,
+          warn: failed > 0,
+          message:
+            `Recognised ${same ? "the first system" : `system ${fullest.index + 1} of page ${fullest.p + 1} (clefs) and the first system (signatures)`}: clefs ${clefs}; key signature ${proposal.keysig}; meter ${meter}.` +
+            (failed ? ` ${failed} of ${xmls.length} staves could not be transcribed and keep the treble clef.` : "") +
+            " Check the values, then submit.",
+        };
+      } catch (e) {
+        return { error: `Recognition failed: ${(e as Error).message}` };
+      }
+    });
+  }
+
 
   // ------------------------------------------------------------------------
   // The form
 
+  const plainStaff = (): StaffModel => ({
+    clefShape: "G",
+    clefLine: 2,
+    clefDis: "",
+    clefDisPlace: "",
+    lines: 5,
+    notationType: "",
+    label: "",
+  });
   function addStaff() {
     if (staves.length >= MAX_STAVES) return;
-    staves = [
-      ...staves,
-      {
-        clefShape: "G",
-        clefLine: 2,
-        clefDis: "",
-        clefDisPlace: "",
-        lines: 5,
-        notationType: "",
-        label: "",
-      },
-    ];
+    staves = [...staves, plainStaff()];
   }
   function addGroup() {
     groups = [
@@ -743,9 +864,11 @@
                       type="button"
                       class="btn btn-icon"
                       onclick={() => removeStaff(i)}
-                      disabled={staves.length <= 1}
+                      disabled={staves.length <= 1 || (omr && data?.hasNotation)}
                       aria-label={`Remove staff ${i + 1}`}
-                      title="Remove this staff"><Icon name="close" /></button
+                      title={omr && data?.hasNotation
+                        ? "The staff count is fixed once the piece holds notation"
+                        : "Remove this staff"}><Icon name="close" /></button
                     >
                   </div>
                 </li>
@@ -755,10 +878,24 @@
               type="button"
               class="btn addbtn"
               onclick={() => addStaff()}
-              disabled={staves.length >= MAX_STAVES}
-              title="Add a staff below the last one."
+              disabled={staves.length >= MAX_STAVES || (omr && data?.hasNotation)}
+              title={omr && data?.hasNotation
+                ? "The staff count is fixed once the piece holds notation"
+                : "Add a staff below the last one."}
               >Add staff</button
             >
+            {#if omr && canEdit}
+              <button
+                type="button"
+                class="btn addbtn"
+                class:btn-danger={confirmingFill}
+                onclick={() => fillAgain()}
+                onblur={() => (confirmingFill = false)}
+                disabled={runner.busy}
+                title="Transcribe the first system again and replace the clefs, key signature and meter with what it reads."
+                >{confirmingFill ? "Replace the values?" : "Fill from recognition again"}</button
+              >
+            {/if}
 
             {#if staves.length > 1 || groups.length > 0}
               <p class="grouphead sub">Groups</p>

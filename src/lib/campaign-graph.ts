@@ -94,12 +94,13 @@ export interface TaskNode {
 
 /**
  * Whether a task is a pre-task: score setup (the score's staves, clefs, key
- * signature and meter, filled in the setup editor) or measure correction
- * (reviewed in the zone editor). Encoding tasks — whole-file (empty locator)
- * and per-page (`surface-N`) — are not pre-tasks and use mei-friend.
+ * signature and meter, filled in the setup editor), measure correction or
+ * layout correction (both in the zone editor). Encoding tasks — whole-file
+ * (empty locator) and per-page (`surface-N`) — are not pre-tasks and use
+ * mei-friend.
  */
 export function isPreTask(locator: string): boolean {
-	return locator === 'score-setup' || locator === 'measure-zones';
+	return locator === 'score-setup' || locator === 'measure-zones' || locator === 'omr-layout';
 }
 
 /** The console route segment a pre-task's own editor lives under. */
@@ -113,7 +114,9 @@ export const sendBackTarget = (locator: string): string =>
 		? 'score setup'
 		: locator === 'measure-zones'
 			? 'measure correction'
-			: 'encoding';
+			: locator === 'omr-layout'
+				? 'layout correction'
+				: 'encoding';
 
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
@@ -127,6 +130,7 @@ export const taskThreshold = (passThreshold: number, subtaskCount: number): numb
 export function typeLabel(locator: string): string {
 	if (locator === 'score-setup') return 'Score setup';
 	if (locator === 'measure-zones') return 'Measure correction';
+	if (locator === 'omr-layout') return 'Layout correction';
 	const page = /^surface-(\d+)$/.exec(locator);
 	return page ? `Encoding · page ${page[1]}` : 'Encoding';
 }
