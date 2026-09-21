@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- Review record: the Pass and Fail buttons of a held slot sit on their own line.
+- Volunteer view: open-task rows show a claim button only when the viewer can claim the task, and review slots read "Claim to review".
+- Score setup of an OMR piece groups staves into systems by the measure boxes that span them, and single-staff systems no longer vote on the staff count.
 - Layout correction of an OMR piece runs in two steps, staff boxes then measures, and commits the model's raw output as `layout.json` beside the score.
 - Zone editor reworked: per-step boxes, two-step control with Next, click-only measure controls, side-by-side two-page view, drag threshold for new boxes.
 - Pre-task editors and the review view submit in the background and return to the campaign page; the run state shows on the board, task panel and volunteer view.

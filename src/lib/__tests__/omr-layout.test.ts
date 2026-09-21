@@ -63,9 +63,9 @@ test('staffCrops grows each staff by its height times the margin, clamped to the
 	]);
 });
 
-test('stavesBySystem assigns staves to the measure row they overlap, top to bottom', () => {
+test('stavesBySystem joins the staves a measure spans, top to bottom', () => {
 	// Two systems of two measures each; three staves in the first, two in the second,
-	// one stray staff between them that overlaps neither row.
+	// one stray staff between them that no measure spans.
 	const measures = [
 		{ ulx: 0, uly: 100, lrx: 500, lry: 400 },
 		{ ulx: 500, uly: 100, lrx: 1000, lry: 400 },
@@ -88,7 +88,33 @@ test('stavesBySystem assigns staves to the measure row they overlap, top to bott
 	assert.deepEqual(stavesBySystem([], staves), []);
 });
 
-test('staffCountOf is the most frequent staves-per-system, larger count on a tie, 1 without staves', () => {
+test('stavesBySystem keeps a system together when some measures cover one staff only', () => {
+	// Two systems of two staves. The last measure of the first system was
+	// detected as two one-staff boxes, the first measure of the second system
+	// as a one-staff box above a full-height duplicate.
+	const measures = [
+		{ ulx: 0, uly: 750, lrx: 800, lry: 921 },
+		{ ulx: 800, uly: 748, lrx: 1000, lry: 802 },
+		{ ulx: 800, uly: 865, lrx: 1000, lry: 917 },
+		{ ulx: 0, uly: 984, lrx: 200, lry: 1037 },
+		{ ulx: 0, uly: 987, lrx: 200, lry: 1153 },
+		{ ulx: 200, uly: 985, lrx: 1000, lry: 1152 }
+	];
+	const staves = [
+		{ ulx: 0, uly: 750, lrx: 1000, lry: 806 },
+		{ ulx: 0, uly: 867, lrx: 1000, lry: 923 },
+		{ ulx: 0, uly: 984, lrx: 1000, lry: 1039 },
+		{ ulx: 0, uly: 1101, lrx: 1000, lry: 1155 }
+	];
+	assert.deepEqual(
+		stavesBySystem(measures, staves).map((system) => system.map((s) => s.uly)),
+		[[750, 867], [984, 1101]]
+	);
+	// Measures that span no staff give no system.
+	assert.deepEqual(stavesBySystem([{ ulx: 0, uly: 0, lrx: 10, lry: 10 }], staves), []);
+});
+
+test('staffCountOf is the most frequent staves-per-system above one, larger count on a tie, else 1', () => {
 	const system = (top: number, count: number) => ({
 		measures: [{ ulx: 0, uly: top, lrx: 1000, lry: top + 300 }],
 		staves: Array.from({ length: count }, (_, i) => ({ ulx: 0, uly: top + 10 + i * 90, lrx: 1000, lry: top + 60 + i * 90 }))
@@ -99,6 +125,9 @@ test('staffCountOf is the most frequent staves-per-system, larger count on a tie
 	});
 	assert.equal(staffCountOf([merge(system(0, 3), system(400, 3), system(800, 2))]), 3);
 	assert.equal(staffCountOf([merge(system(0, 3), system(400, 2))]), 3);
+	// Single-staff systems do not vote: a page whose measure boxes each cover one staff.
+	assert.equal(staffCountOf([merge(system(0, 2)), merge(system(0, 1), system(400, 1), system(800, 1))]), 2);
+	assert.equal(staffCountOf([merge(system(0, 1), system(400, 1))]), 1);
 	assert.equal(staffCountOf([merge(system(0, 0))]), 1);
 	assert.equal(staffCountOf([]), 1);
 });

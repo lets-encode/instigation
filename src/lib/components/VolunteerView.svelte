@@ -123,6 +123,11 @@
     return "Claims this task for you and opens mei-friend in a new tab.";
   };
 
+  /** The viewer may claim this card now: an open task, or a review slot that
+      is free and not on their own submission. */
+  const claimable = (c: BoardCard) =>
+    c.column === "validation" ? c.slots.some((s) => s.claimable) : c.claimable;
+
   // The stage a claim starts, as the button's colour class.
   const stageClass = (c: BoardCard) =>
     c.column === "validation" ? "btn-review" : c.pre ? "btn-pre" : "btn-enc";
@@ -344,12 +349,14 @@
               <span class="stype">{typeOf(card)}</span>
               <span class="vspacer"></span>
               {@render chips(card)}
-              {#if viewer !== ""}
+              {#if claimable(card)}
                 <button
                   type="button"
                   class="btn {stageClass(card)}"
                   onclick={() => onact(card)}
-                  disabled={busy}>Claim to encode</button
+                  disabled={busy}
+                  title={actTitle(card)}
+                  >{card.column === "validation" ? "Claim to review" : "Claim to encode"}</button
                 >
               {/if}
             </div>

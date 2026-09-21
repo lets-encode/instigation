@@ -219,26 +219,28 @@
         {:else if r.key === "open"}
           <span class="muted small-note">{r.note}</span>
         {:else if r.mine}
-          <button
-            type="button"
-            class="btn btn-primary btn-finish"
-            onclick={() => onvalidate(card.task, r.sub, "pass")}
-            disabled={runner.busy || verdictPending(r.sub)}
-            title="Record a passing verdict.">Pass</button
-          >
-          <button
-            type="button"
-            class="btn btn-danger failbtn"
-            class:on={failForm?.sub === r.sub}
-            onclick={() =>
-              (failForm =
-                failForm?.sub === r.sub
-                  ? null
-                  : { sub: r.sub, body: "", ...prefill() })}
-            disabled={runner.busy || verdictPending(r.sub)}
-            title="Record a failing verdict — a fail carries a comment saying why."
-            >Fail</button
-          >
+          <span class="rverdict">
+            <button
+              type="button"
+              class="btn btn-primary btn-finish"
+              onclick={() => onvalidate(card.task, r.sub, "pass")}
+              disabled={runner.busy || verdictPending(r.sub)}
+              title="Record a passing verdict.">Pass</button
+            >
+            <button
+              type="button"
+              class="btn btn-danger failbtn"
+              class:on={failForm?.sub === r.sub}
+              onclick={() =>
+                (failForm =
+                  failForm?.sub === r.sub
+                    ? null
+                    : { sub: r.sub, body: "", ...prefill() })}
+              disabled={runner.busy || verdictPending(r.sub)}
+              title="Record a failing verdict — a fail carries a comment saying why."
+              >Fail</button
+            >
+          </span>
         {/if}
       </div>
       {#if failForm && failForm.sub === r.sub && r.mine}
@@ -392,7 +394,7 @@
     color: var(--ink-faint);
     padding-bottom: 4px;
   }
-  /* Wraps so the verdict buttons stay visible in a narrow panel. */
+  /* Wraps so the trailing controls stay visible in a narrow panel. */
   .rrow {
     display: flex;
     align-items: center;
@@ -415,6 +417,13 @@
   .small-note {
     font-size: 11.5px;
     white-space: nowrap;
+  }
+  /* The verdict pair occupies its own line so the two buttons never split. */
+  .rverdict {
+    display: flex;
+    gap: 10px;
+    flex-basis: 100%;
+    justify-content: flex-end;
   }
   /* The open fail form keeps its trigger tinted, still an outline. */
   .failbtn.on {
