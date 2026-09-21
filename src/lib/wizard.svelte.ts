@@ -20,11 +20,15 @@ import type { Piece } from "./pieces.ts";
 import { DEFAULT_LICENSE } from "./licenses.ts";
 import {
   DRAFT_VERSION,
+  MissingDraftImageError,
   discardDraft,
+  fetchDraftImages,
+  readDraft,
   writeDraft,
   type DraftEntries,
   type WizardDraft,
 } from "./wizard-draft.ts";
+import type { ForgeClient } from "./forge/types.ts";
 
 /** The wizard's steps, in order. Drives navigation and the progress header. */
 export const WIZARD_STEPS = [
@@ -329,6 +333,37 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   const step =
     entries.step === "pages" || withoutImages ? "upload" : entries.step;
   wizard.step = stepIndex(step) < 0 ? "name" : step;
+}
+
+/**
+ * Continue the setup stored under `handle`: read its record, read the page
+ * images it committed back from its repository, and put it into the wizard.
+ * The stored record decides what is continued, not a listing read earlier, since
+ * the setup may have been finished or discarded in another tab since. Throws
+ * with a message that names what went wrong.
+ */
+export async function resumeDraft(
+  client: ForgeClient | null,
+  handle: string,
+  onProgress: (done: number, total: number) => void,
+): Promise<void> {
+  const stored = readDraft(handle);
+  if (!stored) throw new Error("it has since been finished or discarded in this browser");
+  const paths = stored.entries.imagePaths;
+  let images: PageImage[] = [];
+  if (stored.repo && paths.length) {
+    if (!client) throw new Error("you are no longer signed in");
+    try {
+      images = await fetchDraftImages(client, stored.repo, paths, onProgress);
+    } catch (err) {
+      // Pages that are not in the repository any more cannot be read back, but
+      // they can be uploaded again: applyDraft puts a setup without its images
+      // on the upload step.
+      if (!(err instanceof MissingDraftImageError)) throw err;
+      images = [];
+    }
+  }
+  applyDraft(stored, images);
 }
 
 /**

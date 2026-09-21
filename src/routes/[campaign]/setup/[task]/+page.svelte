@@ -116,9 +116,14 @@
 
   const runner = new CommandRunner();
 
-  const canEdit = $derived(
+  const holds = $derived(
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
+  // The submission runs in the background; the form holds until its verdict
+  // lands, since a repeat would only be rejected.
+  const submitting = $derived(pendingVerdicts.isProcessing(`encode:${taskId}`));
+  const canEdit = $derived(holds && !submitting);
+  const busy = $derived(runner.busy || submitting);
 
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
@@ -265,8 +270,22 @@
     );
   }
 
-  const claim = () =>
-    run((c) => invoke(commands.claimTask, { task_id: taskId }, c));
+  // A claim of an OMR piece's setup task whose definition is still the
+  // default continues into the recognition pre-fill in the same overlay: one
+  // step list, one Continue.
+  async function claim() {
+    const f = forge();
+    if (!f) return;
+    await runner.run(async () => {
+      const result = await invoke(commands.claimTask, { task_id: taskId }, ctx(f));
+      if (result.error) return result;
+      runner.log.step("Reloading…");
+      await load();
+      if (!data || !(omr && canEdit && unset)) return result;
+      prefilledFor = taskId;
+      return prefillSteps(f, data);
+    });
+  }
 
   // Opening the editor claims the task, the same way opening a score in
   // mei-friend does — a read-only look is served by the console's score
@@ -557,64 +576,67 @@
     const f = forge();
     if (!f || !data) return;
     const d = data;
+    await runner.run(() => prefillSteps(f, d));
+  }
+
+  // The recognition steps, logged to the running command's overlay.
+  async function prefillSteps(f: ForgeClient, d: FacsimileTaskData): Promise<Result> {
     const client = createOmrClient(provider.brokerUrl);
-    await runner.run(async () => {
-      try {
-        runner.log.step("Checking the recognition service");
-        await client.requirePipelines([omrModels.staffPipeline]);
-        // The first system that holds staves, and the one with the most.
-        type System = { p: number; index: number; staves: MeasureBox[] };
-        let first: System | null = null;
-        let fullest: System | null = null;
-        for (const [p, pg] of layoutPagesOf(d).entries()) {
-          for (const [index, system] of stavesBySystem(pg.measures, pg.staves).entries()) {
-            if (!system.length) continue;
-            first ??= { p, index, staves: system };
-            if (!fullest || system.length > fullest.staves.length) fullest = { p, index, staves: system };
-          }
+    try {
+      runner.log.step("Checking the recognition service");
+      await client.requirePipelines([omrModels.staffPipeline]);
+      // The first system that holds staves, and the one with the most.
+      type System = { p: number; index: number; staves: MeasureBox[] };
+      let first: System | null = null;
+      let fullest: System | null = null;
+      for (const [p, pg] of layoutPagesOf(d).entries()) {
+        for (const [index, system] of stavesBySystem(pg.measures, pg.staves).entries()) {
+          if (!system.length) continue;
+          first ??= { p, index, staves: system };
+          if (!fullest || system.length > fullest.staves.length) fullest = { p, index, staves: system };
         }
-        if (!first || !fullest) throw new Error("the layout has no system with staves.");
-        const same = first.p === fullest.p && first.index === fullest.index;
-        const images = new Map<number, Blob>();
-        const cropsOf = async (system: System) => {
-          const pg = d.model.pages[system.p];
-          if (!images.has(system.p)) {
-            const path = resolveRepoRelativeTarget(d.fragment, pg.image);
-            const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
-            if (!image) throw new Error(`the image of page ${system.p + 1} could not be read.`);
-            images.set(system.p, image);
-          }
-          return cropStaves(images.get(system.p)!, staffCrops(system.staves, pg));
-        };
-        runner.log.step(
-          same
-            ? `Cropping ${first.staves.length} staves of page ${first.p + 1}`
-            : `Cropping ${fullest.staves.length + first.staves.length} staves of pages ${fullest.p + 1} and ${first.p + 1}`,
-        );
-        const fullestCrops = await cropsOf(fullest);
-        const firstCrops = same ? [] : await cropsOf(first);
-        runner.log.step(same ? "Transcribing the first system" : "Transcribing the fullest and the first system");
-        const xmls = await transcribeStaves(client, omrModels.staffPipeline, [...fullestCrops, ...firstCrops]);
-        const fullestXmls = xmls.slice(0, fullestCrops.length);
-        const proposal = proposeScoreDef(fullestXmls, xmls.slice(fullestCrops.length));
-        applyProposal(proposal);
-        const failed = xmls.filter((x) => x === null).length;
-        const clefs = proposal.staves
-          .map((s) => `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`)
-          .join(", ");
-        const meter = proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
-        return {
-          ok: true,
-          warn: failed > 0,
-          message:
-            `Recognised ${same ? "the first system" : `system ${fullest.index + 1} of page ${fullest.p + 1} (clefs) and the first system (signatures)`}: clefs ${clefs}; key signature ${proposal.keysig}; meter ${meter}.` +
-            (failed ? ` ${failed} of ${xmls.length} staves could not be transcribed and keep the treble clef.` : "") +
-            " Check the values, then submit.",
-        };
-      } catch (e) {
-        return { error: `Recognition failed: ${(e as Error).message}` };
       }
-    });
+      if (!first || !fullest) throw new Error("the layout has no system with staves.");
+      const same = first.p === fullest.p && first.index === fullest.index;
+      const images = new Map<number, Blob>();
+      const cropsOf = async (system: System) => {
+        const pg = d.model.pages[system.p];
+        if (!images.has(system.p)) {
+          const path = resolveRepoRelativeTarget(d.fragment, pg.image);
+          const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
+          if (!image) throw new Error(`the image of page ${system.p + 1} could not be read.`);
+          images.set(system.p, image);
+        }
+        return cropStaves(images.get(system.p)!, staffCrops(system.staves, pg));
+      };
+      runner.log.step(
+        same
+          ? `Cropping ${first.staves.length} staves of page ${first.p + 1}`
+          : `Cropping ${fullest.staves.length + first.staves.length} staves of pages ${fullest.p + 1} and ${first.p + 1}`,
+      );
+      const fullestCrops = await cropsOf(fullest);
+      const firstCrops = same ? [] : await cropsOf(first);
+      runner.log.step(same ? "Transcribing the first system" : "Transcribing the fullest and the first system");
+      const xmls = await transcribeStaves(client, omrModels.staffPipeline, [...fullestCrops, ...firstCrops]);
+      const fullestXmls = xmls.slice(0, fullestCrops.length);
+      const proposal = proposeScoreDef(fullestXmls, xmls.slice(fullestCrops.length));
+      applyProposal(proposal);
+      const failed = xmls.filter((x) => x === null).length;
+      const clefs = proposal.staves
+        .map((s) => `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`)
+        .join(", ");
+      const meter = proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
+      return {
+        ok: true,
+        warn: failed > 0,
+        message:
+          `Recognised ${same ? "the first system" : `system ${fullest.index + 1} of page ${fullest.p + 1} (clefs) and the first system (signatures)`}: clefs ${clefs}; key signature ${proposal.keysig}; meter ${meter}.` +
+          (failed ? ` ${failed} of ${xmls.length} staves could not be transcribed and keep the treble clef.` : "") +
+          " Check the values, then submit.",
+      };
+    } catch (e) {
+      return { error: `Recognition failed: ${(e as Error).message}` };
+    }
   }
 
 
@@ -884,14 +906,14 @@
                 : "Add a staff below the last one."}
               >Add staff</button
             >
-            {#if omr && canEdit}
+            {#if omr && holds}
               <button
                 type="button"
                 class="btn addbtn"
                 class:btn-danger={confirmingFill}
                 onclick={() => fillAgain()}
                 onblur={() => (confirmingFill = false)}
-                disabled={runner.busy}
+                disabled={busy}
                 title="Transcribe the first system again and replace the clefs, key signature and meter with what it reads."
                 >{confirmingFill ? "Replace the values?" : "Fill from recognition again"}</button
               >
@@ -1089,7 +1111,7 @@
               ? "common time"
               : "cut time"}
         </span>
-        {#if canEdit}
+        {#if holds}
           <span class="lockpill ok">you hold this task</span>
         {:else if d.status === "completed"}
           <span class="lockpill grey">done — read-only</span>
@@ -1107,13 +1129,13 @@
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={busy}>Claim task</button>
         {/if}
         <button
           type="button"
           class="btn btn-primary submitbtn"
           onclick={() => submit()}
-          disabled={runner.busy || !canEdit || !meterValid || !groupsValid}
+          disabled={busy || !canEdit || !meterValid || !groupsValid}
           title="Submit the staves, clefs, key signature and meter for review"
         >
           Submit setup

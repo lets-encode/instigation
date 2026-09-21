@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { layoutBoxes, staffCountOf, staffCrops, stavesBySystem } from '../omr-layout.ts';
+import { layoutBoxes, layoutRecord, staffCountOf, staffCrops, stavesBySystem } from '../omr-layout.ts';
 
 // The category ids the layout model uses (layout.json's `categories`).
 const categories = [
@@ -101,4 +101,13 @@ test('staffCountOf is the most frequent staves-per-system, larger count on a tie
 	assert.equal(staffCountOf([merge(system(0, 3), system(400, 2))]), 3);
 	assert.equal(staffCountOf([merge(system(0, 0))]), 1);
 	assert.equal(staffCountOf([]), 1);
+});
+
+test('layoutRecord marks the raw layouts as uncorrected and names the model', () => {
+	const layout = { categories, images: [{ width: 10, height: 10 }], annotations: [] };
+	const record = layoutRecord({ name: 'dvorak-ola', version: '2.0' }, [{ image: 'img/01.jpg', layout }]);
+	assert.equal(record.corrected, false);
+	assert.deepEqual(record.model, { name: 'dvorak-ola', version: '2.0' });
+	assert.match(record.note, /not corrected/);
+	assert.deepEqual(record.pages, [{ image: 'img/01.jpg', layout }]);
 });

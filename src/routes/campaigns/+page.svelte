@@ -20,7 +20,7 @@
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { elapsed } from "$lib/campaign-board.ts";
-  import { handle, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { handle, preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
   import {
     commentsOnMyWork,
     invalidateStats,
@@ -210,7 +210,7 @@
   // claim lands on the place the review happens.
   async function claimNext(s: CampaignStats, next: NextTask) {
     if (next.action === "encode" && next.pre) {
-      await goto(`/${s.name}/${preTaskRoute(next.locator)}/${next.task}`);
+      await goto(preTaskHref(s.name, next.locator, next.task));
       return;
     }
     const c = ctxOf(s);
@@ -237,11 +237,7 @@
         refresh,
       );
       if (runner.result?.ok && !runner.result.warn) {
-        await goto(
-          next.pre
-            ? `/${s.name}/${preTaskRoute(next.locator)}/${next.task}`
-            : `/${s.name}/review/${next.task}`,
-        );
+        await goto(reviewHref(s.name, next.locator, next.task));
       }
     }
   }

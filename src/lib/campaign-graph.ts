@@ -108,6 +108,14 @@ export function preTaskRoute(locator: string): string {
 	return locator === 'score-setup' ? 'setup' : 'zones';
 }
 
+/** The console route of a pre-task's own editor. */
+export const preTaskHref = (campaign: string, locator: string, task: string): string =>
+	`/${campaign}/${preTaskRoute(locator)}/${task}`;
+
+/** Where a review of the task happens: a pre-task's own editor, else the review view. */
+export const reviewHref = (campaign: string, locator: string, task: string): string =>
+	isPreTask(locator) ? preTaskHref(campaign, locator, task) : `/${campaign}/review/${task}`;
+
 /** What a send-back returns a task to (its work stage), from its locator. */
 export const sendBackTarget = (locator: string): string =>
 	locator === 'score-setup'

@@ -13,7 +13,7 @@
   import { findRow } from "$lib/campaign-tables.ts";
   import type { CommentRow, LockRow, StateRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { handle, preTaskHref } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import {
     buildRecord,
@@ -118,9 +118,7 @@
     claimableSub !== undefined &&
       pendingVerdicts.isProcessing(`validate:${card.task}/${claimableSub}`),
   );
-  const editorRoute = $derived(
-    `/${campaign}/${preTaskRoute(card.locator)}/${card.task}`,
-  );
+  const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
   const editorName = $derived(
     card.locator === "score-setup" ? "setup editor" : "zone editor",
   );

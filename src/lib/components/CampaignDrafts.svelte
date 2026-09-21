@@ -12,16 +12,13 @@
   import { goto } from "$app/navigation";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import {
-    MissingDraftImageError,
     discardDraft,
-    fetchDraftImages,
     readDraft,
     resumableDrafts,
     type WizardDraft,
   } from "$lib/wizard-draft.ts";
   import { releaseClaim } from "$lib/campaign-resolve.ts";
-  import { WIZARD_STEPS, applyDraft, stepIndex } from "$lib/wizard.svelte.ts";
-  import type { PageImage } from "$lib/prepare-images.ts";
+  import { WIZARD_STEPS, resumeDraft, stepIndex } from "$lib/wizard.svelte.ts";
 
   let drafts = $state<WizardDraft[]>([]);
   let busy = $state<string | null>(null);
@@ -47,36 +44,16 @@
     confirming = null;
     busy = draft.handle;
     try {
-      // The listing is read once, and this setup may have been finished or
-      // discarded in another tab since. The stored record decides, not the row.
-      const stored = readDraft(draft.handle);
-      if (!stored) {
-        drafts = drafts.filter((d) => d.handle !== draft.handle);
-        throw new Error("it has since been finished or discarded in this browser");
-      }
-      const paths = stored.entries.imagePaths;
-      let images: PageImage[] = [];
-      if (stored.repo && paths.length) {
-        const client = forge();
-        if (!client) throw new Error("you are no longer signed in");
-        try {
-          images = await fetchDraftImages(
-            client,
-            stored.repo,
-            paths,
-            (done, total) => (progress = `Loading page ${done} of ${total}…`),
-          );
-        } catch (err) {
-          // Pages that are not in the repository any more cannot be read back,
-          // but they can be uploaded again: the setup continues from the upload
-          // step, which is where applyDraft puts a setup without its images.
-          if (!(err instanceof MissingDraftImageError)) throw err;
-          images = [];
-        }
-      }
-      applyDraft(stored, images);
+      await resumeDraft(
+        forge(),
+        draft.handle,
+        (done, total) => (progress = `Loading page ${done} of ${total}…`),
+      );
       await goto("/new");
     } catch (err) {
+      // A row whose record is gone — finished or discarded in another tab —
+      // has nothing left to continue.
+      if (!readDraft(draft.handle)) drafts = drafts.filter((d) => d.handle !== draft.handle);
       console.error("Continuing a setup failed:", (err as Error).message);
       error = `Could not continue “${draft.handle}”: ${(err as Error).message}`;
     }

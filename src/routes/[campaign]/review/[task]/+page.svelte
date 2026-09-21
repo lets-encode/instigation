@@ -9,6 +9,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
@@ -87,11 +88,12 @@
   );
   const taskDef = $derived(findRow(taskDefs, taskId, ""));
   const fragment = $derived(taskDef?.fragment ?? "");
-  /** The page a per-page task opens at, 0-based. */
-  const startPage = $derived.by(() => {
+  /** The page a per-page task opens at, 0-based; null for a whole-piece task. */
+  const taskPage = $derived.by(() => {
     const p = /^surface-(\d+)$/.exec(taskDef?.locator ?? "");
-    return p ? Number(p[1]) - 1 : 0;
+    return p ? Number(p[1]) - 1 : null;
   });
+  const startPage = $derived(taskPage ?? 0);
 
   // The score viewer, bound for the anchor jump and the fail-form prefill.
   let preview = $state<ReturnType<typeof ScorePreview>>();
@@ -211,13 +213,22 @@
   );
 
   // Run a command: show the busy overlay, capture its result banner, then
-  // refresh the tables.
-  async function run(command: (c: CommandContext) => Promise<Result>) {
+  // refresh the tables. A verdict or send-back returns to the campaign page,
+  // where its run state shows on the task.
+  async function run(
+    command: (c: CommandContext) => Promise<Result>,
+    opts: { overviewOnSuccess?: boolean } = {},
+  ) {
     const f = forge();
     if (!f) return;
     await runner.run(
       () => command(ctx(f)),
       async (result) => {
+        if (result.error) return;
+        if (opts.overviewOnSuccess) {
+          if (result.ok && !result.warn) await goto(`/${campaign}`);
+          return;
+        }
         // A background command changed nothing yet — the settle listener
         // refreshes when its verdict lands.
         if (result.background) return;
@@ -242,10 +253,11 @@
         { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
         c,
       ),
+      { overviewOnSuccess: true },
     );
 
   const sendBackTask = (task_id: string) =>
-    run((c) => invoke(commands.sendBack, { task_id }, c));
+    run((c) => invoke(commands.sendBack, { task_id }, c), { overviewOnSuccess: true });
 
   const postComment = (
     task_id: string,
@@ -436,6 +448,7 @@
           {startPage}
           {anchor}
           initialPane="both"
+          initialView={taskPage === null ? null : "single"}
           onmeasureselect={(label) => (selectedMeasure = label)}
           trailing={reopenComments}
         />

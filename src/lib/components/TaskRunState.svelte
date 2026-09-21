@@ -12,18 +12,21 @@
   let {
     task,
     bar = false,
+    large = false,
   }: {
     /** The task id whose run state renders, e.g. "T0002". */
     task: string;
     /** Render as a full-width strip (task panel) instead of a card badge. */
     bar?: boolean;
+    /** Render at the next-task card's text size. */
+    large?: boolean;
   } = $props();
 
   const entry = $derived(pendingVerdicts.forTask(task));
 </script>
 
 {#if entry}
-  <div class="runstate {entry.state}" class:bar aria-live="polite">
+  <div class="runstate {entry.state}" class:bar class:large aria-live="polite">
     {#if entry.state === "opening"}
       <span class="spinner" aria-hidden="true"></span>
       <span>opening the submission…</span>
@@ -75,6 +78,14 @@
     font-size: 12px;
     border-bottom: 1px solid var(--line);
     background: var(--card);
+  }
+  .runstate.large {
+    margin-top: 0;
+    font-size: 13px;
+  }
+  .runstate.large .spinner {
+    width: 16px;
+    height: 16px;
   }
   .runstate a {
     color: var(--link);

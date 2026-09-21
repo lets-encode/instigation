@@ -21,7 +21,7 @@
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { handle, isPreTask, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { handle, preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
   import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
@@ -575,23 +575,16 @@
     );
   }
 
-  const claim = (task_id: string, subtask_id: string) =>
-    run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
-
   // Claiming a validation slot opens the place the review happens — a
   // pre-task's own editor, or the review view for encoding tasks — but only
   // on a clean claim, so a rejected claim leaves you on the console.
   const claimValidate = async (task_id: string, subtask_id: string) => {
-    await claim(task_id, subtask_id);
+    await run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
     if (!runner.result?.ok || runner.result.warn) return;
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
-    await goto(
-      isPreTask(locator ?? "")
-        ? `/${campaign}/${preTaskRoute(locator ?? "")}/${task_id}`
-        : `/${campaign}/review/${task_id}`,
-    );
+    await goto(reviewHref(campaign, locator ?? "", task_id));
   };
 
   // Open the task's score in mei-friend (claiming it if needed). The tab opens
@@ -682,7 +675,7 @@
   });
 
   function claimCard(card: BoardCard) {
-    if (card.pre) goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`);
+    if (card.pre) goto(preTaskHref(campaign, card.locator, card.task));
     else editor(card.task);
   }
   // Act on a card the viewer can work on: claim it when it is open, claim its

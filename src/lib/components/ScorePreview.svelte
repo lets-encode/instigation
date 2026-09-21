@@ -35,6 +35,7 @@
     startPage = 0,
     anchor = null,
     initialPane = null,
+    initialView = null,
     initialZones = true,
     onmeasureselect,
     trailing,
@@ -49,6 +50,8 @@
     anchor?: { page: number; m1: number; m2: number } | null;
     /** The pane the preview opens with; null uses the stored per-browser choice. */
     initialPane?: PreviewPane | null;
+    /** The spread view the preview opens with; null picks it from the page count. */
+    initialView?: "single" | "double" | null;
     /** Whether the measure-zone overlay starts visible. */
     initialZones?: boolean;
     /** Reports the selected measure's label; null when deselected. */
@@ -379,7 +382,9 @@
           svgs: {},
         };
         const total = Math.max(facs?.length ?? 0, pageCount);
-        if (!viewChosen) ({ view: pvView, firstOnRight: pvFirstOnRight } = defaultSpreadView(total));
+        if (initialView) pvView = initialView;
+        else if (!viewChosen)
+          ({ view: pvView, firstOnRight: pvFirstOnRight } = defaultSpreadView(total));
         pvFirstVisible = Math.min(from, Math.max(0, total - 1));
         renderSpread();
       }

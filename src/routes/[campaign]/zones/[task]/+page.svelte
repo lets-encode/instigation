@@ -12,7 +12,7 @@
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
-  import { buildSpreads } from "$lib/page-spreads.ts";
+  import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
@@ -23,7 +23,7 @@
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
   import { createOmrClient } from "$lib/omr-client.ts";
-  import { layoutBoxes, LAYOUT_PARAMETERS, type CocoLayout } from "$lib/omr-layout.ts";
+  import { layoutBoxes, layoutRecord, LAYOUT_PARAMETERS, type CocoLayout } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
 
@@ -66,8 +66,9 @@
     zones: EditZone[];
     staves: EditStaff[];
   };
-  // The two box layers. Measure-correction tasks have measures only; a
-  // layout task (OMR) edits staves too, one layer at a time.
+  // The two box layers. A measure-correction task edits measures with their
+  // numbers and breaks; a layout task (OMR) edits the staff boxes first, then
+  // the measures, one layer at a time.
   type Layer = "measures" | "staves";
 
   let loading = $state(false);
@@ -81,12 +82,13 @@
   const taskTitle = $derived(typeLabel(data?.locator ?? "measure-zones"));
   const stage = $derived(sendBackTarget(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
-  // Which layer the pointer edits; the other is drawn but inert.
-  let tool = $state<Layer>("measures");
-  function setTool(value: Layer) {
-    tool = value;
+  // A layout task's two steps: the staff boxes, then the measures.
+  let layoutStep = $state<1 | 2>(1);
+  // The layer the pointer edits; in a layout task the other is not drawn.
+  const tool = $derived<Layer>(omr && layoutStep === 1 ? "staves" : "measures");
+  function setLayoutStep(step: 1 | 2) {
+    layoutStep = step;
     selected = null;
-    hovered = null;
   }
   // A page's boxes in a layer, for the geometry code shared by both.
   const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
@@ -95,14 +97,12 @@
   // a posted comment never reloads the editor.
   let tables = $state<CampaignTables | null>(null);
   let pages = $state<EditPage[]>([]);
+  // The layout model's raw output per page index, kept from a detection run
+  // in this session for the submission; outside the edit history.
+  let rawLayouts = $state<Record<number, CocoLayout>>({});
   let selected = $state<{ p: number; z: number } | null>(null);
-  // The zone the pointer is currently over. Kept separate from `selected` so a
-  // brief hover shows the controls without pinning them; a short hide delay
-  // bridges the gap between a zone and its own controls.
-  let hovered = $state<{ p: number; z: number } | null>(null);
-  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
-  // The zone whose controls show: the hovered one, else the pinned selection.
-  const active = $derived(hovered ?? selected);
+  // The zone whose controls show: the selected one.
+  const active = $derived(selected);
 
   const runner = new CommandRunner();
 
@@ -185,9 +185,14 @@
     selected = null;
   }
 
-  const canEdit = $derived(
+  const holds = $derived(
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
+  // The submission runs in the background; the editor holds until its
+  // verdict lands, since a repeat would only be rejected.
+  const submitting = $derived(pendingVerdicts.isProcessing(`encode:${taskId}`));
+  const canEdit = $derived(holds && !submitting);
+  const busy = $derived(runner.busy || submitting);
 
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
@@ -243,7 +248,6 @@
     loading = true;
     loadError = null;
     selected = null;
-    hovered = null;
     firstVisible = 0;
     try {
       const [d, t] = await Promise.all([
@@ -253,6 +257,7 @@
       if (stale()) return;
       data = d;
       tables = t;
+      rawLayouts = {};
       pages = d.model.pages.map((pg, i) => ({
         image: pg.image,
         width: pg.width,
@@ -268,6 +273,9 @@
         })),
         staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
       }));
+      // A score of one or two pages is shown whole: one page, or both side by
+      // side. Longer scores keep the two-up view with page 1 as a recto.
+      if (pages.length <= 2) ({ view, firstOnRight } = defaultSpreadView(pages.length));
       // A label that differs from what automatic numbering would produce is an
       // override (e.g. 10a/10b) — keep it through renumbering.
       let prev: string | undefined;
@@ -358,8 +366,21 @@
     );
   }
 
-  const claim = () =>
-    run((c) => invoke(commands.claimTask, { task_id: taskId }, c));
+  // A claim of an OMR layout task whose score carries no zones yet continues
+  // into layout detection in the same overlay: one step list, one Continue.
+  async function claim() {
+    const f = forge();
+    if (!f) return;
+    await runner.run(async () => {
+      const result = await invoke(commands.claimTask, { task_id: taskId }, ctx(f));
+      if (result.error) return result;
+      runner.log.step("Reloading…");
+      await load();
+      if (!data || !needsDetection()) return result;
+      detectedFor = taskId;
+      return detectSteps(f, data.fragment);
+    });
+  }
 
   // Opening the editor claims the task, the same way opening a score in
   // mei-friend does — a read-only look is served by the console's score
@@ -595,14 +616,25 @@
     }));
   }
 
+  // The raw layouts go with the submission when this session detected every page.
+  const rawLayoutRecord = () =>
+    pages.every((_, p) => rawLayouts[p])
+      ? layoutRecord(
+          omrModels.layoutModel,
+          pages.map((pg, p) => ({ image: pg.image, layout: rawLayouts[p] })),
+        )
+      : undefined;
+
   const submit = () =>
     run(
       (c) =>
-        invoke(
-          omr ? commands.submitOmrLayout : commands.submitZones,
-          { task_id: taskId, pages: toPageModels() },
-          c,
-        ),
+        omr
+          ? invoke(
+              commands.submitOmrLayout,
+              { task_id: taskId, pages: toPageModels(), layout: rawLayoutRecord() },
+              c,
+            )
+          : invoke(commands.submitZones, { task_id: taskId, pages: toPageModels() }, c),
       { overviewOnSuccess: true },
     );
 
@@ -611,36 +643,21 @@
   //
   // A layout task's boxes come from the Musibot layout model, run through
   // the broker's relay when the claim holder opens a task whose score carries
-  // no zones yet; the task box offers a redo. Page bytes are read through the
+  // no boxes yet; the task box offers a redo. Page bytes are read through the
   // forge API; the result is seeded like measure detection's: reading order,
   // continuous numbering, a system start on every row but the page's first.
   let detectedFor = $state<string | null>(null);
+  const needsDetection = () =>
+    omr &&
+    canEdit &&
+    pages.length > 0 &&
+    pages.every((pg) => pg.zones.length === 0 && pg.staves.length === 0);
   $effect(() => {
-    if (
-      omr &&
-      canEdit &&
-      data &&
-      !runner.busy &&
-      detectedFor !== taskId &&
-      pages.length > 0 &&
-      pages.every((pg) => pg.zones.length === 0 && pg.staves.length === 0)
-    ) {
+    if (data && !runner.busy && detectedFor !== taskId && needsDetection()) {
       detectedFor = taskId;
       detectLayout();
     }
   });
-  // Detecting again replaces every box, so the button arms on the first
-  // press and runs on the second.
-  let confirmingDetect = $state(false);
-  function detectAgain() {
-    if (!confirmingDetect) {
-      confirmingDetect = true;
-      return;
-    }
-    confirmingDetect = false;
-    detectLayout();
-  }
-
   function seedLayout() {
     for (const pg of pages) {
       const rows = readingOrderRows(pg.zones.map((z) => z.box));
@@ -648,7 +665,6 @@
       pg.zones = rows.flatMap((row, r) =>
         row.map((box, i) => ({ ...byBox.get(box)!, sb: i === 0 && r > 0 })),
       );
-      pg.staves.sort((a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx);
     }
     renumber();
   }
@@ -657,59 +673,63 @@
     const f = forge();
     if (!f || !data) return;
     const fragment = data.fragment;
+    await runner.run(() => detectSteps(f, fragment));
+  }
+
+  // The detection steps, logged to the running command's overlay.
+  async function detectSteps(f: ForgeClient, fragment: string): Promise<Result> {
     const client = createOmrClient(provider.brokerUrl);
-    await runner.run(async () => {
-      try {
-        runner.log.step("Checking the recognition service");
-        await client.requirePipelines([omrModels.layoutModel]);
-        let measures = 0;
-        let staves = 0;
-        for (const [p, pg] of pages.entries()) {
-          runner.log.step(`Detecting the layout of page ${p + 1} of ${pages.length}`);
-          const path = resolveRepoRelativeTarget(fragment, pg.image);
-          const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
-          if (!image) throw new Error(`the image of page ${p + 1} (${pg.image}) could not be read.`);
-          const layout = await client.withPage(async (pageId) => {
-            await client.upload(pageId, { "image.jpg": image });
-            const execution = await client.run(
-              pageId,
-              omrModels.layoutModel,
-              ["image.jpg"],
-              LAYOUT_PARAMETERS,
+    try {
+      runner.log.step("Checking the recognition service");
+      await client.requirePipelines([omrModels.layoutModel]);
+      let measures = 0;
+      let staves = 0;
+      for (const [p, pg] of pages.entries()) {
+        runner.log.step(`Detecting the layout of page ${p + 1} of ${pages.length}`);
+        const path = resolveRepoRelativeTarget(fragment, pg.image);
+        const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
+        if (!image) throw new Error(`the image of page ${p + 1} (${pg.image}) could not be read.`);
+        const layout = await client.withPage(async (pageId) => {
+          await client.upload(pageId, { "image.jpg": image });
+          const execution = await client.run(
+            pageId,
+            omrModels.layoutModel,
+            ["image.jpg"],
+            LAYOUT_PARAMETERS,
+          );
+          if (execution.state !== "completed") {
+            throw new Error(
+              `the layout model failed on page ${p + 1}: ${execution.error ?? execution.state}.`,
             );
-            if (execution.state !== "completed") {
-              throw new Error(
-                `the layout model failed on page ${p + 1}: ${execution.error ?? execution.state}.`,
-              );
-            }
-            const files = await client.download(pageId, ["layout.json"]);
-            return JSON.parse(await files["layout.json"].text()) as CocoLayout;
-          });
-          const boxes = layoutBoxes(layout, pg);
-          pages[p].zones = boxes.measures.map((box) => ({
-            box,
-            override: null,
-            label: "",
-            sb: false,
-            mdiv: false,
-          }));
-          pages[p].staves = boxes.staves.map((box) => ({ box }));
-          measures += boxes.measures.length;
-          staves += boxes.staves.length;
-          runner.log.detail(`${boxes.staves.length} staves, ${boxes.measures.length} measures`);
-        }
-        seedLayout();
-        selected = null;
-        hovered = null;
-        resetHistory();
-        return {
-          ok: true,
-          message: `Layout detected: ${staves} staves and ${measures} measures on ${pages.length} page(s). Correct the boxes, then submit.`,
-        };
-      } catch (e) {
-        return { error: `Layout detection failed: ${(e as Error).message}` };
+          }
+          const files = await client.download(pageId, ["layout.json"]);
+          return JSON.parse(await files["layout.json"].text()) as CocoLayout;
+        });
+        rawLayouts[p] = layout;
+        const boxes = layoutBoxes(layout, pg);
+        pages[p].zones = boxes.measures.map((box) => ({
+          box,
+          override: null,
+          label: "",
+          sb: false,
+          mdiv: false,
+        }));
+        pages[p].staves = boxes.staves.map((box) => ({ box }));
+        resortStaves(p);
+        measures += boxes.measures.length;
+        staves += boxes.staves.length;
+        runner.log.detail(`${boxes.staves.length} staves, ${boxes.measures.length} measures`);
       }
-    });
+      seedLayout();
+      setLayoutStep(1);
+      resetHistory();
+      return {
+        ok: true,
+        message: `Layout detected: ${staves} staves and ${measures} measures on ${pages.length} page(s). Correct the staff boxes, then the measures, then submit.`,
+      };
+    } catch (e) {
+      return { error: `Layout detection failed: ${(e as Error).message}` };
+    }
   }
 
   // ------------------------------------------------------------------------
@@ -800,23 +820,6 @@
     renumber();
   }
 
-  // ------------------------------------------------------------------------
-  // Hover tracking (a short hide delay bridges zone → its controls)
-
-  function hoverEnter(p: number, z: number) {
-    if (hoverTimer) {
-      clearTimeout(hoverTimer);
-      hoverTimer = null;
-    }
-    hovered = { p, z };
-  }
-  function hoverLeave() {
-    if (hoverTimer) clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => {
-      hovered = null;
-      hoverTimer = null;
-    }, 90);
-  }
 
   // ------------------------------------------------------------------------
   // Pointer interactions (box move / resize / draw)
@@ -827,24 +830,17 @@
   let canvasW = $state<number[]>([]);
   // On-screen height (px) for the number label at 100%; it grows a little with
   // zoom (damped) so it does not feel oversized zoomed out or small zoomed in.
-  const LABEL_PX = 15;
+  const LABEL_PX = 11;
   const labelFont = (p: number, pageW: number) => {
     const damp = Math.min(1.7, Math.max(0.8, 0.7 + 0.3 * zoom));
     const target = LABEL_PX * damp;
     return canvasW[p] ? (target * pageW) / canvasW[p] : target;
   };
 
-  // Vertical anchor for the zone-controls pill (its top edge), as a percentage
-  // of the page height: centred in the box's upper third, but clamped so the
-  // pill — a fixed on-screen size — never pokes out of a short box's top.
-  const ZC_HALF_PX = 17;
-  function zcTop(p: number, box: MeasureBox): number {
-    const pg = pages[p];
-    // Screen pixels per page unit; the SVG keeps its aspect, so one scale.
-    const scale = canvasW[p] ? canvasW[p] / pg.width : 1;
-    const off = Math.max(6 / scale, (box.lry - box.uly) / 6 - ZC_HALF_PX / scale);
-    return ((box.uly + off) / pg.height) * 100;
-  }
+  // The on-screen size of the measure controls, which take the number
+  // label's place in the selected box; the delete button dodges this extent.
+  const ZC_W_PX = 82;
+  const ZC_H_PX = 22;
   type Drag = {
     kind: "move" | "resize" | "draw";
     layer: Layer;
@@ -857,8 +853,13 @@
     // For a resize: which edges follow the pointer — "n", "s", "e", "w" or a
     // corner's pair ("nw", "se", …).
     edges: string;
+    // A draw creates its box only once the pointer has moved a few
+    // millimetres on screen, so a plain click leaves nothing behind.
+    started: boolean;
   };
   let drag: Drag | null = null;
+  // Screen pixels the pointer must travel before a draw creates its box.
+  const DRAW_THRESHOLD_PX = 12;
 
   // The cursor class for a resize handle: a corner gets the diagonal arrows,
   // a side the axis arrows.
@@ -896,7 +897,7 @@
     e.stopPropagation();
     selected = { p, z };
     const { x, y } = svgXY(e, p);
-    drag = { kind, layer: tool, p, z, sx: x, sy: y, orig: { ...items(p)[z].box }, moved: false, edges };
+    drag = { kind, layer: tool, p, z, sx: x, sy: y, orig: { ...items(p)[z].box }, moved: false, edges, started: true };
   }
 
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -943,15 +944,10 @@
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
     selected = null;
-    hovered = null;
     if (!canEdit) return;
     const { x, y } = svgXY(e, p);
     const box = { ulx: x, uly: y, lrx: x, lry: y };
-    if (tool === "staves") pages[p].staves.push({ box });
-    else pages[p].zones.push({ box, override: null, label: "", sb: false, mdiv: false });
-    const z = items(p).length - 1;
-    selected = { p, z };
-    drag = { kind: "draw", layer: tool, p, z, sx: x, sy: y, orig: { ...box }, moved: false, edges: "" };
+    drag = { kind: "draw", layer: tool, p, z: -1, sx: x, sy: y, orig: box, moved: false, edges: "", started: false };
   }
 
   function pointerMove(e: PointerEvent) {
@@ -959,9 +955,19 @@
     const { x, y } = svgXY(e, drag.p);
     const dx = x - drag.sx;
     const dy = y - drag.sy;
+    const pg = pages[drag.p];
+    if (!drag.started) {
+      const threshold = DRAW_THRESHOLD_PX * (pg.width / (canvasW[drag.p] || pg.width));
+      if (Math.hypot(dx, dy) < threshold) return;
+      const box = { ...drag.orig };
+      if (drag.layer === "staves") pages[drag.p].staves.push({ box });
+      else pages[drag.p].zones.push({ box, override: null, label: "", sb: false, mdiv: false });
+      drag.z = items(drag.p, drag.layer).length - 1;
+      drag.started = true;
+      selected = { p: drag.p, z: drag.z };
+    }
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
     const box = items(drag.p, drag.layer)[drag.z].box;
-    const pg = pages[drag.p];
     if (drag.kind === "move") {
       const w = drag.orig.lrx - drag.orig.ulx;
       const h = drag.orig.lry - drag.orig.uly;
@@ -986,8 +992,10 @@
 
   function pointerUp() {
     if (!drag) return;
-    const { kind, layer, p, z, moved } = drag;
+    const { kind, layer, p, z, moved, started } = drag;
     drag = null;
+    // A draw that never crossed the threshold was a plain click.
+    if (!started) return;
     if (kind === "draw") {
       const box = items(p, layer)[z].box;
       // A tiny drawn box was just a background click — drop it.
@@ -1013,7 +1021,6 @@
     if (tool === "staves") resortStaves(p);
     else resort(p);
     selected = null;
-    hovered = null;
     commit();
   }
 
@@ -1046,7 +1053,7 @@
   // under a later overlapping one and steal its pointer events.
   function paintOrder(pg: EditPage, p: number): { zone: EditZone; z: number }[] {
     const entries = pg.zones.map((zone, z) => ({ zone, z }));
-    if (selected?.p === p) {
+    if (tool === "measures" && selected?.p === p) {
       const i = entries.findIndex((e) => e.z === selected!.z);
       if (i >= 0) entries.push(entries.splice(i, 1)[0]);
     }
@@ -1112,8 +1119,7 @@
           ]
         : []),
       "⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages",
-      "purple = movement start",
-      ...(omr ? ["amber = staff"] : []),
+      omr ? "red = staff · teal = measure · purple = movement start" : "purple = movement start",
     ].join("\n"),
   );
 </script>
@@ -1238,13 +1244,6 @@
         aria-label="Fit the whole page"
         title="Fit the whole page in the view, top to bottom"><FitIcon kind="page" /></button
       >
-      {#if omr && canEdit}
-        <span class="vline"></span>
-        <div class="seg" title="Which boxes the pointer edits; the other layer stays visible">
-          <button type="button" class:on={tool === "measures"} onclick={() => setTool("measures")}>Measures</button>
-          <button type="button" class:on={tool === "staves"} onclick={() => setTool("staves")}>Staves</button>
-        </div>
-      {/if}
       <span class="vline"></span>
       {#if canEdit}
         <button
@@ -1317,8 +1316,9 @@
               <svg
                 bind:this={svgEls[p]}
                 viewBox={`0 0 ${pg.width} ${pg.height}`}
+                class:staves={tool === "staves"}
                 role="application"
-                aria-label={`Page ${p + 1} measures`}
+                aria-label={`Page ${p + 1} ${tool}`}
                 onpointerdown={(e) => backgroundPointerDown(e, p)}
               >
                 {#if pg.url}
@@ -1329,14 +1329,13 @@
                     onerror={() => (pages[p].failed = true)}
                   />
                 {/if}
-                {#each staffPaintOrder(pg, p) as { staff, s } (s)}
+                {#each tool === "staves" ? staffPaintOrder(pg, p) : [] as { staff, s } (s)}
                   <rect
                     class="staff"
-                    class:passive={tool !== "staves"}
-                    class:selected={tool === "staves" && selected?.p === p && selected?.z === s}
+                    class:selected={selected?.p === p && selected?.z === s}
                     vector-effect="non-scaling-stroke"
                     role="button"
-                    tabindex={tool === "staves" ? 0 : -1}
+                    tabindex={0}
                     aria-label={`Staff ${s + 1}: select, drag or resize`}
                     x={staff.box.ulx}
                     y={staff.box.uly}
@@ -1345,27 +1344,24 @@
                     onpointerdown={(e) => startZoneDrag(e, p, s, "move")}
                     onkeydown={(e) => zoneKeydown(e, p, s)}
                   />
-                  {#if canEdit && tool === "staves" && selected?.p === p && selected?.z === s}
+                  {#if canEdit && selected?.p === p && selected?.z === s}
                     {@render handles(p, s, staff.box, `Staff ${s + 1}`, 0, 0)}
                   {/if}
                 {/each}
-                {#each paintOrder(pg, p) as { zone, z } (z)}
+                {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
                   <rect
                     class="zone"
-                    class:passive={tool === "staves"}
-                    class:selected={tool === "measures" && selected?.p === p && selected?.z === z}
+                    class:selected={selected?.p === p && selected?.z === z}
                     class:mdivstart={startsMovement(p, z)}
                     vector-effect="non-scaling-stroke"
                     role="button"
-                    tabindex={tool === "measures" ? 0 : -1}
+                    tabindex={0}
                     aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
                     x={zone.box.ulx}
                     y={zone.box.uly}
                     width={zone.box.lrx - zone.box.ulx}
                     height={zone.box.lry - zone.box.uly}
                     onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
-                    onpointerenter={() => hoverEnter(p, z)}
-                    onpointerleave={hoverLeave}
                     onkeydown={(e) => zoneKeydown(e, p, z)}
                   >
                     {#if zoneTitle(p, z)}
@@ -1376,16 +1372,19 @@
                   {@const fs = labelFont(p, pg.width)}
                   {@const inset = fs * 0.6}
                   {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
-                  <rect class="labelbg" x={zone.box.ulx + inset} y={zone.box.uly + inset} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
-                  <text
-                    class="zonelabel"
-                    x={zone.box.ulx + inset + lblW / 2}
-                    y={zone.box.uly + inset + fs * 1.12}
-                    text-anchor="middle"
-                    font-size={fs}
-                  >{lbl}</text>
-                  {#if canEdit && tool === "measures" && selected?.p === p && selected?.z === z}
-                    {@render handles(p, z, zone.box, `Measure ${zone.label}`, inset + lblW, inset + fs * 1.55)}
+                  {@const editing = canEdit && selected?.p === p && selected?.z === z}
+                  {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
+                  {#if !editing}
+                    <rect class="labelbg" x={zone.box.ulx + inset} y={zone.box.uly + inset} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
+                    <text
+                      class="zonelabel"
+                      x={zone.box.ulx + inset + lblW / 2}
+                      y={zone.box.uly + inset + fs * 1.12}
+                      text-anchor="middle"
+                      font-size={fs}
+                    >{lbl}</text>
+                  {:else}
+                    {@render handles(p, z, zone.box, `Measure ${zone.label}`, inset + ZC_W_PX / sc, inset + ZC_H_PX / sc)}
                   {/if}
                 {/each}
               </svg>
@@ -1394,16 +1393,15 @@
                 {@const z = active.z}
                 {@const zone = pg.zones[z]}
                 {@const box = zone.box}
+                {@const inset = labelFont(p, pg.width) * 0.6}
                 <div
                   class="zc"
-                  style={`left:${(((box.ulx + box.lrx) / 2) / pg.width) * 100}%; top:${zcTop(p, box)}%; --accent:${accentFor(p, z)}`}
+                  style={`left:${((box.ulx + inset) / pg.width) * 100}%; top:${((box.uly + inset) / pg.height) * 100}%; --accent:${accentFor(p, z)}`}
                 >
                   <div
                     class="zc-inner"
                     role="group"
                     aria-label={`Measure ${zone.label} controls`}
-                    onpointerenter={() => hoverEnter(p, z)}
-                    onpointerleave={hoverLeave}
                     onpointerdown={(e) => {
                       selected = { p, z };
                       e.stopPropagation();
@@ -1453,12 +1451,17 @@
          when the box is too narrow for both; 0 for a box without a label. -->
     {#snippet handles(p: number, z: number, b: MeasureBox, name: string, labelW: number, labelH: number)}
       {@const pg = pages[p]}
-      {@const r = Math.max(8, pg.width / 120)}
+      <!-- Handle sizes are screen pixels, converted to page units by the
+           canvas scale: the corner dots are 5px in radius, the edge strips
+           12px thick. -->
+      {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
+      {@const r = 5 / sc}
+      {@const g = 12 / sc}
       {#each [
-        { edges: "n", side: "top edge", x: b.ulx + r, y: b.uly - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
-        { edges: "s", side: "bottom edge", x: b.ulx + r, y: b.lry - r / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: r },
-        { edges: "w", side: "left edge", x: b.ulx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
-        { edges: "e", side: "right edge", x: b.lrx - r / 2, y: b.uly + r, w: r, h: Math.max(0, b.lry - b.uly - 2 * r) },
+        { edges: "n", side: "top edge", x: b.ulx + r, y: b.uly - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g },
+        { edges: "s", side: "bottom edge", x: b.ulx + r, y: b.lry - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g },
+        { edges: "w", side: "left edge", x: b.ulx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) },
+        { edges: "e", side: "right edge", x: b.lrx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) },
       ] as e (e.edges)}
         <rect
           class="edge {resizeCursor(e.edges)}"
@@ -1494,7 +1497,6 @@
       {/each}
       <!-- A delete button pinned inside the box's top-right corner, drawn in
            screen pixels via the inverse-scale transform. -->
-      {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
       {@const bx = Math.max(b.ulx + 4 / sc, b.lrx - 27 / sc)}
       {@const by = labelW && bx < b.ulx + labelW + 6 / sc ? b.uly + labelH + 6 / sc : b.uly + 7 / sc}
       <g
@@ -1533,7 +1535,7 @@
           {#if omr}{staffCount} {staffCount === 1 ? "staff" : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1 ? "" : "s"}
           · {movementCount} movement{movementCount === 1 ? "" : "s"}
         </span>
-        {#if canEdit}
+        {#if holds}
           <span class="lockpill ok">you hold this task</span>
         {:else if d.status === "completed"}
           <span class="lockpill grey">done — read-only</span>
@@ -1551,32 +1553,36 @@
           >
         {:else}
           <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
+          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={busy}>Claim task</button>
         {/if}
-        {#if omr && canEdit}
+        {#if omr}
+          <div class="seg steps" title="The two steps of the layout correction. Each step shows only its own boxes.">
+            <button type="button" class:on={layoutStep === 1} onclick={() => setLayoutStep(1)}>1 · Staff boxes</button>
+            <button type="button" class:on={layoutStep === 2} onclick={() => setLayoutStep(2)}>2 · Measures</button>
+          </div>
+        {/if}
+        {#if omr && layoutStep === 1}
           <button
             type="button"
-            class="btn"
-            class:btn-danger={confirmingDetect}
-            onclick={() => detectAgain()}
-            onblur={() => (confirmingDetect = false)}
-            disabled={runner.busy}
-            title="Run the layout model on every page again. Every staff and measure box is replaced."
+            class="btn btn-secondary submitbtn"
+            onclick={() => setLayoutStep(2)}
+            title="Go on to step 2: the measures, their numbers and breaks. Submission is in step 2."
           >
-            {confirmingDetect ? "Replace all boxes?" : "Detect layout again"}
+            Next: measures
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="btn btn-primary submitbtn"
+            onclick={() => submit()}
+            disabled={busy || !canEdit}
+            title={omr
+              ? "Submit the corrected staves, measures, breaks and movements for review"
+              : "Submit the corrected measures, breaks and movements for review"}
+          >
+            Submit corrections
           </button>
         {/if}
-        <button
-          type="button"
-          class="btn btn-primary submitbtn"
-          onclick={() => submit()}
-          disabled={runner.busy || !canEdit}
-          title={omr
-            ? "Submit the corrected staves, measures, breaks and movements for review"
-            : "Submit the corrected measures, breaks and movements for review"}
-        >
-          Submit corrections
-        </button>
       </div>
 
       {#if failComments.length > 0}
@@ -2018,23 +2024,16 @@
     fill: rgba(139, 95, 191, 0.14);
     stroke-width: 3.5;
   }
-  /* Amber, dashed, for staff boxes: a third hue outside the region palette. */
+  /* Red for staff boxes: a third hue outside the region palette. */
   .staff {
-    fill: rgba(180, 116, 26, 0.08);
-    stroke: rgba(180, 116, 26, 0.9);
+    fill: rgba(214, 40, 40, 0.08);
+    stroke: rgba(214, 40, 40, 0.9);
     stroke-width: 1.5;
-    stroke-dasharray: 6 4;
     cursor: pointer;
   }
   .staff.selected {
-    fill: rgba(180, 116, 26, 0.18);
+    fill: rgba(214, 40, 40, 0.18);
     stroke-width: 2.5;
-  }
-  /* The layer the tool does not edit: visible, not interactive. */
-  .zone.passive,
-  .staff.passive {
-    pointer-events: none;
-    opacity: 0.6;
   }
   .labelbg {
     fill: rgba(255, 255, 255, 0.88);
@@ -2050,6 +2049,16 @@
     fill: #fff;
     stroke: rgba(14, 129, 149, 0.85);
     stroke-width: 1.5;
+  }
+  .staves .handle {
+    stroke: rgba(214, 40, 40, 0.9);
+  }
+  .steps {
+    align-self: stretch;
+  }
+  .steps > button {
+    flex: 1;
+    justify-content: center;
   }
   /* The side strips are invisible grab areas along the box edges; a
      transparent fill still catches pointer events. */
@@ -2069,39 +2078,40 @@
     cursor: nesw-resize;
   }
 
-  /* The per-zone controls: a floating pill inside the active box (number input ·
-     ↵ · §), in the box's upper third. The outer layer is a zero-size
-     anchor (zcTop keeps it inside the box); the pill hangs below it, centred,
-     and re-enables the pointer. */
+  /* The per-zone controls (number input · ↵ · §) stand in for the selected
+     measure's number label, at the same top-left anchor and a matching size
+     (ZC_W_PX × ZC_H_PX). The outer layer is a zero-size anchor; the inner
+     box re-enables the pointer. */
   .zc {
     position: absolute;
     pointer-events: none;
-    transform: translate(-50%, 0);
     z-index: 5;
   }
   .zc-inner {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
+    height: 22px;
     pointer-events: auto;
     background: var(--card);
     border: 1px solid var(--line-input);
-    border-radius: 999px;
-    padding: 4px 6px;
-    box-shadow: 0 6px 18px rgba(31, 36, 51, 0.18);
+    border-radius: 4px;
+    padding: 0 2px;
+    box-shadow: 0 2px 6px rgba(31, 36, 51, 0.18);
     white-space: nowrap;
   }
   .zc-inner .znum,
   .zc-inner button {
-    font: 600 11.5px var(--font);
+    font: 600 11px ui-monospace, monospace;
     line-height: 1;
     cursor: pointer;
   }
   .zc-inner .znum {
-    width: 36px;
-    padding: 4px 5px;
+    width: 32px;
+    height: 18px;
+    padding: 0 3px;
     border: 1px solid var(--line-input);
-    border-radius: 6px;
+    border-radius: 3px;
     background: var(--card);
     color: var(--ink);
     text-align: center;
@@ -2109,25 +2119,30 @@
     cursor: text;
   }
   .zc-inner button {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 18px;
     padding: 0;
-    border: 1px solid var(--line-input);
-    border-radius: 6px;
-    background: var(--card);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
     color: var(--ink-soft);
+  }
+  .zc-inner button:hover:not(:disabled) {
+    border-color: var(--line-input);
   }
   .zc-inner button.on {
     background: var(--accent);
     border-color: var(--accent);
     color: #fff;
   }
-  /* Disabled (e.g. the system break implied by a page break): clearly inert. */
-  .zc-inner button:disabled {
+  /* Disabled (e.g. the system break implied by a page break): muted and
+     dashed, also when the state it shows is on. */
+  .zc-inner button:disabled,
+  .zc-inner button.on:disabled {
     cursor: default;
-    border-style: dashed;
     color: var(--ink-faint);
     background: var(--bg-alt);
+    border: 1px dashed var(--ink-faint);
   }
   .delbtn {
     cursor: pointer;

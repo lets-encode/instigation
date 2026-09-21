@@ -3,12 +3,36 @@
 // measure zones, `staff` boxes the staff zones. Pure functions, no DOM.
 
 import { readingOrderRows, type MeasureBox } from './mei-facsimile.ts';
+import type { OmrPipeline } from './omr-client.ts';
 
 /** The parts of a COCO layout document that are read. */
 export interface CocoLayout {
 	categories?: { id: number; name: string }[];
 	images?: { width: number; height: number }[];
 	annotations?: { category_id: number; bbox: [number, number, number, number] }[];
+}
+
+/**
+ * The layout model's raw output for a piece, committed as `layout.json` next
+ * to the score. The corrected boxes are the zones in the score; this file
+ * keeps what the model returned, per page, so it can be read again without
+ * another model run.
+ */
+export interface LayoutRecord {
+	model: OmrPipeline;
+	/** Always false: the boxes in this file are not corrected. */
+	corrected: false;
+	note: string;
+	/** One entry per page, `image` as the score's graphic target. */
+	pages: { image: string; layout: CocoLayout }[];
+}
+
+export const LAYOUT_RECORD_NOTE =
+	'Raw output of the layout model, not corrected. The corrected staff and measure boxes are the zones in score.mei.';
+
+/** The record for the pages' raw layouts, as `layout.json` is written. */
+export function layoutRecord(model: OmrPipeline, pages: { image: string; layout: CocoLayout }[]): LayoutRecord {
+	return { model, corrected: false, note: LAYOUT_RECORD_NOTE, pages };
 }
 
 /** The boxes of one page, in the page image's pixel space, unsorted. */

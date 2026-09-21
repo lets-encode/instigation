@@ -357,6 +357,14 @@ export function buildFacsimileMei(
 					`               </measure>`
 			);
 		});
+		// A page without measure zones (an OMR-prepared piece: its measures come
+		// from transcription later) still opens with its page break, so the
+		// page's span exists for the per-page tasks.
+		if (withMeasures && !page.zones.length) {
+			mdivParts[mdivParts.length - 1].push(
+				`               <pb xml:id="pb-${p}" n="${p}" facs="#${surfaceId}"/>`
+			);
+		}
 		(page.staves ?? []).forEach((box, si) => {
 			zones.push(
 				`            <zone xml:id="staff-zone-${p}-${si + 1}" type="staff" ` +

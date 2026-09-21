@@ -34,7 +34,7 @@
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel from "./ZoomLevel.svelte";
+  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -43,8 +43,22 @@
   let failed = $state(false);
   const log = new ProgressLog();
 
-  let perRow = $state(4);
+  // Fewer pages than the row would hold show one row at its widest; a long
+  // source packs more per row. Not persisted, so every setup starts here.
+  function defaultPerRow(count: number) {
+    if (count <= 4) return Math.max(1, count);
+    return count > 10 ? 5 : 4;
+  }
+  let perRow = $state(defaultPerRow(wizard.candidates.length));
   let zoom = $state(100);
+  // The body's inner size and each preview's own size, for the page fit.
+  let bodyW = $state(0);
+  let bodyH = $state(0);
+  let natW = $state<number[]>([]);
+  let natH = $state<number[]>([]);
+  const fitPage = $derived(
+    fitPageZoom(bodyW, bodyH, perRow, natW.map((w, i) => (natH[i] ?? 0) / (w || 1))),
+  );
 
   // The page a range selection is measured from: the last one clicked on its own.
   let anchor: number | null = null;
@@ -233,16 +247,30 @@
       {/if}
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
-      <ZoomLevel bind:value={zoom} />
+      <ZoomLevel bind:value={zoom} {fitPage} />
       <div class="toolbar-rule"></div>
-      <button type="button" class="tbtn" onclick={() => setAll(true)} disabled={busy}>
+      <button
+        type="button"
+        class="tbtn"
+        class:on={chosen.length === wizard.candidates.length}
+        aria-pressed={chosen.length === wizard.candidates.length}
+        onclick={() => setAll(true)}
+        disabled={busy}
+      >
         Keep all
       </button>
-      <button type="button" class="tbtn" onclick={() => setAll(false)} disabled={busy}>
+      <button
+        type="button"
+        class="tbtn"
+        class:on={chosen.length === 0}
+        aria-pressed={chosen.length === 0}
+        onclick={() => setAll(false)}
+        disabled={busy}
+      >
         Keep none
       </button>
     </div>
-    <div class="material-body">
+    <div class="material-body" bind:clientWidth={bodyW} bind:clientHeight={bodyH}>
     <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
       {#each wizard.candidates as page, i (page.id)}
         <li
@@ -288,7 +316,13 @@
           >
             <!-- An image is draggable in its own right, which would drag the
                  picture instead of the page. -->
-            <img src={urls[i]} alt={page.label} draggable="false" />
+            <img
+              src={urls[i]}
+              alt={page.label}
+              draggable="false"
+              bind:naturalWidth={natW[i]}
+              bind:naturalHeight={natH[i]}
+            />
             <span class="mark" aria-hidden="true">
               {page.include ? numbers[i] : "—"}
             </span>

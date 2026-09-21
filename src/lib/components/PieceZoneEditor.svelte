@@ -21,7 +21,7 @@
     type PieceZone,
   } from "$lib/pieces.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel from "./ZoomLevel.svelte";
+  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
 
   let {
     pieces = $bindable(),
@@ -35,9 +35,16 @@
     selectedPiece: number;
   } = $props();
 
-  // Drawing a region wants the width, so a row holds one page to begin with.
-  let perRow = $state(1);
+  // Two pages per row, each shown whole, to begin with.
+  let perRow = $state(2);
   let zoom = $state(100);
+  let fit = $state<"width" | "page" | null>("page");
+  // The body's inner size, for the page fit.
+  let bodyW = $state(0);
+  let bodyH = $state(0);
+  const fitPage = $derived(
+    fitPageZoom(bodyW, bodyH, perRow, pages.map((p) => p.height / p.width)),
+  );
   // One entry per page, filled by bind:this. Reactive because binding writes
   // into it after the element is created.
   let svgEls = $state<SVGSVGElement[]>([]);
@@ -59,11 +66,13 @@
     origin: PieceZone;
     /** Which corner a resize grabbed. */
     corner?: Corner;
-    /** A draw creates its zone only once the pointer has moved a few screen
-        pixels, so a plain click leaves nothing behind. */
+    /** A draw creates its zone only once the pointer has moved a few
+        millimetres on screen, so a plain click leaves nothing behind. */
     started?: boolean;
   };
   let drag: Drag | null = null;
+  // Screen pixels the pointer must travel before a draw creates its region.
+  const DRAW_THRESHOLD_PX = 12;
   let selectedZone = $state<{ piece: number; zone: number } | null>(null);
   // What the last edit did or refused to do, shown until the next one.
   let notice = $state<string | null>(null);
@@ -185,8 +194,8 @@
     if (!page) return;
     const { x, y } = svgXY(e, drag.page);
     if (drag.kind === "draw" && !drag.started) {
-      // No zone until the pointer has dragged ~4 screen pixels.
-      const threshold = 4 * (page.width / (svgWidths[drag.page] || 400));
+      // No zone until the pointer has dragged a few millimetres (12 screen pixels).
+      const threshold = DRAW_THRESHOLD_PX * (page.width / (svgWidths[drag.page] || 400));
       if (Math.hypot(x - drag.sx, y - drag.sy) < threshold) return;
       const piece = pieces[drag.piece];
       piece.zones.push({ ...drag.origin });
@@ -314,14 +323,14 @@
     </span>
     <div class="toolbar-gap"></div>
     <PagesPerRow bind:value={perRow} />
-    <ZoomLevel bind:value={zoom} />
+    <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
   </div>
 
   {#if notice}
     <p class="msg-warn notice" role="status">{notice}</p>
   {/if}
 
-  <div class="material-body">
+  <div class="material-body" bind:clientWidth={bodyW} bind:clientHeight={bodyH}>
     <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
     {#each pages as page, i (page.url)}
       {@const scale = (svgWidths[i] || 400) / page.width}

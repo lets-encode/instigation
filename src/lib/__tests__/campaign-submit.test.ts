@@ -103,6 +103,25 @@ test('encoding: accepted submission advances the task and its subtasks, clears t
 	assert.equal(serializeLockCsv(v.locks!), LOCK_HEADER);
 });
 
+test('encoding: a layout correction may also commit layout.json beside the score', () => {
+	const tasks = parseTaskCsv(
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'T0001,,sources/score.mei,omr-layout,,,\n' +
+			'T0001,S0001,sources/score.mei,,,,\n'
+	);
+	const base = {
+		state: encodingState(),
+		locks: encodingLock,
+		intent: { task_id: 'T0001' },
+		author: 'bob',
+		changedPaths: ['sources/score.mei', 'sources/layout.json'],
+		meiValid: true,
+		now: NOW
+	};
+	assert.equal(enc({ ...base, tasks }).ok, true);
+	assert.deepEqual(enc({ ...base, tasks: TASKS }), { ok: false, reason: 'out_of_bounds' });
+});
+
 test('encoding: rejects a PR that touches anything but the fragment', () => {
 	const v = enc({
 		tasks: TASKS,

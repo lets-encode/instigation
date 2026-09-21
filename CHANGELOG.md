@@ -3,6 +3,14 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## Unreleased
+
+- Layout correction of an OMR piece runs in two steps, staff boxes then measures, and commits the model's raw output as `layout.json` beside the score.
+- Zone editor reworked: per-step boxes, two-step control with Next, click-only measure controls, side-by-side two-page view, drag threshold for new boxes.
+- Pre-task editors and the review view submit in the background and return to the campaign page; the run state shows on the board, task panel and volunteer view.
+- Claiming an OMR task runs the layout detection or clef/signature recognition in the claim overlay.
+- Wizard: fit-to-width and fit-to-page zoom, pages-per-row default from the page count, other unfinished setups resumable from the rail.
+
 ## 0.34.0 – 2026-09-18
 
 - Encoding tasks of an OMR piece ("Correct the draft · page N" on the board) start from a transcription: when the task is opened, the page's staves are cropped, transcribed with the Musibot staff pipeline, stitched into a page score, converted with verovio, inserted into the page's measures and committed to the task branch before mei-friend opens; mismatches and failed staves are reported.

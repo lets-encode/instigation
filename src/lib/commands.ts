@@ -13,7 +13,7 @@
 // Handlers are self-contained: they read the tracking tables themselves rather
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
-import type { ForgeClient } from './forge/types.ts';
+import type { FileChange, ForgeClient } from './forge/types.ts';
 import {
 	parseTaskCsv,
 	parseStateCsv,
@@ -49,6 +49,7 @@ import { WorkflowRunWatch } from './run-watch.ts';
 import { checkMei } from './mei-check.ts';
 import type { ProgressUpdate } from './run-watch.ts';
 import type { OmrModels } from './omr-page-draft.ts';
+import type { LayoutRecord } from './omr-layout.ts';
 
 const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
@@ -1259,9 +1260,9 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 	run: ({ task_id }, ctx, envelope) => claimAndWait(ctx, task_id, '', 'encoding', envelope)
 };
 
-// Open the PR carrying a rewritten score, wait for the automation's verdict.
-// The current file's <meiHead> is carried over verbatim, its score definition
-// through the parse.
+// Check and build the rewritten score, then open its PR in the background;
+// the verdict lands on the task's run state. The current file's <meiHead> is
+// carried over verbatim, its score definition through the parse.
 //
 // The submission advances the score to stage C (generated measures, breaks and
 // movements), so the submitted content always differs from the file in the
@@ -1277,7 +1278,8 @@ async function submitFacsimile(
 	task_id: string,
 	pages: PageModel[],
 	envelope: CommandEnvelope | null,
-	layout = false
+	layout = false,
+	rawLayout?: LayoutRecord
 ): Promise<Result> {
 	const { forge: f, owner, repo } = ctx;
 	try {
@@ -1299,23 +1301,30 @@ async function submitFacsimile(
 		}
 		const meiError = await checkMei(content);
 		if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
-		ctx.progress({ step: 'Opening the correction submission…' });
 		const title = layout ? `Correct the layout (${task_id})` : `Correct measure zones (${task_id})`;
 		const body = `${title}. Opened from the zone editor.`;
-		console.log('[zones] opening PR', { task_id });
-		const pr = await f.openChangePr(owner, repo, {
-			branch: `${layout ? 'layout' : 'zones'}-${task_id}-${rand()}`,
-			files: [{ path: fragment, content }],
-			message: title,
-			title,
-			body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+		const label = `${layout ? 'Layout' : 'Measure'} correction of ${task_id}`;
+		// The layout model's raw output goes next to the score. The caller runs a
+		// pull request of at most two files, so it is one file per piece.
+		const files: FileChange[] = [{ path: fragment, content }];
+		if (rawLayout) {
+			files.push({
+				path: `${fragment.slice(0, fragment.lastIndexOf('/') + 1)}layout.json`,
+				content: JSON.stringify(rawLayout, null, '\t') + '\n'
+			});
+		}
+		return openAndFinishInBackground(ctx, label, `encode:${task_id}`, async () => {
+			console.log('[zones] opening PR', { task_id });
+			const pr = await f.openChangePr(owner, repo, {
+				branch: `${layout ? 'layout' : 'zones'}-${task_id}-${rand()}`,
+				files,
+				message: title,
+				title,
+				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+			});
+			console.log('[zones] PR opened', pr.number, pr.html_url);
+			return { ...pr, cleanup: 'accepted' };
 		});
-		console.log('[zones] PR opened', pr.number, pr.html_url);
-		// The verdict is awaited here, not in the background: the zone editor
-		// navigates away on acceptance, so a rejection must land while the
-		// volunteer's corrections are still on screen to retry from.
-		const verdict = await waitForPrProcessed(ctx, { ...pr, cleanup: 'accepted' });
-		return verdictResult(verdict, pr.number, pr.html_url, `Correction of ${task_id} submitted.`);
 	} catch (e) {
 		return { error: `Submission failed: ${(e as Error).message}` };
 	}
@@ -1328,6 +1337,7 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 	id: 'campaign.submitZones',
 	version: 2,
 	log: 'pr',
+	background: true,
 	envelopeInput: ({ task_id, pages }) => ({
 		task_id,
 		measures: pages.reduce((n, p) => n + p.zones.length, 0),
@@ -1341,11 +1351,17 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 // Layout correction: submit the corrected staff and measure boxes of an
 // OMR-prepared piece at stage C with empty measures — the breaks and
 // movements as for measure correction, the staff zones alongside. The
-// validation subtask reviews the boxes.
-const submitOmrLayout: CommandDef<{ task_id: string; pages: PageModel[] }, Result> = {
+// validation subtask reviews the boxes. `layout` is the model's raw output
+// for every page, present when detection ran in the editor session; it is
+// committed as `layout.json` next to the score.
+const submitOmrLayout: CommandDef<
+	{ task_id: string; pages: PageModel[]; layout?: LayoutRecord },
+	Result
+> = {
 	id: 'campaign.submitOmrLayout',
-	version: 1,
+	version: 2,
 	log: 'pr',
+	background: true,
 	envelopeInput: ({ task_id, pages }) => ({
 		task_id,
 		staves: pages.reduce((n, p) => n + (p.staves?.length ?? 0), 0),
@@ -1353,8 +1369,8 @@ const submitOmrLayout: CommandDef<{ task_id: string; pages: PageModel[] }, Resul
 		systems: pages.reduce((n, p) => n + p.zones.filter((z) => z.sb).length, 0),
 		movements: 1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0)
 	}),
-	run: ({ task_id, pages }, ctx, envelope) =>
-		submitFacsimile(ctx, task_id, pages, envelope, true)
+	run: ({ task_id, pages, layout }, ctx, envelope) =>
+		submitFacsimile(ctx, task_id, pages, envelope, true, layout)
 };
 
 // Score setup: submit the piece's initial score definition — staves with their
@@ -1370,6 +1386,7 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 	id: 'campaign.submitScoreSetup',
 	version: 1,
 	log: 'pr',
+	background: true,
 	envelopeInput: ({ task_id, scoreDef }) => ({
 		task_id,
 		staves: scoreDef.staves.length,
@@ -1416,23 +1433,20 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 			}
 			const meiError = await checkMei(content);
 			if (meiError) return { error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.` };
-			ctx.progress({ step: 'Opening the setup submission…' });
 			const title = `Set up the score (${task_id})`;
 			const body = `${title}. Opened from the score setup editor.`;
-			console.log('[setup] opening PR', { task_id });
-			const pr = await f.openChangePr(owner, repo, {
-				branch: `setup-${task_id}-${rand()}`,
-				files: [{ path: fragment, content }],
-				message: title,
-				title,
-				body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+			return openAndFinishInBackground(ctx, `Score setup of ${task_id}`, `encode:${task_id}`, async () => {
+				console.log('[setup] opening PR', { task_id });
+				const pr = await f.openChangePr(owner, repo, {
+					branch: `setup-${task_id}-${rand()}`,
+					files: [{ path: fragment, content }],
+					message: title,
+					title,
+					body: envelope ? appendEnvelopeToPrBody(body, envelope) : body
+				});
+				console.log('[setup] PR opened', pr.number, pr.html_url);
+				return { ...pr, cleanup: 'accepted' };
 			});
-			console.log('[setup] PR opened', pr.number, pr.html_url);
-			// The verdict is awaited here, not in the background: the setup editor
-			// navigates away on acceptance, so a rejection must land while the
-			// entered values are still on screen to retry from.
-			const verdict = await waitForPrProcessed(ctx, { ...pr, cleanup: 'accepted' });
-			return verdictResult(verdict, pr.number, pr.html_url, `Score setup of ${task_id} submitted.`);
 		} catch (e) {
 			return { error: `Submission failed: ${(e as Error).message}` };
 		}

@@ -27,15 +27,18 @@
   import Icon from "$lib/components/Icon.svelte";
   import type { Snippet } from "svelte";
   import { goto } from "$app/navigation";
-  import { auth } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
   import { releaseClaim } from "$lib/campaign-resolve.ts";
-  import { discardDraft } from "$lib/wizard-draft.ts";
+  import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
   import {
     WIZARD_STEPS,
+    draftSnapshot,
     draftStatus,
     isSkipped,
     resetWizard,
+    resumeDraft,
+    saveDraft,
     stepIndex,
     wizard,
     type WizardStepId,
@@ -135,6 +138,35 @@
     if (minutes < 60) return `${minutes} min ago`;
     return `${Math.floor(minutes / 60)} h ago`;
   });
+
+  // Other setups of this account stored in the browser, listed so one of them
+  // can be picked up from here. Read again after each save of this one, since a
+  // save is when the stored set changes.
+  const otherDrafts = $derived.by(() => {
+    draftStatus.savedAt;
+    const owner = auth.user?.login;
+    if (!owner) return [];
+    const handle = wizard.handle.trim();
+    return resumableDrafts(owner).filter((d) => d.handle !== handle);
+  });
+  let resuming = $state<string | null>(null);
+  let resumeError = $state<string | null>(null);
+
+  async function resumeOther(handle: string) {
+    if (resuming) return;
+    resumeError = null;
+    resuming = handle;
+    // The setup being left is saved on a debounce; write it now so its last
+    // edits are kept.
+    const owner = auth.user?.login;
+    if (owner) saveDraft(owner, draftSnapshot());
+    try {
+      await resumeDraft(forge(), handle, () => {});
+    } catch (err) {
+      resumeError = `Could not resume “${handle}”: ${(err as Error).message}`;
+    }
+    resuming = null;
+  }
 
   // Dragging the divider left of the work card resizes it; the material pane
   // takes whatever is left. Sized in pixels so the choice survives a window
@@ -245,6 +277,21 @@
         <button type="button" class="discard" onclick={() => (confirmingDiscard = true)}>
           Discard this setup
         </button>
+      {/if}
+      {#each otherDrafts as draft (draft.handle)}
+        <button
+          type="button"
+          class="discard other-draft"
+          onclick={() => resumeOther(draft.handle)}
+          disabled={resuming !== null}
+        >
+          {resuming === draft.handle
+            ? "Working…"
+            : `Resume setup of “${draft.entries?.title?.trim() || draft.handle}”`}
+        </button>
+      {/each}
+      {#if resumeError}
+        <p class="msg-error" role="alert">{resumeError}</p>
       {/if}
     </div>
   </nav>
@@ -512,6 +559,14 @@
   }
   .discard:hover {
     color: var(--danger);
+  }
+  .other-draft {
+    display: flex;
+    margin-top: 6px;
+    text-align: left;
+  }
+  .other-draft:hover {
+    color: var(--accent);
   }
   .discard.danger {
     color: var(--danger);
