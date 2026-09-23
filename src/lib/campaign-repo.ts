@@ -54,7 +54,17 @@ async function createOrAdoptRepo(
 		const marker = await f
 			.waitForRepoContents(owner, name, TEMPLATE_MARKER, { attempts: 5, delayMs: 1000 })
 			.catch(() => null);
-		if (marker !== null) return existing;
+		if (marker !== null) {
+			// Only the final step writes config.yaml, so a repository that has one
+			// holds a finished campaign, which a new setup must not take over.
+			if ((await f.getRepoFile(owner, name, 'config.yaml')) !== null) {
+				throw new Error(
+					`A campaign already exists in ${owner}/${name}. ` +
+						`Restart the setup under another name, or remove or rename that repository.`
+				);
+			}
+			return existing;
+		}
 		throw new Error(
 			`A repository called ${owner}/${name} already exists but is not this campaign's. ` +
 				`Remove or rename it, or restart the setup under another name.`

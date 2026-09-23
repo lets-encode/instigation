@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- Retrying a campaign finish no longer recommits the campaign once its config is in the repository.
+- Campaign setup no longer adopts an existing repository that already holds a finished campaign.
 - Coordinator decides each pull request once, so a second run no longer rejects an operation it already accepted.
 - Broker relay responses are sent as sandboxed downloads, so a relayed SVG or HTML file cannot run script in the app origin.
 - Broker trusts X-Forwarded-Host behind the reverse proxy, so writes no longer fail the same-origin check in production.

@@ -123,137 +123,143 @@ export class CampaignFinisher {
 		this.busy = true;
 		this.log.clear();
 		try {
-			if (!this.detected) this.detected = await this.measurePages();
-			const detected = this.detected;
+			// A campaign whose config.yaml is committed already has its tables and
+			// scores, and volunteers may be working in it; a retry after a failed
+			// registration or topic goes straight to those steps.
+			const committed = (await f.getRepoFile(repo.owner, repo.name, 'config.yaml')) != null;
+			if (!committed) {
+				if (!this.detected) this.detected = await this.measurePages();
+				const detected = this.detected;
 
-			// Every piece is published under the campaign's licence, so it is stated
-			// in each piece's header as well as in the config.
-			const license = wizard.license;
-			const split = partitionPages(wizard.pieces, detected);
-			// The committed pages, as an uploaded encoding's facsimile is relinked to
-			// them: every one was measured at its committed size.
-			const images = detected.map((page) => ({
-				target: page.image,
-				width: page.width,
-				height: page.height
-			}));
-			const surfaces: PieceSurfaces = {};
-			const scores: FileChange[] = [];
+				// Every piece is published under the campaign's licence, so it is stated
+				// in each piece's header as well as in the config.
+				const license = wizard.license;
+				const split = partitionPages(wizard.pieces, detected);
+				// The committed pages, as an uploaded encoding's facsimile is relinked to
+				// them: every one was measured at its committed size.
+				const images = detected.map((page) => ({
+					target: page.image,
+					width: page.width,
+					height: page.height
+				}));
+				const surfaces: PieceSurfaces = {};
+				const scores: FileChange[] = [];
 
-			wizard.pieces.forEach((piece, i) => {
-				const name = piece.meta.title.trim() || piece.id;
-				// Building a score is a string operation: it reports what it did, not
-				// how long it took.
-				this.log.step(`Building the score for ${name} (${i + 1} of ${wizard.pieces.length})`, {
-					timed: false
-				});
-				const head = buildPieceHead(
-					{
-						title: piece.meta.title,
-						composer: piece.meta.composer,
-						editor: piece.meta.editor,
-						lyricist: piece.meta.lyricist,
-						contributors: piece.meta.contributors,
-						note: piece.meta.note,
-						license
-					},
-					wizard.source,
-					{ creator: user.login }
-				);
-				if (piece.kind === 'encoded') {
-					const encoding = wizard.encodings.find((e) => e.name === piece.encodingName);
-					if (!encoding) throw new Error(`The encoding for ${piece.id} is no longer available.`);
-					this.log.detail(`from the encoding ${encoding.name}`);
-					// An uploaded encoding's facsimile references the files and pixel
-					// sizes it was authored against, so it is pointed at the pages this
-					// campaign committed: surface n to page n, coordinates scaled with it.
-					const relinked = relinkFacsimileImages(encoding.mei, images);
-					scores.push({ path: piecePath(piece.id), content: replaceMeiHead(relinked, head) });
-					return;
-				}
-				if (piece.kind === 'physical-only') {
-					// A blank score to transcribe the physical source into. A known page
-					// count writes one page-break marker per page, matching the per-page
-					// tasks planTasks derives from config; no measure-correction pre-task
-					// exists, since there is no facsimile to correct measures on.
-					const count = piece.pages ?? 0;
-					this.log.detail(
-						count > 0
-							? `blank score, ${count} page(s) from the physical source`
-							: 'blank score, transcribed from the physical source'
+				wizard.pieces.forEach((piece, i) => {
+					const name = piece.meta.title.trim() || piece.id;
+					// Building a score is a string operation: it reports what it did, not
+					// how long it took.
+					this.log.step(`Building the score for ${name} (${i + 1} of ${wizard.pieces.length})`, {
+						timed: false
+					});
+					const head = buildPieceHead(
+						{
+							title: piece.meta.title,
+							composer: piece.meta.composer,
+							editor: piece.meta.editor,
+							lyricist: piece.meta.lyricist,
+							contributors: piece.meta.contributors,
+							note: piece.meta.note,
+							license
+						},
+						wizard.source,
+						{ creator: user.login }
 					);
-					scores.push({ path: piecePath(piece.id), content: buildBlankScoreMei(head, count) });
-					return;
-				}
-				// Stage A: facsimile and labelled zones only. The measure body is
-				// generated once this piece's measure-correction pre-task validates.
-				// An OMR piece has no zones yet: its layout task finds them, so its
-				// page tasks are planned from the pages it covers.
-				const model = initialFacsimileModel(split[i].pages);
-				this.log.detail(
-					wizard.preparation === 'omr'
-						? `${split[i].pages.length} page(s); staves and measures are found in the layout task`
-						: `${split[i].pages.length} page(s), ${split[i].measuredSurfaces.length} with measures`
-				);
-				scores.push({
-					path: piecePath(piece.id),
-					content: buildFacsimileMei({ ...model, headXml: head })
-				});
-				if (wizard.preparation !== 'omr') surfaces[piece.id] = split[i].measuredSurfaces;
-			});
-
-			const config = buildCampaignConfig(
-				{
-					name: wizard.handle.trim(),
-					title: wizard.title.trim(),
-					description: wizard.description.trim(),
-					license,
-					sourceKind: wizard.images.length
-						? 'facsimile'
-						: wizard.encodings.length
-							? 'mei-template'
-							: 'physical-only',
-					sourceHeader: {
-						title: wizard.source.title,
-						composer: wizard.source.composer,
-						publisher: wizard.source.publisher,
-						date: wizard.source.date
-					},
-					images: wizard.images.map((image) => image.path),
-					rightsAcknowledged: wizard.copyrightAccepted ? COPYRIGHT_ACKNOWLEDGEMENT.version : '',
-					pieces: wizard.pieces.map((piece) => ({
-						id: piece.id,
-						kind: piece.kind,
+					if (piece.kind === 'encoded') {
+						const encoding = wizard.encodings.find((e) => e.name === piece.encodingName);
+						if (!encoding) throw new Error(`The encoding for ${piece.id} is no longer available.`);
+						this.log.detail(`from the encoding ${encoding.name}`);
+						// An uploaded encoding's facsimile references the files and pixel
+						// sizes it was authored against, so it is pointed at the pages this
+						// campaign committed: surface n to page n, coordinates scaled with it.
+						const relinked = relinkFacsimileImages(encoding.mei, images);
+						scores.push({ path: piecePath(piece.id), content: replaceMeiHead(relinked, head) });
+						return;
+					}
+					if (piece.kind === 'physical-only') {
+						// A blank score to transcribe the physical source into. A known page
+						// count writes one page-break marker per page, matching the per-page
+						// tasks planTasks derives from config; no measure-correction pre-task
+						// exists, since there is no facsimile to correct measures on.
+						const count = piece.pages ?? 0;
+						this.log.detail(
+							count > 0
+								? `blank score, ${count} page(s) from the physical source`
+								: 'blank score, transcribed from the physical source'
+						);
+						scores.push({ path: piecePath(piece.id), content: buildBlankScoreMei(head, count) });
+						return;
+					}
+					// Stage A: facsimile and labelled zones only. The measure body is
+					// generated once this piece's measure-correction pre-task validates.
+					// An OMR piece has no zones yet: its layout task finds them, so its
+					// page tasks are planned from the pages it covers.
+					const model = initialFacsimileModel(split[i].pages);
+					this.log.detail(
+						wizard.preparation === 'omr'
+							? `${split[i].pages.length} page(s); staves and measures are found in the layout task`
+							: `${split[i].pages.length} page(s), ${split[i].measuredSurfaces.length} with measures`
+					);
+					scores.push({
 						path: piecePath(piece.id),
-						...(piece.kind === 'physical-only' && piece.pages ? { pages: piece.pages } : {}),
-						...(piece.kind === 'facsimile' ? { preparation: wizard.preparation } : {}),
-						zones: piece.zones.map((zone) => ({
-							// config records the source's page numbers, 1-based.
-							surface: zone.surface + 1,
-							ulx: Math.round(zone.ulx),
-							uly: Math.round(zone.uly),
-							lrx: Math.round(zone.lrx),
-							lry: Math.round(zone.lry)
-						})),
-						header: { title: piece.meta.title, composer: piece.meta.composer }
-					}))
-				},
-				String(user.id),
-				automation,
-				repo.id
-			);
+						content: buildFacsimileMei({ ...model, headXml: head })
+					});
+					if (wizard.preparation !== 'omr') surfaces[piece.id] = split[i].measuredSurfaces;
+				});
 
-			const files: FileChange[] = [
-				{ path: 'config.yaml', content: configToYaml(config) },
-				...scores,
-				{ path: 'tracking/task.csv', content: buildTaskCsv(config, surfaces) },
-				{ path: 'tracking/state.csv', content: buildStateCsv(config, surfaces) },
-				{ path: 'tracking/lock.csv', content: buildLockCsv() },
-				{ path: 'tracking/history.csv', content: buildHistoryCsv() },
-				{ path: 'tracking/comment.csv', content: buildCommentCsv() }
-			];
-			this.log.step(`Committing the campaign (${files.length} file(s))`);
-			await f.commitFiles(repo.owner, repo.name, files, 'Initialise campaign');
+				const config = buildCampaignConfig(
+					{
+						name: wizard.handle.trim(),
+						title: wizard.title.trim(),
+						description: wizard.description.trim(),
+						license,
+						sourceKind: wizard.images.length
+							? 'facsimile'
+							: wizard.encodings.length
+								? 'mei-template'
+								: 'physical-only',
+						sourceHeader: {
+							title: wizard.source.title,
+							composer: wizard.source.composer,
+							publisher: wizard.source.publisher,
+							date: wizard.source.date
+						},
+						images: wizard.images.map((image) => image.path),
+						rightsAcknowledged: wizard.copyrightAccepted ? COPYRIGHT_ACKNOWLEDGEMENT.version : '',
+						pieces: wizard.pieces.map((piece) => ({
+							id: piece.id,
+							kind: piece.kind,
+							path: piecePath(piece.id),
+							...(piece.kind === 'physical-only' && piece.pages ? { pages: piece.pages } : {}),
+							...(piece.kind === 'facsimile' ? { preparation: wizard.preparation } : {}),
+							zones: piece.zones.map((zone) => ({
+								// config records the source's page numbers, 1-based.
+								surface: zone.surface + 1,
+								ulx: Math.round(zone.ulx),
+								uly: Math.round(zone.uly),
+								lrx: Math.round(zone.lrx),
+								lry: Math.round(zone.lry)
+							})),
+							header: { title: piece.meta.title, composer: piece.meta.composer }
+						}))
+					},
+					String(user.id),
+					automation,
+					repo.id
+				);
+
+				const files: FileChange[] = [
+					{ path: 'config.yaml', content: configToYaml(config) },
+					...scores,
+					{ path: 'tracking/task.csv', content: buildTaskCsv(config, surfaces) },
+					{ path: 'tracking/state.csv', content: buildStateCsv(config, surfaces) },
+					{ path: 'tracking/lock.csv', content: buildLockCsv() },
+					{ path: 'tracking/history.csv', content: buildHistoryCsv() },
+					{ path: 'tracking/comment.csv', content: buildCommentCsv() }
+				];
+				this.log.step(`Committing the campaign (${files.length} file(s))`);
+				await f.commitFiles(repo.owner, repo.name, files, 'Initialise campaign');
+			}
 
 			// There is a campaign now, so the name it was reserved under becomes its
 			// address. This is the reservation being cashed in, not a race: the name
@@ -273,8 +279,8 @@ export class CampaignFinisher {
 			}
 
 			// The topic is what puts a campaign in the listing, so a campaign missing it
-			// is not finished and the setup stays open. Retrying runs this whole step
-			// again, which both the commit and the registration tolerate.
+			// is not finished and the setup stays open. Retrying runs this step again,
+			// which the registration tolerates; the commit is skipped once it exists.
 			this.log.step('Adding it to the list of campaigns');
 			try {
 				await f.setRepoTopics(repo.owner, repo.name, [provider.repoTopic]);
