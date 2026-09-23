@@ -547,7 +547,7 @@ def omr_api(path):
 
 @app.route("/omr/blob", methods=["GET", "PUT"])
 @limiter.limit(
-    "20 per second",
+    "100 per second",
     key_func=lambda: session.get("userLogin") or get_remote_address(),
 )
 def omr_blob():

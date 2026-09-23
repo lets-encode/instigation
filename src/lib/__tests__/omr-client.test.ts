@@ -97,6 +97,35 @@ test('download fetches each presigned URL through the blob relay', async () => {
 	assert.equal(await files['layout.json'].text(), '{"annotations":[]}');
 });
 
+test('a call the broker rate limit refused is retried after a back-off; a service 429 is not', async () => {
+	const brokerLimited = () =>
+		Response.json(
+			{ error: 'OAuth broker request rate limit exceeded', source: 'broker' },
+			{ status: 429, headers: { 'X-Lets-Encode-Upstream': 'broker' } }
+		);
+	let refusals = 2;
+	const waits: number[] = [];
+	const { seen, fetch } = fakeFetch({
+		[`GET ${BASE}/blob`]: () => (refusals-- > 0 ? brokerLimited() : new Response('bytes')),
+		[`POST ${BASE}/api/musicorpus-pages/p1/file-urls`]: () =>
+			Response.json({ get: { 'a.json': 'https://quest.example/b/a.json?sig=d' } }),
+		[`GET ${BASE}/api/pipelines`]: () =>
+			Response.json({ error: 'slow down' }, { status: 429, headers: { 'X-Lets-Encode-Upstream': 'musibot' } })
+	});
+	const client = createOmrClient('/auth', { fetch, sleep: async (ms) => void waits.push(ms) });
+	const files = await client.download('p1', ['a.json']);
+	assert.equal(await files['a.json'].text(), 'bytes');
+	assert.equal(seen.filter((s) => s.url.startsWith(`${BASE}/blob`)).length, 3);
+	assert.deepEqual(waits, [1000, 2000]);
+
+	await assert.rejects(client.pipelines(), (e: unknown) => e instanceof OmrError && e.status === 429);
+	assert.deepEqual(waits, [1000, 2000]);
+
+	refusals = 10;
+	await assert.rejects(client.download('p1', ['a.json']), /rate limit exceeded/);
+	assert.deepEqual(waits, [1000, 2000, 1000, 2000, 4000]);
+});
+
 test('run starts the execution and polls until it has settled', async () => {
 	let polls = 0;
 	const { seen, fetch } = fakeFetch({

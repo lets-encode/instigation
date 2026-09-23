@@ -51,6 +51,9 @@ const DEFAULTS = {
 	executionTimeoutMs: 5 * 60_000
 };
 
+/** Waits before each retry of a call the broker's own rate limit refused. */
+const BROKER_RETRY_MS = [1000, 2000, 4000];
+
 /** The relay's error for a failed call, with the HTTP status. */
 export class OmrError extends Error {
 	constructor(
@@ -101,18 +104,25 @@ export function createOmrClient(brokerUrl: string, options: OmrClientOptions = {
 
 	// One relay call. Network failures and timeouts become OmrErrors with
 	// status 0; a failing status carries the relay's or the service's message.
+	// A 429 from the broker's own rate limit is retried after a back-off.
 	async function call(method: string, url: string, init: RequestInit = {}): Promise<Response> {
 		let res: Response;
-		try {
-			res = await doFetch(url, { ...init, method, signal: AbortSignal.timeout(requestTimeoutMs) });
-		} catch (err) {
-			const timedOut = err instanceof DOMException && err.name === 'TimeoutError';
-			throw new OmrError(
-				timedOut
-					? `The OMR service did not answer within ${requestTimeoutMs / 1000}s (${method} ${url}).`
-					: `Could not reach the OMR relay (${method} ${url}).`,
-				0
-			);
+		for (let attempt = 0; ; attempt++) {
+			try {
+				res = await doFetch(url, { ...init, method, signal: AbortSignal.timeout(requestTimeoutMs) });
+			} catch (err) {
+				const timedOut = err instanceof DOMException && err.name === 'TimeoutError';
+				throw new OmrError(
+					timedOut
+						? `The OMR service did not answer within ${requestTimeoutMs / 1000}s (${method} ${url}).`
+						: `Could not reach the OMR relay (${method} ${url}).`,
+					0
+				);
+			}
+			const brokerLimited =
+				res.status === 429 && res.headers.get('X-Lets-Encode-Upstream') === 'broker';
+			if (!brokerLimited || attempt >= BROKER_RETRY_MS.length) break;
+			await sleep(BROKER_RETRY_MS[attempt]);
 		}
 		if (res.ok) return res;
 		let detail = '';
