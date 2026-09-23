@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- Coordinator retries GitHub 5xx reads and falls back to the commit's file list when GitHub cannot serve a one-commit PR's diff.
+- A failed automation run reads "Run failed" instead of "Rejected".
 - Retrying a campaign finish no longer recommits the campaign once its config is in the repository.
 - Campaign setup no longer adopts an existing repository that already holds a finished campaign.
 - Campaign pages show an error when the registry cannot be reached instead of reporting the campaign as not found.

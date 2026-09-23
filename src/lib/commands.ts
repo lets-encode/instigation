@@ -369,7 +369,8 @@ export interface PendingVerdictSink {
 	}): string;
 	/** The background-opened PR exists now; the entry moves to 'processing'. */
 	attachPr(id: string, prNumber: number, prUrl: string): void;
-	settle(id: string, state: 'accepted' | 'rejected' | 'timeout', message: string): void;
+	/** `runFailed`: the automation run failed before reaching a verdict. */
+	settle(id: string, state: 'accepted' | 'rejected' | 'timeout', message: string, runFailed?: boolean): void;
 }
 
 // The fallback sink cannot render anything, but a rejection must never
@@ -426,8 +427,10 @@ function openAndFinishInBackground(
 		}
 		verdictSink.attachPr(id, pr.number, pr.html_url);
 		let res: Result;
+		let runFailed = false;
 		try {
 			const outcome = await waitForPrProcessed(background, pr);
+			runFailed = outcome.state === 'run_failed';
 			res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
 		} catch (e) {
 			// The poll failed, not necessarily the submission — an indeterminate
@@ -437,7 +440,7 @@ function openAndFinishInBackground(
 		}
 		const state = res.error ? 'rejected' : res.warn ? 'timeout' : 'accepted';
 		console.log('[pending-verdict]', label, 'PR', pr.number, state);
-		verdictSink.settle(id, state, res.error ?? res.message ?? `${label} processed.`);
+		verdictSink.settle(id, state, res.error ?? res.message ?? `${label} processed.`, runFailed);
 	})();
 	// No banner: the task's run state (TaskRunState.svelte) is the visible
 	// signal from here on.

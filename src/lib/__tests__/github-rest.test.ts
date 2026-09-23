@@ -6,6 +6,7 @@ import {
 	routeSessionVia,
 	getRepoAccess,
 	getRepoFile,
+	getPullRequest,
 	getPullRequestDetails,
 	getPullRequestFiles,
 	getLastIssueComment,
@@ -468,4 +469,41 @@ test('ordinary permission failures are not mislabeled as rate limits', async (t)
 		getPullRequestDetails('token', 'owner', 'repo', 7),
 		(error: unknown) => error instanceof Error && !(error instanceof RateLimitError) && /Resource not accessible/.test(error.message)
 	);
+});
+
+test('a GET failing with a 5xx is retried', async (t) => {
+	let calls = 0;
+	t.mock.method(globalThis, 'fetch', async () =>
+		++calls === 1
+			? Response.json({ message: 'Server Error' }, { status: 502 })
+			: Response.json({ body: 'b', changed_files: 1, state: 'open', head: { sha: 'h' } })
+	);
+	const details = await getPullRequestDetails('token', 'owner', 'repo', 7);
+	assert.equal(details.headSha, 'h');
+	assert.equal(calls, 2);
+});
+
+const unavailableDiff = () =>
+	Response.json({ message: 'Sorry, this diff is temporarily unavailable due to heavy server load.' }, { status: 500 });
+
+test('getPullRequest takes a one-commit PR’s files from its commit when the diff is unavailable', async (t) => {
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+		const path = new URL(String(input)).pathname;
+		if (path.endsWith('/pulls/7/files')) return unavailableDiff();
+		if (path.endsWith('/commits/head'))
+			return Response.json({ parents: [{ sha: 'base' }], files: [{ ...file(1), patch: '@@' }] });
+		return Response.json({ changed_files: 1, commits: 1, state: 'open', head: { sha: 'head' }, base: { sha: 'base' } });
+	});
+	const pr = await getPullRequest('token', 'owner', 'repo', 7);
+	assert.deepEqual(pr.files, [{ filename: 'sources/1.mei', status: 'modified', patch: '@@' }]);
+});
+
+test('getPullRequest keeps the diff error when the commit does not sit on the base', async (t) => {
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL) => {
+		const path = new URL(String(input)).pathname;
+		if (path.endsWith('/pulls/7/files')) return unavailableDiff();
+		if (path.endsWith('/commits/head')) return Response.json({ parents: [{ sha: 'older' }], files: [file(1)] });
+		return Response.json({ changed_files: 1, commits: 1, state: 'open', head: { sha: 'head' }, base: { sha: 'base' } });
+	});
+	await assert.rejects(getPullRequest('token', 'owner', 'repo', 7), /diff is temporarily unavailable/);
 });

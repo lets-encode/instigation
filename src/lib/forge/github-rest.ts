@@ -292,6 +292,9 @@ async function ghGet<T>(
 	return { status: res.status, ok: res.ok, data: data as T, link };
 }
 
+/** Waits before each repeat of a GET that failed with a 5xx. */
+const GET_RETRY_DELAYS_MS = [500, 1500];
+
 /**
  * A GitHub JSON request without ETag caching — the write path, plus reads that
  * treat any non-2xx as failure. `path` is API-root-relative (e.g.
@@ -300,12 +303,22 @@ async function ghGet<T>(
  * `(status METHOD path)`. Returns the parsed JSON body ({} when empty).
  */
 async function ghSend<T>(method: string, path: string, token?: string, body?: unknown): Promise<T> {
-	const res = await githubFetch(`${apiRoot(token)}${path}`, {
-		method,
-		headers: { ...baseHeaders, ...authHeaders(token) },
-		cache: 'no-store',
-		...(body === undefined ? {} : { body: JSON.stringify(body) })
-	});
+	const send = () =>
+		githubFetch(`${apiRoot(token)}${path}`, {
+			method,
+			headers: { ...baseHeaders, ...authHeaders(token) },
+			cache: 'no-store',
+			...(body === undefined ? {} : { body: JSON.stringify(body) })
+		});
+	let res = await send();
+	// A GET is safe to repeat, so a 5xx is retried after each delay in turn.
+	if (method === 'GET') {
+		for (const delayMs of GET_RETRY_DELAYS_MS) {
+			if (res.status < 500) break;
+			await new Promise((resolve) => setTimeout(resolve, delayMs));
+			res = await send();
+		}
+	}
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok) {
 		const detail = data as { message?: string; error?: string };
@@ -778,20 +791,32 @@ export async function getPullRequestDetails(
 	owner: string,
 	repo: string,
 	number: number
-): Promise<{ body: string | null; changedFiles: number; createdAt: string; state: string; headSha: string }> {
+): Promise<{
+	body: string | null;
+	changedFiles: number;
+	commits: number;
+	createdAt: string;
+	state: string;
+	headSha: string;
+	baseSha: string;
+}> {
 	const data = await ghSend<{
 		body?: string | null;
 		changed_files?: number;
+		commits?: number;
 		created_at?: string;
 		state?: string;
 		head?: { sha?: string };
+		base?: { sha?: string };
 	}>('GET', `/repos/${owner}/${repo}/pulls/${number}`, token);
 	return {
 		body: data.body ?? null,
 		changedFiles: data.changed_files ?? 0,
+		commits: data.commits ?? 0,
 		createdAt: data.created_at ?? '',
 		state: data.state ?? 'open',
-		headSha: data.head?.sha ?? ''
+		headSha: data.head?.sha ?? '',
+		baseSha: data.base?.sha ?? ''
 	};
 }
 
@@ -854,9 +879,37 @@ export async function getPullRequestFiles(
 }
 
 /**
+ * The changed files of a single commit whose parent is `baseSha`, or null when
+ * the commit has another parent. Such a commit's diff equals the diff of a
+ * one-commit pull request from it onto `baseSha`.
+ */
+async function commitFilesOnBase(
+	token: string,
+	owner: string,
+	repo: string,
+	sha: string,
+	baseSha: string,
+	expectedChangedFiles: number
+): Promise<PullRequestFile[] | null> {
+	const data = await ghSend<{ parents?: Array<{ sha?: string }>; files?: PullRequestFile[] }>(
+		'GET',
+		`/repos/${owner}/${repo}/commits/${sha}`,
+		token
+	);
+	if (data.parents?.length !== 1 || data.parents[0].sha !== baseSha) return null;
+	const files = (data.files ?? []).map((f) => ({ filename: f.filename, status: f.status, patch: f.patch }));
+	if (files.length !== expectedChangedFiles) {
+		throw new Error(`Incomplete commit file list: expected ${expectedChangedFiles}, received ${files.length}.`);
+	}
+	return files;
+}
+
+/**
  * A pull request's body, creation time, state, head sha and complete changed-file list. The
  * first page of files is read alongside the pull request itself; the
- * request's changed-file count then says whether further pages follow.
+ * request's changed-file count then says whether further pages follow. When
+ * GitHub fails to serve the pull request's diff, a one-commit pull request
+ * whose commit sits directly on the base takes its file list from that commit.
  */
 export async function getPullRequest(
 	token: string,
@@ -866,15 +919,32 @@ export async function getPullRequest(
 ): Promise<{
 	body: string | null;
 	changedFiles: number;
+	commits: number;
 	createdAt: string;
 	state: string;
 	headSha: string;
+	baseSha: string;
 	files: PullRequestFile[];
 }> {
 	const [details, firstPage] = await Promise.all([
 		getPullRequestDetails(token, owner, repo, number),
-		pullRequestFilesPage(token, owner, repo, number, 1)
+		pullRequestFilesPage(token, owner, repo, number, 1).catch((e: unknown) =>
+			e instanceof Error ? e : new Error(String(e))
+		)
 	]);
+	if (firstPage instanceof Error) {
+		if (firstPage instanceof RateLimitError || details.commits !== 1) throw firstPage;
+		const files = await commitFilesOnBase(
+			token,
+			owner,
+			repo,
+			details.headSha,
+			details.baseSha,
+			details.changedFiles
+		);
+		if (!files) throw firstPage;
+		return { ...details, files };
+	}
 	const files = await getPullRequestFiles(token, owner, repo, number, details.changedFiles, firstPage);
 	return { ...details, files };
 }

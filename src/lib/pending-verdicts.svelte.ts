@@ -25,6 +25,8 @@ export interface PendingVerdict {
 	state: PendingState;
 	/** The verdict or error text once settled; '' while processing. */
 	message: string;
+	/** The automation run itself failed, so no verdict was reached. */
+	runFailed: boolean;
 }
 
 /** How long an accepted entry stays visible before it removes itself. */
@@ -81,7 +83,8 @@ class PendingVerdictStore {
 				repoId: entry.repoId ?? 0,
 				id,
 				state: entry.state ?? 'processing',
-				message: ''
+				message: '',
+				runFailed: false
 			}
 		];
 		return id;
@@ -117,8 +120,13 @@ class PendingVerdictStore {
 		);
 	}
 
-	settle(id: string, state: Exclude<PendingState, 'opening' | 'processing'>, message: string): void {
-		this.entries = this.entries.map((e) => (e.id === id ? { ...e, state, message } : e));
+	settle(
+		id: string,
+		state: Exclude<PendingState, 'opening' | 'processing'>,
+		message: string,
+		runFailed = false
+	): void {
+		this.entries = this.entries.map((e) => (e.id === id ? { ...e, state, message, runFailed } : e));
 		if (state === 'accepted') {
 			const entry = this.entries.find((e) => e.id === id);
 			if (entry && entry.repoId && FINISH_KINDS.has(entry.key.split(':', 1)[0])) {

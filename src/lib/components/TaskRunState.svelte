@@ -56,7 +56,13 @@
       >
     {:else}
       <span class="mark" aria-hidden="true"><Icon name="close" size={12} /></span>
-      <span>{entry.prNumber ? `submission #${entry.prNumber} rejected` : "submission failed"}</span>
+      <span
+        >{entry.runFailed
+          ? `run for submission #${entry.prNumber} failed`
+          : entry.prNumber
+            ? `submission #${entry.prNumber} rejected`
+            : "submission failed"}</span
+      >
     {/if}
   </div>
 {/if}
