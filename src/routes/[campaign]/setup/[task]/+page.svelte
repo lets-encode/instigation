@@ -534,7 +534,7 @@
   // staves (a first system may leave a staff out, a resting voice above a
   // piano introduction), key and meter from the piece's first system, where
   // signatures are printed — once when the claim holder opens a task whose
-  // definition is still the default; a redo is offered. Labels and groups are
+  // definition is still the default. Labels and groups are
   // not recognised and stay as entered. The count stays editable until the
   // piece holds notation, since the setup submission rebuilds empty measures
   // for it until then.
@@ -550,15 +550,6 @@
       fillFromRecognition();
     }
   });
-  let confirmingFill = $state(false);
-  function fillAgain() {
-    if (!confirmingFill) {
-      confirmingFill = true;
-      return;
-    }
-    confirmingFill = false;
-    fillFromRecognition();
-  }
 
   function applyProposal(proposal: ScoreDefModel) {
     // A clef per staff the layout has; a staff beyond the recognised system
@@ -906,18 +897,6 @@
                 : "Add a staff below the last one."}
               >Add staff</button
             >
-            {#if omr && holds}
-              <button
-                type="button"
-                class="btn addbtn"
-                class:btn-danger={confirmingFill}
-                onclick={() => fillAgain()}
-                onblur={() => (confirmingFill = false)}
-                disabled={busy}
-                title="Transcribe the first system again and replace the clefs, key signature and meter with what it reads."
-                >{confirmingFill ? "Replace the values?" : "Fill from recognition again"}</button
-              >
-            {/if}
 
             {#if staves.length > 1 || groups.length > 0}
               <p class="grouphead sub">Groups</p>

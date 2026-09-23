@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- Layout correction keeps the layout model's output per page in the browser, so reopening the task before submitting skips the model run.
+- Score setup of an OMR piece no longer offers to fill from recognition again.
 - Review record: the Pass and Fail buttons of a held slot sit on their own line.
 - Volunteer view: open-task rows show a claim button only when the viewer can claim the task, and review slots read "Claim to review".
 - Score setup of an OMR piece groups staves into systems by the measure boxes that span them, and single-staff systems no longer vote on the staff count.

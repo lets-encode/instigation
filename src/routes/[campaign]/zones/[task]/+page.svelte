@@ -25,6 +25,11 @@
   import { createOmrClient } from "$lib/omr-client.ts";
   import { layoutBoxes, layoutRecord, LAYOUT_PARAMETERS, type CocoLayout } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
+  import {
+    clearCachedLayouts,
+    readCachedLayouts,
+    writeCachedLayout,
+  } from "$lib/omr-layout-cache.ts";
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
@@ -643,15 +648,23 @@
   //
   // A layout task's boxes come from the Musibot layout model, run through
   // the broker's relay when the claim holder opens a task whose score carries
-  // no boxes yet; the task box offers a redo. Page bytes are read through the
+  // no boxes yet. Page bytes are read through the
   // forge API; the result is seeded like measure detection's: reading order,
   // continuous numbering, a system start on every row but the page's first.
+  // Each page's model output is stored in the browser as it arrives and read
+  // back by the next detection, until the loaded score carries boxes.
   let detectedFor = $state<string | null>(null);
   const needsDetection = () =>
     omr &&
     canEdit &&
     pages.length > 0 &&
     pages.every((pg) => pg.zones.length === 0 && pg.staves.length === 0);
+  $effect(() => {
+    const boxed = data?.model.pages.some((pg) => pg.zones.length > 0 || (pg.staves?.length ?? 0) > 0);
+    if (omr && boxed) {
+      clearCachedLayouts(repoId, taskId);
+    }
+  });
   $effect(() => {
     if (data && !runner.busy && detectedFor !== taskId && needsDetection()) {
       detectedFor = taskId;
@@ -679,32 +692,23 @@
   // The detection steps, logged to the running command's overlay.
   async function detectSteps(f: ForgeClient, fragment: string): Promise<Result> {
     const client = createOmrClient(provider.brokerUrl);
+    const cached = readCachedLayouts(repoId, taskId, omrModels.layoutModel);
     try {
-      runner.log.step("Checking the recognition service");
-      await client.requirePipelines([omrModels.layoutModel]);
+      if (!pages.every((pg) => cached[pg.image])) {
+        runner.log.step("Checking the recognition service");
+        await client.requirePipelines([omrModels.layoutModel]);
+      }
       let measures = 0;
       let staves = 0;
       for (const [p, pg] of pages.entries()) {
         runner.log.step(`Detecting the layout of page ${p + 1} of ${pages.length}`);
-        const path = resolveRepoRelativeTarget(fragment, pg.image);
-        const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
-        if (!image) throw new Error(`the image of page ${p + 1} (${pg.image}) could not be read.`);
-        const layout = await client.withPage(async (pageId) => {
-          await client.upload(pageId, { "image.jpg": image });
-          const execution = await client.run(
-            pageId,
-            omrModels.layoutModel,
-            ["image.jpg"],
-            LAYOUT_PARAMETERS,
-          );
-          if (execution.state !== "completed") {
-            throw new Error(
-              `the layout model failed on page ${p + 1}: ${execution.error ?? execution.state}.`,
-            );
-          }
-          const files = await client.download(pageId, ["layout.json"]);
-          return JSON.parse(await files["layout.json"].text()) as CocoLayout;
-        });
+        let layout = cached[pg.image];
+        if (layout) {
+          runner.log.detail("Result stored in this browser from an earlier detection");
+        } else {
+          layout = await detectPage(f, client, fragment, p, pg);
+          writeCachedLayout(repoId, taskId, omrModels.layoutModel, pg.image, layout);
+        }
         rawLayouts[p] = layout;
         const boxes = layoutBoxes(layout, pg);
         pages[p].zones = boxes.measures.map((box) => ({
@@ -730,6 +734,35 @@
     } catch (e) {
       return { error: `Layout detection failed: ${(e as Error).message}` };
     }
+  }
+
+  // One page's layout from the model.
+  async function detectPage(
+    f: ForgeClient,
+    client: ReturnType<typeof createOmrClient>,
+    fragment: string,
+    p: number,
+    pg: EditPage,
+  ): Promise<CocoLayout> {
+    const path = resolveRepoRelativeTarget(fragment, pg.image);
+    const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
+    if (!image) throw new Error(`the image of page ${p + 1} (${pg.image}) could not be read.`);
+    return client.withPage(async (pageId) => {
+      await client.upload(pageId, { "image.jpg": image });
+      const execution = await client.run(
+        pageId,
+        omrModels.layoutModel,
+        ["image.jpg"],
+        LAYOUT_PARAMETERS,
+      );
+      if (execution.state !== "completed") {
+        throw new Error(
+          `the layout model failed on page ${p + 1}: ${execution.error ?? execution.state}.`,
+        );
+      }
+      const files = await client.download(pageId, ["layout.json"]);
+      return JSON.parse(await files["layout.json"].text()) as CocoLayout;
+    });
   }
 
   // ------------------------------------------------------------------------
