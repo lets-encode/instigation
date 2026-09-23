@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- The volunteer view lists every submission still being processed, not only when no task is open.
 - Committed page images keep the source's full resolution, so OMR staff crops match a direct Musibot run.
 - OMR page drafts take their systems from the corrected measure rows, so a system without staff boxes no longer shifts the music after it.
 - Score setup of an OMR piece takes its staff count from the largest system of the corrected layout.

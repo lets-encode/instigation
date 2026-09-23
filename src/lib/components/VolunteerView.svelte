@@ -78,6 +78,12 @@
     ),
   );
 
+  /** Tasks other than the next-task card (which shows its own) with a
+      submission still being processed. */
+  const running = $derived(
+    cards.filter((c) => c.task !== nextCard?.task && pendingVerdicts.forTask(c.task)),
+  );
+
   // The kind filters over the open-task list; a card's kind is the stage its
   // claim starts.
   type Kind = "enc" | "review" | "pre";
@@ -367,21 +373,19 @@
       </div>
     {/if}
 
+    {#if running.length > 0}
+      <div class="vsec">
+        <h2 class="seclabel c-next">Being processed</h2>
+        {#each running as card (card.task)}
+          <div class="runcard">
+            <span class="runtitle">{card.title}</span>
+            <TaskRunState task={card.task} large />
+          </div>
+        {/each}
+      </div>
+    {/if}
+
     {#if !nextCard && openCards.length === 0}
-      <!-- With nothing to act on, a submission of this campaign still being
-           processed takes the next-task card's place. -->
-      {@const running = cards.filter((c) => pendingVerdicts.forTask(c.task))}
-      {#if running.length > 0}
-        <div class="vsec">
-          <h2 class="seclabel c-next">Being processed</h2>
-          {#each running as card (card.task)}
-            <div class="runcard">
-              <span class="runtitle">{card.title}</span>
-              <TaskRunState task={card.task} large />
-            </div>
-          {/each}
-        </div>
-      {/if}
       <span class="none"
         >No tasks are open right now: every task is claimed, in review, waiting
         for an earlier task, or done.</span
