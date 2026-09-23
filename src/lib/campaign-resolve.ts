@@ -6,8 +6,8 @@
 // name to its id and then to the repo's current owner/name (getRepoById)
 // survives a rename that a bare name→search never could. The registry is reached
 // same-origin via the PUBLIC_REGISTRY_URL mount, so no CORS is involved. A
-// registry miss (no entry, or the registry unreachable) is a genuine "not
-// found" — there is no name-search fallback.
+// name without a campaign is a registry answer (status `free`); an unreachable
+// registry is a failure, never a miss. There is no name-search fallback.
 
 import { provider, registryUrl } from './forge/config.ts';
 import type { ForgeClient } from './forge/types.ts';
@@ -28,18 +28,26 @@ export interface SlugInfo {
 	repo_id: number | null;
 }
 
-/** Look up a name in the registry, or null if it can't be reached / is malformed. */
+/**
+ * Look up a name in the registry, or null for a malformed name (400), which no
+ * campaign can have. Throws when the registry cannot be reached or does not
+ * answer with the name's state.
+ */
 export async function lookupSlug(name: string): Promise<SlugInfo | null> {
+	let res: Response;
 	try {
-		const res = await fetch(`${registryUrl}/api/slug/${encodeURIComponent(name)}`, {
+		res = await fetch(`${registryUrl}/api/slug/${encodeURIComponent(name)}`, {
 			headers: { Accept: 'application/json' },
 			cache: 'no-store'
 		});
-		if (!res.ok) return null; // 400 malformed, or the registry is down
-		return (await res.json()) as SlugInfo;
 	} catch {
-		return null;
+		throw new Error('The campaign registry could not be reached.');
 	}
+	if (res.status === 400) return null;
+	if (!res.ok) throw new Error(`The campaign registry answered with status ${res.status}.`);
+	const info = (await res.json().catch(() => null)) as SlugInfo | null;
+	if (!info?.status) throw new Error('The campaign registry did not report the name’s state.');
+	return info;
 }
 
 /** A held name's token, or why the name could not be held. */
@@ -131,9 +139,9 @@ export function resolveFailureMessage(e: unknown): string {
 
 /**
  * Resolve a campaign name to its repo via the registry (name → stable repo id →
- * current owner/name). Returns null when no campaign of that name can be found —
- * including when the registry is unreachable. Throws when the forge lookup of
- * the registry's repo id fails (getRepoById) — a failure, not a miss. A caller
+ * current owner/name). Returns null when no campaign of that name can be found.
+ * Throws when the registry lookup or the forge lookup of the registry's repo id
+ * (getRepoById) fails — a failure, not a miss. A caller
  * that has already looked the name up passes its `SlugInfo` to save the second
  * registry round trip.
  */
@@ -146,8 +154,8 @@ export async function resolveCampaign(
 	// Only resolve a registry hit whose forge matches this deployment's — a repo
 	// id is only meaningful on its own forge, so a foreign-forge entry is not
 	// reachable here (and its id must never be fed to this forge's client). The
-	// registry is the sole source of truth: a miss (no entry, or the registry is
-	// unreachable) is a genuine "not found", never a silent name-search fallback.
+	// registry is the sole source of truth: a miss is a genuine "not found",
+	// never a silent name-search fallback.
 	if (
 		info?.status === 'active' &&
 		info.repo_id != null &&

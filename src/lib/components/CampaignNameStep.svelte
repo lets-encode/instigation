@@ -96,10 +96,10 @@
         // The slug registry is authoritative for the name, so check it too: a
         // name can be free on the user's GitHub yet already registered to
         // another repo, which would only surface as a 409 after the repo was
-        // created. A null slug means the registry couldn't be reached — treat
-        // that as "unknown" rather than falsely "available".
+        // created. A registry that can't be reached gives a null slug — treated
+        // as "unknown" rather than falsely "available".
         const [slug, exists] = await Promise.all([
-          lookupSlug(h),
+          lookupSlug(h).catch(() => null),
           repoExists(user.login, h, token),
         ]);
         if (seq !== handleCheckSeq) return;

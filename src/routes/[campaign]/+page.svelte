@@ -7,7 +7,7 @@
   import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { lookupSlug, resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
-  import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
+  import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
   import { findRow, pieceNamesOf,
     piecePreparationsOf,
   } from "$lib/campaign-tables.ts";
@@ -511,7 +511,13 @@
   async function resolve() {
     // Results for a name the page has since navigated away from are dropped.
     const name = campaign;
-    const info = await lookupSlug(name);
+    let info: SlugInfo | null;
+    try {
+      info = await lookupSlug(name);
+    } catch (e) {
+      if (name === campaign) resolveError = resolveFailureMessage(e);
+      return;
+    }
     if (name !== campaign) return;
     if (info?.status === "free") {
       await goto(`/new?slug=${encodeURIComponent(name)}`, { replaceState: true });
@@ -525,9 +531,9 @@
       slugState = info.status;
       return;
     }
-    // Active — or the registry was unreachable / the name malformed, which
-    // resolveCampaign reports as null (notFound). A thrown forge error (e.g.
-    // rate limit) is a failed lookup, not a missing campaign. The lookup above
+    // Active — or the name malformed, which resolveCampaign reports as null
+    // (notFound). A thrown forge error (e.g. rate limit) is a failed lookup,
+    // not a missing campaign. The lookup above
     // is passed through so the name is not fetched from the registry twice.
     let r: ResolvedCampaign | null = null;
     try {
