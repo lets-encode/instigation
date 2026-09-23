@@ -190,9 +190,14 @@ broker (section 4), with its own OAuth App whose callback is
     bundles that a later build replaces) and
     `Cache-Control: public, max-age=31536000, immutable` under
     `/_app/immutable/`;
-  - if TLS terminates in front of the web server, the forwarded client
-    address passed on to the broker, with `PROXY_FIX_X_FOR=1` in the broker's
-    environment (see `broker/README.md`).
+  - the `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`
+    headers on proxied requests (Apache's `mod_proxy` adds the first two by
+    default; `X-Forwarded-Proto` needs
+    `RequestHeader set X-Forwarded-Proto "https"`), with `PROXY_FIX_X_FOR` in
+    the broker's environment set to the number of proxies in front (`1` when
+    Apache is the only one). Without `X-Forwarded-Host` the broker sees its
+    loopback address as the host and rejects every write with 403
+    "cross-origin request rejected" (see `broker/README.md`).
 - **Broker env, per instance:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
   `FLASK_SECRET`, `PORT`, and
   `REDIRECT_URL=https://<instance-origin>/auth/authorize` (see

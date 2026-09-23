@@ -15,13 +15,14 @@ Config (environment variables, loaded from broker/.env if present):
   GITHUB_CLIENT_SECRET   the OAuth app's client secret (secret; only here)
   FLASK_SECRET           key that signs the session cookie (secret; generate one)
   REDIRECT_URL           the OAuth callback as the browser reaches it, e.g.
-                         https://your-domain.example/oauth/authorize
+                         https://your-domain.example/auth/authorize
   SESSION_DIR            where session files live (default: instance/sessions)
   FLASK_ENV              set to "development" to allow the cookie over plain HTTP
   PROXY_FIX_X_FOR        number of reverse proxies in front of the broker; when
-                         set, X-Forwarded-For (that many hops deep) supplies the
-                         client address the rate limits key on (default: unset,
-                         header not trusted)
+                         set, X-Forwarded-For, -Proto and -Host (that many hops
+                         deep) supply the client address the rate limits key on
+                         and the host the CSRF guard compares Origin with
+                         (default: unset, headers not trusted)
   RATELIMIT_STORAGE_URI  flask-limiter counter storage (default: memory://,
                          which keeps counters per worker process)
   MUSIBOT_URL            the Musibot OMR API the /omr relay forwards to
@@ -108,15 +109,19 @@ app.config["SESSION_PERMANENT"] = False
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 Session(app)
 
-# Behind a reverse proxy the client address Flask sees is the proxy's own, so
-# the per-client rate limits below would collapse into a single shared bucket.
-# PROXY_FIX_X_FOR names the number of proxies actually in front (1 behind the
-# institution's reverse proxy); X-Forwarded-For is then trusted that many hops deep.
-# Off by default: without a trusted proxy the header is client-supplied and
+# Behind a reverse proxy the client address and Host header Flask sees are the
+# proxy's own, so the per-client rate limits below would collapse into a single
+# shared bucket and the CSRF guard would reject every write (the browser's
+# Origin names the public host). PROXY_FIX_X_FOR names the number of proxies
+# actually in front (1 behind the institution's reverse proxy);
+# X-Forwarded-For, -Proto and -Host are then trusted that many hops deep.
+# Off by default: without a trusted proxy the headers are client-supplied and
 # trivially spoofed.
 proxy_hops = int(getenv("PROXY_FIX_X_FOR") or "0")
 if proxy_hops:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops)
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops
+    )
 
 # Rate-limit counters live in the storage RATELIMIT_STORAGE_URI names. The
 # default memory:// keeps them in-process: with several gunicorn workers the
@@ -287,7 +292,7 @@ def resolves_to_public_address(hostname):
 
 
 def oauth_callback_url() -> str:
-    # Behind the /oauth mount the prefix and scheme are invisible to Flask, so
+    # Behind the /auth mount the prefix and scheme are invisible to Flask, so
     # url_for can't reconstruct the externally reachable callback; REDIRECT_URL
     # states it explicitly (it must match the OAuth app's registered callback).
     return getenv("REDIRECT_URL") or request.host_url.rstrip("/") + "/authorize"

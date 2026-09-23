@@ -12,6 +12,8 @@ os.environ["FLASK_SECRET"] = "test-secret"
 os.environ["GITHUB_CLIENT_ID"] = "test-client"
 os.environ["GITHUB_CLIENT_SECRET"] = "test-client-secret"
 os.environ["SESSION_DIR"] = _session_dir.name
+# Wrap the app in ProxyFix as the deployed broker is (one reverse proxy).
+os.environ["PROXY_FIX_X_FOR"] = "1"
 # Keep the registry's import-time store out of broker/instance/ during tests.
 os.environ.setdefault("DB_PATH", os.path.join(_session_dir.name, "slugs.db"))
 
@@ -291,6 +293,28 @@ class BrokerTest(unittest.TestCase):
             "/logout", headers={"Origin": "http://localhost"}
         )
         self.assertEqual(response.status_code, 200)
+
+    def test_proxied_write_matches_origin_against_forwarded_host(self):
+        # Apache forwards with Host set to the broker's loopback address and
+        # the public host in X-Forwarded-Host.
+        public = "lets-encode.example"
+        response = self.client.post(
+            "/logout",
+            base_url="http://127.0.0.1:7777",
+            headers={
+                "Origin": f"https://{public}",
+                "X-Forwarded-Host": public,
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-For": "203.0.113.5",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            "/logout",
+            base_url="http://127.0.0.1:7777",
+            headers={"Origin": "https://evil.test", "X-Forwarded-Host": public},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_authorize_rotates_the_session_id(self):
         # A session ID fixed before login must not survive into the

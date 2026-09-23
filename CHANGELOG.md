@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Broker trusts X-Forwarded-Host behind the reverse proxy, so writes no longer fail the same-origin check in production.
 - Layout correction keeps the layout model's output per page in the browser, so reopening the task before submitting skips the model run.
 - Score setup of an OMR piece no longer offers to fill from recognition again.
 - Review record: the Pass and Fail buttons of a held slot sit on their own line.

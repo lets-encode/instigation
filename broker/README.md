@@ -95,7 +95,7 @@ Environment variables:
 | `DB_PATH` | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it |
 | `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `README.md` §6) |
 | `ADMIN_ROUTES_ENABLED` | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503 |
-| `PROXY_FIX_X_FOR` | optional: the number of reverse proxies in front (1 behind the institution's reverse proxy); when set, X-Forwarded-For supplies the client address the rate limits key on. Leave unset without a trusted proxy — the header would be spoofable |
+| `PROXY_FIX_X_FOR` | the number of reverse proxies in front (1 behind the institution's reverse proxy); when set, X-Forwarded-For, -Proto and -Host supply the client address the rate limits key on and the host the CSRF guard compares `Origin` with. Leave unset without a trusted proxy — the headers would be spoofable |
 | `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes) |
 | `MUSIBOT_URL` | optional: the Musibot OMR API the `/omr` relay forwards to (default `https://quest.ms.mff.cuni.cz/musibot/api`) |
 | `MUSIBOT_TOKEN` | the Musibot API token (**secret**, only here); without it `/omr` answers 503 and the OMR preparation cannot run |
@@ -164,6 +164,10 @@ they are reported separately from GitHub primary or secondary limits.
   `ProxyFix`; left unset, X-Forwarded-For is not trusted and the per-client
   limits collapse into that single shared bucket. Confirm
   `request.remote_addr` resolves to a real client.
+- **Forward the public host** — the CSRF guard compares the browser's `Origin`
+  with the request's host. The proxy must send `X-Forwarded-Host` (Apache's
+  `mod_proxy` does by default) and `PROXY_FIX_X_FOR` must be set; otherwise the
+  host is the proxy's upstream address and every write is answered 403.
 - **Rate-limit counters are per worker by default** — the limiter's `memory://`
   storage is in-process, so with gunicorn's 2 workers the effective limits are
   twice the stated ones, and counters reset on restart. Set
