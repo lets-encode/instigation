@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Coordinator decides each pull request once, so a second run no longer rejects an operation it already accepted.
 - Broker relay responses are sent as sandboxed downloads, so a relayed SVG or HTML file cannot run script in the app origin.
 - Broker trusts X-Forwarded-Host behind the reverse proxy, so writes no longer fail the same-origin check in production.
 - Layout correction keeps the layout model's output per page in the browser, so reopening the task before submitting skips the model run.

@@ -778,13 +778,21 @@ export async function getPullRequestDetails(
 	owner: string,
 	repo: string,
 	number: number
-): Promise<{ body: string | null; changedFiles: number; createdAt: string }> {
-	const data = await ghSend<{ body?: string | null; changed_files?: number; created_at?: string }>(
-		'GET',
-		`/repos/${owner}/${repo}/pulls/${number}`,
-		token
-	);
-	return { body: data.body ?? null, changedFiles: data.changed_files ?? 0, createdAt: data.created_at ?? '' };
+): Promise<{ body: string | null; changedFiles: number; createdAt: string; state: string; headSha: string }> {
+	const data = await ghSend<{
+		body?: string | null;
+		changed_files?: number;
+		created_at?: string;
+		state?: string;
+		head?: { sha?: string };
+	}>('GET', `/repos/${owner}/${repo}/pulls/${number}`, token);
+	return {
+		body: data.body ?? null,
+		changedFiles: data.changed_files ?? 0,
+		createdAt: data.created_at ?? '',
+		state: data.state ?? 'open',
+		headSha: data.head?.sha ?? ''
+	};
 }
 
 /** One changed file of a pull request, with its unified-diff patch when GitHub supplies one. */
@@ -846,7 +854,7 @@ export async function getPullRequestFiles(
 }
 
 /**
- * A pull request's body, creation time and complete changed-file list. The
+ * A pull request's body, creation time, state, head sha and complete changed-file list. The
  * first page of files is read alongside the pull request itself; the
  * request's changed-file count then says whether further pages follow.
  */
@@ -855,7 +863,14 @@ export async function getPullRequest(
 	owner: string,
 	repo: string,
 	number: number
-): Promise<{ body: string | null; changedFiles: number; createdAt: string; files: PullRequestFile[] }> {
+): Promise<{
+	body: string | null;
+	changedFiles: number;
+	createdAt: string;
+	state: string;
+	headSha: string;
+	files: PullRequestFile[];
+}> {
 	const [details, firstPage] = await Promise.all([
 		getPullRequestDetails(token, owner, repo, number),
 		pullRequestFilesPage(token, owner, repo, number, 1)

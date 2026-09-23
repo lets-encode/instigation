@@ -128,7 +128,7 @@ test('serializeLockCsv: empty rows yield a header-only table', () => {
 });
 
 test('appendHistory: appends rows, keeping existing lines verbatim', () => {
-	const header = 'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n';
+	const header = 'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input,pr\n';
 	const row = {
 		timestamp: 't1',
 		task_id: 'T0001',
@@ -139,11 +139,11 @@ test('appendHistory: appends rows, keeping existing lines verbatim', () => {
 		detail: ''
 	};
 	const once = appendHistory(header, [row]);
-	assert.equal(once, header + 't1,T0001,,bob,claim_encoding,accepted,,,,\n');
+	assert.equal(once, header + 't1,T0001,,bob,claim_encoding,accepted,,,,,\n');
 	const twice = appendHistory(once, [{ ...row, timestamp: 't2', outcome: 'rejected', detail: 'already_locked' }]);
 	assert.equal(
 		twice,
-		header + 't1,T0001,,bob,claim_encoding,accepted,,,,\n' + 't2,T0001,,bob,claim_encoding,rejected,already_locked,,,\n'
+		header + 't1,T0001,,bob,claim_encoding,accepted,,,,,\n' + 't2,T0001,,bob,claim_encoding,rejected,already_locked,,,,\n'
 	);
 	assert.equal(parseHistoryCsv(twice).length, 2);
 });
@@ -152,13 +152,13 @@ test('appendHistory: creates the header when the table is missing', () => {
 	const out = appendHistory('', [
 		{ timestamp: 't', task_id: 'T1', subtask_id: '', user_id: 'u', action: 'reap', outcome: 'released', detail: 'encoding' }
 	]);
-	assert.match(out, /^timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n/);
+	assert.match(out, /^timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input,pr\n/);
 });
 
 test('appendHistory: adds a newline before appending to a table without one', () => {
 	const existing =
-		'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n' +
-		't1,T0001,,bob,claim_encoding,accepted,,,,';
+		'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input,pr\n' +
+		't1,T0001,,bob,claim_encoding,accepted,,,,,';
 	const out = appendHistory(existing, [
 		{
 			timestamp: 't2',
@@ -170,7 +170,7 @@ test('appendHistory: adds a newline before appending to a table without one', ()
 			detail: 'encoding'
 		}
 	]);
-	assert.equal(out, existing + '\nt2,T0001,,bob,reap,released,encoding,,,\n');
+	assert.equal(out, existing + '\nt2,T0001,,bob,reap,released,encoding,,,,\n');
 });
 
 test('appendHistory: command columns and their JSON input round-trip through CSV quoting', () => {
@@ -184,7 +184,8 @@ test('appendHistory: command columns and their JSON input round-trip through CSV
 		detail: '',
 		command: 'campaign.claimValidation',
 		version: '1',
-		input: '{"task_id":"T0001","subtask_id":"S0001"}'
+		input: '{"task_id":"T0001","subtask_id":"S0001"}',
+		pr: '12'
 	};
 	const out = appendHistory('', [row]);
 	assert.deepEqual(parseHistoryCsv(out), [row]);

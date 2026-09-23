@@ -10,6 +10,7 @@ import {
 	touchesCampaignPaths,
 	pieceFieldForPath,
 	pieceKindForPath,
+	priorDecision,
 	resolveEncodingTask,
 	resolvedCommentFromPatch,
 	shouldCleanupSubmission,
@@ -281,4 +282,22 @@ test('pieceFieldForPath reads one quoted field of the piece at a path', () => {
 	assert.equal(pieceFieldForPath(config, 'sources/piece-02/score.mei', 'preparation'), null);
 	assert.equal(pieceFieldForPath(config, 'sources/piece-03/score.mei', 'kind'), null);
 	assert.equal(pieceKindForPath(null, 'sources/piece-01/score.mei'), null);
+});
+
+test('priorDecision: the last history row of the pull request, or null', () => {
+	const row = (pr: string, outcome: string) => ({
+		timestamp: 't',
+		task_id: 'T0001',
+		subtask_id: '',
+		user_id: '7',
+		action: 'claim_encoding',
+		outcome,
+		detail: '',
+		pr
+	});
+	const history = [row('', 'released'), row('12', 'rejected'), row('4', 'accepted'), row('12', 'accepted')];
+	assert.equal(priorDecision(history, 12), history[3]);
+	assert.equal(priorDecision(history, 4), history[2]);
+	assert.equal(priorDecision(history, 5), null);
+	assert.equal(priorDecision([row('', 'released')], 0), null);
 });

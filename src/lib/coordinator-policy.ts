@@ -1,5 +1,5 @@
 import { COMMENT_COLUMNS, parseCsv } from './campaign-tables.ts';
-import type { CommentRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
+import type { CommentRow, HistoryRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
 import { resetTaskRows } from './campaign-submit.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
 
@@ -214,4 +214,15 @@ export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
 
 export function shouldCleanupSubmission(kind: 'encoding' | 'validation', accepted: boolean): boolean {
 	return accepted || kind === 'validation';
+}
+
+/**
+ * The history row that decided pull request `prNumber`, or null when none
+ * has. A pull request is one operation: a run that finds such a row reports
+ * that decision instead of deciding the operation again.
+ */
+export function priorDecision(history: HistoryRow[], prNumber: number): HistoryRow | null {
+	const pr = String(prNumber);
+	for (let i = history.length - 1; i >= 0; i--) if (history[i].pr === pr) return history[i];
+	return null;
 }

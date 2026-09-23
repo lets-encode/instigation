@@ -294,7 +294,7 @@ test('lock.csv and history.csv are header-only', () => {
 	assert.equal(buildLockCsv(), 'task_id,subtask_id,user_id,timestamp,kind\n');
 	assert.equal(
 		buildHistoryCsv(),
-		'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input\n'
+		'timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input,pr\n'
 	);
 });
 

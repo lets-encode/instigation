@@ -35,10 +35,12 @@ export interface LockRow {
 }
 
 /**
- * An append-only history row from history.csv. The last three columns record
- * the console command behind the event, when there was one: the command's id,
- * its version, and its input as JSON. They stay empty for events that arrived
- * without a command envelope (hand-opened PRs, scheduled reaps).
+ * An append-only history row from history.csv. `command`, `version` and
+ * `input` record the console command behind the event, when there was one: the
+ * command's id, its version, and its input as JSON. They stay empty for events
+ * that arrived without a command envelope (hand-opened PRs, scheduled reaps).
+ * `pr` is the number of the pull request the row decides, empty for events
+ * that are no pull request.
  */
 export interface HistoryRow {
 	timestamp: string;
@@ -52,6 +54,7 @@ export interface HistoryRow {
 	command?: string;
 	version?: string;
 	input?: string;
+	pr?: string;
 }
 
 /**
@@ -106,7 +109,7 @@ export interface ParsedState {
 export const TASK_COLUMNS = ['task_id', 'subtask_id', 'fragment', 'locator', 'allowlist', 'blocklist', 'depends_on'];
 export const STATE_BASE_COLUMNS = ['task_id', 'subtask_id', 'status', 'encoder', 'encoded_at'];
 export const LOCK_COLUMNS = ['task_id', 'subtask_id', 'user_id', 'timestamp', 'kind'];
-export const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input'];
+export const HISTORY_COLUMNS = ['timestamp', 'task_id', 'subtask_id', 'user_id', 'action', 'outcome', 'detail', 'command', 'version', 'input', 'pr'];
 export const COMMENT_COLUMNS = ['comment_id', 'task_id', 'subtask_id', 'kind', 'page', 'measure_start', 'measure_end', 'author_id', 'timestamp', 'resolved', 'parent_id', 'body'];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.

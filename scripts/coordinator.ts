@@ -24,6 +24,7 @@ import {
   parseStateCsv,
   parseLockCsv,
   parseCommentCsv,
+  parseHistoryCsv,
   serializeStateCsv,
   serializeLockCsv,
   serializeCommentCsv,
@@ -61,6 +62,7 @@ import {
   appendedCommentsFromPatch,
   classifyPullRequest,
   pieceKindForPath,
+  priorDecision,
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
@@ -218,6 +220,20 @@ const explainReason = (reason: string | undefined): string => {
 // ---------------------------------------------------------------------------
 // Shared helpers
 
+// The decision history.csv already records for the bound pull request, or
+// null. A run that finds one reports that decision and commits nothing, so a
+// pull request processed by two runs, or reopened after its decision, is
+// decided once.
+function priorVerdict(
+  historyCsv: string | null,
+): (Verdict & { row: HistoryRow }) | null {
+  const row = priorDecision(parseHistoryCsv(historyCsv ?? ""), prNumber);
+  if (!row) return null;
+  const ok = row.outcome === "accepted";
+  console.log(`PR #${prNumber} was already decided (${row.outcome}).`);
+  return { ok, reason: ok ? undefined : row.detail, row };
+}
+
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
 
@@ -296,6 +312,22 @@ async function attemptClaim(
       getRepoFile(token, owner, repo, CONFIG_PATH, sha),
     ]);
   logPhase("read_tables", readStart);
+  const prior = priorVerdict(historyCsv);
+  if (prior) {
+    const { row } = prior;
+    return {
+      ...prior,
+      lock: prior.ok
+        ? {
+            task_id: row.task_id,
+            subtask_id: row.subtask_id,
+            user_id: row.user_id,
+            timestamp: row.timestamp,
+            kind: row.action.replace(/^claim_/, ""),
+          }
+        : undefined,
+    };
+  }
   const now = new Date().toISOString();
   const { kept: locks, removed } = reapLocks({
     locks: parseLockCsv(lockCsv ?? ""),
@@ -340,6 +372,7 @@ async function attemptClaim(
     outcome: verdict.ok ? "accepted" : "rejected",
     detail: verdict.ok ? "" : verdict.reason!,
     ...envelopeColumns(envelope),
+    pr: String(prNumber),
   };
   const auditFree = isAuditFree(verdict);
   if (auditFree && removed.length === 0) return verdict;
@@ -717,6 +750,8 @@ async function attemptSubmit(
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
   ]);
   logPhase("read_tables", readStart);
+  const prior = priorVerdict(historyCsv);
+  if (prior) return prior;
   const tasks = parseTaskCsv(taskCsv ?? "");
   const state = parseStateCsv(stateCsv ?? "");
   const locks = parseLockCsv(lockCsv ?? "");
@@ -749,6 +784,7 @@ async function attemptSubmit(
       detail: outcome.reason ?? "rejected",
     }),
     ...envelopeColumns(envelope),
+    pr: String(prNumber),
   };
   const files: FileChange[] = [
     ...(outcome.files ?? []),
@@ -800,6 +836,8 @@ async function attemptComment(
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
   ]);
   logPhase("read_tables", readStart);
+  const prior = priorVerdict(historyCsv);
+  if (prior) return { ...prior, action: prior.row.action };
   const state = parseStateCsv(stateCsv ?? "");
   const comments = parseCommentCsv(commentCsv ?? "");
   const now = new Date().toISOString();
@@ -852,6 +890,7 @@ async function attemptComment(
     outcome: verdict.ok ? "accepted" : "rejected",
     detail: verdict.ok ? row!.kind : verdict.reason,
     ...envelopeColumns(envelope),
+    pr: String(prNumber),
   };
   const files: FileChange[] = [
     { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", [history]) },
@@ -961,14 +1000,26 @@ async function runReap(): Promise<void> {
 
 // Process the bound pull request. `open` is the campaign's open pull request
 // list when the caller already holds it. Returns false when the pull request
-// is not a campaign operation and was left alone.
+// was left alone: it is closed, its head moved past the bound sha (the run for
+// the newer push decides it), or it is not a campaign operation.
 async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
   const readStart = Date.now();
-  const [{ body, files, createdAt }, openPrs] = await Promise.all([
-    getPullRequest(token, owner, repo, prNumber),
-    open ?? listOpenPullRequests(token, owner, repo),
-  ]);
+  const [{ body, files, createdAt, state, headSha: currentHeadSha }, openPrs] =
+    await Promise.all([
+      getPullRequest(token, owner, repo, prNumber),
+      open ?? listOpenPullRequests(token, owner, repo),
+    ]);
   logPhase("read_pr", readStart);
+  if (state !== "open") {
+    console.log(`PR #${prNumber} is ${state}; left as is.`);
+    return false;
+  }
+  if (currentHeadSha !== headSha) {
+    console.log(
+      `PR #${prNumber} head moved from ${headSha} to ${currentHeadSha}; left to the run for the newer push.`,
+    );
+    return false;
+  }
   submittedAt = createdAt || new Date().toISOString();
   const changedPaths = files.map((f) => f.filename);
   // The caller's paths filter admits only campaign operations; the catch-up
