@@ -233,6 +233,15 @@ IIIF_MAX_BYTES = 25 * 1024 * 1024
 IIIF_MAX_REDIRECTS = 5
 IIIF_ALLOWED_CONTENT = ("application/json", "application/ld+json", "image/")
 
+# Headers on relayed third-party bodies. The relays answer in the app origin, so
+# a body opened directly in a tab (an SVG or HTML document) would otherwise run
+# script with the session cookie. fetch() ignores all three.
+RELAY_SAFETY_HEADERS = [
+    ("Content-Disposition", "attachment"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Content-Security-Policy", "sandbox"),
+]
+
 # /omr relay: the Musibot OMR service, for the console's OMR preparation. The
 # service sends no CORS headers and its API token is institutional, so the
 # browser reaches it only through here. Only the endpoints the console uses
@@ -477,6 +486,7 @@ def iiif_fetch():
             ("Content-Type", content_type),
             ("Cache-Control", "no-store"),
             ("X-Lets-Encode-Upstream", "iiif"),
+            *RELAY_SAFETY_HEADERS,
         ],
     )
 
@@ -595,6 +605,7 @@ def omr_blob():
             ("Content-Type", response.headers.get("content-type", "application/octet-stream")),
             ("Cache-Control", "no-store"),
             ("X-Lets-Encode-Upstream", "musibot"),
+            *RELAY_SAFETY_HEADERS,
         ],
     )
 

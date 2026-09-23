@@ -126,6 +126,11 @@ class BrokerTest(unittest.TestCase):
             close=lambda: None,
         )
 
+    def assert_relay_safety_headers(self, response):
+        self.assertEqual(response.headers["Content-Disposition"], "attachment")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["Content-Security-Policy"], "sandbox")
+
     def test_iiif_requires_authentication_and_a_url(self):
         self.assertEqual(self.client.get("/iiif?url=https://ex.test/m").status_code, 401)
         self.authenticate()
@@ -161,6 +166,7 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b'{"ok":1}')
         self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "iiif")
+        self.assert_relay_safety_headers(response)
         # The session's GitHub token must never be attached to a third party.
         self.assertNotIn("Authorization", upstream.call_args.kwargs["headers"])
         self.assertFalse(upstream.call_args.kwargs["allow_redirects"])
@@ -276,6 +282,7 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b"<score-partwise/>")
         self.assertEqual(response.headers["Content-Type"], "application/xml")
+        self.assert_relay_safety_headers(response)
         self.assertNotIn("Authorization", upstream.call_args.kwargs.get("headers", {}))
 
     def test_cross_origin_writes_are_rejected(self):

@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Broker relay responses are sent as sandboxed downloads, so a relayed SVG or HTML file cannot run script in the app origin.
 - Broker trusts X-Forwarded-Host behind the reverse proxy, so writes no longer fail the same-origin check in production.
 - Layout correction keeps the layout model's output per page in the browser, so reopening the task before submitting skips the model run.
 - Score setup of an OMR piece no longer offers to fill from recognition again.
