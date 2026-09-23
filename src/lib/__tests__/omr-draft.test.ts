@@ -73,10 +73,16 @@ test('mismatched systems are filled as far as they go and reported', () => {
 	assert.match(result.mei, /<measure xml:id="measure-4" n="4" facs="#zone-1-4">\s*<staff n="1"><layer n="1"><note xml:id="n3-1"/);
 });
 
-test('a differing system count is reported; staves beyond the score definition are dropped', () => {
-	const result = insertPageDraft(skeleton([2], 1), 'surface-1', converted(2, 2), [1, 1]);
-	assert.equal(result.filled, 1);
-	assert.ok(result.warnings.includes('Page 1: 1 system(s) of measure boxes, 2 transcribed.'));
+test('a differing system count is refused', () => {
+	assert.throws(
+		() => insertPageDraft(skeleton([2], 1), 'surface-1', converted(2, 2), [1, 1]),
+		/Page 1: 1 system\(s\) of measure boxes, 2 transcribed\./
+	);
+});
+
+test('staves beyond the score definition are dropped', () => {
+	const result = insertPageDraft(skeleton([2], 1), 'surface-1', converted(2, 2), [2]);
+	assert.equal(result.filled, 2);
 	assert.ok(result.warnings.includes("Page 1: staves beyond the score definition's 1 were left out."));
 	// The converted second staves were dropped; the skeleton itself has one staff per measure.
 	assert.equal((result.mei.match(/<staff n="2">/g) ?? []).length, 0);

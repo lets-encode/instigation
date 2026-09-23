@@ -227,9 +227,9 @@ ALLOWED_DOMAINS = ["api.github.com"]
 
 # /iiif relay limits. Campaign sources come from any institution's IIIF server,
 # so the host cannot be an allowlist; the request is constrained instead — see
-# iiif_fetch. A manifest is JSON and a canvas is one downscaled page image, so
-# both fit well inside the size cap.
-IIIF_MAX_BYTES = 25 * 1024 * 1024
+# iiif_fetch. A canvas is fetched at the largest size the server gives; the
+# cap is GitHub's limit for one file, the most a committed page can be.
+IIIF_MAX_BYTES = 100 * 1024 * 1024
 IIIF_MAX_REDIRECTS = 5
 IIIF_ALLOWED_CONTENT = ("application/json", "application/ld+json", "image/")
 
@@ -254,7 +254,9 @@ MUSIBOT_URL = (
 ).rstrip("/")
 MUSIBOT_TOKEN = getenv("MUSIBOT_TOKEN")
 MUSIBOT_HOST = urlsplit(MUSIBOT_URL).netloc
-OMR_MAX_BYTES = 25 * 1024 * 1024
+# A page image goes to the service at its committed size, so the cap is the
+# same as the IIIF relay's.
+OMR_MAX_BYTES = IIIF_MAX_BYTES
 _PAGE = r"musicorpus-pages/[A-Za-z0-9_-]+"
 OMR_ROUTES = (
     ("GET", re.compile(r"pipelines")),

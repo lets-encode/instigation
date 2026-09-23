@@ -70,10 +70,6 @@ export type ProgressFn = (progress: { step?: string; detail?: string }) => void;
 // The directory a campaign's page images are committed to, shared by every piece
 // of it. It holds nothing else, so its contents are the campaign's pages.
 export const IMAGE_DIR = 'sources/img';
-// One shared ceiling for uploads, PDF renders and IIIF fetches, so commits stay
-// a reasonable size and later detector runs stay fast. Images already within
-// the cap are committed untouched.
-export const MAX_IMAGE_EDGE = 2000;
 // A preview is what a page is judged by — whether it belongs to the piece, where
 // it comes in the order — and it is shown large enough to read a dense page from,
 // so it stays well above thumbnail size while remaining smaller than the image
@@ -92,8 +88,14 @@ export const IIIF_REQUESTS_PER_SECOND = 16;
 // a 429 reports exhausted is shared by every request in the pass.
 const IIIF_RETRY_WAITS = [500, 1000, 2000];
 const JPEG_QUALITY = 0.85;
-// Render PDF pages at scale 2 of the 72dpi default page box (~150dpi).
-const PDF_RENDER_SCALE = 2;
+// Committed pages keep the source's resolution, as the OMR staff model is run
+// on the source image itself: uploads are committed byte-for-byte, IIIF images
+// at the largest size the server gives, and PDF pages rendered at 300dpi (a
+// scale of the 72dpi default page box).
+const PDF_RENDER_SCALE = 300 / 72;
+// The largest canvas every supported browser renders (Safari's area limit); a
+// PDF page whose render would exceed it is rendered at the scale that fits.
+const MAX_CANVAS_PIXELS = 16_777_216;
 // A preview render of the same page box at ~108dpi: three quarters of the
 // committing width, which is what a dense page has to be read at.
 const PDF_PREVIEW_SCALE = 1.5;
@@ -124,12 +126,15 @@ function imageExtension(file: { name: string; type?: string }): 'jpg' | 'png' {
 }
 
 /**
- * A IIIF Image API request for a canvas, capped to `maxEdge` on its long side.
+ * A IIIF Image API request for a canvas, capped to `maxEdge` on its long side,
+ * or at the largest size the server gives (`max`, Image API 2.1 and 3.0) when
+ * `maxEdge` is null.
  * `!w,h` asks the server to fit the image inside those bounds, preserving the
  * aspect ratio, so the downscale happens server-side.
  */
-export function iiifImageUrl(serviceId: string, maxEdge = MAX_IMAGE_EDGE): string {
-	return `${serviceId.replace(/\/$/, '')}/full/!${maxEdge},${maxEdge}/0/default.jpg`;
+export function iiifImageUrl(serviceId: string, maxEdge: number | null): string {
+	const size = maxEdge === null ? 'max' : `!${maxEdge},${maxEdge}`;
+	return `${serviceId.replace(/\/$/, '')}/full/${size}/0/default.jpg`;
 }
 
 /**
@@ -145,7 +150,7 @@ export interface IiifCanvas {
 }
 
 /** A canvas's image request at the wanted size, as far as the source allows. */
-export function iiifCanvasUrl(canvas: IiifCanvas, maxEdge = MAX_IMAGE_EDGE): string {
+export function iiifCanvasUrl(canvas: IiifCanvas, maxEdge: number | null): string {
 	return canvas.service ? iiifImageUrl(canvas.service, maxEdge) : canvas.url;
 }
 
@@ -252,7 +257,6 @@ export interface PrepareImagesOptions {
 	fetchFn?: typeof fetch;
 	/** Sleep, for pacing relay requests; injectable so tests cost no real time. */
 	wait?: (ms: number) => Promise<void>;
-	maxEdge?: number;
 	/** Long edge of the previews the first pass produces. */
 	previewEdge?: number;
 	/** The session broker's base URL; required to fetch IIIF canvases. */
@@ -292,7 +296,9 @@ async function pdfToImages(file: File, options: PdfRenderOptions): Promise<Blob[
 		for (const n of wanted) {
 			options.onPage?.(n, wanted.length);
 			const page = await doc.getPage(n);
-			const viewport = page.getViewport({ scale: options.scale });
+			const box = page.getViewport({ scale: 1 });
+			const fit = Math.sqrt(MAX_CANVAS_PIXELS / (box.width * box.height));
+			const viewport = page.getViewport({ scale: Math.min(options.scale, fit) });
 			const canvas = document.createElement('canvas');
 			canvas.width = Math.ceil(viewport.width);
 			canvas.height = Math.ceil(viewport.height);
@@ -394,14 +400,14 @@ function relayFailure(res: Response, what: string): string {
 }
 
 /**
- * Fetch a canvas's image at `maxEdge`, through the broker's relay, at the rate
+ * Fetch a canvas's image at `maxEdge` (null: full size), through the broker's relay, at the rate
  * `pacer` allows. A refused request is re-attempted after a widening wait, so
  * one exhausted budget costs the pass time rather than the canvases it has
  * already fetched; every other failure is final.
  */
 async function fetchIiifImage(
 	canvas: IiifCanvas,
-	maxEdge: number,
+	maxEdge: number | null,
 	brokerUrl: string,
 	doFetch: typeof fetch,
 	pacer: Pacer
@@ -531,9 +537,9 @@ export async function prepareCandidates(
 
 /**
  * The chosen pages as committable images, in the order given: each page's bytes
- * are rendered or fetched at committing size now, capped to `maxEdge`, and
- * numbered across the sequence. Every page wanted from one PDF is rendered in a
- * single pass over that document.
+ * are rendered or fetched at full resolution now and numbered across the
+ * sequence. Every page wanted from one PDF is rendered in a single pass over
+ * that document.
  */
 export async function resolvePages(
 	pages: PageCandidate[],
@@ -541,9 +547,7 @@ export async function resolvePages(
 	options: PrepareImagesOptions = {}
 ): Promise<PageImage[]> {
 	const renderPdf = options.renderPdf ?? pdfToImages;
-	const downscale = options.downscale ?? downscaleImage;
 	const doFetch = options.fetchFn ?? fetch;
-	const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE;
 	const pacer = createPacer(options.wait ?? sleep);
 
 	// Opening a PDF is the expensive part of rendering one page of it, so the
@@ -588,7 +592,7 @@ export async function resolvePages(
 			onProgress?.({ step: `Fetching ${page.label} ${nth}` });
 			raster = await fetchIiifImage(
 				page.source.canvas,
-				maxEdge,
+				null,
 				options.brokerUrl,
 				doFetch,
 				pacer
@@ -598,13 +602,9 @@ export async function resolvePages(
 			// fetched bytes decide the committed extension.
 			if (!page.source.canvas.service && raster.type === 'image/png') extension = 'png';
 		}
-		const scaled = await downscale(raster, maxEdge);
-		// A downscale re-encodes to JPEG, so the committed extension follows the
-		// bytes rather than the original file.
-		const finalExtension = scaled === raster ? extension : 'jpg';
 		images.push({
-			path: `${IMAGE_DIR}/${pad2(images.length + 1)}.${finalExtension}`,
-			blob: scaled
+			path: `${IMAGE_DIR}/${pad2(images.length + 1)}.${extension}`,
+			blob: raster
 		});
 	}
 	return images;

@@ -12,7 +12,6 @@ import {
 	fetchIiifCanvases,
 	IIIF_PREVIEW_REQUESTS,
 	IIIF_REQUESTS_PER_SECOND,
-	MAX_IMAGE_EDGE,
 	PREVIEW_IMAGE_EDGE,
 	type IiifCanvas,
 	type PageCandidate,
@@ -84,10 +83,10 @@ test('a useful image MIME type wins over a misleading .pdf extension', () => {
 	assert.equal(classifyUpload({ name: 'scan.pdf', type: 'application/octet-stream' }), 'pdf');
 });
 
-test('builds a capped IIIF Image API request', () => {
+test('builds a full-size or capped IIIF Image API request', () => {
 	assert.equal(
-		iiifImageUrl('https://iiif.example/iiif/2/abc'),
-		`https://iiif.example/iiif/2/abc/full/!${MAX_IMAGE_EDGE},${MAX_IMAGE_EDGE}/0/default.jpg`
+		iiifImageUrl('https://iiif.example/iiif/2/abc', null),
+		'https://iiif.example/iiif/2/abc/full/max/0/default.jpg'
 	);
 	// A trailing slash on the service id must not double up.
 	assert.equal(
@@ -453,11 +452,11 @@ test('renders only the chosen pages of a PDF, in one pass over it', async () => 
 	const images = await resolvePages([pages[1], pages[0]], undefined, { ...stubs, renderPdf });
 	assert.equal(passes.length, 1, 'one pass over the document');
 	assert.deepEqual(passes[0].pages, [1, 2]);
-	assert.equal(passes[0].scale, 2, 'committed pages are rasterised at full scale');
+	assert.equal(passes[0].scale, 300 / 72, 'committed pages are rasterised at 300dpi');
 	assert.equal(images.length, 2);
 });
 
-test('fetches a chosen canvas at committing size, and an unchosen one not at all', async () => {
+test('fetches a chosen canvas at full size, and an unchosen one not at all', async () => {
 	const pages = await candidatesOf(
 		[],
 		[service('https://iiif.example/img/1'), service('https://iiif.example/img/2')],
@@ -468,22 +467,20 @@ test('fetches a chosen canvas at committing size, and an unchosen one not at all
 	assert.equal(requested.length, 1);
 	assert.ok(requested[0].includes(encodeURIComponent('img/2')), 'the chosen canvas');
 	assert.ok(
-		requested[0].includes(encodeURIComponent(`!${MAX_IMAGE_EDGE},${MAX_IMAGE_EDGE}`)),
-		`expected a committing-size request, got ${requested[0]}`
+		requested[0].includes(encodeURIComponent('/full/max/0/default.jpg')),
+		`expected a full-size request, got ${requested[0]}`
 	);
 });
 
-test('keeps images within the cap byte-for-byte and re-encodes downscaled ones as JPEG', async () => {
-	const pages = await candidatesOf([fakeFile('big.png', 'image/png')]);
-	const downscaled = await resolvePages(pages, undefined, {
+test('commits an upload byte-for-byte, keeping its type', async () => {
+	const file = fakeFile('big.png', 'image/png');
+	const pages = await candidatesOf([file]);
+	const images = await resolvePages(pages, undefined, {
 		...stubs,
-		// Simulate a downscale: a different blob comes back.
-		downscale: async () => blob('downscaled')
+		downscale: async () => assert.fail('a committed page is never downscaled')
 	});
-	assert.equal(downscaled[0].path, 'sources/img/01.jpg', 'a re-encoded image commits as .jpg');
-
-	const untouched = await resolvePages(pages, undefined, stubs);
-	assert.equal(untouched[0].path, 'sources/img/01.png', 'an unchanged image keeps its type');
+	assert.equal(images[0].path, 'sources/img/01.png');
+	assert.equal(images[0].blob, file);
 });
 
 test('a serviceless canvas commits with the extension of the bytes fetched', async () => {

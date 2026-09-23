@@ -9,7 +9,7 @@
 import type { ForgeClient } from './forge/types.ts';
 import { createOmrClient, type OmrPipeline } from './omr-client.ts';
 import { parseFacsimileMei } from './mei-facsimile.ts';
-import { staffCrops, stavesBySystem } from './omr-layout.ts';
+import { pageSystems, staffCrops } from './omr-layout.ts';
 import { cropStaves, transcribeStaves } from './omr-transcribe.ts';
 import { stitchPage } from './omr-stitch.ts';
 import { insertPageDraft } from './omr-draft.ts';
@@ -73,11 +73,14 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
 	const path = resolveRepoRelativeTarget(fragment, pg.image);
 	const image = path ? await forge.getRepoFileBytes(owner, repo, path, o.headSha) : null;
 	if (!image) throw new Error(`The image of page ${page} (${pg.image}) could not be read.`);
-	const systems = stavesBySystem(
-		pg.zones.map((z) => z.box),
-		staves
-	);
+	const { systems, unplaced } = pageSystems(pg);
 	const flat = systems.flat();
+	if (!flat.length) {
+		return {
+			note: `Page ${page}: no staff box lies on a system of measure boxes, so nothing was transcribed.`,
+			warn: true
+		};
+	}
 	const crops = await cropStaves(image, staffCrops(flat, pg));
 
 	o.progress(`Transcribing ${flat.length} staves`);
@@ -108,6 +111,7 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
 	);
 
 	const warnings = [
+		...(unplaced ? [`${unplaced} staff box(es) lie on no system of measure boxes and were left out.`] : []),
 		...(failed ? [`${failed} of ${flat.length} staves could not be transcribed and stay empty.`] : []),
 		...draft.warnings
 	];

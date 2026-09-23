@@ -2,7 +2,7 @@
 // into the boxes the zone editor works with: `systemMeasure` boxes become the
 // measure zones, `staff` boxes the staff zones. Pure functions, no DOM.
 
-import type { MeasureBox } from './mei-facsimile.ts';
+import type { MeasureBox, ZoneModel } from './mei-facsimile.ts';
 import type { OmrPipeline } from './omr-client.ts';
 
 /** The parts of a COCO layout document that are read. */
@@ -101,65 +101,49 @@ export function staffCrops(
 }
 
 /**
- * A page's staves grouped by system, top to bottom and each system's staves
- * top to bottom. Two staves belong to one system when a measure box spans
- * both: the staff's vertical centre lies inside the box. A staff no measure
- * spans joins the system of the nearest spanned staff. Without staves the
- * result is empty.
+ * A page's systems as its layout correction defines them: the measure zones in
+ * order, a new system at each zone that starts a page or a system (`pb`/`sb`),
+ * each system with the staff boxes that overlap its measures' vertical extent
+ * most, top to bottom. A system may hold fewer staves than another, or none.
+ * `unplaced` counts the staff boxes that overlap no system.
  */
-export function stavesBySystem(measures: MeasureBox[], staves: MeasureBox[]): MeasureBox[][] {
-	const sorted = [...staves].sort((a, b) => a.uly - b.uly || a.ulx - b.ulx);
-	const centre = (b: MeasureBox) => (b.uly + b.lry) / 2;
-	// Union-find over staff indices.
-	const parent = sorted.map((_, i) => i);
-	const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-	const spanned = new Set<number>();
-	for (const m of measures) {
-		const inside = sorted.flatMap((s, i) => (centre(s) >= m.uly && centre(s) <= m.lry ? [i] : []));
-		for (const i of inside) {
-			spanned.add(i);
-			parent[find(i)] = find(inside[0]);
+export function pageSystems(page: { zones: ZoneModel[]; staves?: MeasureBox[] }): {
+	systems: MeasureBox[][];
+	unplaced: number;
+} {
+	const rows: { uly: number; lry: number }[] = [];
+	for (const [i, zone] of page.zones.entries()) {
+		const row = rows[rows.length - 1];
+		if (i === 0 || zone.pb || zone.sb) rows.push({ uly: zone.box.uly, lry: zone.box.lry });
+		else {
+			row.uly = Math.min(row.uly, zone.box.uly);
+			row.lry = Math.max(row.lry, zone.box.lry);
 		}
 	}
-	if (!spanned.size) return [];
-	sorted.forEach((s, i) => {
-		if (spanned.has(i)) return;
-		let nearest = -1;
-		for (const j of spanned) {
-			if (nearest < 0 || Math.abs(centre(s) - centre(sorted[j])) < Math.abs(centre(s) - centre(sorted[nearest]))) nearest = j;
+	const systems: MeasureBox[][] = rows.map(() => []);
+	let unplaced = 0;
+	for (const staff of page.staves ?? []) {
+		let best = -1;
+		let bestOverlap = 0;
+		for (const [r, row] of rows.entries()) {
+			const overlap = Math.min(staff.lry, row.lry) - Math.max(staff.uly, row.uly);
+			if (overlap > bestOverlap) {
+				best = r;
+				bestOverlap = overlap;
+			}
 		}
-		parent[find(i)] = find(nearest);
-	});
-	const systems = new Map<number, MeasureBox[]>();
-	sorted.forEach((s, i) => {
-		const root = find(i);
-		if (!systems.has(root)) systems.set(root, []);
-		systems.get(root)!.push(s);
-	});
-	return [...systems.values()].sort((a, b) => a[0].uly - b[0].uly);
+		if (best < 0) unplaced++;
+		else systems[best].push(staff);
+	}
+	for (const system of systems) system.sort((a, b) => a.uly - b.uly || a.ulx - b.ulx);
+	return { systems, unplaced };
 }
 
 /**
- * The staff count the piece's systems agree on: the most frequent
- * staves-per-system over every page among systems of more than one staff
- * (ties go to the larger count), or 1 when there is no such system. A
- * single-staff system says nothing about grouping: it is what a staff no
- * measure box joins to another looks like.
+ * The staff count of the piece: the most staves any system of the corrected
+ * layout holds, or 1 when no system holds a staff. A system that shows fewer
+ * staves omits some of the piece's.
  */
-export function staffCountOf(pages: { measures: MeasureBox[]; staves: MeasureBox[] }[]): number {
-	const counts = new Map<number, number>();
-	for (const page of pages) {
-		for (const system of stavesBySystem(page.measures, page.staves)) {
-			if (system.length > 1) counts.set(system.length, (counts.get(system.length) ?? 0) + 1);
-		}
-	}
-	let best = 1;
-	let bestCount = 0;
-	for (const [count, systems] of counts) {
-		if (systems > bestCount || (systems === bestCount && count > best)) {
-			best = count;
-			bestCount = systems;
-		}
-	}
-	return best;
+export function staffCountOf(pages: { zones: ZoneModel[]; staves?: MeasureBox[] }[]): number {
+	return Math.max(1, ...pages.flatMap((page) => pageSystems(page).systems.map((s) => s.length)));
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { layoutBoxes, layoutRecord, staffCountOf, staffCrops, stavesBySystem } from '../omr-layout.ts';
+import { layoutBoxes, layoutRecord, pageSystems, staffCountOf, staffCrops } from '../omr-layout.ts';
 
 // The category ids the layout model uses (layout.json's `categories`).
 const categories = [
@@ -63,72 +63,53 @@ test('staffCrops grows each staff by its height times the margin, clamped to the
 	]);
 });
 
-test('stavesBySystem joins the staves a measure spans, top to bottom', () => {
-	// Two systems of two measures each; three staves in the first, two in the second,
-	// one stray staff between them that no measure spans.
-	const measures = [
-		{ ulx: 0, uly: 100, lrx: 500, lry: 400 },
-		{ ulx: 500, uly: 100, lrx: 1000, lry: 400 },
-		{ ulx: 0, uly: 600, lrx: 500, lry: 800 },
-		{ ulx: 500, uly: 600, lrx: 1000, lry: 800 }
-	];
-	const staves = [
-		{ ulx: 0, uly: 700, lrx: 1000, lry: 760 },
-		{ ulx: 0, uly: 300, lrx: 1000, lry: 360 },
-		{ ulx: 0, uly: 120, lrx: 1000, lry: 180 },
-		{ ulx: 0, uly: 210, lrx: 1000, lry: 270 },
-		{ ulx: 0, uly: 610, lrx: 1000, lry: 670 },
-		{ ulx: 0, uly: 450, lrx: 1000, lry: 500 }
-	];
-	const systems = stavesBySystem(measures, staves);
+// A measure zone; `start` marks the first measure of a system.
+const zone = (uly: number, lry: number, ulx: number, start = false) => ({
+	box: { ulx, uly, lrx: ulx + 500, lry },
+	label: '',
+	pb: false,
+	sb: start,
+	mdiv: false
+});
+const staff = (uly: number) => ({ ulx: 0, uly, lrx: 1000, lry: uly + 60 });
+
+test('pageSystems groups staves by the systems of measure zones, whatever their staff count', () => {
+	// System 1 (100–400) holds three staves, system 2 (600–800) two; one staff
+	// box lies on no system, one straddles the gap but overlaps system 2 more.
+	const page = {
+		zones: [zone(100, 400, 0, true), zone(100, 400, 500), zone(600, 800, 0, true), zone(600, 800, 500)],
+		staves: [staff(700), staff(300), staff(120), staff(210), staff(560), staff(900)]
+	};
+	const { systems, unplaced } = pageSystems(page);
 	assert.deepEqual(
 		systems.map((system) => system.map((s) => s.uly)),
-		[[120, 210, 300, 450], [610, 700]]
+		[[120, 210, 300], [560, 700]]
 	);
-	assert.deepEqual(stavesBySystem([], staves), []);
+	assert.equal(unplaced, 1);
+	assert.equal(staffCountOf([page]), 3);
 });
 
-test('stavesBySystem keeps a system together when some measures cover one staff only', () => {
-	// Two systems of two staves. The last measure of the first system was
-	// detected as two one-staff boxes, the first measure of the second system
-	// as a one-staff box above a full-height duplicate.
-	const measures = [
-		{ ulx: 0, uly: 750, lrx: 800, lry: 921 },
-		{ ulx: 800, uly: 748, lrx: 1000, lry: 802 },
-		{ ulx: 800, uly: 865, lrx: 1000, lry: 917 },
-		{ ulx: 0, uly: 984, lrx: 200, lry: 1037 },
-		{ ulx: 0, uly: 987, lrx: 200, lry: 1153 },
-		{ ulx: 200, uly: 985, lrx: 1000, lry: 1152 }
-	];
-	const staves = [
-		{ ulx: 0, uly: 750, lrx: 1000, lry: 806 },
-		{ ulx: 0, uly: 867, lrx: 1000, lry: 923 },
-		{ ulx: 0, uly: 984, lrx: 1000, lry: 1039 },
-		{ ulx: 0, uly: 1101, lrx: 1000, lry: 1155 }
-	];
+test('pageSystems keeps a system without staves in its place', () => {
+	// Three systems; the staves of the first are missing.
+	const page = {
+		zones: [zone(0, 200, 0, true), zone(300, 500, 0, true), zone(600, 800, 0, true)],
+		staves: [staff(320), staff(420), staff(620), staff(720)]
+	};
 	assert.deepEqual(
-		stavesBySystem(measures, staves).map((system) => system.map((s) => s.uly)),
-		[[750, 867], [984, 1101]]
+		pageSystems(page).systems.map((system) => system.map((s) => s.uly)),
+		[[], [320, 420], [620, 720]]
 	);
-	// Measures that span no staff give no system.
-	assert.deepEqual(stavesBySystem([{ ulx: 0, uly: 0, lrx: 10, lry: 10 }], staves), []);
+	assert.deepEqual(pageSystems({ zones: [], staves: [staff(0)] }), { systems: [], unplaced: 1 });
 });
 
-test('staffCountOf is the most frequent staves-per-system above one, larger count on a tie, else 1', () => {
-	const system = (top: number, count: number) => ({
-		measures: [{ ulx: 0, uly: top, lrx: 1000, lry: top + 300 }],
-		staves: Array.from({ length: count }, (_, i) => ({ ulx: 0, uly: top + 10 + i * 90, lrx: 1000, lry: top + 60 + i * 90 }))
+test('staffCountOf is the largest system of any page, else 1', () => {
+	const page = (...counts: number[]) => ({
+		zones: counts.map((_, i) => zone(i * 1000, i * 1000 + 900, 0, true)),
+		staves: counts.flatMap((count, i) => Array.from({ length: count }, (_, k) => staff(i * 1000 + 10 + k * 100)))
 	});
-	const merge = (...pages: ReturnType<typeof system>[]) => ({
-		measures: pages.flatMap((p) => p.measures),
-		staves: pages.flatMap((p) => p.staves)
-	});
-	assert.equal(staffCountOf([merge(system(0, 3), system(400, 3), system(800, 2))]), 3);
-	assert.equal(staffCountOf([merge(system(0, 3), system(400, 2))]), 3);
-	// Single-staff systems do not vote: a page whose measure boxes each cover one staff.
-	assert.equal(staffCountOf([merge(system(0, 2)), merge(system(0, 1), system(400, 1), system(800, 1))]), 2);
-	assert.equal(staffCountOf([merge(system(0, 1), system(400, 1))]), 1);
-	assert.equal(staffCountOf([merge(system(0, 0))]), 1);
+	assert.equal(staffCountOf([page(2, 3), page(2)]), 3);
+	assert.equal(staffCountOf([page(1, 1)]), 1);
+	assert.equal(staffCountOf([page(0)]), 1);
 	assert.equal(staffCountOf([]), 1);
 });
 

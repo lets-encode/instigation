@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- Committed page images keep the source's full resolution, so OMR staff crops match a direct Musibot run.
+- OMR page drafts take their systems from the corrected measure rows, so a system without staff boxes no longer shifts the music after it.
+- Score setup of an OMR piece takes its staff count from the largest system of the corrected layout.
 - Coordinator retries GitHub 5xx reads and falls back to the commit's file list when GitHub cannot serve a one-commit PR's diff.
 - A failed automation run reads "Run failed" instead of "Rejected".
 - Retrying a campaign finish no longer recommits the campaign once its config is in the repository.

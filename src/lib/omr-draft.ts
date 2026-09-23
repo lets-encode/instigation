@@ -37,7 +37,8 @@ function withContent(measure: string, content: string): string {
  * Put the converted page's measures into the skeleton's measures of the page
  * `locator` (`surface-N`) names. Systems are the runs of skeleton measures
  * opened by a `<pb>` or `<sb>`; the converted document's systems are given by
- * `measuresPerSystem` (what the stitching produced). Converted staves beyond
+ * `measuresPerSystem` (what the stitching produced), one entry per skeleton
+ * system, and a different system count is refused. Converted staves beyond
  * the score definition's staff count are dropped with a warning, since a
  * staff without a staffDef is invalid.
  */
@@ -76,7 +77,7 @@ export function insertPageDraft(
 	const staffCount = parseScoreDef(skeleton).staves.length;
 	const convertedMeasures = measuresOf(converted);
 	if (systems.length !== measuresPerSystem.length) {
-		warnings.push(
+		throw new Error(
 			`Page ${page}: ${systems.length} system(s) of measure boxes, ${measuresPerSystem.length} transcribed.`
 		);
 	}

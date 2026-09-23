@@ -13,7 +13,7 @@
   import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
   import type { MeasureBox, ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
-  import { staffCountOf, staffCrops, stavesBySystem } from "$lib/omr-layout.ts";
+  import { pageSystems, staffCountOf, staffCrops } from "$lib/omr-layout.ts";
   import { proposeScoreDef } from "$lib/omr-musicxml.ts";
   import { cropStaves, transcribeStaves } from "$lib/omr-transcribe.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
@@ -188,7 +188,7 @@
       // recognition once the task is held.
       unset = JSON.stringify(d.model.scoreDef) === JSON.stringify(DEFAULT_SCORE_DEF);
       if (d.preparation === "omr" && unset) {
-        staves = Array.from({ length: staffCountOf(layoutPagesOf(d)) }, plainStaff);
+        staves = Array.from({ length: staffCountOf(d.model.pages) }, plainStaff);
       }
     } catch (e) {
       if (!stale()) loadError = `Could not load ${task}: ${(e as Error).message}`;
@@ -541,8 +541,6 @@
   const omr = $derived(data?.preparation === "omr");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
-  const layoutPagesOf = (d: FacsimileTaskData) =>
-    d.model.pages.map((pg) => ({ measures: pg.zones.map((z) => z.box), staves: pg.staves ?? [] }));
   let prefilledFor = $state<string | null>(null);
   $effect(() => {
     if (omr && canEdit && data && unset && !runner.busy && prefilledFor !== taskId) {
@@ -580,8 +578,8 @@
       type System = { p: number; index: number; staves: MeasureBox[] };
       let first: System | null = null;
       let fullest: System | null = null;
-      for (const [p, pg] of layoutPagesOf(d).entries()) {
-        for (const [index, system] of stavesBySystem(pg.measures, pg.staves).entries()) {
+      for (const [p, pg] of d.model.pages.entries()) {
+        for (const [index, system] of pageSystems(pg).systems.entries()) {
           if (!system.length) continue;
           first ??= { p, index, staves: system };
           if (!fullest || system.length > fullest.staves.length) fullest = { p, index, staves: system };
