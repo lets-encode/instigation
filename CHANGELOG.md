@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Layout correction of an OMR piece can be submitted once every page was shown in both steps and no page has staff boxes without measures.
 - OMR requests refused by the broker rate limit are retried, and the OMR file relay allows 100 requests per second.
 - The volunteer view lists every submission still being processed, not only when no task is open.
 - Committed page images keep the source's full resolution, so OMR staff crops match a direct Musibot run.

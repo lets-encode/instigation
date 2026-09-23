@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import { untrack } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -183,6 +184,34 @@
       : `Page ${(spread.pages[0] ?? 0) + 1} of ${pages.length}`,
   );
 
+  // The pages a layout task has shown in each step. Submission waits until
+  // every page has been on screen in both steps.
+  let seen = $state<Record<Layer, number[]>>({ staves: [], measures: [] });
+  $effect(() => {
+    if (!omr) return;
+    const shown = spread.pages;
+    const layer = tool;
+    untrack(() => {
+      const added = shown.filter((p) => !seen[layer].includes(p));
+      if (added.length) seen[layer] = [...seen[layer], ...added];
+    });
+  });
+  const pageList = (ps: number[]) => ps.map((p) => p + 1).join(", ");
+  // Why a layout task cannot be submitted yet, or null when it can.
+  const submitBlock = $derived.by(() => {
+    if (!omr) return null;
+    const unseen = (layer: Layer) => pages.flatMap((_, p) => (seen[layer].includes(p) ? [] : [p]));
+    const staves = unseen("staves");
+    if (staves.length) return `Show every page in step 1 before submitting. Not yet shown: page ${pageList(staves)}.`;
+    const measures = unseen("measures");
+    if (measures.length) return `Show every page in step 2 before submitting. Not yet shown: page ${pageList(measures)}.`;
+    const noMeasures = pages.flatMap((pg, p) => (pg.staves.length && !pg.zones.length ? [p] : []));
+    if (noMeasures.length) {
+      return `Page ${pageList(noMeasures)} has staff boxes but no measures. Add its measures, or remove its staff boxes if the page has no music.`;
+    }
+    return null;
+  });
+
   function go(delta: number) {
     const next = spreads[spreadIndex + delta];
     if (!next) return;
@@ -263,6 +292,7 @@
       data = d;
       tables = t;
       rawLayouts = {};
+      seen = { staves: [], measures: [] };
       pages = d.model.pages.map((pg, i) => ({
         image: pg.image,
         width: pg.width,
@@ -1608,10 +1638,11 @@
             type="button"
             class="btn btn-primary submitbtn"
             onclick={() => submit()}
-            disabled={busy || !canEdit}
-            title={omr
-              ? "Submit the corrected staves, measures, breaks and movements for review"
-              : "Submit the corrected measures, breaks and movements for review"}
+            disabled={busy || !canEdit || submitBlock !== null}
+            title={submitBlock ??
+              (omr
+                ? "Submit the corrected staves, measures, breaks and movements for review"
+                : "Submit the corrected measures, breaks and movements for review")}
           >
             Submit corrections
           </button>
