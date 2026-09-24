@@ -14,7 +14,9 @@
   import type { MeasureBox, ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
   import { pageSystems, staffCountOf, staffCrops } from "$lib/omr-layout.ts";
-  import { proposeScoreDef } from "$lib/omr-musicxml.ts";
+  import { clefToken, proposeScoreDef } from "$lib/omr-musicxml.ts";
+  import { suggestStaffAssignment } from "$lib/omr-staff-assign.ts";
+  import { readStaffLabels } from "$lib/ocr.ts";
   import { cropStaves, transcribeStaves } from "$lib/omr-transcribe.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
@@ -534,8 +536,10 @@
   // staves (a first system may leave a staff out, a resting voice above a
   // piano introduction), key and meter from the piece's first system, where
   // signatures are printed — once when the claim holder opens a task whose
-  // definition is still the default. Labels and groups are
-  // not recognised and stay as entered. The count stays editable until the
+  // definition is still the default. The instrument labels are read (OCR)
+  // in front of the first system, where they are usually written out, and in
+  // front of the fullest system for a staff the first leaves out; a staff
+  // that already has a label keeps it. Groups are not recognised. The count stays editable until the
   // piece holds notation, since the setup submission rebuilds empty measures
   // for it until then.
   const omr = $derived(data?.preparation === "omr");
@@ -608,19 +612,56 @@
       runner.log.step(same ? "Transcribing the first system" : "Transcribing the fullest and the first system");
       const xmls = await transcribeStaves(client, omrModels.staffPipeline, [...fullestCrops, ...firstCrops]);
       const fullestXmls = xmls.slice(0, fullestCrops.length);
-      const proposal = proposeScoreDef(fullestXmls, xmls.slice(fullestCrops.length));
+      const firstXmls = xmls.slice(fullestCrops.length);
+      const proposal = proposeScoreDef(fullestXmls, firstXmls);
       applyProposal(proposal);
       const failed = xmls.filter((x) => x === null).length;
+
+      runner.log.step("Reading the instrument labels");
+      let labelNote = "";
+      let labelFailed = false;
+      try {
+        const [firstLabels] = await readStaffLabels(images.get(first.p)!, [first.staves]);
+        // The fullest system shows every staff of the definition, in order.
+        const read = same
+          ? firstLabels
+          : (await readStaffLabels(images.get(fullest.p)!, [fullest.staves]))[0];
+        if (!same) {
+          const token = (staff: StaffModel) =>
+            staff.clefShape === "perc" || staff.clefShape === "TAB"
+              ? staff.clefShape
+              : `${staff.clefShape}${staff.clefLine}`;
+          const onFirst = suggestStaffAssignment(
+            first.staves.map((box, i) => ({ box, clef: clefToken(firstXmls[i] ?? null), label: "" })),
+            proposal.staves.map((staff) => ({ clef: token(staff), label: "" })),
+            fullest.staves,
+          );
+          onFirst.forEach((n, i) => {
+            if (n > 0 && firstLabels[i]) read[n - 1] = firstLabels[i];
+          });
+        }
+        let filled = 0;
+        staves = staves.map((staff, i) => {
+          if (staff.label.trim() || !read[i]) return staff;
+          filled++;
+          return { ...staff, label: read[i] };
+        });
+        labelNote = ` Instrument labels read for ${filled} of ${staves.length} staves.`;
+      } catch (e) {
+        labelFailed = true;
+        labelNote = ` The instrument labels could not be read (${(e as Error).message}).`;
+      }
       const clefs = proposal.staves
         .map((s) => `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`)
         .join(", ");
       const meter = proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
       return {
         ok: true,
-        warn: failed > 0,
+        warn: failed > 0 || labelFailed,
         message:
           `Recognised ${same ? "the first system" : `system ${fullest.index + 1} of page ${fullest.p + 1} (clefs) and the first system (signatures)`}: clefs ${clefs}; key signature ${proposal.keysig}; meter ${meter}.` +
           (failed ? ` ${failed} of ${xmls.length} staves could not be transcribed and keep the treble clef.` : "") +
+          labelNote +
           " Check the values, then submit.",
       };
     } catch (e) {

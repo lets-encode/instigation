@@ -37,6 +37,35 @@ const serveWebsiteIndex = () => ({
 	}
 });
 
+// The text recognition's language data (src/lib/ocr.ts), served at
+// /ocr/<lang>.traineddata.gz: tesseract.js builds the file names from a
+// directory URL itself, so the files need fixed names rather than hashed
+// asset URLs. Served from node_modules on the dev server and written into the
+// build output.
+const OCR_LANGUAGES = ['deu', 'eng'];
+const ocrLanguageFile = (lang) =>
+	join(import.meta.dirname, 'node_modules', '@tesseract.js-data', lang, '4.0.0_best_int', `${lang}.traineddata.gz`);
+const ocrLanguageData = () => ({
+	name: 'ocr-language-data',
+	configureServer(server) {
+		server.middlewares.use(async (req, res, next) => {
+			const lang = /^\/ocr\/([a-z]+)\.traineddata\.gz$/.exec(new URL(req.url, 'http://x').pathname)?.[1];
+			if (!lang || !OCR_LANGUAGES.includes(lang)) return next();
+			res.setHeader('Content-Type', 'application/octet-stream');
+			res.end(await readFile(ocrLanguageFile(lang)));
+		});
+	},
+	async generateBundle() {
+		for (const lang of OCR_LANGUAGES) {
+			this.emitFile({
+				type: 'asset',
+				fileName: `ocr/${lang}.traineddata.gz`,
+				source: await readFile(ocrLanguageFile(lang))
+			});
+		}
+	}
+});
+
 export default defineConfig(({ command, mode }) => {
 	if (command === 'build') {
 		// A --mode on the command line overrides the branch-derived mode. The
@@ -53,7 +82,7 @@ export default defineConfig(({ command, mode }) => {
 		// The .env files live in instances-config/ with services.json; svelte.config.js
 		// points SvelteKit's env loader at the same directory.
 		envDir: 'instances-config',
-		plugins: [serveWebsiteIndex(), sveltekit()],
+		plugins: [serveWebsiteIndex(), ocrLanguageData(), sveltekit()],
 		define: {
 			// The footer's "app last updated" date, fixed at build time.
 			__BUILD_DATE__: JSON.stringify(

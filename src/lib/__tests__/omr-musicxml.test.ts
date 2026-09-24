@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { keysigFor, proposeScoreDef, readAttributes } from '../omr-musicxml.ts';
+import { keysigFor, proposeScoreDef, readAttributes, toClef } from '../omr-musicxml.ts';
 
 // The shape the staff model writes: one part, attributes on the first measure.
 const staff = (attributes: string) =>
@@ -80,4 +80,23 @@ test('proposeScoreDef: signatures are read from the given sources before the cle
 	assert.deepEqual(proposal.staves.map((s) => s.clefShape), ['G', 'F']);
 	assert.equal(proposal.keysig, '2f');
 	assert.equal(`${proposal.meterCount}/${proposal.meterUnit}`, '6/8');
+});
+
+test('toClef moves the notes so they keep their places on the staff', () => {
+	const xml = (clef: string, notes: string) =>
+		`<score-partwise><part id="P1"><measure><attributes><divisions>1</divisions>${clef}</attributes>${notes}</measure></part></score-partwise>`;
+	const G = '<clef><sign>G</sign><line>2</line></clef>';
+	const pitch = (step: string, octave: number, alter = '') =>
+		`<note><pitch><step>${step}</step>${alter}<octave>${octave}</octave></pitch></note>`;
+	// Treble to bass: the bottom line E4 becomes G2.
+	const bass = toClef(xml(G, pitch('E', 4) + pitch('F', 5, '<alter>1</alter>')), 'F4');
+	assert.match(bass, /<clef><sign>F<\/sign><line>4<\/line><\/clef>/);
+	assert.match(bass, /<step>G<\/step><octave>2<\/octave>/);
+	assert.match(bass, /<step>A<\/step><alter>1<\/alter><octave>3<\/octave>/);
+	// Already in the clef, several clefs, or an unpitched clef: unchanged.
+	const same = xml(G, pitch('E', 4));
+	assert.equal(toClef(same, 'G2'), same);
+	const two = xml(G + G, pitch('E', 4));
+	assert.equal(toClef(two, 'F4'), two);
+	assert.equal(toClef(same, 'perc'), same);
 });

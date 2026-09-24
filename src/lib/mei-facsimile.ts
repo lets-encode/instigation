@@ -23,6 +23,7 @@
 
 import { addXmlIds } from './mei-ids.ts';
 import { xmlEscape, xmlUnescape } from './mei-xml.ts';
+import { pageSystems } from './omr-layout.ts';
 
 /** A detected measure box, in the page image's pixel space. */
 export interface MeasureBox {
@@ -227,7 +228,9 @@ export function initialFacsimileModel(pages: FacsimilePage[]): FacsimileModel {
 // meter and an optional <label>. keysig '0' means no accidentals and emits no
 // attribute. Grouped staves nest in their own <staffGrp>; a brace joins the
 // staves of one instrument, so its barlines run through (bar.thru).
-function buildScoreDefXml(scoreDef: ScoreDefModel): string {
+// `optimize` marks a score whose systems leave out staves (@optimize): a
+// renderer hides a staff that holds only rests.
+function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
 	const keysig = scoreDef.keysig === '0' ? '' : ` keysig="${xmlEscape(scoreDef.keysig)}"`;
 	const meter = scoreDef.meterSym
 		? `meter.sym="${xmlEscape(scoreDef.meterSym)}"`
@@ -274,7 +277,7 @@ function buildScoreDefXml(scoreDef: ScoreDefModel): string {
 		rows.push(`${base}</staffGrp>`);
 	}
 	return (
-		`               <scoreDef${keysig}>\n` +
+		`               <scoreDef${keysig}${optimize ? ' optimize="true"' : ''}>\n` +
 		`                  <staffGrp>\n` +
 		rows.join('\n') +
 		`\n                  </staffGrp>\n` +
@@ -316,6 +319,12 @@ export function buildFacsimileMei(
 	const withMeasures = withBreaks;
 	const body = seedStaves((model.scoreDef ?? DEFAULT_SCORE_DEF).staves.length, opts.emptyMeasures);
 	const scoreDef = model.scoreDef ?? DEFAULT_SCORE_DEF;
+	// Some system shows fewer staff boxes than the definition has staves.
+	const omits = model.pages.some(
+		(page) =>
+			page.staves?.length &&
+			pageSystems(page).systems.some((system) => system.length > 0 && system.length < scoreDef.staves.length)
+	);
 	const surfaces: string[] = [];
 	// Section content grouped per movement: mdivParts[k] holds <mdiv> k+1's lines.
 	const mdivParts: string[][] = [[]];
@@ -387,7 +396,7 @@ export function buildFacsimileMei(
 		(parts, i) =>
 			`         <mdiv xml:id="mdiv-${i + 1}" n="${i + 1}">\n` +
 			`            <score>\n` +
-			buildScoreDefXml(scoreDef) +
+			buildScoreDefXml(scoreDef, omits) +
 			`\n               <section>\n` +
 			(parts.length ? parts.join('\n') + '\n' : '') +
 			`               </section>\n` +
@@ -461,11 +470,13 @@ export function buildBlankScoreMei(
 
 /**
  * Swap every `<scoreDef>` block of an MEI document for one built from the
- * model, leaving the measures as they are. Used for a piece whose measures
- * hold notation a rebuild would discard.
+ * model, leaving the measures as they are, and keeping the document's
+ * @optimize. Used for a piece whose measures hold notation a rebuild would
+ * discard.
  */
 export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
-	const block = buildScoreDefXml(scoreDef).trim();
+	const optimize = /<scoreDef\b[^>]*\boptimize="true"/.test(mei);
+	const block = buildScoreDefXml(scoreDef, optimize).trim();
 	return mei.replace(/<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/g, () => block);
 }
 

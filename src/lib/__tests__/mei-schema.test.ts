@@ -198,6 +198,51 @@ test('a score rebuilt around a submitted score definition validates', { skip }, 
 	assert.ok(richCheck.ok, `set-up blank score with groups and unpitched staves: ${richCheck.error}`);
 });
 
+test('an optimized score with a resting, unprinted staff validates', { skip }, async () => {
+	// What a page draft writes into a system that prints staff 2 only.
+	const plain = { clefDis: '', clefDisPlace: '', lines: 5, notationType: '', label: '' };
+	const scoreDef: ScoreDefModel = {
+		staves: [
+			{ ...plain, clefShape: 'G', clefLine: 2 },
+			{ ...plain, clefShape: 'F', clefLine: 4 }
+		],
+		groups: [],
+		keysig: '0',
+		meterCount: '4',
+		meterUnit: '4',
+		meterSym: ''
+	};
+	const zone = (uly: number, pb: boolean) => ({ box: { ulx: 100, uly, lrx: 900, lry: uly + 300 }, label: String(uly), pb, sb: !pb, mdiv: false });
+	const mei = buildFacsimileMei(
+		{
+			headXml: buildPieceHead({ title: 'Sonata No. 1', composer: 'L. van Beethoven', license: 'CC BY 4.0' }, source()),
+			scoreDef,
+			pages: [
+				{
+					image: 'img/01.jpg',
+					width: 1000,
+					height: 1000,
+					zones: [zone(0, true), zone(500, false)],
+					staves: [
+						{ ulx: 100, uly: 20, lrx: 900, lry: 80 },
+						{ ulx: 100, uly: 180, lrx: 900, lry: 240 },
+						{ ulx: 100, uly: 600, lrx: 900, lry: 660 }
+					]
+				}
+			]
+		},
+		{ withBreaks: true, emptyMeasures: true }
+	);
+	assert.match(mei, /<scoreDef[^>]* optimize="true"/);
+	const drafted = mei.replace(
+		/(<measure[^>]* n="500"[^>]*>)[\s\S]*?(<\/measure>)/,
+		'$1<staff n="1"><layer n="1"><mRest/></layer></staff><staff n="2" facs="#staff-zone-1-3"><layer n="1"><mRest/></layer></staff>$2'
+	);
+	assert.notEqual(drafted, mei);
+	const check = await validateMei(drafted);
+	assert.ok(check.ok, `score with a reduced system: ${check.error}`);
+});
+
 test('a document carrying a DOCTYPE declaration is rejected outright', async () => {
 	// The rejection happens before the schema check, so it needs neither the
 	// downloaded schema nor the library — no skip.

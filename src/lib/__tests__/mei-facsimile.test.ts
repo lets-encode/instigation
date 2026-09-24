@@ -531,3 +531,27 @@ test('seed measures hold one resting staff per staffDef in both builders', () =>
 		}
 	}
 });
+
+test('a system with fewer staff boxes than the definition has staves optimizes the score', () => {
+	const staff = DEFAULT_SCORE_DEF.staves[0];
+	const zone = (uly: number, pb: boolean) => ({ box: { ulx: 0, uly, lrx: 900, lry: uly + 400 }, label: '', pb, sb: !pb, mdiv: false });
+	const model = (boxes: number[]): FacsimileModel => ({
+		headXml: HEAD,
+		scoreDef: { ...DEFAULT_SCORE_DEF, staves: [staff, staff] },
+		pages: [
+			{
+				image: 'img/01.jpg',
+				width: 1000,
+				height: 1000,
+				zones: [zone(0, true), zone(500, false)],
+				staves: boxes.map((uly) => ({ ulx: 0, uly, lrx: 900, lry: uly + 60 }))
+			}
+		]
+	});
+	const full = buildFacsimileMei(model([20, 150, 520, 650]), { withBreaks: true, emptyMeasures: true });
+	assert.doesNotMatch(full, /optimize/);
+	const reduced = buildFacsimileMei(model([20, 150, 520]), { withBreaks: true, emptyMeasures: true });
+	assert.match(reduced, /<scoreDef[^>]* optimize="true"/);
+	// Replacing the definition keeps it.
+	assert.match(replaceScoreDef(reduced, DEFAULT_SCORE_DEF), /<scoreDef[^>]* optimize="true"/);
+});

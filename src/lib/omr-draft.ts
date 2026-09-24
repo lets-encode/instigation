@@ -5,7 +5,10 @@
 // converted measure's content — staves, layers and the control events
 // (slurs, dynamics, ties) that reference them. The skeleton's own measure
 // tags (xml:id, @n, @facs), its page and system breaks and everything outside
-// the page stay as they are. Regex over the document text, no DOM.
+// the page stay as they are. Each system's staves are written as `printed`
+// gives them: a printed staff takes the converted staff of its number and
+// links its staff zone (@facs); a staff the system leaves out rests. Regex
+// over the document text, no DOM.
 
 import { parseScoreDef } from './mei-facsimile.ts';
 
@@ -27,6 +30,45 @@ function measuresOf(mei: string): { text: string; inner: string }[] {
 	}));
 }
 
+// The self-closing form comes first, so it never runs on to the next </staff>.
+const STAFF = /<staff\b[^>]*\/>|<staff\b[^>]*>[\s\S]*?<\/staff>/g;
+
+/**
+ * Staff content with every `<clef>` inside a `<bTrem>` or `<fTrem>` moved to
+ * just after it. Verovio's MusicXML import puts the next system's clef change
+ * inside a tremolo that ends an overfull measure, where MEI allows only notes
+ * and chords.
+ */
+function clefsOutOfTremolos(content: string): string {
+	return content.replace(/<(bTrem|fTrem)\b[^>]*>[\s\S]*?<\/\1>/g, (tremolo) => {
+		const clefs = tremolo.match(/<clef\b[^>]*\/>/g);
+		return clefs ? tremolo.replace(/\s*<clef\b[^>]*\/>/g, '') + clefs.join('') : tremolo;
+	});
+}
+
+/**
+ * A measure's staves 1…staffCount from converted content: a staff in
+ * `printed` (staff n → staff zone id) takes the converted staff's content and
+ * links its zone, the others rest; the converted control events follow.
+ */
+function measureStaves(content: string, staffCount: number, printed: Map<number, string>): string {
+	const convertedStaves = content.match(STAFF) ?? [];
+	const byN = new Map(convertedStaves.map((staff) => [Number(/\bn="(\d+)"/.exec(staff)?.[1]), staff]));
+	const staves = Array.from({ length: staffCount }, (_, i) => {
+		const n = i + 1;
+		const zone = printed.get(n);
+		if (!zone) return `<staff n="${n}"><layer n="1"><mRest/></layer></staff>`;
+		const converted = byN.get(n);
+		const inner =
+			!converted || /\/>$/.test(converted)
+				? '<layer n="1"/>'
+				: clefsOutOfTremolos(converted.replace(/^<staff\b[^>]*>/, '').replace(/<\/staff>$/, ''));
+		return `<staff n="${n}" facs="#${zone}">${inner}</staff>`;
+	});
+	const controlEvents = convertedStaves.reduce((rest, staff) => rest.replace(staff, ''), content).trim();
+	return staves.join('\n') + (controlEvents ? `\n${controlEvents}` : '');
+}
+
 /** A skeleton measure with `content` in place of its inner content, keeping its start tag. */
 function withContent(measure: string, content: string): string {
 	const open = /^<measure\b[^>]*?>/.exec(measure)![0].replace(/\/>$/, '>');
@@ -38,15 +80,17 @@ function withContent(measure: string, content: string): string {
  * `locator` (`surface-N`) names. Systems are the runs of skeleton measures
  * opened by a `<pb>` or `<sb>`; the converted document's systems are given by
  * `measuresPerSystem` (what the stitching produced), one entry per skeleton
- * system, and a different system count is refused. Converted staves beyond
- * the score definition's staff count are dropped with a warning, since a
- * staff without a staffDef is invalid.
+ * system, and a different system count is refused. `printed` gives, per
+ * system, the staves it prints (staff n → staff zone id). Converted staves
+ * beyond the score definition's staff count are dropped with a warning,
+ * since a staff without a staffDef is invalid.
  */
 export function insertPageDraft(
 	skeleton: string,
 	locator: string,
 	converted: string,
-	measuresPerSystem: number[]
+	measuresPerSystem: number[],
+	printed: Map<number, string>[]
 ): DraftInsertion {
 	const warnings: string[] = [];
 	const page = Number(/^surface-(\d+)$/.exec(locator)?.[1]);
@@ -107,7 +151,8 @@ export function insertPageDraft(
 					dropped = true;
 				}
 			}
-			result = result.replace(system[i].text, () => withContent(system[i].text, content.trim()));
+			const staves = measureStaves(content, staffCount, printed[s] ?? new Map());
+			result = result.replace(system[i].text, () => withContent(system[i].text, staves));
 			filled++;
 		}
 		cursor += available;

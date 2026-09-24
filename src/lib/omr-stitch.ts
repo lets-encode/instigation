@@ -1,11 +1,15 @@
 // Stitching the staff model's per-staff MusicXML into one page-level MusicXML
-// document: every staff of a system becomes a part, the systems follow one
-// another with a system break at each start. A system with fewer staves than
-// the score has parts (a voice resting through a piano introduction, say)
-// places its staves by clef: the part sequence that matches its clef sequence
-// best, and the lowest such placement on a tie, since an omitted staff is
-// usually a top one. The parts it leaves out get empty measures. Regex over
-// the document text, no DOM.
+// document: one part per staff of the score definition, the systems following
+// one another with a system break at each start. Each system places its
+// staves on the parts given for it (the score setup's staff assignment), and
+// the parts a system leaves out get empty measures. Each placed staff is put
+// into its part's clef (toClef): the score definition's clef is trusted over
+// the one the staff model read, which it misreads at times, and a later
+// system then opens without a clef change. Every part opens with an
+// <attributes> block holding at least its clef: verovio drops a part whose
+// first measure has none and numbers the remaining staves consecutively,
+// which would shift every staff below it. Regex over the document text, no
+// DOM.
 //
 // The staff model transcribes one staff at a time and reads an unprinted key
 // or time signature as none, so within a system the key and the time of the
@@ -15,47 +19,10 @@
 // system ends up with is reported for the draft insertion to check against
 // the measure boxes.
 
-import { clefToken } from './omr-musicxml.ts';
+import { toClef } from './omr-musicxml.ts';
 
 /** One system's transcriptions, top staff first; null for a staff that was not transcribed. */
 export type SystemTranscriptions = (string | null)[];
-
-/**
- * The part (0-based, strictly increasing) each staff of a system goes to,
- * given the staves' clefs and the parts' clefs (`G2`, `F4`, …). The
- * placement with the most clef matches wins; a staff of unknown clef matches
- * any part; among equals the lowest placement wins. More staves than parts:
- * the extra bottom staves are dropped (index -1).
- */
-export function alignStaves(staffClefs: (string | null)[], partClefs: string[]): number[] {
-	const n = staffClefs.length;
-	const m = partClefs.length;
-	if (n >= m) return staffClefs.map((_, i) => (i < m ? i : -1));
-	// best[i][j]: the most matches placing staves i.. into parts j.., and the
-	// part staff i takes for it.
-	const best: { score: number; part: number }[][] = Array.from({ length: n + 1 }, () =>
-		Array.from({ length: m + 1 }, () => ({ score: 0, part: -1 }))
-	);
-	for (let i = n - 1; i >= 0; i--) {
-		for (let j = m - 1; j >= 0; j--) {
-			let choice = { score: -1, part: -1 };
-			// Staff i may take any part p ≥ j that still leaves parts for the rest.
-			for (let p = j; p <= m - (n - i); p++) {
-				const match = staffClefs[i] === null || staffClefs[i] === partClefs[p] ? 1 : 0;
-				const score = match + best[i + 1][p + 1].score;
-				if (score >= choice.score) choice = { score, part: p };
-			}
-			best[i][j] = choice;
-		}
-	}
-	const out: number[] = [];
-	let j = 0;
-	for (let i = 0; i < n; i++) {
-		out.push(best[i][j].part);
-		j = best[i][j].part + 1;
-	}
-	return out;
-}
 
 export interface StitchedPage {
 	musicxml: string;
@@ -63,6 +30,14 @@ export interface StitchedPage {
 	measuresPerSystem: number[];
 	/** How many parts (staves per system) the page has. */
 	parts: number;
+}
+
+/** A MusicXML <clef> for a clef token (`G2`, `F4`, `perc`, `TAB`). */
+function clefXml(token: string): string {
+	if (token === 'perc') return '<clef><sign>percussion</sign></clef>';
+	if (token === 'TAB') return '<clef><sign>TAB</sign></clef>';
+	const m = /^([A-Z])(\d)$/.exec(token);
+	return m ? `<clef><sign>${m[1]}</sign><line>${m[2]}</line></clef>` : '<clef><sign>G</sign><line>2</line></clef>';
 }
 
 /** The `<measure>` elements of a single-part MusicXML document, in order. */
@@ -103,23 +78,24 @@ function withSignatures(measure: string, key: string | null, time: string | null
 }
 
 /**
- * Stitch the systems of one page into a page-level score. With `partClefs`
- * (the score definition's staves, top to bottom) the parts are those staves
- * and a system's staves are placed by clef (alignStaves); without, the parts
- * are as many as the widest system has staves and a system fills them from
- * the top. Parts a system leaves out get empty measures.
+ * Stitch the systems of one page into a page-level score with one part per
+ * entry of `partClefs` (the score definition's staves, top to bottom, as clef
+ * tokens). `placements[s][i]` is the part (0-based) staff i of system s goes
+ * to; -1, or a part beyond the definition, leaves the staff out.
  */
-export function stitchPage(systems: SystemTranscriptions[], partClefs?: string[]): StitchedPage {
-	const parts = partClefs ? partClefs.length : Math.max(0, ...systems.map((s) => s.length));
+export function stitchPage(
+	systems: SystemTranscriptions[],
+	partClefs: string[],
+	placements: number[][]
+): StitchedPage {
+	const parts = partClefs.length;
 	const perPart: string[][] = Array.from({ length: parts }, () => []);
 	const measuresPerSystem: number[] = [];
 	for (const [s, system] of systems.entries()) {
-		const placement = partClefs
-			? alignStaves(system.map(clefToken), partClefs)
-			: system.map((_, i) => (i < parts ? i : -1));
 		const byPart: (string | null)[] = Array.from({ length: parts }, () => null);
-		placement.forEach((p, i) => {
-			if (p >= 0) byPart[p] = system[i];
+		(placements[s] ?? []).forEach((p, i) => {
+			const xml = system[i] ?? null;
+			if (p >= 0 && p < parts) byPart[p] = xml && toClef(xml, partClefs[p]);
 		});
 		const staffMeasures = byPart.map((xml) => (xml ? measuresOf(xml) : []));
 		const count = Math.max(0, ...staffMeasures.map((m) => m.length));
@@ -133,6 +109,8 @@ export function stitchPage(systems: SystemTranscriptions[], partClefs?: string[]
 		for (let k = 0; k < parts; k++) {
 			const measures = [...(staffMeasures[k] ?? [])];
 			if (measures.length) measures[0] = withSignatures(measures[0], key, time);
+			// The part's clef carries on from the system before.
+			if (s > 0 && measures.length) measures[0] = measures[0].replace(/<clef\b[^>]*>[\s\S]*?<\/clef>/, '');
 			while (measures.length < count) measures.push('<measure/>');
 			// The system break sits on the first measure of the first part.
 			if (k === 0 && s > 0 && measures.length) {
@@ -143,6 +121,11 @@ export function stitchPage(systems: SystemTranscriptions[], partClefs?: string[]
 			perPart[k].push(...measures);
 		}
 	}
+	perPart.forEach((measures, k) => {
+		if (!measures.length || element(inner(measures[0]), 'attributes')) return;
+		const open = /^<measure\b[^>]*?\/?>/.exec(measures[0])![0].replace(/\/>$/, '>');
+		measures[0] = `${open}<attributes><divisions>1</divisions>${clefXml(partClefs[k])}</attributes>${inner(measures[0])}</measure>`;
+	});
 	const partList = perPart
 		.map((_, k) => `<score-part id="P${k + 1}"><part-name>Staff ${k + 1}</part-name></score-part>`)
 		.join('');

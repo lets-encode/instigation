@@ -107,8 +107,8 @@ export function staffCrops(
  * most, top to bottom. A system may hold fewer staves than another, or none.
  * `unplaced` counts the staff boxes that overlap no system.
  */
-export function pageSystems(page: { zones: ZoneModel[]; staves?: MeasureBox[] }): {
-	systems: MeasureBox[][];
+export function pageSystems<B extends MeasureBox>(page: { zones: ZoneModel[]; staves?: B[] }): {
+	systems: B[][];
 	unplaced: number;
 } {
 	const rows: { uly: number; lry: number }[] = [];
@@ -120,7 +120,7 @@ export function pageSystems(page: { zones: ZoneModel[]; staves?: MeasureBox[] })
 			row.lry = Math.max(row.lry, zone.box.lry);
 		}
 	}
-	const systems: MeasureBox[][] = rows.map(() => []);
+	const systems: B[][] = rows.map(() => []);
 	let unplaced = 0;
 	for (const staff of page.staves ?? []) {
 		let best = -1;

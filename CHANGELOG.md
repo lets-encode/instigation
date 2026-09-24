@@ -5,8 +5,13 @@ parentheses.
 
 ## Unreleased
 
+- OMR page drafts no longer fail the MEI schema check when a clef change follows a tremolo.
+- OMR page drafts keep every staff of the score, so a system that leaves out staves no longer shifts the staves below.
+- OMR page drafts place the staves of a shorter system on their score staves by clef, printed instrument label and staff spacing.
+- Score setup of an OMR piece fills in the instrument labels printed in front of the first system.
+- OMR page drafts keep each staff in its score clef, correcting the pitches of a staff whose clef was misread.
 - Layout correction of an OMR piece can be submitted once every page was shown in both steps and no page has staff boxes without measures.
-- OMR requests refused by the broker rate limit are retried, and the OMR file relay allows 100 requests per second.
+- OMR transcription runs at most 16 staves at once and retries requests the broker rate limit refused.
 - The volunteer view lists every submission still being processed, not only when no task is open.
 - Committed page images keep the source's full resolution, so OMR staff crops match a direct Musibot run.
 - OMR page drafts take their systems from the corrected measure rows, so a system without staff boxes no longer shifts the music after it.

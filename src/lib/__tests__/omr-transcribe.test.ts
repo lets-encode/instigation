@@ -59,3 +59,37 @@ test('transcribeStaves: no crops, no page', async () => {
 	} as unknown as OmrClient;
 	assert.deepEqual(await transcribeStaves(client, pipeline, []), []);
 });
+
+test('transcribeStaves: at most 16 executions run at once, results stay in crop order', async () => {
+	let running = 0;
+	let peak = 0;
+	const client = {
+		withPage: <T>(work: (pageId: string) => Promise<T>) => work('p1'),
+		async upload() {},
+		async run(_pageId: string, _pipeline: unknown, input: string[]): Promise<OmrExecution> {
+			running++;
+			peak = Math.max(peak, running);
+			await new Promise((r) => setTimeout(r, 1));
+			running--;
+			return {
+				execution_id: 1,
+				pipeline_name: 'mzk-staff',
+				pipeline_version: '1',
+				input,
+				state: 'completed',
+				error: null
+			};
+		},
+		async download(_pageId: string, paths: string[]) {
+			return Object.fromEntries(paths.map((path) => [path, new Blob([path])]));
+		}
+	} as unknown as OmrClient;
+
+	const crops = Array.from({ length: 40 }, () => new Blob(['x']));
+	const xmls = await transcribeStaves(client, pipeline, crops);
+	assert.equal(peak, 16);
+	assert.deepEqual(
+		xmls,
+		crops.map((_, k) => `Staves/${k + 1}/transcription.musicxml`)
+	);
+});

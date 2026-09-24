@@ -497,7 +497,7 @@ def iiif_fetch():
 # Transcribing a page is one execution per staff plus the polling for each,
 # so a page is a burst of a few dozen calls.
 @limiter.limit(
-    "20 per second",
+    "100 per second",
     key_func=lambda: session.get("userLogin") or get_remote_address(),
 )
 def omr_api(path):

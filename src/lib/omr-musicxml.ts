@@ -1,6 +1,7 @@
 // Reading the staff model's MusicXML: the opening attributes of a transcribed
 // staff (clef, key, time) and, from several staves, a proposed score
-// definition for the setup editor. Regex over the document text, no DOM.
+// definition for the setup editor; and putting a transcribed staff into
+// another clef. Regex over the document text, no DOM.
 
 import type { ScoreDefModel, StaffModel } from './mei-facsimile.ts';
 
@@ -107,4 +108,55 @@ export function proposeScoreDef(
 		meterUnit: symbol ? (symbol === 'cut' ? '2' : '4') : (time?.beatType ?? '4'),
 		meterSym: symbol
 	};
+}
+
+const STEPS = 'CDEFGAB';
+
+/**
+ * The diatonic number (octave × 7 + step) of a clef's bottom line: the clef's
+ * own pitch (G4, F3, C4, moved by its octave change) less two steps per line
+ * it sits above the bottom one. Null for a clef without pitch (percussion,
+ * tablature).
+ */
+function bottomLine(sign: string, line: number, octaveChange = 0): number | null {
+	const pitch = sign === 'G' ? 4 * 7 + 4 : sign === 'F' ? 3 * 7 + 3 : sign === 'C' ? 4 * 7 : null;
+	return pitch === null ? null : pitch + 7 * octaveChange - 2 * (line - 1);
+}
+
+/** The diatonic number moved by `delta` steps, as MusicXML step and octave. */
+function moved(step: string, octave: string, delta: number): { step: string; octave: number } | null {
+	const index = STEPS.indexOf(step);
+	if (index < 0 || !/^-?\d+$/.test(octave)) return null;
+	const n = Number(octave) * 7 + index + delta;
+	return { step: STEPS[((n % 7) + 7) % 7], octave: Math.floor(n / 7) };
+}
+
+/**
+ * A staff transcription put into the clef `token` (`G2`, `F4`, `C3`): read
+ * in another clef, its notes are moved so they keep their places on the staff
+ * (a viola read as treble gets the pitches its alto clef gives), and its clef
+ * becomes `token`. Left as it is when it is already in that clef, holds more
+ * than one clef, or either clef has no pitch (percussion, tablature).
+ */
+export function toClef(musicxml: string, token: string): string {
+	const clefs = musicxml.match(/<clef\b[^>]*>[\s\S]*?<\/clef>/g) ?? [];
+	const target = /^([GFC])(\d)$/.exec(token);
+	if (clefs.length !== 1 || !target) return musicxml;
+	const read = readAttributes(musicxml).clef;
+	if (!read) return musicxml;
+	const from = bottomLine(read.sign, read.line, read.octaveChange);
+	const to = bottomLine(target[1], Number(target[2]));
+	if (from === null || to === null) return musicxml;
+	const clef = `<clef><sign>${target[1]}</sign><line>${target[2]}</line></clef>`;
+	const delta = to - from;
+	const shift = (xml: string, stepTag: string, octaveTag: string) =>
+		xml.replace(
+			new RegExp(`<${stepTag}>\\s*([A-G])\\s*</${stepTag}>(\\s*(?:<alter>[^<]*</alter>\\s*)?)<${octaveTag}>\\s*(-?\\d+)\\s*</${octaveTag}>`, 'g'),
+			(whole, step: string, between: string, octave: string) => {
+				const m = moved(step, octave, delta);
+				return m ? `<${stepTag}>${m.step}</${stepTag}>${between}<${octaveTag}>${m.octave}</${octaveTag}>` : whole;
+			}
+		);
+	const out = delta ? shift(shift(musicxml, 'step', 'octave'), 'display-step', 'display-octave') : musicxml;
+	return out.replace(clefs[0], clef);
 }
