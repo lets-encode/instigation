@@ -86,7 +86,9 @@
   // Whether a step is skipped follows from the upload, so steps are left out
   // only once the upload step is done; before that the whole flow is listed.
   const steps = $derived(
-    WIZARD_STEPS.filter((s) => !(isSkipped(s.id) && stepIndex(step) > stepIndex("upload"))),
+    WIZARD_STEPS.filter(
+      (s) => !(isSkipped(s.id) && stepIndex(step) > stepIndex("upload")),
+    ),
   );
   const current = $derived(steps.findIndex((s) => s.id === step));
 
@@ -98,14 +100,19 @@
     if (pdfs) parts.push(`${pdfs} PDF${pdfs === 1 ? "" : "s"}`);
     if (others) parts.push(`${others} file${others === 1 ? "" : "s"}`);
     if (wizard.iiifManifestUrl.trim()) parts.push("IIIF manifest");
-    if (wizard.candidates.length) parts.push(`${wizard.candidates.length} pages`);
+    if (wizard.candidates.length)
+      parts.push(`${wizard.candidates.length} pages`);
     else if (!parts.length && wizard.encodings.length)
-      parts.push(`${wizard.encodings.length} encoding${wizard.encodings.length === 1 ? "" : "s"}`);
+      parts.push(
+        `${wizard.encodings.length} encoding${wizard.encodings.length === 1 ? "" : "s"}`,
+      );
     return parts.join(" · ") || "no material";
   });
 
   const sourceSummary = $derived.by(() => {
-    const imprint = [wizard.source.publisher, wizard.source.date].filter(Boolean).join(", ");
+    const imprint = [wizard.source.publisher, wizard.source.date]
+      .filter(Boolean)
+      .join(", ");
     return [wizard.source.title, imprint].filter(Boolean).join(" · ");
   });
 
@@ -243,7 +250,11 @@
               {/if}
             </span>
             <span class="step-text">
-              <span class="step-label" class:active class:upcoming={!done && !active}>
+              <span
+                class="step-label"
+                class:active
+                class:upcoming={!done && !active}
+              >
                 {s.label}
               </span>
               {#if active && status}
@@ -259,7 +270,9 @@
 
     <div class="rail-foot">
       {#if savedAgo}
-        <div class="saved"><span class="saved-dot"></span>Draft saved · {savedAgo}</div>
+        <div class="saved">
+          <span class="saved-dot"></span>Draft saved · {savedAgo}
+        </div>
       {/if}
       {#if confirmingDiscard}
         <div class="discard-confirm">
@@ -268,13 +281,21 @@
             <button type="button" class="discard danger" onclick={discardSetup}>
               Discard for good
             </button>
-            <button type="button" class="discard" onclick={() => (confirmingDiscard = false)}>
+            <button
+              type="button"
+              class="discard"
+              onclick={() => (confirmingDiscard = false)}
+            >
               Keep it
             </button>
           </span>
         </div>
       {:else}
-        <button type="button" class="discard" onclick={() => (confirmingDiscard = true)}>
+        <button
+          type="button"
+          class="discard"
+          onclick={() => (confirmingDiscard = true)}
+        >
           Discard this setup
         </button>
       {/if}
@@ -328,7 +349,12 @@
 </div>
 
 {#snippet workCard(solo: boolean)}
-  <section class="card" class:solo class:wide={solo && step === "upload"} aria-label={heading}>
+  <section
+    class="card"
+    class:solo
+    class:wide={solo && step === "upload"}
+    aria-label={heading}
+  >
     {#if solo}
       <div class="kicker">Step {current + 1} of {steps.length}</div>
     {/if}
@@ -419,7 +445,10 @@
     overflow-wrap: anywhere;
   }
   .rail-slug {
-    font: 400 12px ui-monospace, Menlo, monospace;
+    font:
+      400 12px ui-monospace,
+      Menlo,
+      monospace;
     color: var(--ink-faint);
   }
   .rail-unnamed {

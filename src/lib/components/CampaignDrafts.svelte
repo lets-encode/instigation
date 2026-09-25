@@ -53,7 +53,8 @@
     } catch (err) {
       // A row whose record is gone — finished or discarded in another tab —
       // has nothing left to continue.
-      if (!readDraft(draft.handle)) drafts = drafts.filter((d) => d.handle !== draft.handle);
+      if (!readDraft(draft.handle))
+        drafts = drafts.filter((d) => d.handle !== draft.handle);
       console.error("Continuing a setup failed:", (err as Error).message);
       error = `Could not continue “${draft.handle}”: ${(err as Error).message}`;
     }
@@ -86,7 +87,12 @@
           onclick={() => continueSetup(draft)}
           disabled={busy !== null}
         >
-          {busy === draft.handle ? "Working…" : "Resume"}{#if busy !== draft.handle}<Icon name="arrow-right" size={12} />{/if}
+          {busy === draft.handle
+            ? "Working…"
+            : "Resume"}{#if busy !== draft.handle}<Icon
+              name="arrow-right"
+              size={12}
+            />{/if}
         </button>
         <span class="spacer"></span>
         {#if confirming === draft.handle}

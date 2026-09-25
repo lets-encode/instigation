@@ -20,7 +20,11 @@
   import { onDestroy } from "svelte";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import { IMAGE_DIR, resolvePages, blobToBase64 } from "$lib/prepare-images.ts";
+  import {
+    IMAGE_DIR,
+    resolvePages,
+    blobToBase64,
+  } from "$lib/prepare-images.ts";
   import { ensureCampaignRepo } from "$lib/campaign-repo.ts";
   import {
     wizard,
@@ -57,7 +61,12 @@
   let natW = $state<number[]>([]);
   let natH = $state<number[]>([]);
   const fitPage = $derived(
-    fitPageZoom(bodyW, bodyH, perRow, natW.map((w, i) => (natH[i] ?? 0) / (w || 1))),
+    fitPageZoom(
+      bodyW,
+      bodyH,
+      perRow,
+      natW.map((w, i) => (natH[i] ?? 0) / (w || 1)),
+    ),
   );
 
   // The page a range selection is measured from: the last one clicked on its own.
@@ -169,10 +178,14 @@
           )
         : [];
 
-      const repo = await ensureCampaignRepo(f, user.login, ({ step, detail }) => {
-        if (step) log.step(step);
-        if (detail) log.detail(detail);
-      });
+      const repo = await ensureCampaignRepo(
+        f,
+        user.login,
+        ({ step, detail }) => {
+          if (step) log.step(step);
+          if (detail) log.detail(detail);
+        },
+      );
 
       // Pages the repository holds that this selection does not: the chosen ones
       // are committed over the paths they had, but a shorter selection, or one
@@ -186,7 +199,11 @@
       let stale: string[] = [];
       if (wizard.candidates.length) {
         log.step("Reading the pages already committed", { timed: false });
-        const held = await f.getDirDownloadUrls(repo.owner, repo.name, IMAGE_DIR);
+        const held = await f.getDirDownloadUrls(
+          repo.owner,
+          repo.name,
+          IMAGE_DIR,
+        );
         stale = Object.keys(held)
           .map((name) => `${IMAGE_DIR}/${name}`)
           .filter((path) => !images.some((image) => image.path === path));
@@ -202,7 +219,8 @@
             contentBase64: await blobToBase64(image.blob),
           });
         }
-        if (stale.length) log.detail(`removing ${stale.length} page(s) not kept`);
+        if (stale.length)
+          log.detail(`removing ${stale.length} page(s) not kept`);
         log.detail(`uploading 0/${images.length}`);
         await f.commitFiles(
           repo.owner,
@@ -270,70 +288,80 @@
         Keep none
       </button>
     </div>
-    <div class="material-body" bind:clientWidth={bodyW} bind:clientHeight={bodyH}>
-    <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
-      {#each wizard.candidates as page, i (page.id)}
-        <li
-          class:out={!page.include}
-          class:dragging={dragIndex === i}
-          class:drop-before={dragIndex !== null && overIndex === i && dragIndex > i}
-          class:drop-after={dragIndex !== null && overIndex === i && dragIndex < i}
-          ondragover={(e) => {
-            if (dragIndex === null) return;
-            // Accepting the drag is what makes this position a drop target.
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-            overIndex = i;
-          }}
-          ondragleave={() => {
-            if (overIndex === i) overIndex = null;
-          }}
-          ondrop={(e) => {
-            e.preventDefault();
-            if (dragIndex !== null) move(dragIndex, i);
-            dragIndex = null;
-            overIndex = null;
-          }}
-        >
-          <button
-            type="button"
-            class="thumb"
-            aria-pressed={page.include}
-            disabled={busy}
-            title={page.label}
-            draggable={!busy}
-            onclick={(e) => toggle(i, e.shiftKey)}
-            ondragstart={(e) => {
-              dragIndex = i;
-              // Firefox starts a drag only once the transfer carries data.
-              e.dataTransfer?.setData("text/plain", String(i));
-              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    <div
+      class="material-body"
+      bind:clientWidth={bodyW}
+      bind:clientHeight={bodyH}
+    >
+      <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+        {#each wizard.candidates as page, i (page.id)}
+          <li
+            class:out={!page.include}
+            class:dragging={dragIndex === i}
+            class:drop-before={dragIndex !== null &&
+              overIndex === i &&
+              dragIndex > i}
+            class:drop-after={dragIndex !== null &&
+              overIndex === i &&
+              dragIndex < i}
+            ondragover={(e) => {
+              if (dragIndex === null) return;
+              // Accepting the drag is what makes this position a drop target.
+              e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+              overIndex = i;
             }}
-            ondragend={() => {
+            ondragleave={() => {
+              if (overIndex === i) overIndex = null;
+            }}
+            ondrop={(e) => {
+              e.preventDefault();
+              if (dragIndex !== null) move(dragIndex, i);
               dragIndex = null;
               overIndex = null;
             }}
           >
-            <!-- An image is draggable in its own right, which would drag the
+            <button
+              type="button"
+              class="thumb"
+              aria-pressed={page.include}
+              disabled={busy}
+              title={page.label}
+              draggable={!busy}
+              onclick={(e) => toggle(i, e.shiftKey)}
+              ondragstart={(e) => {
+                dragIndex = i;
+                // Firefox starts a drag only once the transfer carries data.
+                e.dataTransfer?.setData("text/plain", String(i));
+                if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+              }}
+              ondragend={() => {
+                dragIndex = null;
+                overIndex = null;
+              }}
+            >
+              <!-- An image is draggable in its own right, which would drag the
                  picture instead of the page. -->
-            <img
-              src={urls[i]}
-              alt={page.label}
-              draggable="false"
-              bind:naturalWidth={natW[i]}
-              bind:naturalHeight={natH[i]}
-            />
-            <span class="mark" aria-hidden="true">
-              {page.include ? numbers[i] : "—"}
-            </span>
-            {#if !page.include}
-              <span class="left-out" aria-hidden="true"><span>left out</span></span>
-            {/if}
-          </button>
-          <span class="page-caption">p. {i + 1}</span>
-        </li>
-      {/each}
-    </ol>
+              <img
+                src={urls[i]}
+                alt={page.label}
+                draggable="false"
+                bind:naturalWidth={natW[i]}
+                bind:naturalHeight={natH[i]}
+              />
+              <span class="mark" aria-hidden="true">
+                {page.include ? numbers[i] : "—"}
+              </span>
+              {#if !page.include}
+                <span class="left-out" aria-hidden="true"
+                  ><span>left out</span></span
+                >
+              {/if}
+            </button>
+            <span class="page-caption">p. {i + 1}</span>
+          </li>
+        {/each}
+      </ol>
     </div>
   </div>
 {/snippet}

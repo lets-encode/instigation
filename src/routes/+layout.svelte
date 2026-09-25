@@ -1,27 +1,28 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
-  import { onMount } from 'svelte';
-  import { page } from '$app/state';
-  import { auth, initAuth, login, logout } from '$lib/auth.svelte.ts';
-  import PendingVerdicts from '$lib/components/PendingVerdicts.svelte';
-  import './theme.css';
-  import './ui.css';
+  import { onMount } from "svelte";
+  import { page } from "$app/state";
+  import { auth, initAuth, login, logout } from "$lib/auth.svelte.ts";
+  import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
+  import "./theme.css";
+  import "./ui.css";
 
   let { children } = $props();
 
   // The pre-paint script in app.html has already set data-theme before mount;
   // mirror it here so the bulb reflects the active theme, and flip + persist on
   // click. Only an explicit choice is stored — a functional preference.
-  let theme = $state<'light' | 'dark'>('light');
+  let theme = $state<"light" | "dark">("light");
   onMount(() => {
-    theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    theme =
+      document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   });
   function toggleTheme() {
-    theme = theme === 'dark' ? 'light' : 'dark';
+    theme = theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     try {
-      localStorage.setItem('theme', theme);
+      localStorage.setItem("theme", theme);
     } catch (e) {
       /* storage unavailable — theme still applies for this visit */
     }
@@ -32,21 +33,23 @@
   // into a form pane and a page-preview pane); every other route keeps the
   // narrow reading column.
   const corrector = $derived(
-    page.route.id === '/[campaign]/zones/[task]' ||
-      page.route.id === '/[campaign]/setup/[task]' ||
-      page.route.id === '/[campaign]/review/[task]'
+    page.route.id === "/[campaign]/zones/[task]" ||
+      page.route.id === "/[campaign]/setup/[task]" ||
+      page.route.id === "/[campaign]/review/[task]",
   );
   const full = $derived(
-    page.route.id === '/campaigns' || page.route.id === '/[campaign]' || page.route.id === '/new'
+    page.route.id === "/campaigns" ||
+      page.route.id === "/[campaign]" ||
+      page.route.id === "/new",
   );
-  const onHome = $derived(page.route.id === '/campaigns');
-  const inCampaign = $derived(page.route.id === '/[campaign]');
+  const onHome = $derived(page.route.id === "/campaigns");
+  const inCampaign = $derived(page.route.id === "/[campaign]");
   // The campaign page's full-page score view (?score=) backs out to the
   // campaign, keeping its open task.
-  const inScore = $derived(inCampaign && page.url.searchParams.has('score'));
+  const inScore = $derived(inCampaign && page.url.searchParams.has("score"));
   const campaignHref = $derived.by(() => {
-    const task = page.url.searchParams.get('task');
-    return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ''}`;
+    const task = page.url.searchParams.get("task");
+    return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
   });
 
   // Resolve any existing broker session once the app mounts (client-only).
@@ -57,15 +60,32 @@
 
 <header>
   <a class="brand" href="/campaigns">
-    <img class="brand-light" src="/logo.svg" alt="Let's Encode" width="1391" height="400" />
-    <img class="brand-dark" src="/logo-dark.svg" alt="" aria-hidden="true" width="1391" height="400" />
+    <img
+      class="brand-light"
+      src="/logo.svg"
+      alt="Let's Encode"
+      width="1391"
+      height="400"
+    />
+    <img
+      class="brand-dark"
+      src="/logo-dark.svg"
+      alt=""
+      aria-hidden="true"
+      width="1391"
+      height="400"
+    />
   </a>
   <!-- Closing a screen lands one level up: the campaign view returns to the
        listing, the corrector to the campaign it belongs to. -->
   {#if inScore}
-    <a class="nav-link back" href={campaignHref}><Icon name="arrow-left" /> {page.params.campaign}</a>
+    <a class="nav-link back" href={campaignHref}
+      ><Icon name="arrow-left" /> {page.params.campaign}</a
+    >
   {:else if inCampaign}
-    <a class="nav-link back" href="/campaigns"><Icon name="arrow-left" /> All campaigns</a>
+    <a class="nav-link back" href="/campaigns"
+      ><Icon name="arrow-left" /> All campaigns</a
+    >
   {:else if corrector}
     <a class="nav-link back" href={`/${page.params.campaign}`}
       ><Icon name="arrow-left" /> {page.params.campaign}</a
@@ -81,30 +101,57 @@
           <img class="avatar" src={auth.user.avatar_url} alt="" />
         {/if}
         <span>{auth.user.login}</span>
-        <button type="button" class="btn btn-soft" onclick={() => logout()}>Log out</button>
+        <button type="button" class="btn btn-soft" onclick={() => logout()}
+          >Log out</button
+        >
       </div>
-    {:else if auth.status === 'anonymous'}
-      <button type="button" class="btn btn-soft" onclick={() => login()}>Log in with GitHub</button>
+    {:else if auth.status === "anonymous"}
+      <button type="button" class="btn btn-soft" onclick={() => login()}
+        >Log in with GitHub</button
+      >
     {/if}
     <button
       class="theme-toggle"
       type="button"
       onclick={toggleTheme}
-      aria-pressed={theme === 'dark'}
-      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-pressed={theme === "dark"}
+      aria-label={theme === "dark"
+        ? "Switch to light theme"
+        : "Switch to dark theme"}
       title="Toggle light / dark theme"
     >
-      <svg class="bulb" viewBox="-2 -2 28 28" width="22" height="22" aria-hidden="true" focusable="false">
-        <g class="bulb-rays" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <svg
+        class="bulb"
+        viewBox="-2 -2 28 28"
+        width="22"
+        height="22"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <g
+          class="bulb-rays"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+        >
           <line x1="12" y1="-1.8" x2="12" y2="2" />
           <line x1="21.8" y1="2.2" x2="18.9" y2="5.1" />
           <line x1="2.2" y1="2.2" x2="5.1" y2="5.1" />
           <line x1="24.6" y1="11" x2="20.8" y2="11" />
           <line x1="-0.6" y1="11" x2="3.2" y2="11" />
         </g>
-        <path class="bulb-glass" d="M12 2.6a6.2 6.2 0 0 0-3.8 11.1c.75.58 1.25 1.4 1.35 2.35h4.9c.1-.95.6-1.77 1.35-2.35A6.2 6.2 0 0 0 12 2.6Z" />
+        <path
+          class="bulb-glass"
+          d="M12 2.6a6.2 6.2 0 0 0-3.8 11.1c.75.58 1.25 1.4 1.35 2.35h4.9c.1-.95.6-1.77 1.35-2.35A6.2 6.2 0 0 0 12 2.6Z"
+        />
         <path class="bulb-filament" d="M10 12.7 12 10l2 2.7" />
-        <g class="bulb-base" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none">
+        <g
+          class="bulb-base"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          fill="none"
+        >
           <path d="M9.6 16.2v1.6h4.8v-1.6" />
           <line x1="10.4" y1="20" x2="13.6" y2="20" />
         </g>
@@ -117,7 +164,11 @@
   {#if auth.error}
     <p class="auth-error" role="alert">
       Sign-in failed: {auth.error}
-      <button type="button" class="btn btn-soft" onclick={() => (auth.error = null)}>Dismiss</button>
+      <button
+        type="button"
+        class="btn btn-soft"
+        onclick={() => (auth.error = null)}>Dismiss</button
+      >
     </p>
   {/if}
   {@render children()}
@@ -138,7 +189,9 @@
 </main>
 
 <footer>
-  <span>© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span>
+  <span
+    >© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span
+  >
   <span class="fsep" aria-hidden="true">·</span>
   <span>app last updated {__BUILD_DATE__}</span>
 </footer>
@@ -181,10 +234,10 @@
   .brand img.brand-dark {
     display: none;
   }
-  :global([data-theme='dark']) .brand img.brand-light {
+  :global([data-theme="dark"]) .brand img.brand-light {
     display: none;
   }
-  :global([data-theme='dark']) .brand img.brand-dark {
+  :global([data-theme="dark"]) .brand img.brand-dark {
     display: block;
   }
   .nav-link {
@@ -336,25 +389,25 @@
       transform 0.2s ease;
   }
   /* Lit bulb in dark mode: a warm glowing shine so it reads as "on". */
-  :global([data-theme='dark']) .theme-toggle {
+  :global([data-theme="dark"]) .theme-toggle {
     color: #ffdf85;
     border-color: rgba(255, 223, 133, 0.55);
   }
-  :global([data-theme='dark']) .theme-toggle:hover {
+  :global([data-theme="dark"]) .theme-toggle:hover {
     color: #ffe9a6;
     border-color: #ffdf85;
     background: rgba(255, 223, 133, 0.14);
   }
-  :global([data-theme='dark']) .bulb {
+  :global([data-theme="dark"]) .bulb {
     filter: drop-shadow(0 0 3px rgba(255, 210, 110, 0.8));
   }
-  :global([data-theme='dark']) .bulb-glass {
+  :global([data-theme="dark"]) .bulb-glass {
     fill: rgba(255, 223, 133, 0.45);
   }
-  :global([data-theme='dark']) .bulb-filament {
+  :global([data-theme="dark"]) .bulb-filament {
     opacity: 1;
   }
-  :global([data-theme='dark']) .bulb-rays {
+  :global([data-theme="dark"]) .bulb-rays {
     opacity: 1;
   }
   @media (prefers-reduced-motion: reduce) {

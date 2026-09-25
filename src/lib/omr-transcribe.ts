@@ -4,38 +4,54 @@
 // produced. A staff the pipeline fails on yields null, not an error: one
 // failed staff must not fail a page.
 
-import type { MeasureBox } from './mei-facsimile.ts';
-import type { OmrClient, OmrExecution, OmrPipeline } from './omr-client.ts';
+import type { MeasureBox } from "./mei-facsimile.ts";
+import type { OmrClient, OmrExecution, OmrPipeline } from "./omr-client.ts";
 
 // The crops go to the staff model as JPEGs, like the pipeline's own crops.
 const CROP_JPEG_QUALITY = 0.95;
 
 /** Cut the given rectangles (page pixels, see staffCrops) out of a page image. Browser only. */
-export async function cropStaves(image: Blob, crops: MeasureBox[]): Promise<Blob[]> {
-	const bitmap = await createImageBitmap(image);
-	try {
-		const out: Blob[] = [];
-		for (const crop of crops) {
-			const canvas = document.createElement('canvas');
-			canvas.width = Math.max(1, Math.round(crop.lrx - crop.ulx));
-			canvas.height = Math.max(1, Math.round(crop.lry - crop.uly));
-			const ctx = canvas.getContext('2d');
-			if (!ctx) throw new Error('Canvas 2D context unavailable.');
-			ctx.drawImage(bitmap, crop.ulx, crop.uly, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
-			out.push(
-				await new Promise<Blob>((resolve, reject) =>
-					canvas.toBlob(
-						(blob) => (blob ? resolve(blob) : reject(new Error('Could not encode a staff crop.'))),
-						'image/jpeg',
-						CROP_JPEG_QUALITY
-					)
-				)
-			);
-		}
-		return out;
-	} finally {
-		bitmap.close();
-	}
+export async function cropStaves(
+  image: Blob,
+  crops: MeasureBox[],
+): Promise<Blob[]> {
+  const bitmap = await createImageBitmap(image);
+  try {
+    const out: Blob[] = [];
+    for (const crop of crops) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(crop.lrx - crop.ulx));
+      canvas.height = Math.max(1, Math.round(crop.lry - crop.uly));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas 2D context unavailable.");
+      ctx.drawImage(
+        bitmap,
+        crop.ulx,
+        crop.uly,
+        canvas.width,
+        canvas.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+      out.push(
+        await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob(
+            (blob) =>
+              blob
+                ? resolve(blob)
+                : reject(new Error("Could not encode a staff crop.")),
+            "image/jpeg",
+            CROP_JPEG_QUALITY,
+          ),
+        ),
+      );
+    }
+    return out;
+  } finally {
+    bitmap.close();
+  }
 }
 
 // Executions in flight at once. Each running execution is polled about once
@@ -51,29 +67,39 @@ const resultPath = (k: number) => `Staves/${k + 1}/transcription.musicxml`;
  * order; null where the pipeline failed or wrote nothing.
  */
 export async function transcribeStaves(
-	client: OmrClient,
-	pipeline: OmrPipeline,
-	crops: Blob[]
+  client: OmrClient,
+  pipeline: OmrPipeline,
+  crops: Blob[],
 ): Promise<(string | null)[]> {
-	if (!crops.length) return [];
-	return client.withPage(async (pageId) => {
-		await client.upload(pageId, Object.fromEntries(crops.map((crop, k) => [cropPath(k), crop])));
-		const executions: OmrExecution[] = [];
-		let next = 0;
-		const worker = async () => {
-			while (next < crops.length) {
-				const k = next++;
-				executions[k] = await client.run(pageId, pipeline, [cropPath(k)]);
-			}
-		};
-		await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_RUNS, crops.length) }, worker));
-		const completed = executions.flatMap((e, k) => (e.state === 'completed' ? [k] : []));
-		const files = await client.download(pageId, completed.map(resultPath));
-		return Promise.all(
-			crops.map(async (_, k) => {
-				const file = files[resultPath(k)];
-				return file ? file.text() : null;
-			})
-		);
-	});
+  if (!crops.length) return [];
+  return client.withPage(async (pageId) => {
+    await client.upload(
+      pageId,
+      Object.fromEntries(crops.map((crop, k) => [cropPath(k), crop])),
+    );
+    const executions: OmrExecution[] = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < crops.length) {
+        const k = next++;
+        executions[k] = await client.run(pageId, pipeline, [cropPath(k)]);
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(MAX_CONCURRENT_RUNS, crops.length) },
+        worker,
+      ),
+    );
+    const completed = executions.flatMap((e, k) =>
+      e.state === "completed" ? [k] : [],
+    );
+    const files = await client.download(pageId, completed.map(resultPath));
+    return Promise.all(
+      crops.map(async (_, k) => {
+        const file = files[resultPath(k)];
+        return file ? file.text() : null;
+      }),
+    );
+  });
 }

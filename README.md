@@ -127,6 +127,15 @@ npm run preview   # serve the built site locally
 npm test          # pure campaign-logic unit tests (no network)
 ```
 
+Formatting is Prettier (`.prettierrc`) for the app and Black (`broker/pyproject.toml`)
+for the broker. `npm run format` applies both; a pre-commit hook rejects
+unformatted staged files. One-time setup per clone:
+
+```bash
+uv pip install --python broker/.venv/bin/python -r broker/requirements-dev.txt
+git config core.hooksPath .githooks
+```
+
 ## 6. Deploy (production / staging / testing)
 
 Three instances run side by side, each deployed from its own branch and fully
@@ -167,6 +176,7 @@ broker (section 4), with its own OAuth App whose callback is
   `svelte.config.js` — is baked in at build time, so a config change needs a
   rebuild. The broker is a separate process: restart it when `broker/`
   changed.
+
 - **Web server requirements (institution-managed):** the SPA and its broker
   must share one origin, because the broker's session cookie is first-party.
   Each instance's virtual host therefore needs, behind **HTTPS**. The SPA

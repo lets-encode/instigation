@@ -536,7 +536,10 @@ textarea.input {
   background: var(--card);
 }
 .material-toolbar .toolbar-name {
-  font: 11.5px ui-monospace, Menlo, monospace;
+  font:
+    11.5px ui-monospace,
+    Menlo,
+    monospace;
   color: var(--ink-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -574,7 +577,10 @@ textarea.input {
 }
 .material-grid .page-caption {
   text-align: center;
-  font: 10.5px ui-monospace, Menlo, monospace;
+  font:
+    10.5px ui-monospace,
+    Menlo,
+    monospace;
   color: var(--ink-faint);
 }
 

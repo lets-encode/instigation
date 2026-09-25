@@ -9,23 +9,23 @@
 // name without a campaign is a registry answer (status `free`); an unreachable
 // registry is a failure, never a miss. There is no name-search fallback.
 
-import { provider, registryUrl } from './forge/config.ts';
-import type { ForgeClient } from './forge/types.ts';
+import { provider, registryUrl } from "./forge/config.ts";
+import type { ForgeClient } from "./forge/types.ts";
 
 /** A campaign name resolved to its repo's stable id and current owner/name. */
 export interface ResolvedCampaign {
-	repoId: number;
-	owner: string;
-	repo: string;
+  repoId: number;
+  owner: string;
+  repo: string;
 }
 
 /** A slug's state in the registry. */
 export interface SlugInfo {
-	name: string;
-	status: 'free' | 'pending' | 'active' | 'reserved' | 'tombstoned';
-	/** Which forge repo_id belongs to (e.g. 'github'); null unless active. */
-	forge: string | null;
-	repo_id: number | null;
+  name: string;
+  status: "free" | "pending" | "active" | "reserved" | "tombstoned";
+  /** Which forge repo_id belongs to (e.g. 'github'); null unless active. */
+  forge: string | null;
+  repo_id: number | null;
 }
 
 /**
@@ -34,24 +34,30 @@ export interface SlugInfo {
  * answer with the name's state.
  */
 export async function lookupSlug(name: string): Promise<SlugInfo | null> {
-	let res: Response;
-	try {
-		res = await fetch(`${registryUrl}/api/slug/${encodeURIComponent(name)}`, {
-			headers: { Accept: 'application/json' },
-			cache: 'no-store'
-		});
-	} catch {
-		throw new Error('The campaign registry could not be reached.');
-	}
-	if (res.status === 400) return null;
-	if (!res.ok) throw new Error(`The campaign registry answered with status ${res.status}.`);
-	const info = (await res.json().catch(() => null)) as SlugInfo | null;
-	if (!info?.status) throw new Error('The campaign registry did not report the name’s state.');
-	return info;
+  let res: Response;
+  try {
+    res = await fetch(`${registryUrl}/api/slug/${encodeURIComponent(name)}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error("The campaign registry could not be reached.");
+  }
+  if (res.status === 400) return null;
+  if (!res.ok)
+    throw new Error(
+      `The campaign registry answered with status ${res.status}.`,
+    );
+  const info = (await res.json().catch(() => null)) as SlugInfo | null;
+  if (!info?.status)
+    throw new Error("The campaign registry did not report the name’s state.");
+  return info;
 }
 
 /** A held name's token, or why the name could not be held. */
-export type ClaimResult = { token: string } | { error: 'taken' | 'invalid' | 'unreachable' };
+export type ClaimResult =
+  | { token: string }
+  | { error: "taken" | "invalid" | "unreachable" };
 
 /**
  * Hold a name in the registry before the repo it will belong to exists, so the
@@ -61,19 +67,22 @@ export type ClaimResult = { token: string } | { error: 'taken' | 'invalid' | 'un
  * from then on — the token keeps working until they do.
  */
 export async function claimName(name: string): Promise<ClaimResult> {
-	try {
-		const res = await fetch(`${registryUrl}/claim`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name })
-		});
-		if (res.ok) return { token: ((await res.json()) as { claim_token: string }).claim_token };
-		if (res.status === 409) return { error: 'taken' };
-		if (res.status === 422) return { error: 'invalid' };
-		return { error: 'unreachable' };
-	} catch {
-		return { error: 'unreachable' };
-	}
+  try {
+    const res = await fetch(`${registryUrl}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (res.ok)
+      return {
+        token: ((await res.json()) as { claim_token: string }).claim_token,
+      };
+    if (res.status === 409) return { error: "taken" };
+    if (res.status === 422) return { error: "invalid" };
+    return { error: "unreachable" };
+  } catch {
+    return { error: "unreachable" };
+  }
 }
 
 /**
@@ -81,21 +90,27 @@ export async function claimName(name: string): Promise<ClaimResult> {
  * leave its first name held. Best-effort: false means the name stays held until
  * the registry's hold runs out, which frees it without anyone acting.
  */
-export async function releaseClaim(name: string, token: string): Promise<boolean> {
-	try {
-		const res = await fetch(`${registryUrl}/claim/${encodeURIComponent(name)}`, {
-			method: 'DELETE',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ claim_token: token })
-		});
-		return res.ok;
-	} catch {
-		return false;
-	}
+export async function releaseClaim(
+  name: string,
+  token: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${registryUrl}/claim/${encodeURIComponent(name)}`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ claim_token: token }),
+      },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** The outcome of registering a name against a repo id. */
-export type RegisterResult = 'ok' | 'conflict' | 'invalid' | 'error';
+export type RegisterResult = "ok" | "conflict" | "invalid" | "error";
 
 /**
  * Register a campaign name against its repo id on `forge`, after the repo has
@@ -104,24 +119,29 @@ export type RegisterResult = 'ok' | 'conflict' | 'invalid' | 'error';
  * repo; 'invalid' means it isn't a valid slug.
  */
 export async function registerCampaign(
-	name: string,
-	repoId: number,
-	forge: string,
-	claimToken: string
+  name: string,
+  repoId: number,
+  forge: string,
+  claimToken: string,
 ): Promise<RegisterResult> {
-	try {
-		const res = await fetch(`${registryUrl}/register`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, repo_id: repoId, forge, claim_token: claimToken })
-		});
-		if (res.ok) return 'ok';
-		if (res.status === 409) return 'conflict';
-		if (res.status === 422) return 'invalid';
-		return 'error';
-	} catch {
-		return 'error';
-	}
+  try {
+    const res = await fetch(`${registryUrl}/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        repo_id: repoId,
+        forge,
+        claim_token: claimToken,
+      }),
+    });
+    if (res.ok) return "ok";
+    if (res.status === 409) return "conflict";
+    if (res.status === 422) return "invalid";
+    return "error";
+  } catch {
+    return "error";
+  }
 }
 
 /**
@@ -131,10 +151,10 @@ export async function registerCampaign(
  * as "campaign not found".
  */
 export function resolveFailureMessage(e: unknown): string {
-	const msg = e instanceof Error ? e.message : String(e);
-	return /rate limit/i.test(msg)
-		? "GitHub's request limit was reached, so the campaign could not be loaded. Try again later, or log in for a higher limit."
-		: `The campaign could not be loaded: ${msg}`;
+  const msg = e instanceof Error ? e.message : String(e);
+  return /rate limit/i.test(msg)
+    ? "GitHub's request limit was reached, so the campaign could not be loaded. Try again later, or log in for a higher limit."
+    : `The campaign could not be loaded: ${msg}`;
 }
 
 /**
@@ -146,23 +166,23 @@ export function resolveFailureMessage(e: unknown): string {
  * registry round trip.
  */
 export async function resolveCampaign(
-	f: ForgeClient,
-	campaign: string,
-	info?: SlugInfo | null
+  f: ForgeClient,
+  campaign: string,
+  info?: SlugInfo | null,
 ): Promise<ResolvedCampaign | null> {
-	if (info === undefined) info = await lookupSlug(campaign);
-	// Only resolve a registry hit whose forge matches this deployment's — a repo
-	// id is only meaningful on its own forge, so a foreign-forge entry is not
-	// reachable here (and its id must never be fed to this forge's client). The
-	// registry is the sole source of truth: a miss is a genuine "not found",
-	// never a silent name-search fallback.
-	if (
-		info?.status === 'active' &&
-		info.repo_id != null &&
-		(info.forge ?? provider.id) === provider.id
-	) {
-		const ref = await f.getRepoById(info.repo_id);
-		if (ref) return { repoId: ref.id, owner: ref.owner, repo: ref.repo };
-	}
-	return null;
+  if (info === undefined) info = await lookupSlug(campaign);
+  // Only resolve a registry hit whose forge matches this deployment's — a repo
+  // id is only meaningful on its own forge, so a foreign-forge entry is not
+  // reachable here (and its id must never be fed to this forge's client). The
+  // registry is the sole source of truth: a miss is a genuine "not found",
+  // never a silent name-search fallback.
+  if (
+    info?.status === "active" &&
+    info.repo_id != null &&
+    (info.forge ?? provider.id) === provider.id
+  ) {
+    const ref = await f.getRepoById(info.repo_id);
+    if (ref) return { repoId: ref.id, owner: ref.owner, repo: ref.repo };
+  }
+  return null;
 }

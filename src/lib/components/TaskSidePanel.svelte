@@ -159,7 +159,10 @@
   }
   function moveResize(e: PointerEvent) {
     if (!resizing) return;
-    panel.width = clampPanelWidth(startWidth + (startX - e.clientX), window.innerWidth);
+    panel.width = clampPanelWidth(
+      startWidth + (startX - e.clientX),
+      window.innerWidth,
+    );
   }
   function endResize() {
     if (!resizing) return;
@@ -180,7 +183,11 @@
     onpointerup={endResize}
     onpointercancel={endResize}
   ></div>
-  <aside class="tsp" style="--zone: var(--zone-{zone})" aria-label={`Task ${card.title}`}>
+  <aside
+    class="tsp"
+    style="--zone: var(--zone-{zone})"
+    aria-label={`Task ${card.title}`}
+  >
     {@render resultBanner()}
     <div class="taskcard">
       <div class="tsphead">
@@ -205,7 +212,8 @@
               : undefined}>{cardPill(card, viewer)}</span
         >
         <span class="pieceline"
-          >{pieceName} · <button
+          >{pieceName} ·
+          <button
             type="button"
             class="scorelink"
             onclick={onopenscore}
@@ -309,8 +317,7 @@
               class="btn btn-primary btn-review"
               onclick={() => onclaim(card.task, claimableSub)}
               disabled={runner.busy || claimPending}
-              title="Reserve this review slot."
-              >Claim to review</button
+              title="Reserve this review slot.">Claim to review</button
             >
             {#if !card.pre}
               <a
@@ -344,42 +351,48 @@
     </div>
 
     <div class="tspscroll">
-    <span class="sechead" class:review={isReview}>
-      <span class="secdot"></span>
-      Discussion
-      <span class="seccount">{discussionCount}</span>
-    </span>
-    {#each threads as t (t.root.comment_id)}
-      <CommentCard
-        comment={t.root}
-        {logins}
-        {viewer}
-        {canPush}
-        {runner}
-        review={isReview}
-        onanchor={onshowanchor}
-        onreply={(c) => (replyTo = c)}
-        {onresolve}
-      />
-      {#each t.replies as reply (reply.comment_id)}
+      <span class="sechead" class:review={isReview}>
+        <span class="secdot"></span>
+        Discussion
+        <span class="seccount">{discussionCount}</span>
+      </span>
+      {#each threads as t (t.root.comment_id)}
         <CommentCard
-          comment={reply}
+          comment={t.root}
           {logins}
           {viewer}
           {canPush}
           {runner}
           review={isReview}
-          reply
           onanchor={onshowanchor}
+          onreply={(c) => (replyTo = c)}
           {onresolve}
         />
+        {#each t.replies as reply (reply.comment_id)}
+          <CommentCard
+            comment={reply}
+            {logins}
+            {viewer}
+            {canPush}
+            {runner}
+            review={isReview}
+            reply
+            onanchor={onshowanchor}
+            {onresolve}
+          />
+        {/each}
       {/each}
-    {/each}
-    {#if threads.length === 0}
-      <span class="cnone">No discussion yet.</span>
-    {/if}
+      {#if threads.length === 0}
+        <span class="cnone">No discussion yet.</span>
+      {/if}
     </div>
-    <CommentComposer task={card.task} {logins} {runner} bind:replyTo {oncomment} />
+    <CommentComposer
+      task={card.task}
+      {logins}
+      {runner}
+      bind:replyTo
+      {oncomment}
+    />
   </aside>
 </div>
 
@@ -511,7 +524,10 @@
     white-space: nowrap;
   }
   .tspid {
-    font: 400 10px ui-monospace, Menlo, monospace;
+    font:
+      400 10px ui-monospace,
+      Menlo,
+      monospace;
     color: var(--ink-faint);
     flex: none;
   }

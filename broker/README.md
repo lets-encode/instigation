@@ -42,7 +42,7 @@ organiser picks it, and `POST /registry/register` presents that token when the
 setup is finished. Registering verifies the repo at GitHub with the session's
 token: the caller must hold push permission on the repository the name is
 bound to (403 otherwise; an unknown repo or a non-github forge is 404).
-Registration happens at the *end* of setup, not when the
+Registration happens at the _end_ of setup, not when the
 repository is created — a repository is not yet a campaign, and an abandoned
 setup must never be published as one. A claim is a short lease: one that
 nobody promotes occupies nothing once it has run out (reads report the name
@@ -84,21 +84,21 @@ The SPA reaches it via `PUBLIC_BROKER_URL` (default `/auth`) and
 
 Environment variables:
 
-| Name | Value |
-|---|---|
-| `GITHUB_CLIENT_ID` | the OAuth app's client id |
-| `GITHUB_CLIENT_SECRET` | the OAuth app's client secret (**secret**, only here) |
-| `FLASK_SECRET` | signs the session cookie (**secret**; e.g. `python3 -c "import secrets; print(secrets.token_hex(32))"`) |
-| `REDIRECT_URL` | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/auth/authorize` — required outside development and must match the OAuth app's registered callback |
-| `FLASK_ENV` | set to `development` locally to allow the cookie over plain HTTP |
-| `SESSION_DIR` | optional: session file directory |
-| `DB_PATH` | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it |
-| `ADMIN_TOKEN` | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `README.md` §6) |
-| `ADMIN_ROUTES_ENABLED` | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503 |
-| `PROXY_FIX_X_FOR` | the number of reverse proxies in front (1 behind the institution's reverse proxy); when set, X-Forwarded-For, -Proto and -Host supply the client address the rate limits key on and the host the CSRF guard compares `Origin` with. Leave unset without a trusted proxy — the headers would be spoofable |
-| `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes) |
-| `MUSIBOT_URL` | optional: the Musibot OMR API the `/omr` relay forwards to (default `https://quest.ms.mff.cuni.cz/musibot/api`) |
-| `MUSIBOT_TOKEN` | the Musibot API token (**secret**, only here); without it `/omr` answers 503 and the OMR preparation cannot run |
+| Name                    | Value                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_CLIENT_ID`      | the OAuth app's client id                                                                                                                                                                                                                                                                                |
+| `GITHUB_CLIENT_SECRET`  | the OAuth app's client secret (**secret**, only here)                                                                                                                                                                                                                                                    |
+| `FLASK_SECRET`          | signs the session cookie (**secret**; e.g. `python3 -c "import secrets; print(secrets.token_hex(32))"`)                                                                                                                                                                                                  |
+| `REDIRECT_URL`          | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/auth/authorize` — required outside development and must match the OAuth app's registered callback                                                                                                                        |
+| `FLASK_ENV`             | set to `development` locally to allow the cookie over plain HTTP                                                                                                                                                                                                                                         |
+| `SESSION_DIR`           | optional: session file directory                                                                                                                                                                                                                                                                         |
+| `DB_PATH`               | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it                                                                                                                                                                               |
+| `ADMIN_TOKEN`           | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `README.md` §6)                                                                                                                                                         |
+| `ADMIN_ROUTES_ENABLED`  | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503                                                                                                                                                                                       |
+| `PROXY_FIX_X_FOR`       | the number of reverse proxies in front (1 behind the institution's reverse proxy); when set, X-Forwarded-For, -Proto and -Host supply the client address the rate limits key on and the host the CSRF guard compares `Origin` with. Leave unset without a trusted proxy — the headers would be spoofable |
+| `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes)                                                                                                                                                                                                 |
+| `MUSIBOT_URL`           | optional: the Musibot OMR API the `/omr` relay forwards to (default `https://quest.ms.mff.cuni.cz/musibot/api`)                                                                                                                                                                                          |
+| `MUSIBOT_TOKEN`         | the Musibot API token (**secret**, only here); without it `/omr` answers 503 and the OMR preparation cannot run                                                                                                                                                                                          |
 
 The broker loads these from its process environment. The simplest way locally is a
 `broker/.env` file (auto-loaded via python-dotenv, and gitignored):
@@ -155,7 +155,7 @@ they are reported separately from GitHub primary or secondary limits.
 
 - **HTTPS is required** — the session cookie is marked `Secure` outside
   development, and the OAuth code travels over this connection. It is the scheme
-  the *browser* used that matters, so TLS terminating at a proxy or appliance in
+  the _browser_ used that matters, so TLS terminating at a proxy or appliance in
   front is fine.
 - **Trust the forwarded client IP** — behind a proxy every request appears to
   come from that proxy, which would turn the rate limits into one bucket shared

@@ -6,7 +6,12 @@
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
-  import type { CommandContext, Result, FacsimileTaskData, CampaignTables } from "$lib/commands.ts";
+  import type {
+    CommandContext,
+    Result,
+    FacsimileTaskData,
+    CampaignTables,
+  } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
   import { handle, sendBackTarget, typeLabel } from "$lib/campaign-graph.ts";
   import { elapsed } from "$lib/campaign-board.ts";
@@ -18,13 +23,25 @@
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
+  import {
+    CommandRunner,
+    readForge,
+    viewerId,
+  } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
+  import {
+    resolveCampaign,
+    resolveFailureMessage,
+  } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
   import { createOmrClient } from "$lib/omr-client.ts";
-  import { layoutBoxes, layoutRecord, LAYOUT_PARAMETERS, type CocoLayout } from "$lib/omr-layout.ts";
+  import {
+    layoutBoxes,
+    layoutRecord,
+    LAYOUT_PARAMETERS,
+    type CocoLayout,
+  } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import {
     clearCachedLayouts,
@@ -100,7 +117,11 @@
   }
   // A page's boxes in a layer, for the geometry code shared by all.
   const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
-    layer === "staves" ? pages[p].staves : layer === "grandstaves" ? pages[p].grandstaves : pages[p].zones;
+    layer === "staves"
+      ? pages[p].staves
+      : layer === "grandstaves"
+        ? pages[p].grandstaves
+        : pages[p].zones;
   // The campaign tables behind the comments panel; refreshed on their own so
   // a posted comment never reloads the editor.
   let tables = $state<CampaignTables | null>(null);
@@ -124,10 +145,14 @@
   // so the low end moves in fine steps and the high end in coarse ones.
   const ZOOM_STOPS = 100;
   const zoomPos = $derived(
-    Math.round((Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * ZOOM_STOPS),
+    Math.round(
+      (Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * ZOOM_STOPS,
+    ),
   );
   const setZoomPos = (p: number) =>
-    (zoom = Math.round(ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (p / ZOOM_STOPS) * 100) / 100);
+    (zoom =
+      Math.round(ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (p / ZOOM_STOPS) * 100) /
+      100);
 
   // The desk's inner size, for the whole-page fit.
   let deskW = $state(0);
@@ -177,7 +202,10 @@
 
   const spreads = $derived(buildSpreads(pages.length, view, firstOnRight));
   const spreadIndex = $derived(
-    Math.max(0, spreads.findIndex((s) => s.pages.includes(firstVisible))),
+    Math.max(
+      0,
+      spreads.findIndex((s) => s.pages.includes(firstVisible)),
+    ),
   );
   const spread = $derived(spreads[spreadIndex] ?? { pages: [] });
   const spreadLabel = $derived(
@@ -188,7 +216,11 @@
 
   // The pages a layout task has shown in each step. Submission waits until
   // every page has been on screen in both steps.
-  let seen = $state<Record<Layer, number[]>>({ staves: [], grandstaves: [], measures: [] });
+  let seen = $state<Record<Layer, number[]>>({
+    staves: [],
+    grandstaves: [],
+    measures: [],
+  });
   $effect(() => {
     if (!omr) return;
     const shown = spread.pages;
@@ -202,14 +234,17 @@
   // Why a layout task cannot be submitted yet, or null when it can.
   const submitBlock = $derived.by(() => {
     if (!omr) return null;
-    const unseen = (layer: Layer) => pages.flatMap((_, p) => (seen[layer].includes(p) ? [] : [p]));
+    const unseen = (layer: Layer) =>
+      pages.flatMap((_, p) => (seen[layer].includes(p) ? [] : [p]));
     for (const [i, layer] of STEP_LAYERS.entries()) {
       const pending = unseen(layer);
       if (pending.length) {
         return `Show every page in step ${i + 1} before submitting. Not yet shown: page ${pageList(pending)}.`;
       }
     }
-    const noMeasures = pages.flatMap((pg, p) => (pg.staves.length && !pg.zones.length ? [p] : []));
+    const noMeasures = pages.flatMap((pg, p) =>
+      pg.staves.length && !pg.zones.length ? [p] : [],
+    );
     if (noMeasures.length) {
       return `Page ${pageList(noMeasures)} has staff boxes but no measures. Add its measures, or remove its staff boxes if the page has no music.`;
     }
@@ -273,7 +308,9 @@
 
   // Staff and grand-staff boxes are kept top to bottom, then left to right.
   function resortStaves(p: number, layer: "staves" | "grandstaves" = "staves") {
-    pages[p][layer].sort((a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx);
+    pages[p][layer].sort(
+      (a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx,
+    );
   }
 
   async function load() {
@@ -315,7 +352,8 @@
       }));
       // A score of one or two pages is shown whole: one page, or both side by
       // side. Longer scores keep the two-up view with page 1 as a recto.
-      if (pages.length <= 2) ({ view, firstOnRight } = defaultSpreadView(pages.length));
+      if (pages.length <= 2)
+        ({ view, firstOnRight } = defaultSpreadView(pages.length));
       // A label that differs from what automatic numbering would produce is an
       // override (e.g. 10a/10b) — keep it through renumbering.
       let prev: string | undefined;
@@ -327,7 +365,8 @@
       }
       resetHistory();
     } catch (e) {
-      if (!stale()) loadError = `Could not load ${task}: ${(e as Error).message}`;
+      if (!stale())
+        loadError = `Could not load ${task}: ${(e as Error).message}`;
     } finally {
       if (!stale()) loading = false;
     }
@@ -353,7 +392,13 @@
   // Resolve the campaign name to its repo first; the load effect is gated on
   // `owner`/`repo` so it waits for this.
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolveError || resolving)
+    if (
+      auth.status === "loading" ||
+      resolved ||
+      notFound ||
+      resolveError ||
+      resolving
+    )
       return;
     resolving = true;
     // A result for a name the page has since navigated away from is dropped.
@@ -412,7 +457,11 @@
     const f = forge();
     if (!f) return;
     await runner.run(async () => {
-      const result = await invoke(commands.claimTask, { task_id: taskId }, ctx(f));
+      const result = await invoke(
+        commands.claimTask,
+        { task_id: taskId },
+        ctx(f),
+      );
       if (result.error) return result;
       runner.log.step("Reloading…");
       await load();
@@ -451,7 +500,9 @@
   // controls hold until it lands — a repeat would only be rejected.
   const verdictPending = $derived(
     !!validation &&
-      pendingVerdicts.isProcessing(`validate:${taskId}/${validation.subtask_id}`),
+      pendingVerdicts.isProcessing(
+        `validate:${taskId}/${validation.subtask_id}`,
+      ),
   );
   // A settled background verdict changed the tables; reload the read-only
   // view so it shows the recorded state. An edit session only refreshes the
@@ -474,7 +525,10 @@
     viewer !== "" && validation?.lockUser === viewer,
   );
   const selfValidation = $derived(
-    !!data && data.encoder !== "" && data.encoder === viewer && !data.allowSelfValidation,
+    !!data &&
+      data.encoder !== "" &&
+      data.encoder === viewer &&
+      !data.allowSelfValidation,
   );
   // One verdict per person: a validator who already recorded pass/fail here
   // cannot claim another slot (matching the campaign automation's rule).
@@ -581,8 +635,10 @@
   let logins = $state<Record<string, string>>({});
   $effect(() => {
     const ids = new Set<string>();
-    for (const v of data?.validation?.verdicts ?? []) if (v.user) ids.add(v.user);
-    for (const c of data?.failComments ?? []) if (c.author_id) ids.add(c.author_id);
+    for (const v of data?.validation?.verdicts ?? [])
+      if (v.user) ids.add(v.user);
+    for (const c of data?.failComments ?? [])
+      if (c.author_id) ids.add(c.author_id);
     if (data?.encodingLockUser) ids.add(data.encodingLockUser);
     for (const id of ids) {
       if (logins[id]) continue;
@@ -676,10 +732,18 @@
         omr
           ? invoke(
               commands.submitOmrLayout,
-              { task_id: taskId, pages: toPageModels(), layout: rawLayoutRecord() },
+              {
+                task_id: taskId,
+                pages: toPageModels(),
+                layout: rawLayoutRecord(),
+              },
               c,
             )
-          : invoke(commands.submitZones, { task_id: taskId, pages: toPageModels() }, c),
+          : invoke(
+              commands.submitZones,
+              { task_id: taskId, pages: toPageModels() },
+              c,
+            ),
       { overviewOnSuccess: true },
     );
 
@@ -700,7 +764,9 @@
     pages.length > 0 &&
     pages.every((pg) => pg.zones.length === 0 && pg.staves.length === 0);
   $effect(() => {
-    const boxed = data?.model.pages.some((pg) => pg.zones.length > 0 || (pg.staves?.length ?? 0) > 0);
+    const boxed = data?.model.pages.some(
+      (pg) => pg.zones.length > 0 || (pg.staves?.length ?? 0) > 0,
+    );
     if (omr && boxed) {
       clearCachedLayouts(repoId, taskId);
     }
@@ -730,7 +796,10 @@
   }
 
   // The detection steps, logged to the running command's overlay.
-  async function detectSteps(f: ForgeClient, fragment: string): Promise<Result> {
+  async function detectSteps(
+    f: ForgeClient,
+    fragment: string,
+  ): Promise<Result> {
     const client = createOmrClient(provider.brokerUrl);
     const cached = readCachedLayouts(repoId, taskId, omrModels.layoutModel);
     try {
@@ -742,13 +811,23 @@
       let staves = 0;
       let grandstaves = 0;
       for (const [p, pg] of pages.entries()) {
-        runner.log.step(`Detecting the layout of page ${p + 1} of ${pages.length}`);
+        runner.log.step(
+          `Detecting the layout of page ${p + 1} of ${pages.length}`,
+        );
         let layout = cached[pg.image];
         if (layout) {
-          runner.log.detail("Result stored in this browser from an earlier detection");
+          runner.log.detail(
+            "Result stored in this browser from an earlier detection",
+          );
         } else {
           layout = await detectPage(f, client, fragment, p, pg);
-          writeCachedLayout(repoId, taskId, omrModels.layoutModel, pg.image, layout);
+          writeCachedLayout(
+            repoId,
+            taskId,
+            omrModels.layoutModel,
+            pg.image,
+            layout,
+          );
         }
         rawLayouts[p] = layout;
         const boxes = layoutBoxes(layout, pg);
@@ -792,7 +871,10 @@
   ): Promise<CocoLayout> {
     const path = resolveRepoRelativeTarget(fragment, pg.image);
     const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
-    if (!image) throw new Error(`the image of page ${p + 1} (${pg.image}) could not be read.`);
+    if (!image)
+      throw new Error(
+        `the image of page ${p + 1} (${pg.image}) could not be read.`,
+      );
     return client.withPage(async (pageId) => {
       await client.upload(pageId, { "image.jpg": image });
       const execution = await client.run(
@@ -840,7 +922,10 @@
   // off once the limit is reached.
   const HISTORY_LIMIT = 100;
   function commit() {
-    history = history.slice(Math.max(0, historyIndex + 2 - HISTORY_LIMIT), historyIndex + 1);
+    history = history.slice(
+      Math.max(0, historyIndex + 2 - HISTORY_LIMIT),
+      historyIndex + 1,
+    );
     history.push(clonePages(pages));
     historyIndex = history.length - 1;
   }
@@ -900,7 +985,6 @@
     renumber();
   }
 
-
   // ------------------------------------------------------------------------
   // Pointer interactions (box move / resize / draw)
 
@@ -957,8 +1041,14 @@
     const r = svg.getBoundingClientRect();
     const pg = pages[p];
     return {
-      x: Math.max(0, Math.min(pg.width, ((e.clientX - r.left) * pg.width) / r.width)),
-      y: Math.max(0, Math.min(pg.height, ((e.clientY - r.top) * pg.height) / r.height)),
+      x: Math.max(
+        0,
+        Math.min(pg.width, ((e.clientX - r.left) * pg.width) / r.width),
+      ),
+      y: Math.max(
+        0,
+        Math.min(pg.height, ((e.clientY - r.top) * pg.height) / r.height),
+      ),
     };
   }
 
@@ -977,7 +1067,18 @@
     e.stopPropagation();
     selected = { p, z };
     const { x, y } = svgXY(e, p);
-    drag = { kind, layer: tool, p, z, sx: x, sy: y, orig: { ...items(p)[z].box }, moved: false, edges, started: true };
+    drag = {
+      kind,
+      layer: tool,
+      p,
+      z,
+      sx: x,
+      sy: y,
+      orig: { ...items(p)[z].box },
+      moved: false,
+      edges,
+      started: true,
+    };
   }
 
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
@@ -994,7 +1095,8 @@
     const box = items(p)[z].box;
     const pg = pages[p];
     const step = e.shiftKey ? 10 : 2;
-    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dx =
+      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
     const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
     const w = box.lrx - box.ulx;
     const h = box.lry - box.uly;
@@ -1006,19 +1108,29 @@
   }
 
   // Arrow keys on a focused resize handle move that handle's edges.
-  function resizeKeydown(e: KeyboardEvent, p: number, z: number, edges: string) {
+  function resizeKeydown(
+    e: KeyboardEvent,
+    p: number,
+    z: number,
+    edges: string,
+  ) {
     if (!canEdit || !e.key.startsWith("Arrow")) return;
     e.preventDefault();
     e.stopPropagation();
     const box = items(p)[z].box;
     const pg = pages[p];
     const step = e.shiftKey ? 10 : 2;
-    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dx =
+      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
     const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-    if (edges.includes("w")) box.ulx = Math.max(0, Math.min(box.lrx - 5, box.ulx + dx));
-    if (edges.includes("e")) box.lrx = Math.min(pg.width, Math.max(box.ulx + 5, box.lrx + dx));
-    if (edges.includes("n")) box.uly = Math.max(0, Math.min(box.lry - 5, box.uly + dy));
-    if (edges.includes("s")) box.lry = Math.min(pg.height, Math.max(box.uly + 5, box.lry + dy));
+    if (edges.includes("w"))
+      box.ulx = Math.max(0, Math.min(box.lrx - 5, box.ulx + dx));
+    if (edges.includes("e"))
+      box.lrx = Math.min(pg.width, Math.max(box.ulx + 5, box.lrx + dx));
+    if (edges.includes("n"))
+      box.uly = Math.max(0, Math.min(box.lry - 5, box.uly + dy));
+    if (edges.includes("s"))
+      box.lry = Math.min(pg.height, Math.max(box.uly + 5, box.lry + dy));
     commitGeometry(p, z);
   }
 
@@ -1027,7 +1139,18 @@
     if (!canEdit) return;
     const { x, y } = svgXY(e, p);
     const box = { ulx: x, uly: y, lrx: x, lry: y };
-    drag = { kind: "draw", layer: tool, p, z: -1, sx: x, sy: y, orig: box, moved: false, edges: "", started: false };
+    drag = {
+      kind: "draw",
+      layer: tool,
+      p,
+      z: -1,
+      sx: x,
+      sy: y,
+      orig: box,
+      moved: false,
+      edges: "",
+      started: false,
+    };
   }
 
   function pointerMove(e: PointerEvent) {
@@ -1037,11 +1160,19 @@
     const dy = y - drag.sy;
     const pg = pages[drag.p];
     if (!drag.started) {
-      const threshold = DRAW_THRESHOLD_PX * (pg.width / (canvasW[drag.p] || pg.width));
+      const threshold =
+        DRAW_THRESHOLD_PX * (pg.width / (canvasW[drag.p] || pg.width));
       if (Math.hypot(dx, dy) < threshold) return;
       const box = { ...drag.orig };
       if (drag.layer !== "measures") pages[drag.p][drag.layer].push({ box });
-      else pages[drag.p].zones.push({ box, override: null, label: "", sb: false, mdiv: false });
+      else
+        pages[drag.p].zones.push({
+          box,
+          override: null,
+          label: "",
+          sb: false,
+          mdiv: false,
+        });
       drag.z = items(drag.p, drag.layer).length - 1;
       drag.started = true;
       selected = { p: drag.p, z: drag.z };
@@ -1131,7 +1262,10 @@
   // Paint order for a page's zones: the selected zone is moved to the end so it
   // renders on top. SVG has no z-index, so an earlier zone would otherwise sit
   // under a later overlapping one and steal its pointer events.
-  function paintOrder(pg: EditPage, p: number): { zone: EditZone; z: number }[] {
+  function paintOrder(
+    pg: EditPage,
+    p: number,
+  ): { zone: EditZone; z: number }[] {
     const entries = pg.zones.map((zone, z) => ({ zone, z }));
     if (tool === "measures" && selected?.p === p) {
       const i = entries.findIndex((e) => e.z === selected!.z);
@@ -1141,8 +1275,13 @@
   }
 
   // Same for the staff and grand-staff layers: the selected box paints last.
-  function staffPaintOrder(pg: EditPage, p: number): { staff: EditStaff; s: number }[] {
-    const entries = (tool === "grandstaves" ? pg.grandstaves : pg.staves).map((staff, s) => ({ staff, s }));
+  function staffPaintOrder(
+    pg: EditPage,
+    p: number,
+  ): { staff: EditStaff; s: number }[] {
+    const entries = (tool === "grandstaves" ? pg.grandstaves : pg.staves).map(
+      (staff, s) => ({ staff, s }),
+    );
     if (tool !== "measures" && selected?.p === p) {
       const i = entries.findIndex((e) => e.s === selected!.z);
       if (i >= 0) entries.push(entries.splice(i, 1)[0]);
@@ -1152,11 +1291,14 @@
 
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
   const staffCount = $derived(pages.reduce((n, p) => n + p.staves.length, 0));
-  const grandstaffCount = $derived(pages.reduce((n, p) => n + p.grandstaves.length, 0));
+  const grandstaffCount = $derived(
+    pages.reduce((n, p) => n + p.grandstaves.length, 0),
+  );
   const movementCount = $derived(
     1 +
       pages.reduce(
-        (n, pg, p) => n + pg.zones.filter((z, i) => z.mdiv && (p > 0 || i > 0)).length,
+        (n, pg, p) =>
+          n + pg.zones.filter((z, i) => z.mdiv && (p > 0 || i > 0)).length,
         0,
       ),
   );
@@ -1178,7 +1320,8 @@
 
   // Hover tooltip explaining a zone's break marker, if it carries one.
   const zoneTitle = (p: number, z: number) => {
-    if (pbAt(z)) return "⇱ page beginning — automatic: the first measure on each page";
+    if (pbAt(z))
+      return "⇱ page beginning — automatic: the first measure on each page";
     if (pages[p].zones[z].sb) return "↵ system beginning";
     return "";
   };
@@ -1211,7 +1354,11 @@
   <title>{taskTitle} · {campaign} · Let's Encode!</title>
 </svelte:head>
 
-<svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onkeydown={keydown} />
+<svelte:window
+  onpointermove={pointerMove}
+  onpointerup={pointerUp}
+  onkeydown={keydown}
+/>
 
 {#if runner.busy && runner.overlay}
   <LoadingOverlay
@@ -1228,8 +1375,10 @@
       <div class="banner err">
         <span>
           {resolveError}
-          <button type="button" class="linkish" onclick={() => (resolveError = null)}
-            >Try again</button
+          <button
+            type="button"
+            class="linkish"
+            onclick={() => (resolveError = null)}>Try again</button
           >
         </span>
       </div>
@@ -1249,7 +1398,9 @@
     <div class="deskwrap">
       <div class="banner warn">
         <span>
-          Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
+          Please <button type="button" class="linkish" onclick={() => login()}
+            >log in with GitHub</button
+          >
           to work on this task.
         </span>
       </div>
@@ -1261,280 +1412,350 @@
       <div class="banner err">
         <span>
           {loadError}
-          <button type="button" class="linkish" onclick={() => load()}>Try again</button>
+          <button type="button" class="linkish" onclick={() => load()}
+            >Try again</button
+          >
         </span>
       </div>
     </div>
   {:else if data}
     <div class="main">
-    <div class="ctoolbar">
-      <button
-        type="button"
-        class="btn btn-icon"
-        onclick={() => go(-1)}
-        disabled={spreadIndex <= 0}
-        aria-label="Previous page"
-        title="Previous page"><Icon name="chevron-left" /></button
-      >
-      <span class="pglabel">{spreadLabel}</span>
-      <button
-        type="button"
-        class="btn btn-icon"
-        onclick={() => go(1)}
-        disabled={spreadIndex >= spreads.length - 1}
-        aria-label="Next page"
-        title="Next page"><Icon name="chevron-right" /></button
-      >
-      <div class="seg" title="How many pages the desk shows at once">
-        <button type="button" class:on={view === "single"} onclick={() => (view = "single")}>1 page</button>
-        <button type="button" class:on={view === "double"} onclick={() => (view = "double")}>2 pages</button>
-      </div>
-      {#if view === "double"}
-        <label class="checkline" title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens">
-          <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
-        </label>
-      {/if}
-      <span class="tspacer"></span>
-      <span class="vline"></span>
-      <input
-        class="zoomslider"
-        type="range"
-        aria-label="Zoom"
-        aria-valuetext={`${Math.round(zoom * 100)}%`}
-        min={0}
-        max={ZOOM_STOPS}
-        step={1}
-        value={zoomPos}
-        oninput={(e) => {
-          setZoomPos(Number((e.target as HTMLInputElement).value));
-          fit = null;
-        }}
-      />
-      <span class="zval">{Math.round(zoom * 100)}%</span>
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        class:on={fit === "width"}
-        onclick={() => (fit = "width")}
-        aria-label="Fit the page width"
-        title="Fit the page width to the view"><FitIcon kind="width" /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        class:on={fit === "page"}
-        onclick={() => (fit = "page")}
-        aria-label="Fit the whole page"
-        title="Fit the whole page in the view, top to bottom"><FitIcon kind="page" /></button
-      >
-      <span class="vline"></span>
-      {#if canEdit}
+      <div class="ctoolbar">
         <button
           type="button"
           class="btn btn-icon"
-          onclick={() => undo()}
-          disabled={!canUndo}
-          aria-label="Undo"
-          title="Undo the last change (Ctrl/Cmd+Z)">↶</button
+          onclick={() => go(-1)}
+          disabled={spreadIndex <= 0}
+          aria-label="Previous page"
+          title="Previous page"><Icon name="chevron-left" /></button
         >
+        <span class="pglabel">{spreadLabel}</span>
         <button
           type="button"
           class="btn btn-icon"
-          onclick={() => redo()}
-          disabled={!canRedo}
-          aria-label="Redo"
-          title="Redo (Ctrl/Cmd+Shift+Z)">↷</button
+          onclick={() => go(1)}
+          disabled={spreadIndex >= spreads.length - 1}
+          aria-label="Next page"
+          title="Next page"><Icon name="chevron-right" /></button
         >
+        <div class="seg" title="How many pages the desk shows at once">
+          <button
+            type="button"
+            class:on={view === "single"}
+            onclick={() => (view = "single")}>1 page</button
+          >
+          <button
+            type="button"
+            class:on={view === "double"}
+            onclick={() => (view = "double")}>2 pages</button
+          >
+        </div>
+        {#if view === "double"}
+          <label
+            class="checkline"
+            title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+          >
+            <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
+          </label>
+        {/if}
+        <span class="tspacer"></span>
+        <span class="vline"></span>
+        <input
+          class="zoomslider"
+          type="range"
+          aria-label="Zoom"
+          aria-valuetext={`${Math.round(zoom * 100)}%`}
+          min={0}
+          max={ZOOM_STOPS}
+          step={1}
+          value={zoomPos}
+          oninput={(e) => {
+            setZoomPos(Number((e.target as HTMLInputElement).value));
+            fit = null;
+          }}
+        />
+        <span class="zval">{Math.round(zoom * 100)}%</span>
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={fit === "width"}
+          onclick={() => (fit = "width")}
+          aria-label="Fit the page width"
+          title="Fit the page width to the view"
+          ><FitIcon kind="width" /></button
+        >
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={fit === "page"}
+          onclick={() => (fit = "page")}
+          aria-label="Fit the whole page"
+          title="Fit the whole page in the view, top to bottom"
+          ><FitIcon kind="page" /></button
+        >
+        <span class="vline"></span>
+        {#if canEdit}
+          <button
+            type="button"
+            class="btn btn-icon"
+            onclick={() => undo()}
+            disabled={!canUndo}
+            aria-label="Undo"
+            title="Undo the last change (Ctrl/Cmd+Z)">↶</button
+          >
+          <button
+            type="button"
+            class="btn btn-icon"
+            onclick={() => redo()}
+            disabled={!canRedo}
+            aria-label="Redo"
+            title="Redo (Ctrl/Cmd+Shift+Z)">↷</button
+          >
+        {/if}
+        <span
+          class="helpico"
+          role="img"
+          aria-label="Editor help"
+          title={helpText}>?</span
+        >
+        <button
+          type="button"
+          aria-pressed={commentsPanel.open}
+          class="btn"
+          title={commentsPanel.open
+            ? "Hide the comments panel with the task's controls"
+            : "Show the comments panel with the task's controls"}
+          onclick={() => {
+            commentsPanel.open = !commentsPanel.open;
+            writeSidePanel("comments", { ...commentsPanel });
+          }}
+        >
+          <PanelIcon />
+          Comments
+        </button>
+      </div>
+      {#if runner.result && runner.result.error}
+        <div class="banner err bar">
+          <span>
+            {runner.result.error}
+            {#if runner.result.prUrl}<a
+                href={runner.result.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                >View submission <Icon name="external" size={12} /></a
+              >{/if}
+          </span>
+        </div>
+      {:else if runner.result && runner.result.ok && !runner.result.background}
+        <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
+          <span>
+            {runner.result.message}
+            {#if runner.result.prUrl}<a
+                href={runner.result.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                >View submission <Icon name="external" size={12} /></a
+              >{/if}
+          </span>
+        </div>
       {/if}
-      <span class="helpico" role="img" aria-label="Editor help" title={helpText}
-        >?</span
-      >
-            <button
-        type="button"
-        aria-pressed={commentsPanel.open}
-        class="btn"
-        title={commentsPanel.open
-          ? "Hide the comments panel with the task's controls"
-          : "Show the comments panel with the task's controls"}
-        onclick={() => {
-          commentsPanel.open = !commentsPanel.open;
-          writeSidePanel("comments", { ...commentsPanel });
-        }}
-      >
-        <PanelIcon />
-        Comments
-      </button>
-    </div>
-    {#if runner.result && runner.result.error}
-      <div class="banner err bar">
-        <span>
-          {runner.result.error}
-          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
-        </span>
-      </div>
-    {:else if runner.result && runner.result.ok && !runner.result.background}
-      <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
-        <span>
-          {runner.result.message}
-          {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
-        </span>
-      </div>
-    {/if}
-    <TaskRunState task={taskId} bar />
+      <TaskRunState task={taskId} bar />
 
-    <div class="desk" bind:clientWidth={deskW} bind:clientHeight={deskH}>
-      <div class="pages" class:double={view === "double"} style={`--zoom:${zoom}`}>
-        {#if spread.lonelySide === "right"}<div class="page-spacer"></div>{/if}
-        {#each spread.pages as p (p)}
-          {@const pg = pages[p]}
-          <div class="page">
-            <p class="pagehead">Page {p + 1}</p>
-            {#if pg.failed}
-              <div class="banner err">
-                The page facsimile for page {p + 1} could not be loaded. The zones
-                are shown without their reference image.
-              </div>
-            {/if}
-            <div class="canvas" bind:clientWidth={canvasW[p]}>
-              <svg
-                bind:this={svgEls[p]}
-                viewBox={`0 0 ${pg.width} ${pg.height}`}
-                class:staves={tool === "staves"}
-                class:grandstaves={tool === "grandstaves"}
-                role="application"
-                aria-label={`Page ${p + 1} ${tool}`}
-                onpointerdown={(e) => backgroundPointerDown(e, p)}
-              >
-                {#if pg.url}
-                  <image
-                    href={pg.url}
-                    width={pg.width}
-                    height={pg.height}
-                    onerror={() => (pages[p].failed = true)}
-                  />
-                {/if}
-                {#each tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
-                  <rect
-                    class="staff"
-                    class:grand={tool === "grandstaves"}
-                    class:selected={selected?.p === p && selected?.z === s}
-                    vector-effect="non-scaling-stroke"
-                    role="button"
-                    tabindex={0}
-                    aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}: select, drag or resize`}
-                    x={staff.box.ulx}
-                    y={staff.box.uly}
-                    width={staff.box.lrx - staff.box.ulx}
-                    height={staff.box.lry - staff.box.uly}
-                    onpointerdown={(e) => startZoneDrag(e, p, s, "move")}
-                    onkeydown={(e) => zoneKeydown(e, p, s)}
-                  />
-                  {#if canEdit && selected?.p === p && selected?.z === s}
-                    {@render handles(p, s, staff.box, `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`, 0, 0)}
-                  {/if}
-                {/each}
-                {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
-                  <rect
-                    class="zone"
-                    class:selected={selected?.p === p && selected?.z === z}
-                    class:mdivstart={startsMovement(p, z)}
-                    vector-effect="non-scaling-stroke"
-                    role="button"
-                    tabindex={0}
-                    aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
-                    x={zone.box.ulx}
-                    y={zone.box.uly}
-                    width={zone.box.lrx - zone.box.ulx}
-                    height={zone.box.lry - zone.box.uly}
-                    onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
-                    onkeydown={(e) => zoneKeydown(e, p, z)}
-                  >
-                    {#if zoneTitle(p, z)}
-                      <title>{zoneTitle(p, z)}</title>
-                    {/if}
-                  </rect>
-                  {@const lbl = labelText(p, z)}
-                  {@const fs = labelFont(p, pg.width)}
-                  {@const inset = fs * 0.6}
-                  {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
-                  {@const editing = canEdit && selected?.p === p && selected?.z === z}
-                  {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
-                  {#if !editing}
-                    <rect class="labelbg" x={zone.box.ulx + inset} y={zone.box.uly + inset} width={lblW} height={fs * 1.55} rx={fs * 0.28} />
-                    <text
-                      class="zonelabel"
-                      x={zone.box.ulx + inset + lblW / 2}
-                      y={zone.box.uly + inset + fs * 1.12}
-                      text-anchor="middle"
-                      font-size={fs}
-                    >{lbl}</text>
-                  {:else}
-                    {@render handles(p, z, zone.box, `Measure ${zone.label}`, inset + ZC_W_PX / sc, inset + ZC_H_PX / sc)}
-                  {/if}
-                {/each}
-              </svg>
-
-              {#if canEdit && tool === "measures" && active && active.p === p && pg.zones[active.z]}
-                {@const z = active.z}
-                {@const zone = pg.zones[z]}
-                {@const box = zone.box}
-                {@const inset = labelFont(p, pg.width) * 0.6}
-                <div
-                  class="zc"
-                  style={`left:${((box.ulx + inset) / pg.width) * 100}%; top:${((box.uly + inset) / pg.height) * 100}%; --accent:${accentFor(p, z)}`}
-                >
-                  <div
-                    class="zc-inner"
-                    role="group"
-                    aria-label={`Measure ${zone.label} controls`}
-                    onpointerdown={(e) => {
-                      selected = { p, z };
-                      e.stopPropagation();
-                    }}
-                  >
-                    <input
-                      class="znum"
-                      value={zone.override ?? zone.label}
-                      size={Math.max(2, String(zone.override ?? zone.label).length)}
-                      onfocus={() => (selected = { p, z })}
-                      oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
-                      onchange={() => commit()}
-                      title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
-                    />
-                    <button
-                      type="button"
-                      class:on={sbActive(p, z)}
-                      onclick={() => toggleSb(p, z)}
-                      disabled={pbAt(z)}
-                      aria-pressed={sbActive(p, z)}
-                      title={pbAt(z)
-                        ? "System beginning — implied by the page break on a page's first measure"
-                        : "System beginning (sb)"}>↵</button>
-                    <button
-                      type="button"
-                      class:on={startsMovement(p, z)}
-                      onclick={() => toggleSection(p, z)}
-                      disabled={sectionLocked(p, z)}
-                      aria-pressed={startsMovement(p, z)}
-                      title={sectionLocked(p, z)
-                        ? "The first measure always opens the first section"
-                        : "Section beginning — starts a new movement/section (mdiv)"}>§</button>
-                  </div>
+      <div class="desk" bind:clientWidth={deskW} bind:clientHeight={deskH}>
+        <div
+          class="pages"
+          class:double={view === "double"}
+          style={`--zoom:${zoom}`}
+        >
+          {#if spread.lonelySide === "right"}<div
+              class="page-spacer"
+            ></div>{/if}
+          {#each spread.pages as p (p)}
+            {@const pg = pages[p]}
+            <div class="page">
+              <p class="pagehead">Page {p + 1}</p>
+              {#if pg.failed}
+                <div class="banner err">
+                  The page facsimile for page {p + 1} could not be loaded. The zones
+                  are shown without their reference image.
                 </div>
               {/if}
+              <div class="canvas" bind:clientWidth={canvasW[p]}>
+                <svg
+                  bind:this={svgEls[p]}
+                  viewBox={`0 0 ${pg.width} ${pg.height}`}
+                  class:staves={tool === "staves"}
+                  class:grandstaves={tool === "grandstaves"}
+                  role="application"
+                  aria-label={`Page ${p + 1} ${tool}`}
+                  onpointerdown={(e) => backgroundPointerDown(e, p)}
+                >
+                  {#if pg.url}
+                    <image
+                      href={pg.url}
+                      width={pg.width}
+                      height={pg.height}
+                      onerror={() => (pages[p].failed = true)}
+                    />
+                  {/if}
+                  {#each tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
+                    <rect
+                      class="staff"
+                      class:grand={tool === "grandstaves"}
+                      class:selected={selected?.p === p && selected?.z === s}
+                      vector-effect="non-scaling-stroke"
+                      role="button"
+                      tabindex={0}
+                      aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}: select, drag or resize`}
+                      x={staff.box.ulx}
+                      y={staff.box.uly}
+                      width={staff.box.lrx - staff.box.ulx}
+                      height={staff.box.lry - staff.box.uly}
+                      onpointerdown={(e) => startZoneDrag(e, p, s, "move")}
+                      onkeydown={(e) => zoneKeydown(e, p, s)}
+                    />
+                    {#if canEdit && selected?.p === p && selected?.z === s}
+                      {@render handles(
+                        p,
+                        s,
+                        staff.box,
+                        `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`,
+                        0,
+                        0,
+                      )}
+                    {/if}
+                  {/each}
+                  {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
+                    <rect
+                      class="zone"
+                      class:selected={selected?.p === p && selected?.z === z}
+                      class:mdivstart={startsMovement(p, z)}
+                      vector-effect="non-scaling-stroke"
+                      role="button"
+                      tabindex={0}
+                      aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
+                      x={zone.box.ulx}
+                      y={zone.box.uly}
+                      width={zone.box.lrx - zone.box.ulx}
+                      height={zone.box.lry - zone.box.uly}
+                      onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
+                      onkeydown={(e) => zoneKeydown(e, p, z)}
+                    >
+                      {#if zoneTitle(p, z)}
+                        <title>{zoneTitle(p, z)}</title>
+                      {/if}
+                    </rect>
+                    {@const lbl = labelText(p, z)}
+                    {@const fs = labelFont(p, pg.width)}
+                    {@const inset = fs * 0.6}
+                    {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
+                    {@const editing =
+                      canEdit && selected?.p === p && selected?.z === z}
+                    {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
+                    {#if !editing}
+                      <rect
+                        class="labelbg"
+                        x={zone.box.ulx + inset}
+                        y={zone.box.uly + inset}
+                        width={lblW}
+                        height={fs * 1.55}
+                        rx={fs * 0.28}
+                      />
+                      <text
+                        class="zonelabel"
+                        x={zone.box.ulx + inset + lblW / 2}
+                        y={zone.box.uly + inset + fs * 1.12}
+                        text-anchor="middle"
+                        font-size={fs}>{lbl}</text
+                      >
+                    {:else}
+                      {@render handles(
+                        p,
+                        z,
+                        zone.box,
+                        `Measure ${zone.label}`,
+                        inset + ZC_W_PX / sc,
+                        inset + ZC_H_PX / sc,
+                      )}
+                    {/if}
+                  {/each}
+                </svg>
+
+                {#if canEdit && tool === "measures" && active && active.p === p && pg.zones[active.z]}
+                  {@const z = active.z}
+                  {@const zone = pg.zones[z]}
+                  {@const box = zone.box}
+                  {@const inset = labelFont(p, pg.width) * 0.6}
+                  <div
+                    class="zc"
+                    style={`left:${((box.ulx + inset) / pg.width) * 100}%; top:${((box.uly + inset) / pg.height) * 100}%; --accent:${accentFor(p, z)}`}
+                  >
+                    <div
+                      class="zc-inner"
+                      role="group"
+                      aria-label={`Measure ${zone.label} controls`}
+                      onpointerdown={(e) => {
+                        selected = { p, z };
+                        e.stopPropagation();
+                      }}
+                    >
+                      <input
+                        class="znum"
+                        value={zone.override ?? zone.label}
+                        size={Math.max(
+                          2,
+                          String(zone.override ?? zone.label).length,
+                        )}
+                        onfocus={() => (selected = { p, z })}
+                        oninput={(e) =>
+                          setLabel(p, z, (e.target as HTMLInputElement).value)}
+                        onchange={() => commit()}
+                        title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
+                      />
+                      <button
+                        type="button"
+                        class:on={sbActive(p, z)}
+                        onclick={() => toggleSb(p, z)}
+                        disabled={pbAt(z)}
+                        aria-pressed={sbActive(p, z)}
+                        title={pbAt(z)
+                          ? "System beginning — implied by the page break on a page's first measure"
+                          : "System beginning (sb)"}>↵</button
+                      >
+                      <button
+                        type="button"
+                        class:on={startsMovement(p, z)}
+                        onclick={() => toggleSection(p, z)}
+                        disabled={sectionLocked(p, z)}
+                        aria-pressed={startsMovement(p, z)}
+                        title={sectionLocked(p, z)
+                          ? "The first measure always opens the first section"
+                          : "Section beginning — starts a new movement/section (mdiv)"}
+                        >§</button
+                      >
+                    </div>
+                  </div>
+                {/if}
+              </div>
             </div>
-          </div>
-        {/each}
-        {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
+          {/each}
+          {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
+        </div>
       </div>
-    </div>
     </div>
 
     <!-- The resize handles and delete button of the selected box in the
          active layer, shared by measures and staves. `labelW`/`labelH` are the
          label's extent inside the box, so the delete button drops below it
          when the box is too narrow for both; 0 for a box without a label. -->
-    {#snippet handles(p: number, z: number, b: MeasureBox, name: string, labelW: number, labelH: number)}
+    {#snippet handles(
+      p: number,
+      z: number,
+      b: MeasureBox,
+      name: string,
+      labelW: number,
+      labelH: number,
+    )}
       {@const pg = pages[p]}
       <!-- Handle sizes are screen pixels, converted to page units by the
            canvas scale: the corner dots are 5px in radius, the edge strips
@@ -1542,12 +1763,7 @@
       {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
       {@const r = 5 / sc}
       {@const g = 12 / sc}
-      {#each [
-        { edges: "n", side: "top edge", x: b.ulx + r, y: b.uly - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g },
-        { edges: "s", side: "bottom edge", x: b.ulx + r, y: b.lry - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g },
-        { edges: "w", side: "left edge", x: b.ulx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) },
-        { edges: "e", side: "right edge", x: b.lrx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) },
-      ] as e (e.edges)}
+      {#each [{ edges: "n", side: "top edge", x: b.ulx + r, y: b.uly - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g }, { edges: "s", side: "bottom edge", x: b.ulx + r, y: b.lry - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g }, { edges: "w", side: "left edge", x: b.ulx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) }, { edges: "e", side: "right edge", x: b.lrx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) }] as e (e.edges)}
         <rect
           class="edge {resizeCursor(e.edges)}"
           role="button"
@@ -1561,12 +1777,7 @@
           onkeydown={(ev) => resizeKeydown(ev, p, z, e.edges)}
         />
       {/each}
-      {#each [
-        { edges: "nw", side: "top-left corner", cx: b.ulx, cy: b.uly },
-        { edges: "ne", side: "top-right corner", cx: b.lrx, cy: b.uly },
-        { edges: "sw", side: "bottom-left corner", cx: b.ulx, cy: b.lry },
-        { edges: "se", side: "bottom-right corner", cx: b.lrx, cy: b.lry },
-      ] as c (c.edges)}
+      {#each [{ edges: "nw", side: "top-left corner", cx: b.ulx, cy: b.uly }, { edges: "ne", side: "top-right corner", cx: b.lrx, cy: b.uly }, { edges: "sw", side: "bottom-left corner", cx: b.ulx, cy: b.lry }, { edges: "se", side: "bottom-right corner", cx: b.lrx, cy: b.lry }] as c (c.edges)}
         <circle
           class="handle {resizeCursor(c.edges)}"
           vector-effect="non-scaling-stroke"
@@ -1575,7 +1786,7 @@
           aria-label={`${name}: resize (${c.side})`}
           cx={c.cx}
           cy={c.cy}
-          r={r}
+          {r}
           onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", c.edges)}
           onkeydown={(ev) => resizeKeydown(ev, p, z, c.edges)}
         />
@@ -1583,7 +1794,10 @@
       <!-- A delete button pinned inside the box's top-right corner, drawn in
            screen pixels via the inverse-scale transform. -->
       {@const bx = Math.max(b.ulx + 4 / sc, b.lrx - 27 / sc)}
-      {@const by = labelW && bx < b.ulx + labelW + 6 / sc ? b.uly + labelH + 6 / sc : b.uly + 7 / sc}
+      {@const by =
+        labelW && bx < b.ulx + labelW + 6 / sc
+          ? b.uly + labelH + 6 / sc
+          : b.uly + 7 / sc}
       <g
         class="delbtn"
         role="button"
@@ -1616,165 +1830,213 @@
           <code class="taskchip">{taskId}</code>
         </div>
         <div class="tbsection">
-        <span class="abcount">
-          {#if omr}{staffCount} {staffCount === 1 ? "staff" : "staves"} · {grandstaffCount} grand
-            {grandstaffCount === 1 ? "staff" : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1 ? "" : "s"}
-          · {movementCount} movement{movementCount === 1 ? "" : "s"}
-        </span>
-        {#if holds}
-          <span class="lockpill ok">you hold this task</span>
-        {:else if d.status === "completed"}
-          <span class="lockpill grey">done — read-only</span>
-        {:else if d.status !== "encoding_required"}
-          {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
-            <span class="lockpill red">review failed — read-only</span>
-          {:else}
-            <span class="lockpill amber">submitted — awaiting review, read-only</span>
-          {/if}
-        {:else if d.blockedBy}
-          <span class="lockpill grey">waits for {d.blockedBy} — read-only</span>
-        {:else if d.encodingLockUser}
-          <span class="lockpill amber"
-            >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
-          >
-        {:else}
-          <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={busy}>Claim task</button>
-        {/if}
-        {#if omr}
-          <div class="seg steps" title="The three steps of the layout correction. Each step shows only its own boxes.">
-            <button type="button" class:on={layoutStep === 1} onclick={() => setLayoutStep(1)}>1 · Staff boxes</button>
-            <button type="button" class:on={layoutStep === 2} onclick={() => setLayoutStep(2)}>2 · Grand staves</button>
-            <button type="button" class:on={layoutStep === 3} onclick={() => setLayoutStep(3)}>3 · Measures</button>
-          </div>
-        {/if}
-        {#if omr && layoutStep === 1}
-          <button
-            type="button"
-            class="btn btn-secondary submitbtn"
-            onclick={() => setLayoutStep(2)}
-            title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
-          >
-            Next: grand staves
-          </button>
-        {:else if omr && layoutStep === 2}
-          <button
-            type="button"
-            class="btn btn-secondary submitbtn"
-            onclick={() => setLayoutStep(3)}
-            title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
-          >
-            Next: measures
-          </button>
-        {:else}
-          <button
-            type="button"
-            class="btn btn-primary submitbtn"
-            onclick={() => submit()}
-            disabled={busy || !canEdit || submitBlock !== null}
-            title={submitBlock ??
-              (omr
-                ? "Submit the corrected staves, grand staves, measures, breaks and movements for review"
-                : "Submit the corrected measures, breaks and movements for review")}
-          >
-            Submit corrections
-          </button>
-        {/if}
-      </div>
-
-      {#if failComments.length > 0}
-        <div class="tbsection">
-          <span class="sb-label">Fail comments</span>
-          {#each failComments as c (c.comment_id)}
-            <div class="failnote" class:resolved={c.resolved === "true"}>
-              <span class="failwho"
-                >@{handle(logins, c.author_id)} · {elapsed(c.timestamp)}{c.resolved ===
-                "true"
-                  ? " · resolved"
-                  : ""}</span
-              >
-              <div class="failtext">“{c.body}”</div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      {#if validation && submitted}
-        <div class="tbsection sb-validation">
-          <span class="sb-label">Review</span>
-          <span class="vstatus">
-            {#if validation.status === "completed"}
-              Review done
-            {:else if verdictPending}
-              Your verdict is being processed…
-            {:else if validation.lockUser}
-              {holdsValidation ? "You are reviewing" : `@${lockUserLogin || validation.lockUser} reviewing`}
-            {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
-              Failed — send it back to redo the correction
-            {:else if selfValidation}
-              Your own submission
-            {:else if alreadyValidated}
-              You reviewed this — another volunteer is needed
-            {:else}
-              Awaiting review
-            {/if}
+          <span class="abcount">
+            {#if omr}{staffCount}
+              {staffCount === 1 ? "staff" : "staves"} · {grandstaffCount} grand
+              {grandstaffCount === 1
+                ? "staff"
+                : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1
+              ? ""
+              : "s"}
+            · {movementCount} movement{movementCount === 1 ? "" : "s"}
           </span>
-          {#each validation.verdicts as v, i (i)}
-            <span class="vrow {v.verdict}"
-              >{#if v.verdict === "pass"}<img
-                  class="hand-pass"
-                  src="/green-hand.svg"
-                  alt=""
-                /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(logins, v.user)} · {elapsed(
-                v.ts,
-              )}</span
-            >
-          {/each}
-          {#if canClaimValidation}
-            <div class="sb-row one">
-              <button type="button" class="btn btn-review" onclick={() => claimValidation()} disabled={runner.busy}
-                title="Reserve this review slot.">Claim to review</button>
-            </div>
-          {:else if holdsValidation && !verdictPending}
-            <div class="sb-row two">
-              <button type="button" class="btn btn-primary btn-finish" onclick={() => validate("pass")} disabled={runner.busy}
-                title="Record a passing verdict.">Pass</button>
-              <button type="button" class="btn btn-danger vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy}
-                title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
-            </div>
-          {/if}
-          {#if failOpen && holdsValidation}
-            <input
-              class="fail-note"
-              bind:value={failText}
-              placeholder="Why does this fail?"
-              onkeydown={(e) => {
-                if (e.key === "Enter" && failText.trim()) validate("fail");
-              }}
-            />
-            <div class="sb-row one">
-              <button
-                type="button"
-                class="btn btn-danger"
-                onclick={() => validate("fail")}
-                disabled={runner.busy || !failText.trim() || verdictPending}
-                title="Submit the failing verdict with this comment."
-                >Submit fail</button
+          {#if holds}
+            <span class="lockpill ok">you hold this task</span>
+          {:else if d.status === "completed"}
+            <span class="lockpill grey">done — read-only</span>
+          {:else if d.status !== "encoding_required"}
+            {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
+              <span class="lockpill red">review failed — read-only</span>
+            {:else}
+              <span class="lockpill amber"
+                >submitted — awaiting review, read-only</span
               >
-            </div>
-          {/if}
-          {#if canSendBack}
+            {/if}
+          {:else if d.blockedBy}
+            <span class="lockpill grey"
+              >waits for {d.blockedBy} — read-only</span
+            >
+          {:else if d.encodingLockUser}
+            <span class="lockpill amber"
+              >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
+            >
+          {:else}
+            <span class="lockpill amber">unclaimed — read-only</span>
             <button
               type="button"
-              class="btn btn-danger sendbackbtn"
-              onclick={() => sendBack()}
-              disabled={runner.busy || sendBackPending}
-              title="Return the task to {stage}: attribution and reviews reset."
-              >Send back to {stage}</button
+              class="btn btn-pre"
+              onclick={() => claim()}
+              disabled={busy}>Claim task</button
             >
           {/if}
+          {#if omr}
+            <div
+              class="seg steps"
+              title="The three steps of the layout correction. Each step shows only its own boxes."
+            >
+              <button
+                type="button"
+                class:on={layoutStep === 1}
+                onclick={() => setLayoutStep(1)}>1 · Staff boxes</button
+              >
+              <button
+                type="button"
+                class:on={layoutStep === 2}
+                onclick={() => setLayoutStep(2)}>2 · Grand staves</button
+              >
+              <button
+                type="button"
+                class:on={layoutStep === 3}
+                onclick={() => setLayoutStep(3)}>3 · Measures</button
+              >
+            </div>
+          {/if}
+          {#if omr && layoutStep === 1}
+            <button
+              type="button"
+              class="btn btn-secondary submitbtn"
+              onclick={() => setLayoutStep(2)}
+              title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
+            >
+              Next: grand staves
+            </button>
+          {:else if omr && layoutStep === 2}
+            <button
+              type="button"
+              class="btn btn-secondary submitbtn"
+              onclick={() => setLayoutStep(3)}
+              title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
+            >
+              Next: measures
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="btn btn-primary submitbtn"
+              onclick={() => submit()}
+              disabled={busy || !canEdit || submitBlock !== null}
+              title={submitBlock ??
+                (omr
+                  ? "Submit the corrected staves, grand staves, measures, breaks and movements for review"
+                  : "Submit the corrected measures, breaks and movements for review")}
+            >
+              Submit corrections
+            </button>
+          {/if}
         </div>
-      {/if}
+
+        {#if failComments.length > 0}
+          <div class="tbsection">
+            <span class="sb-label">Fail comments</span>
+            {#each failComments as c (c.comment_id)}
+              <div class="failnote" class:resolved={c.resolved === "true"}>
+                <span class="failwho"
+                  >@{handle(logins, c.author_id)} · {elapsed(
+                    c.timestamp,
+                  )}{c.resolved === "true" ? " · resolved" : ""}</span
+                >
+                <div class="failtext">“{c.body}”</div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        {#if validation && submitted}
+          <div class="tbsection sb-validation">
+            <span class="sb-label">Review</span>
+            <span class="vstatus">
+              {#if validation.status === "completed"}
+                Review done
+              {:else if verdictPending}
+                Your verdict is being processed…
+              {:else if validation.lockUser}
+                {holdsValidation
+                  ? "You are reviewing"
+                  : `@${lockUserLogin || validation.lockUser} reviewing`}
+              {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
+                Failed — send it back to redo the correction
+              {:else if selfValidation}
+                Your own submission
+              {:else if alreadyValidated}
+                You reviewed this — another volunteer is needed
+              {:else}
+                Awaiting review
+              {/if}
+            </span>
+            {#each validation.verdicts as v, i (i)}
+              <span class="vrow {v.verdict}"
+                >{#if v.verdict === "pass"}<img
+                    class="hand-pass"
+                    src="/green-hand.svg"
+                    alt=""
+                  /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(
+                  logins,
+                  v.user,
+                )} · {elapsed(v.ts)}</span
+              >
+            {/each}
+            {#if canClaimValidation}
+              <div class="sb-row one">
+                <button
+                  type="button"
+                  class="btn btn-review"
+                  onclick={() => claimValidation()}
+                  disabled={runner.busy}
+                  title="Reserve this review slot.">Claim to review</button
+                >
+              </div>
+            {:else if holdsValidation && !verdictPending}
+              <div class="sb-row two">
+                <button
+                  type="button"
+                  class="btn btn-primary btn-finish"
+                  onclick={() => validate("pass")}
+                  disabled={runner.busy}
+                  title="Record a passing verdict.">Pass</button
+                >
+                <button
+                  type="button"
+                  class="btn btn-danger vfail"
+                  class:on={failOpen}
+                  onclick={() => (failOpen = !failOpen)}
+                  disabled={runner.busy}
+                  title="Record a failing verdict — a fail carries a comment saying why."
+                  >Fail</button
+                >
+              </div>
+            {/if}
+            {#if failOpen && holdsValidation}
+              <input
+                class="fail-note"
+                bind:value={failText}
+                placeholder="Why does this fail?"
+                onkeydown={(e) => {
+                  if (e.key === "Enter" && failText.trim()) validate("fail");
+                }}
+              />
+              <div class="sb-row one">
+                <button
+                  type="button"
+                  class="btn btn-danger"
+                  onclick={() => validate("fail")}
+                  disabled={runner.busy || !failText.trim() || verdictPending}
+                  title="Submit the failing verdict with this comment."
+                  >Submit fail</button
+                >
+              </div>
+            {/if}
+            {#if canSendBack}
+              <button
+                type="button"
+                class="btn btn-danger sendbackbtn"
+                onclick={() => sendBack()}
+                disabled={runner.busy || sendBackPending}
+                title="Return the task to {stage}: attribution and reviews reset."
+                >Send back to {stage}</button
+              >
+            {/if}
+          </div>
+        {/if}
       </div>
     {/snippet}
 
@@ -2210,7 +2472,9 @@
   }
   .zc-inner .znum,
   .zc-inner button {
-    font: 600 11px ui-monospace, monospace;
+    font:
+      600 11px ui-monospace,
+      monospace;
     line-height: 1;
     cursor: pointer;
   }

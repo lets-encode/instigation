@@ -1,69 +1,72 @@
-import adapter from '@sveltejs/adapter-static';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-import { readFileSync } from 'node:fs';
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+import { readFileSync } from "node:fs";
 
 // External services the app talks to, shared with src/lib/forge/config.ts.
 // The session broker needs no CSP entry: it is mounted on the SPA's own
 // origin, covered by 'self'.
 const services = JSON.parse(
-	readFileSync(new URL('./instances-config/services.json', import.meta.url), 'utf8')
+  readFileSync(
+    new URL("./instances-config/services.json", import.meta.url),
+    "utf8",
+  ),
 );
 // The measure-detector the campaign scaffolder POSTs page images to.
 const detectorOrigin = new URL(services.measureDetectorUrl).origin;
-const dev = process.env.NODE_ENV === 'development';
+const dev = process.env.NODE_ENV === "development";
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-	preprocess: vitePreprocess(),
-	kit: {
-		// The PUBLIC_ env files are read from instances-config/ (same directory as Vite's envDir).
-		env: { dir: 'instances-config' },
-		// Static SPA: all routes are client-rendered and served via the fallback,
-		// so the dynamic /[campaign] route resolves without a server. The output
-		// directory website/ is the web server's document root; the adapter
-		// empties it on every build. The project website lives in static/ and is
-		// copied in verbatim, so its index.html owns "/" — which is why the SPA
-		// fallback is named spa.html, not index.html.
-		adapter: adapter({ pages: 'website', fallback: 'spa.html' }),
-		// Strict CSP as defence in depth: the forge token lives server-side in
-		// the broker session, but scripts on the page could still act through
-		// the authenticated proxy — allow only our own scripts and the exact
-		// hosts the app talks to. `hash` mode works on static pages (nonces
-		// need a server). `ws:` is for Vite's dev-server HMR socket only.
-		csp: {
-			mode: 'hash',
-			directives: {
-				'default-src': ['self'],
-				// 'wasm-unsafe-eval' permits compiling WebAssembly (the Verovio
-				// score renderer) but not JS eval().
-				'script-src': ['self', 'wasm-unsafe-eval'],
-				'style-src': ['self', 'unsafe-inline'],
-				// avatars: the signed-in user's avatar. raw.githubusercontent.com:
-				// repo file contents by URL (the Contents API download_url) — the
-				// page facsimiles the zone editor renders as a background, tokenised
-				// for private repos. blob: previews page images the browser itself
-				// holds (the onboarding wizard's upload, before it is committed);
-				// it grants no remote origin.
-				'img-src': [
-					'self',
-					'blob:',
-					'https://avatars.githubusercontent.com',
-					'https://raw.githubusercontent.com'
-				],
-				// music-encoding.org: the MEI schema the pre-submission check
-				// validates against (src/lib/mei-check.ts).
-				'connect-src': [
-					'self',
-					'https://api.github.com',
-					'https://music-encoding.org',
-					detectorOrigin,
-					...(dev ? ['ws:'] : [])
-				],
-				'base-uri': ['self'],
-				'object-src': ['none']
-			}
-		}
-	}
+  preprocess: vitePreprocess(),
+  kit: {
+    // The PUBLIC_ env files are read from instances-config/ (same directory as Vite's envDir).
+    env: { dir: "instances-config" },
+    // Static SPA: all routes are client-rendered and served via the fallback,
+    // so the dynamic /[campaign] route resolves without a server. The output
+    // directory website/ is the web server's document root; the adapter
+    // empties it on every build. The project website lives in static/ and is
+    // copied in verbatim, so its index.html owns "/" — which is why the SPA
+    // fallback is named spa.html, not index.html.
+    adapter: adapter({ pages: "website", fallback: "spa.html" }),
+    // Strict CSP as defence in depth: the forge token lives server-side in
+    // the broker session, but scripts on the page could still act through
+    // the authenticated proxy — allow only our own scripts and the exact
+    // hosts the app talks to. `hash` mode works on static pages (nonces
+    // need a server). `ws:` is for Vite's dev-server HMR socket only.
+    csp: {
+      mode: "hash",
+      directives: {
+        "default-src": ["self"],
+        // 'wasm-unsafe-eval' permits compiling WebAssembly (the Verovio
+        // score renderer) but not JS eval().
+        "script-src": ["self", "wasm-unsafe-eval"],
+        "style-src": ["self", "unsafe-inline"],
+        // avatars: the signed-in user's avatar. raw.githubusercontent.com:
+        // repo file contents by URL (the Contents API download_url) — the
+        // page facsimiles the zone editor renders as a background, tokenised
+        // for private repos. blob: previews page images the browser itself
+        // holds (the onboarding wizard's upload, before it is committed);
+        // it grants no remote origin.
+        "img-src": [
+          "self",
+          "blob:",
+          "https://avatars.githubusercontent.com",
+          "https://raw.githubusercontent.com",
+        ],
+        // music-encoding.org: the MEI schema the pre-submission check
+        // validates against (src/lib/mei-check.ts).
+        "connect-src": [
+          "self",
+          "https://api.github.com",
+          "https://music-encoding.org",
+          detectorOrigin,
+          ...(dev ? ["ws:"] : []),
+        ],
+        "base-uri": ["self"],
+        "object-src": ["none"],
+      },
+    },
+  },
 };
 
 export default config;

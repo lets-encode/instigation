@@ -348,7 +348,8 @@ export async function resumeDraft(
   onProgress: (done: number, total: number) => void,
 ): Promise<void> {
   const stored = readDraft(handle);
-  if (!stored) throw new Error("it has since been finished or discarded in this browser");
+  if (!stored)
+    throw new Error("it has since been finished or discarded in this browser");
   const paths = stored.entries.imagePaths;
   let images: PageImage[] = [];
   if (stored.repo && paths.length) {

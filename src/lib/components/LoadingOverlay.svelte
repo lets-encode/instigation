@@ -27,10 +27,16 @@
   } = $props();
 </script>
 
-<div class="overlay" role={finished && error ? "alert" : "status"} aria-live="polite">
+<div
+  class="overlay"
+  role={finished && error ? "alert" : "status"}
+  aria-live="polite"
+>
   <div class="overlay-card">
     {#if finished && error}
-      <div class="fail-mark" aria-hidden="true"><Icon name="close" size={22} /></div>
+      <div class="fail-mark" aria-hidden="true">
+        <Icon name="close" size={22} />
+      </div>
       <p class="overlay-title failed">Failed</p>
       <p class="overlay-error">{error}</p>
     {:else if finished}

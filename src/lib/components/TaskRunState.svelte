@@ -42,7 +42,9 @@
         >…</span
       >
     {:else if entry.state === "accepted"}
-      <span class="mark" aria-hidden="true"><Icon name="check" size={12} /></span>
+      <span class="mark" aria-hidden="true"
+        ><Icon name="check" size={12} /></span
+      >
       <span>submission #{entry.prNumber} accepted</span>
     {:else if entry.state === "timeout"}
       <span class="mark" aria-hidden="true">…</span>
@@ -55,7 +57,9 @@
         > is still being processed</span
       >
     {:else}
-      <span class="mark" aria-hidden="true"><Icon name="close" size={12} /></span>
+      <span class="mark" aria-hidden="true"
+        ><Icon name="close" size={12} /></span
+      >
       <span
         >{entry.runFailed
           ? `run for submission #${entry.prNumber} failed`

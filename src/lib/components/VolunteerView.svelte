@@ -81,7 +81,9 @@
   /** Tasks other than the next-task card (which shows its own) with a
       submission still being processed. */
   const running = $derived(
-    cards.filter((c) => c.task !== nextCard?.task && pendingVerdicts.forTask(c.task)),
+    cards.filter(
+      (c) => c.task !== nextCard?.task && pendingVerdicts.forTask(c.task),
+    ),
   );
 
   // The kind filters over the open-task list; a card's kind is the stage its
@@ -94,7 +96,11 @@
     { key: "review", label: "Review" },
     { key: "pre", label: "Setup" },
   ];
-  let kinds = $state<Record<Kind, boolean>>({ enc: true, review: true, pre: true });
+  let kinds = $state<Record<Kind, boolean>>({
+    enc: true,
+    review: true,
+    pre: true,
+  });
   const listed = $derived(openCards.filter((c) => kinds[kindOf(c)]));
   /** Kinds present among the open tasks; the filters show only for those. */
   const presentKinds = $derived(new Set(openCards.map(kindOf)));
@@ -162,7 +168,9 @@
   const nextPiece = $derived(
     nextCard ? pieces[pieceIndex.get(nextCard.task) ?? 0] : undefined,
   );
-  const nextPreview = $derived(nextPiece ? previews[nextPiece.path] : undefined);
+  const nextPreview = $derived(
+    nextPiece ? previews[nextPiece.path] : undefined,
+  );
   const nextPage = $derived(nextCard ? startPage(nextCard) : null);
   /** The next task's own page, when the piece has facsimile pages. */
   const nextPagePreview = $derived<PagePreview | undefined>(
@@ -175,7 +183,9 @@
   const nextContext = $derived.by(() => {
     if (!nextCard) return "";
     const parts = [typeOf(nextCard)];
-    const measures = nextPage ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0) : 0;
+    const measures = nextPage
+      ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0)
+      : 0;
     if (measures) {
       const staves = nextPreview?.staves ?? 0;
       parts.push(
@@ -226,7 +236,11 @@
     const counts = { pre: 0, enc: 0, review: 0 };
     for (const c of pieceTasks(index)) {
       if (c.column === "ready") counts[c.pre ? "pre" : "enc"]++;
-      else if (c.column === "validation" && c.slots.some((s) => s.key === "open")) counts.review++;
+      else if (
+        c.column === "validation" &&
+        c.slots.some((s) => s.key === "open")
+      )
+        counts.review++;
     }
     return counts;
   };
@@ -250,13 +264,23 @@
 
 {#snippet chips(card: BoardCard)}
   {#if card.counts.fails > 0}
-    <span class="chip chip-fail">{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span>
+    <span class="chip chip-fail"
+      >{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span
+    >
   {/if}
   {#if card.counts.comments > 0}
-    <span class="chip chip-note">{card.counts.comments} comment{card.counts.comments === 1 ? "" : "s"}</span>
+    <span class="chip chip-note"
+      >{card.counts.comments} comment{card.counts.comments === 1
+        ? ""
+        : "s"}</span
+    >
   {/if}
   {#if card.counts.questions > 0}
-    <span class="chip chip-question">{card.counts.questions} question{card.counts.questions === 1 ? "" : "s"}</span>
+    <span class="chip chip-question"
+      >{card.counts.questions} question{card.counts.questions === 1
+        ? ""
+        : "s"}</span
+    >
   {/if}
 {/snippet}
 
@@ -303,7 +327,12 @@
               class:btn-primary={!panelOpen}
               onclick={() => (viewer === "" ? login() : onact(nextCard))}
               disabled={busy}
-              title={actTitle(nextCard)}>{actLabel(nextCard)}{#if actLabel(nextCard) === "Claim & open editor"}<Icon name="external" />{/if}</button
+              title={actTitle(nextCard)}
+              >{actLabel(
+                nextCard,
+              )}{#if actLabel(nextCard) === "Claim & open editor"}<Icon
+                  name="external"
+                />{/if}</button
             >
             <button
               type="button"
@@ -328,7 +357,7 @@
           </h2>
           {#if presentKinds.size > 1}
             <span class="vspacer"></span>
-            {#each KINDS.filter((k) => presentKinds.has(k.key)) as kind (kind.key)}
+            {#each KINDS.filter( (k) => presentKinds.has(k.key), ) as kind (kind.key)}
               <button
                 type="button"
                 class="chip-switch"
@@ -362,7 +391,9 @@
                   onclick={() => onact(card)}
                   disabled={busy}
                   title={actTitle(card)}
-                  >{card.column === "validation" ? "Claim to review" : "Claim to encode"}</button
+                  >{card.column === "validation"
+                    ? "Claim to review"
+                    : "Claim to encode"}</button
                 >
               {/if}
             </div>
@@ -412,8 +443,9 @@
                     class="piecename"
                     aria-expanded={open}
                     onclick={() => toggle(piece.path)}
-                    title={open ? "Collapse this piece" : "Show this piece's tasks"}
-                    >{pieceName(piece)}</button
+                    title={open
+                      ? "Collapse this piece"
+                      : "Show this piece's tasks"}>{pieceName(piece)}</button
                   >
                 {/if}
                 <!-- Done, in review and the rest, in the stage colours. -->
@@ -425,19 +457,30 @@
                     <div class="seg review" style="flex: {review}"></div>
                   {/if}
                   {#if p && p.total - p.done - review > 0}
-                    <div class="seg" style="flex: {p.total - p.done - review}"></div>
+                    <div
+                      class="seg"
+                      style="flex: {p.total - p.done - review}"
+                    ></div>
                   {/if}
                 </div>
                 {#if p && p.total > 0 && p.done === p.total}
-                  <span class="piecedone complete"><Icon name="check" size={12} /> done</span>
+                  <span class="piecedone complete"
+                    ><Icon name="check" size={12} /> done</span
+                  >
                 {:else}
-                  <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
+                  <span class="piecedone"
+                    >{p?.done ?? 0} of {p?.total ?? 0} done</span
+                  >
                 {/if}
                 {#if counts.enc > 0}
                   <span class="scount enc">{counts.enc} open</span>
                 {/if}
                 {#if counts.review > 0}
-                  <span class="scount review">{counts.review} review{counts.review === 1 ? "" : "s"}</span>
+                  <span class="scount review"
+                    >{counts.review} review{counts.review === 1
+                      ? ""
+                      : "s"}</span
+                  >
                 {/if}
                 {#if counts.pre > 0}
                   <span class="scount pre">{counts.pre} setup</span>
@@ -451,7 +494,11 @@
                   >View score</button
                 >
                 {#if !lone}
-                  <span class="pchev"><Icon name={open ? "chevron-down" : "chevron-right"} /></span>
+                  <span class="pchev"
+                    ><Icon
+                      name={open ? "chevron-down" : "chevron-right"}
+                    /></span
+                  >
                 {/if}
               </div>
               {#if open}
@@ -459,14 +506,20 @@
                   {#each pieceTasks(index) as card (card.task)}
                     {#if card.column === "blocked" || card.column === "done"}
                       <div class="taskrow still">
-                        <span class="tasktitle">{partTitle(card.title, piece)}</span>
+                        <span class="tasktitle"
+                          >{partTitle(card.title, piece)}</span
+                        >
                         <span class="ttype">{typeOf(card)}</span>
                         <TaskRunState task={card.task} />
                         <span class="vspacer"></span>
                         {#if card.column === "done"}
-                          <span class="merged"><Icon name="check" size={12} /> done</span>
+                          <span class="merged"
+                            ><Icon name="check" size={12} /> done</span
+                          >
                         {:else}
-                          <span class="waits">waits for {partTitle(card.waitsFor, piece)}</span>
+                          <span class="waits"
+                            >waits for {partTitle(card.waitsFor, piece)}</span
+                          >
                         {/if}
                       </div>
                     {:else}
@@ -475,7 +528,8 @@
                           type="button"
                           class="tasktitle"
                           onclick={() => onopen(card.task)}
-                          title="Open this task">{partTitle(card.title, piece)}</button
+                          title="Open this task"
+                          >{partTitle(card.title, piece)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
                         <TaskRunState task={card.task} />

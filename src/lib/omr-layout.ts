@@ -2,14 +2,17 @@
 // into the boxes the zone editor works with: `systemMeasure` boxes become the
 // measure zones, `staff` boxes the staff zones. Pure functions, no DOM.
 
-import type { MeasureBox, ZoneModel } from './mei-facsimile.ts';
-import type { OmrPipeline } from './omr-client.ts';
+import type { MeasureBox, ZoneModel } from "./mei-facsimile.ts";
+import type { OmrPipeline } from "./omr-client.ts";
 
 /** The parts of a COCO layout document that are read. */
 export interface CocoLayout {
-	categories?: { id: number; name: string }[];
-	images?: { width: number; height: number }[];
-	annotations?: { category_id: number; bbox: [number, number, number, number] }[];
+  categories?: { id: number; name: string }[];
+  images?: { width: number; height: number }[];
+  annotations?: {
+    category_id: number;
+    bbox: [number, number, number, number];
+  }[];
 }
 
 /**
@@ -19,27 +22,30 @@ export interface CocoLayout {
  * another model run.
  */
 export interface LayoutRecord {
-	model: OmrPipeline;
-	/** Always false: the boxes in this file are not corrected. */
-	corrected: false;
-	note: string;
-	/** One entry per page, `image` as the score's graphic target. */
-	pages: { image: string; layout: CocoLayout }[];
+  model: OmrPipeline;
+  /** Always false: the boxes in this file are not corrected. */
+  corrected: false;
+  note: string;
+  /** One entry per page, `image` as the score's graphic target. */
+  pages: { image: string; layout: CocoLayout }[];
 }
 
 export const LAYOUT_RECORD_NOTE =
-	'Raw output of the layout model, not corrected. The corrected staff and measure boxes are the zones in score.mei.';
+  "Raw output of the layout model, not corrected. The corrected staff and measure boxes are the zones in score.mei.";
 
 /** The record for the pages' raw layouts, as `layout.json` is written. */
-export function layoutRecord(model: OmrPipeline, pages: { image: string; layout: CocoLayout }[]): LayoutRecord {
-	return { model, corrected: false, note: LAYOUT_RECORD_NOTE, pages };
+export function layoutRecord(
+  model: OmrPipeline,
+  pages: { image: string; layout: CocoLayout }[],
+): LayoutRecord {
+  return { model, corrected: false, note: LAYOUT_RECORD_NOTE, pages };
 }
 
 /** The boxes of one page, in the page image's pixel space, unsorted. */
 export interface PageLayout {
-	measures: MeasureBox[];
-	staves: MeasureBox[];
-	grandstaves: MeasureBox[];
+  measures: MeasureBox[];
+  staves: MeasureBox[];
+  grandstaves: MeasureBox[];
 }
 
 /**
@@ -55,33 +61,36 @@ export const LAYOUT_PARAMETERS: Record<string, unknown> = {};
  * the document declares another image size, clamped to the page, rounded to
  * whole pixels. Boxes with no area after clamping are dropped.
  */
-export function layoutBoxes(layout: CocoLayout, page: { width: number; height: number }): PageLayout {
-	const names = new Map((layout.categories ?? []).map((c) => [c.id, c.name]));
-	const declared = layout.images?.[0];
-	const sx = declared?.width ? page.width / declared.width : 1;
-	const sy = declared?.height ? page.height / declared.height : 1;
-	const out: PageLayout = { measures: [], staves: [], grandstaves: [] };
-	for (const a of layout.annotations ?? []) {
-		const name = names.get(a.category_id);
-		const target =
-			name === 'systemMeasure'
-				? out.measures
-				: name === 'staff'
-					? out.staves
-					: name === 'grandstaff'
-						? out.grandstaves
-						: null;
-		if (!target || !Array.isArray(a.bbox) || a.bbox.length !== 4) continue;
-		const [x, y, w, h] = a.bbox;
-		const box = {
-			ulx: Math.max(0, Math.round(x * sx)),
-			uly: Math.max(0, Math.round(y * sy)),
-			lrx: Math.min(page.width, Math.round((x + w) * sx)),
-			lry: Math.min(page.height, Math.round((y + h) * sy))
-		};
-		if (box.lrx > box.ulx && box.lry > box.uly) target.push(box);
-	}
-	return out;
+export function layoutBoxes(
+  layout: CocoLayout,
+  page: { width: number; height: number },
+): PageLayout {
+  const names = new Map((layout.categories ?? []).map((c) => [c.id, c.name]));
+  const declared = layout.images?.[0];
+  const sx = declared?.width ? page.width / declared.width : 1;
+  const sy = declared?.height ? page.height / declared.height : 1;
+  const out: PageLayout = { measures: [], staves: [], grandstaves: [] };
+  for (const a of layout.annotations ?? []) {
+    const name = names.get(a.category_id);
+    const target =
+      name === "systemMeasure"
+        ? out.measures
+        : name === "staff"
+          ? out.staves
+          : name === "grandstaff"
+            ? out.grandstaves
+            : null;
+    if (!target || !Array.isArray(a.bbox) || a.bbox.length !== 4) continue;
+    const [x, y, w, h] = a.bbox;
+    const box = {
+      ulx: Math.max(0, Math.round(x * sx)),
+      uly: Math.max(0, Math.round(y * sy)),
+      lrx: Math.min(page.width, Math.round((x + w) * sx)),
+      lry: Math.min(page.height, Math.round((y + h) * sy)),
+    };
+    if (box.lrx > box.ulx && box.lry > box.uly) target.push(box);
+  }
+  return out;
 }
 
 /**
@@ -93,19 +102,19 @@ export const STAFF_CROP_MARGIN = 0.9;
 
 /** The crop rectangle for each staff box: the box grown by the margin, clamped to the page. */
 export function staffCrops(
-	staves: MeasureBox[],
-	page: { width: number; height: number },
-	margin = STAFF_CROP_MARGIN
+  staves: MeasureBox[],
+  page: { width: number; height: number },
+  margin = STAFF_CROP_MARGIN,
 ): MeasureBox[] {
-	return staves.map((box) => {
-		const pad = Math.round((box.lry - box.uly) * margin);
-		return {
-			ulx: Math.max(0, box.ulx - pad),
-			uly: Math.max(0, box.uly - pad),
-			lrx: Math.min(page.width, box.lrx + pad),
-			lry: Math.min(page.height, box.lry + pad)
-		};
-	});
+  return staves.map((box) => {
+    const pad = Math.round((box.lry - box.uly) * margin);
+    return {
+      ulx: Math.max(0, box.ulx - pad),
+      uly: Math.max(0, box.uly - pad),
+      lrx: Math.min(page.width, box.lrx + pad),
+      lry: Math.min(page.height, box.lry + pad),
+    };
+  });
 }
 
 /**
@@ -115,36 +124,42 @@ export function staffCrops(
  * most, top to bottom. A system may hold fewer staves than another, or none.
  * `unplaced` counts the staff boxes that overlap no system.
  */
-export function pageSystems<B extends MeasureBox>(page: { zones: ZoneModel[]; staves?: B[] }): {
-	systems: B[][];
-	unplaced: number;
+export function pageSystems<B extends MeasureBox>(page: {
+  zones: ZoneModel[];
+  staves?: B[];
+}): {
+  systems: B[][];
+  unplaced: number;
 } {
-	const rows: { uly: number; lry: number }[] = [];
-	for (const [i, zone] of page.zones.entries()) {
-		const row = rows[rows.length - 1];
-		if (i === 0 || zone.pb || zone.sb) rows.push({ uly: zone.box.uly, lry: zone.box.lry });
-		else {
-			row.uly = Math.min(row.uly, zone.box.uly);
-			row.lry = Math.max(row.lry, zone.box.lry);
-		}
-	}
-	const systems: B[][] = rows.map(() => []);
-	let unplaced = 0;
-	for (const staff of page.staves ?? []) {
-		let best = -1;
-		let bestOverlap = 0;
-		for (const [r, row] of rows.entries()) {
-			const overlap = Math.min(staff.lry, row.lry) - Math.max(staff.uly, row.uly);
-			if (overlap > bestOverlap) {
-				best = r;
-				bestOverlap = overlap;
-			}
-		}
-		if (best < 0) unplaced++;
-		else systems[best].push(staff);
-	}
-	for (const system of systems) system.sort((a, b) => a.uly - b.uly || a.ulx - b.ulx);
-	return { systems, unplaced };
+  const rows: { uly: number; lry: number }[] = [];
+  for (const [i, zone] of page.zones.entries()) {
+    const row = rows[rows.length - 1];
+    if (i === 0 || zone.pb || zone.sb)
+      rows.push({ uly: zone.box.uly, lry: zone.box.lry });
+    else {
+      row.uly = Math.min(row.uly, zone.box.uly);
+      row.lry = Math.max(row.lry, zone.box.lry);
+    }
+  }
+  const systems: B[][] = rows.map(() => []);
+  let unplaced = 0;
+  for (const staff of page.staves ?? []) {
+    let best = -1;
+    let bestOverlap = 0;
+    for (const [r, row] of rows.entries()) {
+      const overlap =
+        Math.min(staff.lry, row.lry) - Math.max(staff.uly, row.uly);
+      if (overlap > bestOverlap) {
+        best = r;
+        bestOverlap = overlap;
+      }
+    }
+    if (best < 0) unplaced++;
+    else systems[best].push(staff);
+  }
+  for (const system of systems)
+    system.sort((a, b) => a.uly - b.uly || a.ulx - b.ulx);
+  return { systems, unplaced };
 }
 
 /**
@@ -152,6 +167,11 @@ export function pageSystems<B extends MeasureBox>(page: { zones: ZoneModel[]; st
  * layout holds, or 1 when no system holds a staff. A system that shows fewer
  * staves omits some of the piece's.
  */
-export function staffCountOf(pages: { zones: ZoneModel[]; staves?: MeasureBox[] }[]): number {
-	return Math.max(1, ...pages.flatMap((page) => pageSystems(page).systems.map((s) => s.length)));
+export function staffCountOf(
+  pages: { zones: ZoneModel[]; staves?: MeasureBox[] }[],
+): number {
+  return Math.max(
+    1,
+    ...pages.flatMap((page) => pageSystems(page).systems.map((s) => s.length)),
+  );
 }

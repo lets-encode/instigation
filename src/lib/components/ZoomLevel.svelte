@@ -53,7 +53,8 @@
 
   $effect(() => {
     if (fit === "width") value = 100;
-    else if (fit === "page" && fitPage !== undefined) value = Math.max(least, fitPage);
+    else if (fit === "page" && fitPage !== undefined)
+      value = Math.max(least, fitPage);
   });
 
   // The slider runs on a log scale: equal drags multiply the zoom equally,
@@ -97,7 +98,8 @@
       class:on={fit === "page"}
       onclick={() => (fit = "page")}
       aria-label="Fit the whole page"
-      title="Fit the whole page in the pane, top to bottom"><FitIcon kind="page" /></button
+      title="Fit the whole page in the pane, top to bottom"
+      ><FitIcon kind="page" /></button
     >
   {/if}
 </span>

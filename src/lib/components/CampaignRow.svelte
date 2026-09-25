@@ -79,14 +79,15 @@
         ? "Claim & open zone editor"
         : "Claim & open editor";
   };
-
 </script>
 
 <div class="shelfrow">
   <a class="rowlink" href={`/${stats.name}`}>
     <span class="spine">
       {#if preview?.thumb}
-        <span class="paper"><img src={preview.thumb} alt="" loading="lazy" /></span>
+        <span class="paper"
+          ><img src={preview.thumb} alt="" loading="lazy" /></span
+        >
       {:else}
         <span class="nopreview">no preview</span>
       {/if}
@@ -101,12 +102,16 @@
           <span class="pill newbadge">NEW</span>
         {/if}
         {#if attention > 0}
-          <span class="attn">{attention} need{attention === 1 ? "s" : ""} attention</span>
+          <span class="attn"
+            >{attention} need{attention === 1 ? "s" : ""} attention</span
+          >
         {/if}
       </span>
       <span class="byline">{byline}</span>
       <span class="progress">
-        <span class="bar"><span class="fill" style={`width:${pct}%`}></span></span>
+        <span class="bar"
+          ><span class="fill" style={`width:${pct}%`}></span></span
+        >
         <span class="count">{stats.done}/{stats.total}</span>
       </span>
     </span>
@@ -115,7 +120,9 @@
         <span class="incstrip">{@html preview.incipit}</span>
       {:else}
         <span class="incnote">
-          {preview?.incipitPending ? "incipit appears after the setup tasks" : "no preview"}
+          {preview?.incipitPending
+            ? "incipit appears after the setup tasks"
+            : "no preview"}
         </span>
       {/if}
     </span>
@@ -131,12 +138,21 @@
       {#if next.action === "encode" || next.action === "review"}
         <button
           type="button"
-          class="btn btn-primary {next.action === 'review' ? 'btn-review' : next.pre ? 'btn-pre' : 'btn-enc'}"
+          class="btn btn-primary {next.action === 'review'
+            ? 'btn-review'
+            : next.pre
+              ? 'btn-pre'
+              : 'btn-enc'}"
           disabled={busy}
-          onclick={() => onact(stats, next)}>{actLabel(next)}{#if actLabel(next) === "Claim & open editor"}<Icon name="external" />{/if}</button
+          onclick={() => onact(stats, next)}
+          >{actLabel(next)}{#if actLabel(next) === "Claim & open editor"}<Icon
+              name="external"
+            />{/if}</button
         >
       {:else if next.action === "continue"}
-        <a class="continue" href={`/${stats.name}?task=${encodeURIComponent(next.task)}`}
+        <a
+          class="continue"
+          href={`/${stats.name}?task=${encodeURIComponent(next.task)}`}
           >Continue <Icon name="arrow-right" size={12} /></a
         >
       {/if}

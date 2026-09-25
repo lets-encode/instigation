@@ -5,15 +5,15 @@
 // SESSION sentinel, which routes them through the broker's /proxy — the token
 // itself is never present in the browser.
 
-import { provider } from './forge/config.ts';
-import { replaceState } from '$app/navigation';
-import { createForge } from './forge/index.ts';
-import { routeSessionVia, SESSION } from './forge/github-rest.ts';
-import type { ForgeClient, GitHubUser } from './forge/types.ts';
+import { provider } from "./forge/config.ts";
+import { replaceState } from "$app/navigation";
+import { createForge } from "./forge/index.ts";
+import { routeSessionVia, SESSION } from "./forge/github-rest.ts";
+import type { ForgeClient, GitHubUser } from "./forge/types.ts";
 
 routeSessionVia(`${provider.brokerUrl}/proxy/api.github.com`);
 
-type Status = 'loading' | 'authenticated' | 'anonymous';
+type Status = "loading" | "authenticated" | "anonymous";
 
 /**
  * Reactive auth state, shared across the app. `token` is not a credential: it
@@ -21,18 +21,18 @@ type Status = 'loading' | 'authenticated' | 'anonymous';
  * session cookie) and null when anonymous.
  */
 export const auth = $state<{
-	token: string | null;
-	user: GitHubUser | null;
-	scope: string;
-	error: string | null;
-	status: Status;
-}>({ token: null, user: null, scope: '', error: null, status: 'loading' });
+  token: string | null;
+  user: GitHubUser | null;
+  scope: string;
+  error: string | null;
+  status: Status;
+}>({ token: null, user: null, scope: "", error: null, status: "loading" });
 
 function clear(): void {
-	auth.token = null;
-	auth.user = null;
-	auth.scope = '';
-	auth.status = 'anonymous';
+  auth.token = null;
+  auth.user = null;
+  auth.scope = "";
+  auth.status = "anonymous";
 }
 
 /**
@@ -41,58 +41,67 @@ function clear(): void {
  * any ?auth_error the broker redirected back with after a failed login.
  */
 export async function initAuth(): Promise<void> {
-	const params = new URLSearchParams(location.search);
-	if (params.has('auth_error')) {
-		auth.error = params.get('auth_error');
-		params.delete('auth_error');
-		const query = params.toString();
-		replaceState(location.pathname + (query ? `?${query}` : ''), {});
-	}
+  const params = new URLSearchParams(location.search);
+  if (params.has("auth_error")) {
+    auth.error = params.get("auth_error");
+    params.delete("auth_error");
+    const query = params.toString();
+    replaceState(location.pathname + (query ? `?${query}` : ""), {});
+  }
 
-	let resolved;
-	try {
-		resolved = await createForge(SESSION).getAuthenticatedUser();
-	} catch (e) {
-		// A failed session check must not leave the app stuck on "loading":
-		// continue anonymously and surface the error. A SyntaxError means the
-		// response was not JSON: the broker mount is not served on this origin
-		// and a page (the SPA fallback) came back instead of session data.
-		clear();
-		auth.error =
-			e instanceof SyntaxError
-				? `the session service at ${provider.brokerUrl} is not answering on this server.`
-				: (e as Error).message;
-		return;
-	}
-	if (!resolved) {
-		clear();
-		return;
-	}
-	auth.token = SESSION;
-	auth.user = resolved.user;
-	auth.scope = resolved.scopes;
-	auth.status = 'authenticated';
-	console.log('[auth] logged in as', resolved.user.login, 'scope:', resolved.scopes);
+  let resolved;
+  try {
+    resolved = await createForge(SESSION).getAuthenticatedUser();
+  } catch (e) {
+    // A failed session check must not leave the app stuck on "loading":
+    // continue anonymously and surface the error. A SyntaxError means the
+    // response was not JSON: the broker mount is not served on this origin
+    // and a page (the SPA fallback) came back instead of session data.
+    clear();
+    auth.error =
+      e instanceof SyntaxError
+        ? `the session service at ${provider.brokerUrl} is not answering on this server.`
+        : (e as Error).message;
+    return;
+  }
+  if (!resolved) {
+    clear();
+    return;
+  }
+  auth.token = SESSION;
+  auth.user = resolved.user;
+  auth.scope = resolved.scopes;
+  auth.status = "authenticated";
+  console.log(
+    "[auth] logged in as",
+    resolved.user.login,
+    "scope:",
+    resolved.scopes,
+  );
 }
 
 /** Begin the OAuth dance: the broker remembers `returnTo` and hands off to GitHub. */
-export function login(returnTo: string = location.pathname + location.search): void {
-	console.log('[auth] starting OAuth login, returning to', returnTo);
-	location.assign(`${provider.brokerUrl}/login?return_to=${encodeURIComponent(returnTo)}`);
+export function login(
+  returnTo: string = location.pathname + location.search,
+): void {
+  console.log("[auth] starting OAuth login, returning to", returnTo);
+  location.assign(
+    `${provider.brokerUrl}/login?return_to=${encodeURIComponent(returnTo)}`,
+  );
 }
 
 /** Log out: clear local state and end the broker session (which revokes the token). */
 export async function logout(): Promise<void> {
-	console.log('[auth] logging out');
-	clear();
-	try {
-		await fetch(`${provider.brokerUrl}/logout`, { method: 'POST' });
-	} catch {
-		// best-effort; the local session is already cleared
-	}
+  console.log("[auth] logging out");
+  clear();
+  try {
+    await fetch(`${provider.brokerUrl}/logout`, { method: "POST" });
+  } catch {
+    // best-effort; the local session is already cleared
+  }
 }
 
 /** A ForgeClient bound to the current session, or null when anonymous. */
 export function forge(): ForgeClient | null {
-	return auth.token ? createForge(auth.token) : null;
+  return auth.token ? createForge(auth.token) : null;
 }

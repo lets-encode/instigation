@@ -90,7 +90,8 @@
   // wizard, so their pieces can be re-added rather than being lost.
   const unusedEncodings = $derived(
     wizard.encodings.filter(
-      (encoding) => !wizard.pieces.some((p) => p.encodingName === encoding.name),
+      (encoding) =>
+        !wizard.pieces.some((p) => p.encodingName === encoding.name),
     ),
   );
 
@@ -157,7 +158,8 @@
   function copyFromSource() {
     // The title names this piece, so a title already given stays; an empty one
     // takes the source's.
-    const title = wizard.pieces[selected].meta.title.trim() || wizard.source.title;
+    const title =
+      wizard.pieces[selected].meta.title.trim() || wizard.source.title;
     wizard.pieces[selected].meta = { ...copyMetadata(wizard.source), title };
   }
 
@@ -167,14 +169,19 @@
   // A facsimile piece with no regions would produce no tasks at all, so it
   // blocks finishing unless marked as having none on purpose.
   const unmarked = $derived(
-    wizard.pieces.filter((p) => p.kind === "facsimile" && p.zones.length === 0 && !p.noRegions),
+    wizard.pieces.filter(
+      (p) => p.kind === "facsimile" && p.zones.length === 0 && !p.noRegions,
+    ),
   );
 
-  const labelOf = (p: (typeof wizard.pieces)[number]) => p.meta.title.trim() || p.id;
+  const labelOf = (p: (typeof wizard.pieces)[number]) =>
+    p.meta.title.trim() || p.id;
   const rangeOf = (p: (typeof wizard.pieces)[number]) => {
     if (p.kind === "encoded") return "encoding";
     if (p.kind === "physical-only") {
-      return p.pages ? `${p.pages} page${p.pages === 1 ? "" : "s"}` : "physical only";
+      return p.pages
+        ? `${p.pages} page${p.pages === 1 ? "" : "s"}`
+        : "physical only";
     }
     const on = pagesCovered(p);
     if (on.length) return `pages ${formatRanges(on.map((s) => s + 1))}`;
@@ -190,7 +197,9 @@
   const railStatus = $derived.by(() => {
     const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
     if (!wizard.images.length) return count;
-    const marked = new Set(wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)));
+    const marked = new Set(
+      wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)),
+    );
     const open = wizard.images.filter((_, i) => !marked.has(i)).length;
     return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
   });
@@ -204,7 +213,11 @@
 </script>
 
 {#snippet material()}
-  <PieceZoneEditor bind:pieces={wizard.pieces} {pages} selectedPiece={selected} />
+  <PieceZoneEditor
+    bind:pieces={wizard.pieces}
+    {pages}
+    selectedPiece={selected}
+  />
 {/snippet}
 
 <WizardCard
@@ -217,20 +230,42 @@
   backDisabled={busy}
   onNext={last ? () => finisher.run() : nextStep}
   nextDisabled={busy || !wizard.pieces.length || unmarked.length > 0}
-  nextLabel={!last ? "Continue" : busy ? "Working…" : finisher.error ? "Retry" : "Finish"}
-  nextIcon={!last ? "arrow-right" : busy ? null : finisher.error ? "arrow-right" : "check"}
+  nextLabel={!last
+    ? "Continue"
+    : busy
+      ? "Working…"
+      : finisher.error
+        ? "Retry"
+        : "Finish"}
+  nextIcon={!last
+    ? "arrow-right"
+    : busy
+      ? null
+      : finisher.error
+        ? "arrow-right"
+        : "check"}
   finish={last}
 >
   <div class="pieces-head">
     <span class="pieces-count">Pieces · {wizard.pieces.length}</span>
-    <button type="button" class="pill pill-sm" onclick={addPiece}>+ Add piece</button>
+    <button type="button" class="pill pill-sm" onclick={addPiece}
+      >+ Add piece</button
+    >
   </div>
 
   <div class="pieces">
     {#each wizard.pieces as p, i (p.id)}
-      <div class="piece" class:selected={selected === i} style="--piece: {pieceColour(i)}">
+      <div
+        class="piece"
+        class:selected={selected === i}
+        style="--piece: {pieceColour(i)}"
+      >
         <div class="piece-row">
-          <button type="button" class="piece-head" onclick={() => selectPiece(i)}>
+          <button
+            type="button"
+            class="piece-head"
+            onclick={() => selectPiece(i)}
+          >
             <span class="swatch"></span>
             <span class="name" class:plain={selected !== i}>{labelOf(p)}</span>
             <span class="range">{rangeOf(p)}</span>
@@ -261,7 +296,12 @@
         </div>
         {#if selected === i && p.kind === "facsimile" && pages.length}
           <div class="piece-actions">
-            <button type="button" class="pill pill-sm" onclick={assignAllPages} disabled={busy}>
+            <button
+              type="button"
+              class="pill pill-sm"
+              onclick={assignAllPages}
+              disabled={busy}
+            >
               Assign all pages
             </button>
             <button
@@ -316,81 +356,82 @@
 
   {#if piece}
     <div class="piece-meta" style="--piece: {pieceColour(selected)}">
-    <MetadataForm bind:meta={wizard.pieces[selected].meta} variant="piece">
-      {#snippet heading()}
-        <span class="meta-for">
-          Metadata for <span style="color: {pieceColour(selected)}">{label}</span>
-        </span>
-      {/snippet}
-      {#snippet subhead()}
-        <div class="copy-row">
-          <button type="button" class="pill pill-sm" onclick={copyFromSource}>
-            Copy from the source
-          </button>
-          {#if wizard.pieces.length > 1}
-            <select
-              class="copy-select"
-              value=""
-              aria-label="Copy the metadata from another piece"
-              onchange={(e) => {
-                const el = e.currentTarget;
-                copyFromPiece(Number(el.value));
-                el.value = "";
-              }}
+      <MetadataForm bind:meta={wizard.pieces[selected].meta} variant="piece">
+        {#snippet heading()}
+          <span class="meta-for">
+            Metadata for <span style="color: {pieceColour(selected)}"
+              >{label}</span
             >
-              <option value="" disabled>Copy from piece…</option>
-              {#each wizard.pieces as other, i (other.id)}
-                {#if i !== selected}
-                  <option value={i}>{labelOf(other)}</option>
-                {/if}
-              {/each}
-            </select>
-          {/if}
-        </div>
-      {/snippet}
-    </MetadataForm>
+          </span>
+        {/snippet}
+        {#snippet subhead()}
+          <div class="copy-row">
+            <button type="button" class="pill pill-sm" onclick={copyFromSource}>
+              Copy from the source
+            </button>
+            {#if wizard.pieces.length > 1}
+              <select
+                class="copy-select"
+                value=""
+                aria-label="Copy the metadata from another piece"
+                onchange={(e) => {
+                  const el = e.currentTarget;
+                  copyFromPiece(Number(el.value));
+                  el.value = "";
+                }}
+              >
+                <option value="" disabled>Copy from piece…</option>
+                {#each wizard.pieces as other, i (other.id)}
+                  {#if i !== selected}
+                    <option value={i}>{labelOf(other)}</option>
+                  {/if}
+                {/each}
+              </select>
+            {/if}
+          </div>
+        {/snippet}
+      </MetadataForm>
 
-    {#if piece.kind === "facsimile"}
-      <p class="covered">
-        <strong style="color: {pieceColour(selected)}">{label}</strong>
-        {#if covered.length}
-          covers page{covered.length === 1 ? "" : "s"}
-          {formatRanges(covered.map((p) => p + 1))}. Adjust its regions in the
-          pane on the left.
-        {:else if piece.noRegions}
-          covers no regions on purpose and gets no tasks.
-        {:else}
-          has no regions marked yet. Mark them in the pane on the left.
-        {/if}
-      </p>
-    {:else if piece.kind === "physical-only"}
-      <p class="covered">
-        <strong style="color: {pieceColour(selected)}">{label}</strong>
-        is transcribed from the physical source — encoding starts from a blank
-        score.
-      </p>
-      <label class="field pages-field">
-        Pages in this piece
-        <input
-          class="input pages-input"
-          type="number"
-          min="1"
-          step="1"
-          value={piece.pages ?? ""}
-          oninput={(e) => setPageCount((e.target as HTMLInputElement).value)}
-          disabled={busy}
-        />
-        <span class="hint">
-          Optional. With a page count, each page becomes its own encoding task;
-          without one, the piece is a single task.
-        </span>
-      </label>
-    {:else}
-      <p class="covered">
-        <strong style="color: {pieceColour(selected)}">{label}</strong>
-        comes from the uploaded encoding <code>{piece.encodingName}</code>.
-      </p>
-    {/if}
+      {#if piece.kind === "facsimile"}
+        <p class="covered">
+          <strong style="color: {pieceColour(selected)}">{label}</strong>
+          {#if covered.length}
+            covers page{covered.length === 1 ? "" : "s"}
+            {formatRanges(covered.map((p) => p + 1))}. Adjust its regions in the
+            pane on the left.
+          {:else if piece.noRegions}
+            covers no regions on purpose and gets no tasks.
+          {:else}
+            has no regions marked yet. Mark them in the pane on the left.
+          {/if}
+        </p>
+      {:else if piece.kind === "physical-only"}
+        <p class="covered">
+          <strong style="color: {pieceColour(selected)}">{label}</strong>
+          is transcribed from the physical source — encoding starts from a blank score.
+        </p>
+        <label class="field pages-field">
+          Pages in this piece
+          <input
+            class="input pages-input"
+            type="number"
+            min="1"
+            step="1"
+            value={piece.pages ?? ""}
+            oninput={(e) => setPageCount((e.target as HTMLInputElement).value)}
+            disabled={busy}
+          />
+          <span class="hint">
+            Optional. With a page count, each page becomes its own encoding
+            task; without one, the piece is a single task.
+          </span>
+        </label>
+      {:else}
+        <p class="covered">
+          <strong style="color: {pieceColour(selected)}">{label}</strong>
+          comes from the uploaded encoding <code>{piece.encodingName}</code>.
+        </p>
+      {/if}
     </div>
   {:else}
     <p class="covered">Add a piece to describe what this campaign encodes.</p>
@@ -400,8 +441,8 @@
     <p class="msg-warn" role="status">
       {unmarked.map((p) => p.meta.title.trim() || p.id).join(", ")}
       {unmarked.length === 1 ? "has" : "have"} no regions marked, so
-      {unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark
-      regions, or mark the piece as having no regions on purpose, to finish.
+      {unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark regions,
+      or mark the piece as having no regions on purpose, to finish.
     </p>
   {/if}
 

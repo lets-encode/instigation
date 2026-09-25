@@ -17,13 +17,20 @@
 // checked afterwards (assertSpliceIntegrity) so a fork that smuggles in a
 // page break or a duplicate measure is rejected rather than merged.
 
-import { escapeRegex } from './mei-xml.ts';
+import { escapeRegex } from "./mei-xml.ts";
 
 /** The first facs-matched `<pb>` for `surfaceId` at or after `from`. */
-function pbTagAt(xml: string, surfaceId: string, from = 0): RegExpExecArray | null {
-	const pb = new RegExp(`<pb\\b[^>]*\\bfacs="#${escapeRegex(surfaceId)}"[^>]*>`, 'g');
-	pb.lastIndex = from;
-	return pb.exec(xml);
+function pbTagAt(
+  xml: string,
+  surfaceId: string,
+  from = 0,
+): RegExpExecArray | null {
+  const pb = new RegExp(
+    `<pb\\b[^>]*\\bfacs="#${escapeRegex(surfaceId)}"[^>]*>`,
+    "g",
+  );
+  pb.lastIndex = from;
+  return pb.exec(xml);
 }
 
 /**
@@ -34,17 +41,17 @@ function pbTagAt(xml: string, surfaceId: string, from = 0): RegExpExecArray | nu
  * where the integrity checks see it, instead of silently truncating there.
  */
 function pageSpanAt(
-	xml: string,
-	surfaceId: string,
-	nextSurfaceId: string | null
+  xml: string,
+  surfaceId: string,
+  nextSurfaceId: string | null,
 ): { from: number; to: number } {
-	const pb = pbTagAt(xml, surfaceId);
-	if (!pb) throw new Error(`No page break found for ${surfaceId}.`);
-	const from = pb.index + pb[0].length;
-	if (nextSurfaceId === null) return { from, to: closeOfEnclosure(xml, from) };
-	const next = pbTagAt(xml, nextSurfaceId, from);
-	if (!next) throw new Error(`No page break found for ${nextSurfaceId}.`);
-	return { from, to: next.index };
+  const pb = pbTagAt(xml, surfaceId);
+  if (!pb) throw new Error(`No page break found for ${surfaceId}.`);
+  const from = pb.index + pb[0].length;
+  if (nextSurfaceId === null) return { from, to: closeOfEnclosure(xml, from) };
+  const next = pbTagAt(xml, nextSurfaceId, from);
+  if (!next) throw new Error(`No page break found for ${nextSurfaceId}.`);
+  return { from, to: next.index };
 }
 
 // A span that runs to the end of the body must not swallow the enclosing
@@ -52,21 +59,23 @@ function pageSpanAt(
 // enclosing it. <section>/<mdiv> elements opened inside the span are tracked
 // by depth, so a nested section's close does not end the span early.
 function closeOfEnclosure(xml: string, from: number): number {
-	const tags = /<(\/?)(section|mdiv)\b[^>]*?(\/?)>/g;
-	tags.lastIndex = from;
-	let depth = 0;
-	for (let match = tags.exec(xml); match; match = tags.exec(xml)) {
-		if (match[3]) continue; // self-closing: opens nothing
-		if (!match[1]) depth++;
-		else if (depth === 0) return match.index;
-		else depth--;
-	}
-	return xml.length;
+  const tags = /<(\/?)(section|mdiv)\b[^>]*?(\/?)>/g;
+  tags.lastIndex = from;
+  let depth = 0;
+  for (let match = tags.exec(xml); match; match = tags.exec(xml)) {
+    if (match[3]) continue; // self-closing: opens nothing
+    if (!match[1]) depth++;
+    else if (depth === 0) return match.index;
+    else depth--;
+  }
+  return xml.length;
 }
 
 /** Every `<pb>` facs target ("surface-N") in `xml`, in document order. */
 function pbSurfaces(xml: string): string[] {
-	return [...xml.matchAll(/<pb\b[^>]*\bfacs="#([^"]*)"[^>]*>/g)].map((match) => match[1]);
+  return [...xml.matchAll(/<pb\b[^>]*\bfacs="#([^"]*)"[^>]*>/g)].map(
+    (match) => match[1],
+  );
 }
 
 /**
@@ -76,49 +85,63 @@ function pbSurfaces(xml: string): string[] {
  * descriptive Error on the first violation; the checks are what turn a fork
  * that would silently corrupt the score into a loud rejection.
  */
-export function assertSpliceIntegrity(baseMei: string, splicedMei: string, locator: string): void {
-	const baseSurfaces = new Set(pbSurfaces(baseMei));
-	const counts = new Map<string, number>();
-	for (const surface of pbSurfaces(splicedMei)) {
-		counts.set(surface, (counts.get(surface) ?? 0) + 1);
-	}
-	for (const [surface, count] of counts) {
-		if (!baseSurfaces.has(surface)) {
-			throw new Error(
-				`Splicing ${locator} introduced a page break for ${surface} the base score does not have.`
-			);
-		}
-		if (count > 1) {
-			throw new Error(`${count} page breaks for ${surface} after splicing ${locator}.`);
-		}
-	}
-	for (const surface of baseSurfaces) {
-		if (!counts.has(surface)) {
-			throw new Error(`The page break for ${surface} is missing after splicing ${locator}.`);
-		}
-	}
+export function assertSpliceIntegrity(
+  baseMei: string,
+  splicedMei: string,
+  locator: string,
+): void {
+  const baseSurfaces = new Set(pbSurfaces(baseMei));
+  const counts = new Map<string, number>();
+  for (const surface of pbSurfaces(splicedMei)) {
+    counts.set(surface, (counts.get(surface) ?? 0) + 1);
+  }
+  for (const [surface, count] of counts) {
+    if (!baseSurfaces.has(surface)) {
+      throw new Error(
+        `Splicing ${locator} introduced a page break for ${surface} the base score does not have.`,
+      );
+    }
+    if (count > 1) {
+      throw new Error(
+        `${count} page breaks for ${surface} after splicing ${locator}.`,
+      );
+    }
+  }
+  for (const surface of baseSurfaces) {
+    if (!counts.has(surface)) {
+      throw new Error(
+        `The page break for ${surface} is missing after splicing ${locator}.`,
+      );
+    }
+  }
 
-	const measureIds = new Set<string>();
-	for (const match of splicedMei.matchAll(/<measure\b[^>]*\bxml:id="([^"]*)"/g)) {
-		if (measureIds.has(match[1])) {
-			throw new Error(`Duplicate measure xml:id "${match[1]}" after splicing ${locator}.`);
-		}
-		measureIds.add(match[1]);
-	}
+  const measureIds = new Set<string>();
+  for (const match of splicedMei.matchAll(
+    /<measure\b[^>]*\bxml:id="([^"]*)"/g,
+  )) {
+    if (measureIds.has(match[1])) {
+      throw new Error(
+        `Duplicate measure xml:id "${match[1]}" after splicing ${locator}.`,
+      );
+    }
+    measureIds.add(match[1]);
+  }
 }
 
 /** Replace the base's page span with the fork's, both delimited by `locator`'s `<pb>`. */
 function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
-	// Which surface follows the page is the base's to say.
-	const surfaces = pbSurfaces(baseMei);
-	const at = surfaces.indexOf(locator);
-	const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
-	const base = pageSpanAt(baseMei, locator, nextSurface);
-	const fork = pageSpanAt(forkMei, locator, nextSurface);
-	const spliced =
-		baseMei.slice(0, base.from) + forkMei.slice(fork.from, fork.to) + baseMei.slice(base.to);
-	assertSpliceIntegrity(baseMei, spliced, locator);
-	return spliced;
+  // Which surface follows the page is the base's to say.
+  const surfaces = pbSurfaces(baseMei);
+  const at = surfaces.indexOf(locator);
+  const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
+  const base = pageSpanAt(baseMei, locator, nextSurface);
+  const fork = pageSpanAt(forkMei, locator, nextSurface);
+  const spliced =
+    baseMei.slice(0, base.from) +
+    forkMei.slice(fork.from, fork.to) +
+    baseMei.slice(base.to);
+  assertSpliceIntegrity(baseMei, spliced, locator);
+  return spliced;
 }
 
 /**
@@ -128,8 +151,12 @@ function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
  * the base. Throws if either side is missing the page break or the result
  * fails the integrity checks (assertSpliceIntegrity).
  */
-export function splicePage(baseMei: string, forkMei: string, locator: string): string {
-	return spliceSpan(baseMei, forkMei, locator);
+export function splicePage(
+  baseMei: string,
+  forkMei: string,
+  locator: string,
+): string {
+  return spliceSpan(baseMei, forkMei, locator);
 }
 
 /**
@@ -141,6 +168,10 @@ export function splicePage(baseMei: string, forkMei: string, locator: string): s
  * marker; everything outside the span is kept from the base verbatim, so
  * per-page tasks still cannot touch each other's pages.
  */
-export function splicePageSpan(baseMei: string, forkMei: string, locator: string): string {
-	return spliceSpan(baseMei, forkMei, locator);
+export function splicePageSpan(
+  baseMei: string,
+  forkMei: string,
+  locator: string,
+): string {
+  return spliceSpan(baseMei, forkMei, locator);
 }

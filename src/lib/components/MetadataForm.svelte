@@ -87,9 +87,13 @@
     if (!extra.trim()) return "";
     const comments = (extra.match(/<!--/g) ?? []).length;
     const names = [
-      ...new Set([...extra.replace(/<!--[\s\S]*?-->/g, "").matchAll(/<([a-zA-Z][\w:.-]*)/g)].map(
-        (m) => m[1],
-      )),
+      ...new Set(
+        [
+          ...extra
+            .replace(/<!--[\s\S]*?-->/g, "")
+            .matchAll(/<([a-zA-Z][\w:.-]*)/g),
+        ].map((m) => m[1]),
+      ),
     ];
     const parts = [];
     if (names.length) parts.push(names.slice(0, 3).join(", "));
@@ -99,173 +103,281 @@
 </script>
 
 <div class="metaform">
-{#if heading}
-  <div class="views-row">{@render heading()}</div>
-{/if}
-{#if subhead}{@render subhead()}{/if}
-<div class="views" role="tablist" aria-label="Metadata detail">
-  {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
-    <button
-      type="button"
-      role="tab"
-      aria-selected={view === id}
-      class="pill"
-      class:pill-sm={heading !== undefined}
-      class:on={view === id}
-      onclick={() => show(id)}
-    >
-      {label}
-    </button>
-  {/each}
-</div>
-
-{#if view === "xml"}
-  {#if externalEditor}
-    <p class="hint xml-note">
-      The editor is using the material pane while you write. Fields the form
-      knows are read back when you switch views; markup it doesn't model is
-      kept as written.
-    </p>
-    {#if readBack}
-      <div class="read-back">
-        <div class="read-back-head">Read from the XML</div>
-        <div class="read-back-rows">
-          <div class="row"><span class="key">Title</span><span class="val">{readBack.title}</span></div>
-          <div class="row"><span class="key">Composer</span><span class="val">{readBack.composer}</span></div>
-          <div class="row">
-            <span class="key">Publisher</span>
-            <span class="val">{[readBack.publisher, readBack.pubPlace].filter(Boolean).join(", ")}</span>
-          </div>
-          <div class="row"><span class="key">Year</span><span class="val">{readBack.date}</span></div>
-          {#if keptAsWritten}
-            <div class="row"><span class="key">Kept as written</span><span class="val">{keptAsWritten}</span></div>
-          {/if}
-        </div>
-      </div>
-    {/if}
-  {:else}
-    <p class="hint xml-note">
-      The header generated from the form. Fields the form knows are read back
-      when you switch away; other markup inside <code>&lt;meiHead&gt;</code> is
-      kept as you wrote it.
-    </p>
-    <XmlEditor bind:value={xml} />
+  {#if heading}
+    <div class="views-row">{@render heading()}</div>
   {/if}
-{:else}
-  <div class="fields">
-    <label class="field">
-      Title
-      <input
-        class="input"
-        bind:value={meta.title}
-        placeholder={variant === "piece" ? "Title of the piece, as printed" : "Title as printed on the source"}
-      />
-    </label>
-    {#if view === "short"}
-      <label class="field">
-        Composer
-        <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
-      </label>
-      <label class="field">
-        Lyricist
-        <input class="input" bind:value={meta.lyricist} placeholder="e.g. J. W. von Goethe" />
-      </label>
-      <label class="field">
-        Editor
-        <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
-      </label>
-      {#if variant === "source"}
-        <div class="pair">
-          <label class="field grow">
-            Publisher
-            <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
-          </label>
-          <label class="field grow">
-            Place of publication
-            <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
-          </label>
-          <label class="field year">
-            Year
-            <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
-          </label>
+  {#if subhead}{@render subhead()}{/if}
+  <div class="views" role="tablist" aria-label="Metadata detail">
+    {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={view === id}
+        class="pill"
+        class:pill-sm={heading !== undefined}
+        class:on={view === id}
+        onclick={() => show(id)}
+      >
+        {label}
+      </button>
+    {/each}
+  </div>
+
+  {#if view === "xml"}
+    {#if externalEditor}
+      <p class="hint xml-note">
+        The editor is using the material pane while you write. Fields the form
+        knows are read back when you switch views; markup it doesn't model is
+        kept as written.
+      </p>
+      {#if readBack}
+        <div class="read-back">
+          <div class="read-back-head">Read from the XML</div>
+          <div class="read-back-rows">
+            <div class="row">
+              <span class="key">Title</span><span class="val"
+                >{readBack.title}</span
+              >
+            </div>
+            <div class="row">
+              <span class="key">Composer</span><span class="val"
+                >{readBack.composer}</span
+              >
+            </div>
+            <div class="row">
+              <span class="key">Publisher</span>
+              <span class="val"
+                >{[readBack.publisher, readBack.pubPlace]
+                  .filter(Boolean)
+                  .join(", ")}</span
+              >
+            </div>
+            <div class="row">
+              <span class="key">Year</span><span class="val"
+                >{readBack.date}</span
+              >
+            </div>
+            {#if keptAsWritten}
+              <div class="row">
+                <span class="key">Kept as written</span><span class="val"
+                  >{keptAsWritten}</span
+                >
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
     {:else}
+      <p class="hint xml-note">
+        The header generated from the form. Fields the form knows are read back
+        when you switch away; other markup inside <code>&lt;meiHead&gt;</code> is
+        kept as you wrote it.
+      </p>
+      <XmlEditor bind:value={xml} />
+    {/if}
+  {:else}
+    <div class="fields">
       <label class="field">
-        Composer
-        <input class="input" bind:value={meta.composer} placeholder="e.g. L. van Beethoven" />
+        Title
+        <input
+          class="input"
+          bind:value={meta.title}
+          placeholder={variant === "piece"
+            ? "Title of the piece, as printed"
+            : "Title as printed on the source"}
+        />
       </label>
-      <label class="field">
-        Lyricist
-        <input class="input" bind:value={meta.lyricist} placeholder="e.g. J. W. von Goethe" />
-      </label>
-      <label class="field">
-        Editor
-        <input class="input" bind:value={meta.editor} placeholder="e.g. C. Czerny" />
-      </label>
-      {#if variant === "source"}
+      {#if view === "short"}
+        <label class="field">
+          Composer
+          <input
+            class="input"
+            bind:value={meta.composer}
+            placeholder="e.g. L. van Beethoven"
+          />
+        </label>
+        <label class="field">
+          Lyricist
+          <input
+            class="input"
+            bind:value={meta.lyricist}
+            placeholder="e.g. J. W. von Goethe"
+          />
+        </label>
+        <label class="field">
+          Editor
+          <input
+            class="input"
+            bind:value={meta.editor}
+            placeholder="e.g. C. Czerny"
+          />
+        </label>
+        {#if variant === "source"}
+          <div class="pair">
+            <label class="field grow">
+              Publisher
+              <input
+                class="input"
+                bind:value={meta.publisher}
+                placeholder="e.g. Breitkopf &amp; Härtel"
+              />
+            </label>
+            <label class="field grow">
+              Place of publication
+              <input
+                class="input"
+                bind:value={meta.pubPlace}
+                placeholder="e.g. Leipzig"
+              />
+            </label>
+            <label class="field year">
+              Year
+              <input
+                class="input"
+                bind:value={meta.date}
+                placeholder="e.g. 1802"
+              />
+            </label>
+          </div>
+        {/if}
+      {:else}
+        <label class="field">
+          Composer
+          <input
+            class="input"
+            bind:value={meta.composer}
+            placeholder="e.g. L. van Beethoven"
+          />
+        </label>
+        <label class="field">
+          Lyricist
+          <input
+            class="input"
+            bind:value={meta.lyricist}
+            placeholder="e.g. J. W. von Goethe"
+          />
+        </label>
+        <label class="field">
+          Editor
+          <input
+            class="input"
+            bind:value={meta.editor}
+            placeholder="e.g. C. Czerny"
+          />
+        </label>
+        {#if variant === "source"}
+          <div class="row">
+            <label class="field grow">
+              Publisher
+              <input
+                class="input"
+                bind:value={meta.publisher}
+                placeholder="e.g. Breitkopf &amp; Härtel"
+              />
+            </label>
+            <label class="field grow">
+              Place of publication
+              <input
+                class="input"
+                bind:value={meta.pubPlace}
+                placeholder="e.g. Leipzig"
+              />
+            </label>
+            <label class="field year">
+              Year
+              <input
+                class="input"
+                bind:value={meta.date}
+                placeholder="e.g. 1802"
+              />
+            </label>
+          </div>
+          <div class="row">
+            <label class="field grow">
+              Edition
+              <input
+                class="input"
+                bind:value={meta.edition}
+                placeholder="e.g. 2nd revised edition"
+              />
+            </label>
+            <label class="field year">
+              Year of edition
+              <input
+                class="input"
+                bind:value={meta.editionDate}
+                placeholder="e.g. 1854"
+              />
+            </label>
+            <label class="field grow">
+              Extent
+              <input
+                class="input"
+                bind:value={meta.extent}
+                placeholder="e.g. 48 pages"
+              />
+            </label>
+          </div>
+          <div class="row">
+            <label class="field grow">
+              Holding institution
+              <input
+                class="input"
+                bind:value={meta.repository}
+                placeholder="e.g. Austrian National Library"
+              />
+            </label>
+            <label class="field grow">
+              Shelfmark
+              <input
+                class="input"
+                bind:value={meta.shelfmark}
+                placeholder="e.g. Mus.Hs.16481"
+              />
+            </label>
+          </div>
+        {/if}
+        <fieldset>
+          <legend>Other contributors</legend>
+          {#each meta.contributors as contributor, i (i)}
+            <div class="contributor">
+              <input
+                class="input"
+                bind:value={contributor.name}
+                placeholder="Name"
+                aria-label="Contributor name"
+              />
+              <input
+                class="input"
+                bind:value={contributor.role}
+                placeholder="Role, e.g. arranger"
+                aria-label="Contributor role"
+              />
+              <button
+                type="button"
+                class="pill pill-sm"
+                onclick={() => removeContributor(i)}
+              >
+                Remove
+              </button>
+            </div>
+          {/each}
+          <button type="button" class="pill pill-sm" onclick={addContributor}
+            >Add contributor</button
+          >
+        </fieldset>
+
         <div class="row">
           <label class="field grow">
-            Publisher
-            <input class="input" bind:value={meta.publisher} placeholder="e.g. Breitkopf &amp; Härtel" />
-          </label>
-          <label class="field grow">
-            Place of publication
-            <input class="input" bind:value={meta.pubPlace} placeholder="e.g. Leipzig" />
-          </label>
-          <label class="field year">
-            Year
-            <input class="input" bind:value={meta.date} placeholder="e.g. 1802" />
-          </label>
-        </div>
-        <div class="row">
-          <label class="field grow">
-            Edition
-            <input class="input" bind:value={meta.edition} placeholder="e.g. 2nd revised edition" />
-          </label>
-          <label class="field year">
-            Year of edition
-            <input class="input" bind:value={meta.editionDate} placeholder="e.g. 1854" />
-          </label>
-          <label class="field grow">
-            Extent
-            <input class="input" bind:value={meta.extent} placeholder="e.g. 48 pages" />
-          </label>
-        </div>
-        <div class="row">
-          <label class="field grow">
-            Holding institution
-            <input class="input" bind:value={meta.repository} placeholder="e.g. Austrian National Library" />
-          </label>
-          <label class="field grow">
-            Shelfmark
-            <input class="input" bind:value={meta.shelfmark} placeholder="e.g. Mus.Hs.16481" />
+            {variant === "piece"
+              ? "Note about the piece"
+              : "Note about the source"}
+            <textarea class="input" bind:value={meta.note} rows="3"></textarea>
           </label>
         </div>
       {/if}
-      <fieldset>
-        <legend>Other contributors</legend>
-        {#each meta.contributors as contributor, i (i)}
-          <div class="contributor">
-            <input class="input" bind:value={contributor.name} placeholder="Name" aria-label="Contributor name" />
-            <input class="input" bind:value={contributor.role} placeholder="Role, e.g. arranger" aria-label="Contributor role" />
-            <button type="button" class="pill pill-sm" onclick={() => removeContributor(i)}>
-              Remove
-            </button>
-          </div>
-        {/each}
-        <button type="button" class="pill pill-sm" onclick={addContributor}>Add contributor</button>
-      </fieldset>
-
-      <div class="row">
-        <label class="field grow">
-          {variant === "piece" ? "Note about the piece" : "Note about the source"}
-          <textarea class="input" bind:value={meta.note} rows="3"></textarea>
-        </label>
-      </div>
-    {/if}
-  </div>
-{/if}
+    </div>
+  {/if}
 </div>
 
 <style>

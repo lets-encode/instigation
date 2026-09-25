@@ -152,6 +152,7 @@ def reject_cross_origin_writes():
         return jsonify(error="cross-origin request rejected"), 403
     return None
 
+
 # The campaign name registry (see registry.py): the name → (forge, repo id)
 # mapping and the claim/register lifecycle around it. It lives in the broker
 # because claiming and registering require the GitHub session; the /registry
@@ -159,7 +160,8 @@ def reject_cross_origin_writes():
 # Vite dev proxy.
 try:
     from .registry import registry
-except ImportError:  # run as a top-level module (flask --app app run, gunicorn app:app)
+except ImportError:
+    # Run as a top-level module (flask --app app run, gunicorn app:app).
     from registry import registry
 app.register_blueprint(registry, url_prefix="/registry")
 
@@ -509,15 +511,23 @@ def omr_api(path):
         return jsonify(error="Authentication required"), 401
     if not MUSIBOT_TOKEN:
         return (
-            jsonify(error="OMR is not configured on this instance", source="musibot"),
+            jsonify(
+                error="OMR is not configured on this instance", source="musibot"
+            ),
             503,
         )
     if not any(
         method == request.method and pattern.fullmatch(path)
         for method, pattern in OMR_ROUTES
     ):
-        return jsonify(error="That OMR endpoint is not relayed", source="musibot"), 404
-    headers = {"Authorization": f"Bearer {MUSIBOT_TOKEN}", "Accept": "application/json"}
+        return (
+            jsonify(error="That OMR endpoint is not relayed", source="musibot"),
+            404,
+        )
+    headers = {
+        "Authorization": f"Bearer {MUSIBOT_TOKEN}",
+        "Accept": "application/json",
+    }
     body = request.get_data()
     if body:
         headers["Content-Type"] = "application/json"
@@ -531,14 +541,27 @@ def omr_api(path):
             allow_redirects=False,
         )
     except requests.Timeout:
-        return jsonify(error="The OMR service did not answer in time", source="musibot"), 504
+        return (
+            jsonify(
+                error="The OMR service did not answer in time", source="musibot"
+            ),
+            504,
+        )
     except requests.RequestException:
-        return jsonify(error="The OMR service could not be reached", source="musibot"), 502
+        return (
+            jsonify(
+                error="The OMR service could not be reached", source="musibot"
+            ),
+            502,
+        )
     return (
         response.content,
         response.status_code,
         [
-            ("Content-Type", response.headers.get("content-type", "application/json")),
+            (
+                "Content-Type",
+                response.headers.get("content-type", "application/json"),
+            ),
             ("Cache-Control", "no-store"),
             ("X-Lets-Encode-Upstream", "musibot"),
         ],
@@ -562,20 +585,32 @@ def omr_blob():
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc != MUSIBOT_HOST:
         return (
-            jsonify(error="Only presigned URLs on the OMR service's host are relayed", source="musibot"),
+            jsonify(
+                error="Only presigned URLs on the OMR service's host are relayed",
+                source="musibot",
+            ),
             400,
         )
     try:
         if request.method == "PUT":
             if (request.content_length or 0) > OMR_MAX_BYTES:
-                return jsonify(error="That file is too large", source="musibot"), 413
+                return (
+                    jsonify(error="That file is too large", source="musibot"),
+                    413,
+                )
             data = request.get_data()
             if len(data) > OMR_MAX_BYTES:
-                return jsonify(error="That file is too large", source="musibot"), 413
+                return (
+                    jsonify(error="That file is too large", source="musibot"),
+                    413,
+                )
             response = requests.put(
                 url,
                 data=data,
-                headers={"Content-Type": request.content_type or "application/octet-stream"},
+                headers={
+                    "Content-Type": request.content_type
+                    or "application/octet-stream"
+                },
                 timeout=(10, 60),
                 allow_redirects=False,
             )
@@ -583,13 +618,28 @@ def omr_blob():
             return (
                 jsonify(ok=response.ok),
                 response.status_code if not response.ok else 200,
-                [("Cache-Control", "no-store"), ("X-Lets-Encode-Upstream", "musibot")],
+                [
+                    ("Cache-Control", "no-store"),
+                    ("X-Lets-Encode-Upstream", "musibot"),
+                ],
             )
-        response = requests.get(url, timeout=(10, 60), allow_redirects=False, stream=True)
+        response = requests.get(
+            url, timeout=(10, 60), allow_redirects=False, stream=True
+        )
     except requests.Timeout:
-        return jsonify(error="The OMR service did not answer in time", source="musibot"), 504
+        return (
+            jsonify(
+                error="The OMR service did not answer in time", source="musibot"
+            ),
+            504,
+        )
     except requests.RequestException:
-        return jsonify(error="The OMR service could not be reached", source="musibot"), 502
+        return (
+            jsonify(
+                error="The OMR service could not be reached", source="musibot"
+            ),
+            502,
+        )
     # Read with a ceiling rather than trusting Content-Length.
     chunks = []
     total = 0
@@ -597,14 +647,22 @@ def omr_blob():
         total += len(chunk)
         if total > OMR_MAX_BYTES:
             response.close()
-            return jsonify(error="That file is too large", source="musibot"), 413
+            return (
+                jsonify(error="That file is too large", source="musibot"),
+                413,
+            )
         chunks.append(chunk)
     response.close()
     return (
         b"".join(chunks),
         response.status_code,
         [
-            ("Content-Type", response.headers.get("content-type", "application/octet-stream")),
+            (
+                "Content-Type",
+                response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
+            ),
             ("Cache-Control", "no-store"),
             ("X-Lets-Encode-Upstream", "musibot"),
             *RELAY_SAFETY_HEADERS,

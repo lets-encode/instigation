@@ -23,7 +23,12 @@
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
-  import { getVerovio, loadedVerovio, loadScore, renderPage } from "$lib/verovio-render.ts";
+  import {
+    getVerovio,
+    loadedVerovio,
+    loadScore,
+    renderPage,
+  } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
   import FitIcon from "./FitIcon.svelte";
   import type { PreviewPane } from "$lib/preview-pane.ts";
@@ -108,12 +113,15 @@
   const PV_ZOOM_STOPS = 100;
   const pvZoomPos = $derived(
     Math.round(
-      (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) * PV_ZOOM_STOPS,
+      (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) *
+        PV_ZOOM_STOPS,
     ),
   );
   const setPvZoomPos = (p: number) =>
     (pvZoom =
-      Math.round(PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100) / 100);
+      Math.round(
+        PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100,
+      ) / 100);
   // The fit in force, if any: it keeps the zoom at the fit as the pane
   // resizes or the spread changes, until the slider is moved.
   let pvFit = $state<"width" | "page" | null>("page");
@@ -140,12 +148,15 @@
       const box = encVisible
         ? /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(preview.svgs[p + 1] ?? "")
         : null;
-      if (box) needs.push({ aspect: Number(box[2]) / Number(box[1]), extra: 2 });
+      if (box)
+        needs.push({ aspect: Number(box[2]) / Number(box[1]), extra: 2 });
     }
     if (!needs.length) return 1;
     const cols = pvView === "double" ? 2 : 1;
     const colW = (pvScrollW - 14 * (cols - 1)) / cols;
-    const z = Math.min(...needs.map((n) => (pvScrollH - n.extra) / (colW * n.aspect)));
+    const z = Math.min(
+      ...needs.map((n) => (pvScrollH - n.extra) / (colW * n.aspect)),
+    );
     return Math.min(1, Math.max(PV_ZOOM_MIN, Math.floor(z * 1000) / 1000));
   });
   $effect(() => {
@@ -288,8 +299,9 @@
    */
   export function pageOfMeasure(label: string): number {
     return (
-      preview?.facs?.findIndex((pg) => pg.zones.some((z) => z.label === label)) ??
-      -1
+      preview?.facs?.findIndex((pg) =>
+        pg.zones.some((z) => z.label === label),
+      ) ?? -1
     );
   }
 
@@ -366,7 +378,9 @@
           .map((pg) => pg.height / pg.width)
           .sort((a, b) => a - b);
         const ok = loadScore(tk, mei, {
-          aspect: aspects.length ? aspects[Math.floor(aspects.length / 2)] : undefined,
+          aspect: aspects.length
+            ? aspects[Math.floor(aspects.length / 2)]
+            : undefined,
           encodedBreaks: parsed.hasBreaks,
         });
         if (!ok) throw new Error(`Verovio could not parse ${path}.`);
@@ -384,7 +398,8 @@
         const total = Math.max(facs?.length ?? 0, pageCount);
         if (initialView) pvView = initialView;
         else if (!viewChosen)
-          ({ view: pvView, firstOnRight: pvFirstOnRight } = defaultSpreadView(total));
+          ({ view: pvView, firstOnRight: pvFirstOnRight } =
+            defaultSpreadView(total));
         pvFirstVisible = Math.min(from, Math.max(0, total - 1));
         renderSpread();
       }
@@ -419,27 +434,25 @@
           class:on={pane === "facs"}
           onclick={() => setPane("facs")}
           title="Show the page images of the source"
-          ><span class="ico" aria-hidden="true"><Icon name="facsimile" /></span><span class="lbl"
-            >Facsimile</span
-          ></button
+          ><span class="ico" aria-hidden="true"><Icon name="facsimile" /></span
+          ><span class="lbl">Facsimile</span></button
         >
         <button
           type="button"
           class:on={pane === "enc"}
           onclick={() => setPane("enc")}
           title="Show the encoding rendered as notation"
-          ><span class="ico" aria-hidden="true"><Icon name="notes" /></span><span class="lbl"
-            >Rendered encoding</span
-          ></button
+          ><span class="ico" aria-hidden="true"><Icon name="notes" /></span
+          ><span class="lbl">Rendered encoding</span></button
         >
         <button
           type="button"
           class:on={pane === "both"}
           onclick={() => setPane("both")}
           title="Show the facsimile and the rendered encoding next to each other"
-          ><span class="ico" aria-hidden="true"><Icon name="side-by-side" /></span><span class="lbl"
-            >Side by side</span
-          ></button
+          ><span class="ico" aria-hidden="true"
+            ><Icon name="side-by-side" /></span
+          ><span class="lbl">Side by side</span></button
         >
       </div>
     {/if}
@@ -500,7 +513,8 @@
         type="button"
         class="tchip on"
         onclick={() => selectMeasure(selected)}
-        title="Clear the measure selection">m. {selected} <Icon name="close" size={11} /></button
+        title="Clear the measure selection"
+        >m. {selected} <Icon name="close" size={11} /></button
       >
     {/if}
     <span class="vline"></span>
@@ -533,7 +547,8 @@
       class:on={pvFit === "page"}
       onclick={() => (pvFit = "page")}
       aria-label="Fit the whole page"
-      title="Fit the whole page in the pane, top to bottom"><FitIcon kind="page" /></button
+      title="Fit the whole page in the pane, top to bottom"
+      ><FitIcon kind="page" /></button
     >
     {@render trailing?.()}
   </div>
@@ -547,118 +562,126 @@
            rebuilt: its size binding otherwise stops reporting once its
            sibling pane is removed. -->
       {#key pane}
-      {#if facsVisible && preview.facs?.length}
-        <div class="pane">
-          <div
-            class="pv-scroll"
-            class:noh={pvZoom <= 1}
-            bind:clientWidth={pvScrollW}
-            bind:clientHeight={pvScrollH}
-          >
+        {#if facsVisible && preview.facs?.length}
+          <div class="pane">
             <div
-              class="pv-spread"
-              class:hug-right={pane === "both"}
-              style={`width:${pvZoom * 100}%`}
+              class="pv-scroll"
+              class:noh={pvZoom <= 1}
+              bind:clientWidth={pvScrollW}
+              bind:clientHeight={pvScrollH}
             >
-              {#if pvSpread.lonelySide === "right"}<div class="pv-spacer"></div>{/if}
-              {#each pvSpread.pages as p (p)}
-                {@const pg = preview.facs[p]}
-                <figure class="pv-page">
-                  {#if pg}
-                    <svg
-                      viewBox={`0 0 ${pg.w} ${pg.h}`}
-                      role="img"
-                      aria-label={`Facsimile page ${p + 1}`}
-                    >
-                      {#if pg.url}
-                        <image href={pg.url} width={pg.w} height={pg.h} />
-                      {:else}
-                        <rect width={pg.w} height={pg.h} fill="#f3f3f0" />
-                      {/if}
-                      {#if showZones}
-                        {#each pg.zones as z, zi (zi)}
-                          <rect
-                            class="pv-zone"
-                            vector-effect="non-scaling-stroke"
-                            class:flagged={anchor &&
-                              p + 1 === anchor.page &&
-                              zoneFlagged(z.label)}
-                            class:sel={selected === z.label}
-                            role="button"
-                            tabindex={0}
-                            aria-label={`Measure ${z.label}: highlight in both panes`}
-                            x={z.box.ulx}
-                            y={z.box.uly}
-                            width={z.box.lrx - z.box.ulx}
-                            height={z.box.lry - z.box.uly}
-                            onclick={() => selectMeasure(z.label)}
-                            onkeydown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                selectMeasure(z.label);
-                              }
-                            }}
-                          />
-                          <text
-                            class="pv-zonelabel"
-                            class:flagged={anchor &&
-                              p + 1 === anchor.page &&
-                              zoneFlagged(z.label)}
-                            class:sel={selected === z.label}
-                            x={z.box.ulx + 6}
-                            y={z.box.uly + 30}>{z.label}</text
-                          >
-                        {/each}
-                      {/if}
-                    </svg>
-                    <figcaption class="mono">page {p + 1}</figcaption>
-                  {/if}
-                </figure>
-              {/each}
-              {#if pvSpread.lonelySide === "left"}<div class="pv-spacer"></div>{/if}
+              <div
+                class="pv-spread"
+                class:hug-right={pane === "both"}
+                style={`width:${pvZoom * 100}%`}
+              >
+                {#if pvSpread.lonelySide === "right"}<div
+                    class="pv-spacer"
+                  ></div>{/if}
+                {#each pvSpread.pages as p (p)}
+                  {@const pg = preview.facs[p]}
+                  <figure class="pv-page">
+                    {#if pg}
+                      <svg
+                        viewBox={`0 0 ${pg.w} ${pg.h}`}
+                        role="img"
+                        aria-label={`Facsimile page ${p + 1}`}
+                      >
+                        {#if pg.url}
+                          <image href={pg.url} width={pg.w} height={pg.h} />
+                        {:else}
+                          <rect width={pg.w} height={pg.h} fill="#f3f3f0" />
+                        {/if}
+                        {#if showZones}
+                          {#each pg.zones as z, zi (zi)}
+                            <rect
+                              class="pv-zone"
+                              vector-effect="non-scaling-stroke"
+                              class:flagged={anchor &&
+                                p + 1 === anchor.page &&
+                                zoneFlagged(z.label)}
+                              class:sel={selected === z.label}
+                              role="button"
+                              tabindex={0}
+                              aria-label={`Measure ${z.label}: highlight in both panes`}
+                              x={z.box.ulx}
+                              y={z.box.uly}
+                              width={z.box.lrx - z.box.ulx}
+                              height={z.box.lry - z.box.uly}
+                              onclick={() => selectMeasure(z.label)}
+                              onkeydown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  selectMeasure(z.label);
+                                }
+                              }}
+                            />
+                            <text
+                              class="pv-zonelabel"
+                              class:flagged={anchor &&
+                                p + 1 === anchor.page &&
+                                zoneFlagged(z.label)}
+                              class:sel={selected === z.label}
+                              x={z.box.ulx + 6}
+                              y={z.box.uly + 30}>{z.label}</text
+                            >
+                          {/each}
+                        {/if}
+                      </svg>
+                      <figcaption class="mono">page {p + 1}</figcaption>
+                    {/if}
+                  </figure>
+                {/each}
+                {#if pvSpread.lonelySide === "left"}<div
+                    class="pv-spacer"
+                  ></div>{/if}
+              </div>
             </div>
+            <div class="pane-cap">Facsimile</div>
           </div>
-          <div class="pane-cap">Facsimile</div>
-        </div>
-      {/if}
-      {#if encVisible && preview.pageCount > 0}
-        <div class="pane">
-          <div
-            class="pv-scroll"
-            class:noh={pvZoom <= 1}
-            bind:clientWidth={pvScrollW}
-            bind:clientHeight={pvScrollH}
-          >
+        {/if}
+        {#if encVisible && preview.pageCount > 0}
+          <div class="pane">
             <div
-              class="pv-spread"
-              class:hug-left={pane === "both"}
-              style={`width:${pvZoom * 100}%`}
+              class="pv-scroll"
+              class:noh={pvZoom <= 1}
+              bind:clientWidth={pvScrollW}
+              bind:clientHeight={pvScrollH}
             >
-              {#if pvSpread.lonelySide === "right"}<div class="pv-spacer"></div>{/if}
-              {#each pvSpread.pages as p (p)}
-                <!-- The click lands on whichever rendered measure it hit; the
+              <div
+                class="pv-spread"
+                class:hug-left={pane === "both"}
+                style={`width:${pvZoom * 100}%`}
+              >
+                {#if pvSpread.lonelySide === "right"}<div
+                    class="pv-spacer"
+                  ></div>{/if}
+                {#each pvSpread.pages as p (p)}
+                  <!-- The click lands on whichever rendered measure it hit; the
                      keyboard path to selection is the facsimile zones. -->
-                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                <div class="pv-page enc" onclick={encClick}>
-                  {#if p < preview.pageCount}
-                    {@html flaggedSvgs[p + 1] ?? ""}
-                  {/if}
-                </div>
-              {/each}
-              {#if pvSpread.lonelySide === "left"}<div class="pv-spacer"></div>{/if}
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                  <div class="pv-page enc" onclick={encClick}>
+                    {#if p < preview.pageCount}
+                      {@html flaggedSvgs[p + 1] ?? ""}
+                    {/if}
+                  </div>
+                {/each}
+                {#if pvSpread.lonelySide === "left"}<div
+                    class="pv-spacer"
+                  ></div>{/if}
+              </div>
             </div>
+            <div class="pane-cap">Current encoding — rendered with Verovio</div>
           </div>
-          <div class="pane-cap">Current encoding — rendered with Verovio</div>
-        </div>
-      {:else if encVisible && preview.facs?.length}
-        <div class="pane">
-          <p class="muted pnote">
-            No encoding to render yet — the measures are generated when the
-            measure correction is submitted.
-          </p>
-          <div class="pane-cap">Current encoding</div>
-        </div>
-      {/if}
+        {:else if encVisible && preview.facs?.length}
+          <div class="pane">
+            <p class="muted pnote">
+              No encoding to render yet — the measures are generated when the
+              measure correction is submitted.
+            </p>
+            <div class="pane-cap">Current encoding</div>
+          </div>
+        {/if}
       {/key}
     {/if}
   </div>

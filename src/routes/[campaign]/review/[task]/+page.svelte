@@ -12,10 +12,17 @@
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
+  import {
+    CommandRunner,
+    readForge,
+    viewerId,
+  } from "$lib/command-runner.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
+  import {
+    resolveCampaign,
+    resolveFailureMessage,
+  } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
   import type {
@@ -73,7 +80,14 @@
 
   const board = $derived(
     buildBoard(
-      { taskDefs, rows, validationColumns, locks, passThreshold, allowSelfValidation },
+      {
+        taskDefs,
+        rows,
+        validationColumns,
+        locks,
+        passThreshold,
+        allowSelfValidation,
+      },
       comments,
       history,
       viewer,
@@ -183,7 +197,13 @@
   });
 
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolveError || resolving)
+    if (
+      auth.status === "loading" ||
+      resolved ||
+      notFound ||
+      resolveError ||
+      resolving
+    )
       return;
     resolving = true;
     const name = campaign;
@@ -246,17 +266,20 @@
     verdict: string,
     comment?: FailComment,
   ) =>
-    run((c) =>
-      invoke(
-        commands.submitValidation,
-        { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
-        c,
-      ),
+    run(
+      (c) =>
+        invoke(
+          commands.submitValidation,
+          { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
+          c,
+        ),
       { overviewOnSuccess: true },
     );
 
   const sendBackTask = (task_id: string) =>
-    run((c) => invoke(commands.sendBack, { task_id }, c), { overviewOnSuccess: true });
+    run((c) => invoke(commands.sendBack, { task_id }, c), {
+      overviewOnSuccess: true,
+    });
 
   const postComment = (
     task_id: string,
@@ -286,7 +309,7 @@
 </script>
 
 <svelte:head>
-  <title>{card ? `Review · ${card.title}` : 'Review'} · Let's Encode!</title>
+  <title>{card ? `Review · ${card.title}` : "Review"} · Let's Encode!</title>
 </svelte:head>
 
 {#if runner.busy && runner.overlay}
@@ -304,11 +327,15 @@
       <span>
         {runner.result.error}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View submission <Icon name="external" size={12} /></a
+          >
         {/if}
       </span>
-      <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-        >Dismiss</button
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {:else if runner.result && runner.result.ok && !runner.result.background}
@@ -316,11 +343,15 @@
       <span>
         {runner.result.message}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View submission <Icon name="external" size={12} /></a
+          >
         {/if}
       </span>
-      <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-        >Dismiss</button
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {/if}
@@ -333,8 +364,10 @@
     <div class="msg banner err">
       <span>
         {resolveError}
-        <button type="button" class="linkish" onclick={() => (resolveError = null)}
-          >Try again</button
+        <button
+          type="button"
+          class="linkish"
+          onclick={() => (resolveError = null)}>Try again</button
         >
       </span>
     </div>
@@ -374,7 +407,7 @@
     </div>
   {:else}
     {#snippet reopenComments()}
-            <button
+      <button
         type="button"
         aria-pressed={commentsPanel.open}
         class="btn"

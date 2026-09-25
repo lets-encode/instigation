@@ -172,12 +172,15 @@ const REASON_TEXT: Record<string, string> = {
   malformed_claim: "the submission does not add exactly one lock row",
   malformed_validation:
     "the submission is neither a single verdict nor a clean send-back reset",
-  malformed_comment: "the submission does not append or resolve exactly one comment row",
-  out_of_bounds: "the submission changes files outside the ones this operation may touch",
+  malformed_comment:
+    "the submission does not append or resolve exactly one comment row",
+  out_of_bounds:
+    "the submission changes files outside the ones this operation may touch",
   invalid_kind: "unknown claim or comment kind",
   invalid_target: "the claim addresses the wrong row for its kind",
   unknown_task: "no such task",
-  dependency_incomplete: "this task opens once the task it depends on is completed",
+  dependency_incomplete:
+    "this task opens once the task it depends on is completed",
   wrong_state: "the task is not in the right state for this operation",
   already_locked: "someone already holds this claim",
   self_validation: "the encoder cannot review their own work",
@@ -355,7 +358,10 @@ async function attemptClaim(
         changedPaths,
         now,
         allowSelfValidation: configFlag(configText, "allow_self_validation"),
-        passThreshold: passThresholdOf(configText, claimState.validationColumns.length),
+        passThreshold: passThresholdOf(
+          configText,
+          claimState.validationColumns.length,
+        ),
       })
     : { ok: false, reason: "malformed_claim" };
 
@@ -1055,7 +1061,9 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
   // The caller's paths filter admits only campaign operations; the catch-up
   // pass applies the same rule.
   if (!touchesCampaignPaths(changedPaths)) {
-    console.log(`PR #${prNumber} changes no tracking or source file; left as is.`);
+    console.log(
+      `PR #${prNumber} changes no tracking or source file; left as is.`,
+    );
     return false;
   }
   const openByAuthor = openPrs.filter(
@@ -1112,7 +1120,9 @@ async function runCatchUp(): Promise<void> {
   let processed = 0;
   for (const pr of due) {
     if (processed >= CATCHUP_MAX_PRS) break;
-    const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split("/");
+    const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split(
+      "/",
+    );
     bindPullRequest({
       number: pr.number,
       author: String(pr.user.id),
@@ -1122,14 +1132,18 @@ async function runCatchUp(): Promise<void> {
       headSha: pr.head.sha,
       headRef: pr.head.ref,
     });
-    console.log(`Catch-up: processing open PR #${pr.number} by ${authorLabel}.`);
+    console.log(
+      `Catch-up: processing open PR #${pr.number} by ${authorLabel}.`,
+    );
     try {
       if (await processPullRequest(remaining)) {
         processed++;
         remaining = remaining.filter((p) => p.number !== pr.number);
       }
     } catch (e) {
-      console.error(`Catch-up: PR #${pr.number} failed: ${(e as Error).message}`);
+      console.error(
+        `Catch-up: PR #${pr.number} failed: ${(e as Error).message}`,
+      );
       process.exitCode = 1;
     }
   }

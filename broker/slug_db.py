@@ -33,7 +33,8 @@ def now_iso() -> str:
 
 def in_minutes_iso(minutes: int) -> str:
     """A timestamp `minutes` from now, in the same format as now_iso() — the two
-    are compared lexicographically, which holds while the format is identical."""
+    are compared lexicographically, which holds while the format is identical.
+    """
     return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat(
         timespec="seconds"
     )
@@ -68,7 +69,9 @@ class Store:
 
     def get(self, name: str) -> sqlite3.Row | None:
         with self._connect() as conn:
-            return conn.execute("SELECT * FROM slugs WHERE name = ?", (name,)).fetchone()
+            return conn.execute(
+                "SELECT * FROM slugs WHERE name = ?", (name,)
+            ).fetchone()
 
     def drop_expired_claim(self, name: str) -> bool:
         """Remove the name's claim if it has run out, so the write that follows
@@ -81,7 +84,9 @@ class Store:
             )
             return cur.rowcount > 0
 
-    def create_pending(self, name: str, claim_token: str, expires_at: str) -> None:
+    def create_pending(
+        self, name: str, claim_token: str, expires_at: str
+    ) -> None:
         """Hold a name for whoever presents `claim_token`, until `expires_at`.
         Raises SlugExists if the name is occupied — the PRIMARY KEY is the
         arbiter, so two simultaneous claims cannot both succeed."""
@@ -95,7 +100,9 @@ class Store:
         except sqlite3.IntegrityError:
             raise SlugExists(name) from None
 
-    def activate(self, name: str, forge: str, repo_id: int, claim_token: str | None) -> bool:
+    def activate(
+        self, name: str, forge: str, repo_id: int, claim_token: str | None
+    ) -> bool:
         """Turn this name's claim into the live campaign it was held for. Returns
         False if the name has no claim matching `claim_token`, which includes a
         claim that ran out and was taken over by someone else."""
@@ -149,4 +156,6 @@ class Store:
 
     def list_all(self) -> list[sqlite3.Row]:
         with self._connect() as conn:
-            return conn.execute("SELECT * FROM slugs ORDER BY created_at").fetchall()
+            return conn.execute(
+                "SELECT * FROM slugs ORDER BY created_at"
+            ).fetchall()

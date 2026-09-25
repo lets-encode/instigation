@@ -27,14 +27,19 @@
   const took = (step: ProgressStep) => seconds(stepMs(step));
   // The step times added up — for a step that reported its own duration,
   // that duration rather than how long it was open.
-  const total = $derived(log.steps.reduce((sum, step) => sum + stepMs(step), 0));
+  const total = $derived(
+    log.steps.reduce((sum, step) => sum + stepMs(step), 0),
+  );
 </script>
 
 {#if log.steps.length}
   <div class="log" role="status" aria-live="polite" aria-label="Progress">
     <ol>
       {#each log.steps as step, i (i)}
-        <li class:failed={step.failed} class:running={step.endedAt === undefined}>
+        <li
+          class:failed={step.failed}
+          class:running={step.endedAt === undefined}
+        >
           <span class="mark" aria-hidden="true">
             {#if step.failed}
               <Icon name="close" size={12} />
@@ -45,7 +50,9 @@
             {/if}
           </span>
           <span class="what">
-            {step.label}{#if step.detail}<span class="detail">{step.detail}</span>{/if}
+            {step.label}{#if step.detail}<span class="detail"
+                >{step.detail}</span
+              >{/if}
           </span>
           <span class="time">{step.timed ? took(step) : ""}</span>
         </li>

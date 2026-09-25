@@ -64,10 +64,14 @@
   // lands rather than waiting for the slowest repository.
   async function loadAll() {
     try {
-      const listing = await loadAllCampaignStats(readForge(), provider.repoTopic, {
-        onEach: (s) =>
-          (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
-      });
+      const listing = await loadAllCampaignStats(
+        readForge(),
+        provider.repoTopic,
+        {
+          onEach: (s) =>
+            (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
+        },
+      );
       listFailed = listing.failed;
       listFailureMessage = listing.failureMessage;
       listError = null;
@@ -102,7 +106,8 @@
           .flatMap((s) => commentsOnMyWork(s, viewer))
           .filter(
             (f) =>
-              (f.comment.kind === "question" || f.comment.kind === "addition") &&
+              (f.comment.kind === "question" ||
+                f.comment.kind === "addition") &&
               f.comment.resolved !== "true",
           )
           .sort(
@@ -135,10 +140,11 @@
   const runner = new CommandRunner();
 
   const ctxOf = (s: CampaignStats): CommandContext =>
-    runner.context(
-      readForge(),
-      { repoId: s.repoId, owner: s.owner, repo: s.repo },
-    );
+    runner.context(readForge(), {
+      repoId: s.repoId,
+      owner: s.owner,
+      repo: s.repo,
+    });
 
   const ctxFor = (t: MyTask): CommandContext | null => {
     const s = stats.find((x) => x.name === t.campaignSlug);
@@ -197,7 +203,11 @@
 
   const openEditor = async (t: MyTask) => {
     await run(t, (c) => invoke(commands.openEditor, { task_id: t.task }, c));
-    if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+    if (
+      runner.result?.ok &&
+      !runner.result.warn &&
+      runner.result.meiFriendUrl
+    ) {
       window.open(runner.result.meiFriendUrl, "_blank", "noopener");
     }
   };
@@ -222,7 +232,11 @@
         () => invoke(commands.openEditor, { task_id: next.task }, c),
         refresh,
       );
-      if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+      if (
+        runner.result?.ok &&
+        !runner.result.warn &&
+        runner.result.meiFriendUrl
+      ) {
         window.open(runner.result.meiFriendUrl, "_blank", "noopener");
       }
     } else if (next.action === "review") {
@@ -292,7 +306,8 @@
   const filtered = $derived.by(() => {
     const list = stats.filter(matchesSearch).filter(matchesFilter);
     const ts = (v: string) => Date.parse(v || "0") || 0;
-    if (sort === "newest") list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    if (sort === "newest")
+      list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
     else if (sort === "progress")
       list.sort(
         (a, b) =>
@@ -346,7 +361,8 @@
   {#if auth.user && (fix.length > 0 || openComments.length > 0)}
     <section class="block">
       <h2 class="slabel danger">
-        <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your attention
+        <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your
+        attention
       </h2>
       <div class="rows">
         {#each fix as t (t.campaignSlug + t.task)}
@@ -360,7 +376,9 @@
               >
             {/if}
             <span class="spacer"></span>
-            <span class="golink red">Open task <Icon name="arrow-right" size={12} /></span>
+            <span class="golink red"
+              >Open task <Icon name="arrow-right" size={12} /></span
+            >
           </a>
         {/each}
         {#each openComments as f (f.comment.comment_id || f.comment.timestamp + f.task)}
@@ -374,7 +392,9 @@
                 .body}”</span
             >
             <span class="spacer"></span>
-            <span class="golink">Reply <Icon name="arrow-right" size={12} /></span>
+            <span class="golink"
+              >Reply <Icon name="arrow-right" size={12} /></span
+            >
           </a>
         {/each}
       </div>
@@ -394,7 +414,10 @@
             type="button"
             class="expander"
             onclick={() => (showCompleted = !showCompleted)}
-            >{done.length} done <Icon name={showCompleted ? "chevron-down" : "chevron-right"} size={12} /></button
+            >{done.length} done <Icon
+              name={showCompleted ? "chevron-down" : "chevron-right"}
+              size={12}
+            /></button
           >
         {/if}
       </div>
@@ -402,9 +425,7 @@
         {#if listLoading && tasks.length === 0}
           <p class="note">Loading your claimed tasks…</p>
         {:else if encoding.length === 0 && validating.length === 0 && awaiting.length === 0 && fix.length === 0}
-          <p class="note">
-            No open work. Claim a task from a campaign below.
-          </p>
+          <p class="note">No open work. Claim a task from a campaign below.</p>
         {/if}
         {#each encoding as t (t.campaignSlug + t.task)}
           <div class="row">
@@ -420,7 +441,8 @@
               type="button"
               class="btn"
               disabled={runner.busy}
-              onclick={() => openEditor(t)}>Open editor <Icon name="external" /></button
+              onclick={() => openEditor(t)}
+              >Open editor <Icon name="external" /></button
             >
             <button
               type="button"
@@ -450,7 +472,9 @@
             <span class="rowtitle">{taskLine(t)}</span>
             <span class="pill green">awaiting review</span>
             <span class="rowmeta"
-              >{t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}{t.passes}
+              >{t.submittedAt
+                ? `submitted ${ago(t.submittedAt)} · `
+                : ""}{t.passes}
               of {t.threshold} reviews</span
             >
             <span class="spacer"></span>
@@ -551,14 +575,14 @@
             more,
           ) === 1
             ? ""
-            : "s"} <Icon name="chevron-down" size={12} /></button
+            : "s"}
+          <Icon name="chevron-down" size={12} /></button
         >
       {/if}
     {/if}
     {#if !listError && listFailed > 0}
       <p class="note partial">
-        {listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded
-        — {listFailureMessage}
+        {listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded — {listFailureMessage}
       </p>
     {/if}
     {#if !auth.user && auth.status === "anonymous"}

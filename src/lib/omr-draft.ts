@@ -15,75 +15,84 @@
 // element of the staff's layer in the page's first measure, a key or meter as
 // a `<scoreDef>` before that measure. Regex over the document text, no DOM.
 
-import { parseScoreDef } from './mei-facsimile.ts';
-import { keysigFor } from './omr-musicxml.ts';
-import type { PageOpening } from './omr-stitch.ts';
+import { parseScoreDef } from "./mei-facsimile.ts";
+import { keysigFor } from "./omr-musicxml.ts";
+import type { PageOpening } from "./omr-stitch.ts";
 
 export interface DraftInsertion {
-	mei: string;
-	/** Skeleton measures that received content. */
-	filled: number;
-	/** What did not line up: a system with more boxes than transcribed measures, or the reverse. */
-	warnings: string[];
+  mei: string;
+  /** Skeleton measures that received content. */
+  filled: number;
+  /** What did not line up: a system with more boxes than transcribed measures, or the reverse. */
+  warnings: string[];
 }
 
 const MEASURE_OR_SCOREDEF =
-	/<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>|<measure\b[^>]*>[\s\S]*?<\/measure>|<measure\b[^>]*\/>/g;
+  /<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>|<measure\b[^>]*>[\s\S]*?<\/measure>|<measure\b[^>]*\/>/g;
 
 /**
  * The `<measure>` elements of a converted document's sections in order, each
  * with its inner content and the `<scoreDef>` elements since the measure
  * before it.
  */
-function measuresOf(mei: string): { text: string; inner: string; before: string }[] {
-	const sections = mei.slice(Math.max(0, mei.search(/<section\b/)));
-	const measures: { text: string; inner: string; before: string }[] = [];
-	let before = '';
-	for (const text of sections.match(MEASURE_OR_SCOREDEF) ?? []) {
-		if (text.startsWith('<scoreDef')) {
-			// Only a key or meter change, without verovio's ppq, which also makes up scoreDefs of its own.
-			if (/<(keySig|meterSig)\b|\s(keysig|meter\.(count|unit|sym))=/.test(text)) {
-				before += text.replace(/^(<scoreDef\b[^>]*?)\s+ppq="[^"]*"/, '$1');
-			}
-			continue;
-		}
-		measures.push({
-			text,
-			inner: /\/>$/.test(text) ? '' : text.replace(/^<measure\b[^>]*>/, '').replace(/<\/measure>$/, ''),
-			before
-		});
-		before = '';
-	}
-	return measures;
+function measuresOf(
+  mei: string,
+): { text: string; inner: string; before: string }[] {
+  const sections = mei.slice(Math.max(0, mei.search(/<section\b/)));
+  const measures: { text: string; inner: string; before: string }[] = [];
+  let before = "";
+  for (const text of sections.match(MEASURE_OR_SCOREDEF) ?? []) {
+    if (text.startsWith("<scoreDef")) {
+      // Only a key or meter change, without verovio's ppq, which also makes up scoreDefs of its own.
+      if (
+        /<(keySig|meterSig)\b|\s(keysig|meter\.(count|unit|sym))=/.test(text)
+      ) {
+        before += text.replace(/^(<scoreDef\b[^>]*?)\s+ppq="[^"]*"/, "$1");
+      }
+      continue;
+    }
+    measures.push({
+      text,
+      inner: /\/>$/.test(text)
+        ? ""
+        : text.replace(/^<measure\b[^>]*>/, "").replace(/<\/measure>$/, ""),
+      before,
+    });
+    before = "";
+  }
+  return measures;
 }
 
 /** An MEI `<clef>` for a clef token (`G2`, `F4`, `G2-1`, `perc`, `TAB`; see `clefXml`). */
 export function meiClef(token: string): string {
-	const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
-	if (!m) return `<clef shape="${token === 'TAB' ? 'TAB' : 'perc'}"/>`;
-	const octaves = Math.abs(Number(m[3] ?? 0));
-	const dis = octaves
-		? ` dis="${octaves === 1 ? 8 : octaves === 2 ? 15 : 22}" dis.place="${Number(m[3]) < 0 ? 'below' : 'above'}"`
-		: '';
-	return `<clef shape="${m[1]}" line="${m[2]}"${dis}/>`;
+  const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
+  if (!m) return `<clef shape="${token === "TAB" ? "TAB" : "perc"}"/>`;
+  const octaves = Math.abs(Number(m[3] ?? 0));
+  const dis = octaves
+    ? ` dis="${octaves === 1 ? 8 : octaves === 2 ? 15 : 22}" dis.place="${Number(m[3]) < 0 ? "below" : "above"}"`
+    : "";
+  return `<clef shape="${m[1]}" line="${m[2]}"${dis}/>`;
 }
 
 /** A `<scoreDef>` for the key and meter the page's first system changes, or '' when it changes neither. */
 function openingScoreDef(opening: PageOpening): string {
-	const key = opening.fifths !== null ? `<keySig sig="${keysigFor(opening.fifths)}"/>` : '';
-	const time = opening.time
-		? opening.time.symbol
-			? `<meterSig sym="${opening.time.symbol}"/>`
-			: `<meterSig count="${opening.time.beats}" unit="${opening.time.beatType}"/>`
-		: '';
-	return key || time ? `<scoreDef>${key}${time}</scoreDef>` : '';
+  const key =
+    opening.fifths !== null
+      ? `<keySig sig="${keysigFor(opening.fifths)}"/>`
+      : "";
+  const time = opening.time
+    ? opening.time.symbol
+      ? `<meterSig sym="${opening.time.symbol}"/>`
+      : `<meterSig count="${opening.time.beats}" unit="${opening.time.beatType}"/>`
+    : "";
+  return key || time ? `<scoreDef>${key}${time}</scoreDef>` : "";
 }
 
 /** Staff content with `clef` as the first element of its first layer. */
 const withLeadingClef = (content: string, clef: string): string =>
-	/^\s*<layer\b[^>]*\/>/.test(content)
-		? content.replace(/^\s*<layer\b([^>]*?)\s*\/>/, `<layer$1>${clef}</layer>`)
-		: content.replace(/<layer\b[^>]*>/, (tag) => `${tag}${clef}`);
+  /^\s*<layer\b[^>]*\/>/.test(content)
+    ? content.replace(/^\s*<layer\b([^>]*?)\s*\/>/, `<layer$1>${clef}</layer>`)
+    : content.replace(/<layer\b[^>]*>/, (tag) => `${tag}${clef}`);
 
 // The self-closing form comes first, so it never runs on to the next </staff>.
 const STAFF = /<staff\b[^>]*\/>|<staff\b[^>]*>[\s\S]*?<\/staff>/g;
@@ -95,10 +104,12 @@ const STAFF = /<staff\b[^>]*\/>|<staff\b[^>]*>[\s\S]*?<\/staff>/g;
  * and chords.
  */
 function clefsOutOfTremolos(content: string): string {
-	return content.replace(/<(bTrem|fTrem)\b[^>]*>[\s\S]*?<\/\1>/g, (tremolo) => {
-		const clefs = tremolo.match(/<clef\b[^>]*\/>/g);
-		return clefs ? tremolo.replace(/\s*<clef\b[^>]*\/>/g, '') + clefs.join('') : tremolo;
-	});
+  return content.replace(/<(bTrem|fTrem)\b[^>]*>[\s\S]*?<\/\1>/g, (tremolo) => {
+    const clefs = tremolo.match(/<clef\b[^>]*\/>/g);
+    return clefs
+      ? tremolo.replace(/\s*<clef\b[^>]*\/>/g, "") + clefs.join("")
+      : tremolo;
+  });
 }
 
 /**
@@ -109,36 +120,45 @@ function clefsOutOfTremolos(content: string): string {
  * holds. The converted control events follow.
  */
 function measureStaves(
-	content: string,
-	staffCount: number,
-	printed: Map<number, string>,
-	leadingClefs: Map<number, string> = new Map()
+  content: string,
+  staffCount: number,
+  printed: Map<number, string>,
+  leadingClefs: Map<number, string> = new Map(),
 ): string {
-	const convertedStaves = content.match(STAFF) ?? [];
-	const byN = new Map(convertedStaves.map((staff) => [Number(/\bn="(\d+)"/.exec(staff)?.[1]), staff]));
-	const staves = Array.from({ length: staffCount }, (_, i) => {
-		const n = i + 1;
-		const zone = printed.get(n);
-		const converted = byN.get(n);
-		if (!zone) {
-			const clefs = converted?.match(/<clef\b[^>]*\/>/g)?.join('') ?? '';
-			return `<staff n="${n}"><layer n="1"><mRest/>${clefs}</layer></staff>`;
-		}
-		const inner =
-			!converted || /\/>$/.test(converted)
-				? '<layer n="1"/>'
-				: clefsOutOfTremolos(converted.replace(/^<staff\b[^>]*>/, '').replace(/<\/staff>$/, ''));
-		const clef = leadingClefs.get(n);
-		return `<staff n="${n}" facs="#${zone}">${clef ? withLeadingClef(inner, clef) : inner}</staff>`;
-	});
-	const controlEvents = convertedStaves.reduce((rest, staff) => rest.replace(staff, ''), content).trim();
-	return staves.join('\n') + (controlEvents ? `\n${controlEvents}` : '');
+  const convertedStaves = content.match(STAFF) ?? [];
+  const byN = new Map(
+    convertedStaves.map((staff) => [
+      Number(/\bn="(\d+)"/.exec(staff)?.[1]),
+      staff,
+    ]),
+  );
+  const staves = Array.from({ length: staffCount }, (_, i) => {
+    const n = i + 1;
+    const zone = printed.get(n);
+    const converted = byN.get(n);
+    if (!zone) {
+      const clefs = converted?.match(/<clef\b[^>]*\/>/g)?.join("") ?? "";
+      return `<staff n="${n}"><layer n="1"><mRest/>${clefs}</layer></staff>`;
+    }
+    const inner =
+      !converted || /\/>$/.test(converted)
+        ? '<layer n="1"/>'
+        : clefsOutOfTremolos(
+            converted.replace(/^<staff\b[^>]*>/, "").replace(/<\/staff>$/, ""),
+          );
+    const clef = leadingClefs.get(n);
+    return `<staff n="${n}" facs="#${zone}">${clef ? withLeadingClef(inner, clef) : inner}</staff>`;
+  });
+  const controlEvents = convertedStaves
+    .reduce((rest, staff) => rest.replace(staff, ""), content)
+    .trim();
+  return staves.join("\n") + (controlEvents ? `\n${controlEvents}` : "");
 }
 
 /** A skeleton measure with `content` in place of its inner content, keeping its start tag. */
 function withContent(measure: string, content: string): string {
-	const open = /^<measure\b[^>]*?>/.exec(measure)![0].replace(/\/>$/, '>');
-	return `${open}\n${content}\n               </measure>`;
+  const open = /^<measure\b[^>]*?>/.exec(measure)![0].replace(/\/>$/, ">");
+  return `${open}\n${content}\n               </measure>`;
 }
 
 /**
@@ -153,88 +173,107 @@ function withContent(measure: string, content: string): string {
  * since a staff without a staffDef is invalid.
  */
 export function insertPageDraft(
-	skeleton: string,
-	locator: string,
-	converted: string,
-	measuresPerSystem: number[],
-	printed: Map<number, string>[],
-	opening: PageOpening = { clefs: [], fifths: null, time: null }
+  skeleton: string,
+  locator: string,
+  converted: string,
+  measuresPerSystem: number[],
+  printed: Map<number, string>[],
+  opening: PageOpening = { clefs: [], fifths: null, time: null },
 ): DraftInsertion {
-	const warnings: string[] = [];
-	const page = Number(/^surface-(\d+)$/.exec(locator)?.[1]);
-	const pbTag = new RegExp(`<pb\\b[^>]*\\bfacs="#${locator}"[^>]*>`);
-	const pb = pbTag.exec(skeleton);
-	if (!pb) throw new Error(`No page break found for ${locator}.`);
-	const from = pb.index + pb[0].length;
-	const nextPb = /<pb\b[^>]*>/g;
-	nextPb.lastIndex = from;
-	const next = nextPb.exec(skeleton);
-	const to = next ? next.index : skeleton.length;
-	const span = skeleton.slice(from, to);
+  const warnings: string[] = [];
+  const page = Number(/^surface-(\d+)$/.exec(locator)?.[1]);
+  const pbTag = new RegExp(`<pb\\b[^>]*\\bfacs="#${locator}"[^>]*>`);
+  const pb = pbTag.exec(skeleton);
+  if (!pb) throw new Error(`No page break found for ${locator}.`);
+  const from = pb.index + pb[0].length;
+  const nextPb = /<pb\b[^>]*>/g;
+  nextPb.lastIndex = from;
+  const next = nextPb.exec(skeleton);
+  const to = next ? next.index : skeleton.length;
+  const span = skeleton.slice(from, to);
 
-	// The skeleton's systems on this page: measures grouped at each <sb>.
-	const systems: { text: string; inner: string }[][] = [[]];
-	for (const token of span.match(/<sb\b[^>]*>|<measure\b[^>]*>[\s\S]*?<\/measure>|<measure\b[^>]*\/>/g) ?? []) {
-		if (token.startsWith('<sb')) {
-			if (systems[systems.length - 1].length) systems.push([]);
-			continue;
-		}
-		systems[systems.length - 1].push({
-			text: token,
-			inner: /\/>$/.test(token) ? '' : token.replace(/^<measure\b[^>]*>/, '').replace(/<\/measure>$/, '')
-		});
-	}
-	if (!systems[0].length) systems.shift();
+  // The skeleton's systems on this page: measures grouped at each <sb>.
+  const systems: { text: string; inner: string }[][] = [[]];
+  for (const token of span.match(
+    /<sb\b[^>]*>|<measure\b[^>]*>[\s\S]*?<\/measure>|<measure\b[^>]*\/>/g,
+  ) ?? []) {
+    if (token.startsWith("<sb")) {
+      if (systems[systems.length - 1].length) systems.push([]);
+      continue;
+    }
+    systems[systems.length - 1].push({
+      text: token,
+      inner: /\/>$/.test(token)
+        ? ""
+        : token.replace(/^<measure\b[^>]*>/, "").replace(/<\/measure>$/, ""),
+    });
+  }
+  if (!systems[0].length) systems.shift();
 
-	const staffCount = parseScoreDef(skeleton).staves.length;
-	const convertedMeasures = measuresOf(converted);
-	if (systems.length !== measuresPerSystem.length) {
-		throw new Error(
-			`Page ${page}: ${systems.length} system(s) of measure boxes, ${measuresPerSystem.length} transcribed.`
-		);
-	}
+  const staffCount = parseScoreDef(skeleton).staves.length;
+  const convertedMeasures = measuresOf(converted);
+  if (systems.length !== measuresPerSystem.length) {
+    throw new Error(
+      `Page ${page}: ${systems.length} system(s) of measure boxes, ${measuresPerSystem.length} transcribed.`,
+    );
+  }
 
-	const leadingClefs = new Map<number, string>();
-	opening.clefs.forEach((token, k) => {
-		if (token) leadingClefs.set(k + 1, meiClef(token));
-	});
-	const startScoreDef = openingScoreDef(opening);
+  const leadingClefs = new Map<number, string>();
+  opening.clefs.forEach((token, k) => {
+    if (token) leadingClefs.set(k + 1, meiClef(token));
+  });
+  const startScoreDef = openingScoreDef(opening);
 
-	let filled = 0;
-	let dropped = false;
-	let cursor = 0;
-	let result = span;
-	for (const [s, system] of systems.entries()) {
-		const available = measuresPerSystem[s] ?? 0;
-		const take = Math.min(system.length, available);
-		if (system.length !== available) {
-			warnings.push(
-				`Page ${page}, system ${s + 1}: ${system.length} measure box(es), ${available} measure(s) transcribed.`
-			);
-		}
-		for (let i = 0; i < take; i++) {
-			const measure = convertedMeasures[cursor + i];
-			if (!measure) break;
-			// Staves the score definition does not have are left out.
-			let content = measure.inner;
-			const extra = content.match(/<staff\b[^>]*\bn="(\d+)"[^>]*>[\s\S]*?<\/staff>/g) ?? [];
-			for (const staff of extra) {
-				const n = Number(/\bn="(\d+)"/.exec(staff)![1]);
-				if (n > staffCount) {
-					content = content.replace(staff, '');
-					dropped = true;
-				}
-			}
-			const first = s === 0 && i === 0;
-			const staves = measureStaves(content, staffCount, printed[s] ?? new Map(), first ? leadingClefs : undefined);
-			const before = (first ? startScoreDef : '') + measure.before;
-			result = result.replace(system[i].text, () => before + withContent(system[i].text, staves));
-			filled++;
-		}
-		cursor += available;
-	}
-	if (dropped) {
-		warnings.push(`Page ${page}: staves beyond the score definition's ${staffCount} were left out.`);
-	}
-	return { mei: skeleton.slice(0, from) + result + skeleton.slice(to), filled, warnings };
+  let filled = 0;
+  let dropped = false;
+  let cursor = 0;
+  let result = span;
+  for (const [s, system] of systems.entries()) {
+    const available = measuresPerSystem[s] ?? 0;
+    const take = Math.min(system.length, available);
+    if (system.length !== available) {
+      warnings.push(
+        `Page ${page}, system ${s + 1}: ${system.length} measure box(es), ${available} measure(s) transcribed.`,
+      );
+    }
+    for (let i = 0; i < take; i++) {
+      const measure = convertedMeasures[cursor + i];
+      if (!measure) break;
+      // Staves the score definition does not have are left out.
+      let content = measure.inner;
+      const extra =
+        content.match(/<staff\b[^>]*\bn="(\d+)"[^>]*>[\s\S]*?<\/staff>/g) ?? [];
+      for (const staff of extra) {
+        const n = Number(/\bn="(\d+)"/.exec(staff)![1]);
+        if (n > staffCount) {
+          content = content.replace(staff, "");
+          dropped = true;
+        }
+      }
+      const first = s === 0 && i === 0;
+      const staves = measureStaves(
+        content,
+        staffCount,
+        printed[s] ?? new Map(),
+        first ? leadingClefs : undefined,
+      );
+      const before = (first ? startScoreDef : "") + measure.before;
+      result = result.replace(
+        system[i].text,
+        () => before + withContent(system[i].text, staves),
+      );
+      filled++;
+    }
+    cursor += available;
+  }
+  if (dropped) {
+    warnings.push(
+      `Page ${page}: staves beyond the score definition's ${staffCount} were left out.`,
+    );
+  }
+  return {
+    mei: skeleton.slice(0, from) + result + skeleton.slice(to),
+    filled,
+    warnings,
+  };
 }

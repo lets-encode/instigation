@@ -61,7 +61,9 @@ from flask import Blueprint, jsonify, request, session
 try:
     from . import slug_validation as validation
     from .slug_db import SlugExists, Store, in_minutes_iso, now_iso
-except ImportError:  # run as top-level modules (flask --app app run, gunicorn app:app)
+except (
+    ImportError
+):  # run as top-level modules (flask --app app run, gunicorn app:app)
     import slug_validation as validation
     from slug_db import SlugExists, Store, in_minutes_iso, now_iso
 
@@ -207,7 +209,12 @@ def register():
     denied = _push_permission_error(forge, repo_id)
     if denied:
         return denied
-    active = {"name": name, "status": "active", "forge": forge, "repo_id": repo_id}
+    active = {
+        "name": name,
+        "status": "active",
+        "forge": forge,
+        "repo_id": repo_id,
+    }
     if store.activate(name, forge, repo_id, claim_token):
         return jsonify(**active), 201
     # No claim of ours to activate: the name must be free — either never

@@ -3,11 +3,21 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
-  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
+  import {
+    CommandRunner,
+    readForge,
+    viewerId,
+  } from "$lib/command-runner.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import { lookupSlug, resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
+  import {
+    lookupSlug,
+    resolveCampaign,
+    resolveFailureMessage,
+  } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
-  import { findRow, pieceNamesOf,
+  import {
+    findRow,
+    pieceNamesOf,
     piecePreparationsOf,
   } from "$lib/campaign-tables.ts";
   import type {
@@ -181,7 +191,16 @@
   const pieceNames = $derived(pieceNamesOf(pieces));
   const piecePreparations = $derived(piecePreparationsOf(pieces));
   const board = $derived(
-    buildBoard(graphData, comments, history, viewer, logins, pieceNames, Date.now(), piecePreparations),
+    buildBoard(
+      graphData,
+      comments,
+      history,
+      viewer,
+      logins,
+      pieceNames,
+      Date.now(),
+      piecePreparations,
+    ),
   );
   const allCards = $derived(board.columns.flatMap((c) => c.cards));
   // Per-piece task progress, for the piece tiles.
@@ -289,12 +308,23 @@
     if (viewer === "") return "";
     const encoded = new Set(
       history
-        .filter((h) => h.user_id === viewer && h.action === "submit_encoding" && h.outcome === "accepted")
+        .filter(
+          (h) =>
+            h.user_id === viewer &&
+            h.action === "submit_encoding" &&
+            h.outcome === "accepted",
+        )
         .map((h) => h.task_id),
     );
-    const done = allCards.filter((c) => c.column === "done" && encoded.has(c.task)).length;
-    const claimed = locks.filter((l) => l.user_id === viewer && l.kind !== "validation").length;
-    const reviewing = locks.filter((l) => l.user_id === viewer && l.kind === "validation").length;
+    const done = allCards.filter(
+      (c) => c.column === "done" && encoded.has(c.task),
+    ).length;
+    const claimed = locks.filter(
+      (l) => l.user_id === viewer && l.kind !== "validation",
+    ).length;
+    const reviewing = locks.filter(
+      (l) => l.user_id === viewer && l.kind === "validation",
+    ).length;
     const parts = [`${done} done`, `${claimed} claimed`];
     if (reviewing) parts.push(`${reviewing} reviewing`);
     return `You: ${parts.join(" · ")}`;
@@ -343,7 +373,11 @@
   function closeTask() {
     detailTask = null;
     writeLastTask(campaign, null);
-    goto(`/${campaign}`, { replaceState: true, noScroll: true, keepFocus: true });
+    goto(`/${campaign}`, {
+      replaceState: true,
+      noScroll: true,
+      keepFocus: true,
+    });
   }
 
   // -------------------------------------------------------- the score view
@@ -519,7 +553,9 @@
     }
     if (name !== campaign) return;
     if (info?.status === "free") {
-      await goto(`/new?slug=${encodeURIComponent(name)}`, { replaceState: true });
+      await goto(`/new?slug=${encodeURIComponent(name)}`, {
+        replaceState: true,
+      });
       return;
     }
     if (
@@ -584,7 +620,9 @@
   // pre-task's own editor, or the review view for encoding tasks — but only
   // on a clean claim, so a rejected claim leaves you on the console.
   const claimValidate = async (task_id: string, subtask_id: string) => {
-    await run((c) => invoke(commands.claimValidation, { task_id, subtask_id }, c));
+    await run((c) =>
+      invoke(commands.claimValidation, { task_id, subtask_id }, c),
+    );
     if (!runner.result?.ok || runner.result.warn) return;
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
@@ -597,7 +635,11 @@
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
     await run((c) => invoke(commands.openEditor, { task_id }, c));
-    if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+    if (
+      runner.result?.ok &&
+      !runner.result.warn &&
+      runner.result.meiFriendUrl
+    ) {
       window.open(runner.result.meiFriendUrl, "_blank", "noopener");
     }
   };
@@ -799,11 +841,15 @@
       <span>
         {runner.result.error}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View submission <Icon name="external" size={12} /></a
+          >
         {/if}
       </span>
-      <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-        >Dismiss</button
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {:else if runner.result && runner.result.ok && !runner.result.background}
@@ -811,7 +857,9 @@
       <div class="banner-body">
         {runner.result.message}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View submission <Icon name="external" size={12} /></a
+          >
         {/if}
         {#if runner.result.meiFriendUrl}
           <div class="rawlink">
@@ -820,12 +868,16 @@
               value={runner.result.meiFriendUrl}
               onfocus={(e) => (e.target as HTMLInputElement).select()}
             />
-            <button type="button" onclick={() => copy(runner.result!.meiFriendUrl!)}
-              >Copy</button
+            <button
+              type="button"
+              onclick={() => copy(runner.result!.meiFriendUrl!)}>Copy</button
             >
           </div>
           <span class="muted">
-            <a href={runner.result.meiFriendUrl} target="_blank" rel="noreferrer"
+            <a
+              href={runner.result.meiFriendUrl}
+              target="_blank"
+              rel="noreferrer"
               >Open in mei-friend <Icon name="external" size={12} /></a
             >
             (if the tab didn't open automatically)
@@ -838,8 +890,10 @@
           {/if}
         {/if}
       </div>
-      <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-        >Dismiss</button
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {/if}
@@ -913,579 +967,611 @@
     {:else if notFound}
       <div class="banner bar err">
         <span>
-          No campaign called <code>{campaign}</code> was found. It may have
-          been removed, or the name may be misspelled.
+          No campaign called <code>{campaign}</code> was found. It may have been
+          removed, or the name may be misspelled.
           <a href="/campaigns">Back to all campaigns</a>.
         </span>
       </div>
     {:else if slugState === "pending"}
       <div class="banner bar warn">
         <span>
-          Someone is setting up a campaign called <code>{campaign}</code>.
-          If they don't finish it, the name becomes free again.
+          Someone is setting up a campaign called <code>{campaign}</code>. If
+          they don't finish it, the name becomes free again.
           <a href="/campaigns">Back to all campaigns</a>.
         </span>
       </div>
     {:else if slugState === "reserved"}
       <div class="banner bar err">
         <span>
-          <code>{campaign}</code> is reserved and can't be used for a
-          campaign. <a href="/campaigns">Back to all campaigns</a>.
+          <code>{campaign}</code> is reserved and can't be used for a campaign.
+          <a href="/campaigns">Back to all campaigns</a>.
         </span>
       </div>
     {:else if slugState === "tombstoned"}
       <div class="banner bar err">
         <span>
-          The name <code>{campaign}</code> has been blocked and can't be
-          used. <a href="/campaigns">Back to all campaigns</a>.
+          The name <code>{campaign}</code> has been blocked and can't be used.
+          <a href="/campaigns">Back to all campaigns</a>.
         </span>
       </div>
     {:else}
-    <div class="viewcol" class:capped={!!scoreView || !canPush}>
-      {#if !resolved}
-        <p class="msg muted">Finding the campaign…</p>
-      {:else if loading}
-        <p class="msg muted">Loading campaign…</p>
-      {:else if loadError}
-        <div class="banner bar err"><span>{loadError}</span></div>
-      {:else if notInitialised}
-        <div class="banner bar warn">
-          <span>
-            This repository has no tracking tables (<code
-              >tracking/task.csv</code
-            >,
-            <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>)
-            yet — it may not have been initialised. Create it through the home
-            page to initialise it.
-          </span>
-        </div>
-      {:else if scoreView}
-        {#key scoreView.piece.path}
-          <ScoreView
-            piece={scoreView.piece}
-            zone={(scoreView.index % 8) + 1}
-            campaignTitle={title || repo}
-            {owner}
-            {repo}
-            startPage={scoreStartPage}
-            {anchor}
-            cards={scoreCards}
-            {comments}
-            {logins}
-            {viewer}
-            {canPush}
-            {runner}
-            bind:panel={commentsPanel}
-            oncomment={postComment}
-            onresolve={resolveCommentRow}
-          />
-        {/key}
-      {:else if manage && canPush}
-        <div class="crumbrow">
-          <button type="button" class="backlink" onclick={() => (manage = false)}
-            ><Icon name="arrow-left" /> Back to the board</button
-          >
-          <span class="bcsep">/</span>
-          <span class="crumbtitle">{title || repo}</span>
-          <span class="crumbsub">· Manage</span>
-          <span class="ownerpill">owner</span>
-          <span class="cspacer"></span>
-          <span class="reapline">
-            {#if lastReap}
-              Expired claims were last released {elapsedLabel(lastReap.timestamp)}
-            {:else}
-              No expired claims have been released yet
-            {/if}
-          </span>
-          <button
-            type="button"
-            class="btn"
-            onclick={() => reaper()}
-            disabled={runner.busy}
-            title="Releases the claims whose lock has expired">Release expired claims now</button
-          >
-        </div>
-        <PlanEditor
-          {taskDefs}
-          {rows}
-          {validationColumns}
-          {locks}
-          {logins}
-          {pieceNames}
-          busy={runner.busy}
-          onsave={savePlan}
-          oncancel={() => (manage = false)}
-        />
-      {:else if !canPush}
-        <div class="volwrap">
-          <!-- The group's width: the task column plus the side panel's default
-               width and the row's gap. It does not follow a dragged panel
-               width, so widening the panel narrows the column instead. -->
-          <div
-            class="volcenter"
-            style="--side: {detailCard || commentsPanel.open ? `${DEFAULT_PANEL_WIDTH + 14}px` : '0px'}"
-          >
-            <div class="volhead">
-              <div class="voltitle">
-                <h1>{title || repo}</h1>
-                {#if volStanding}
-                  <span class="volstanding">{volStanding}</span>
-                {/if}
-              </div>
-              <span class="volspacer"></span>
-              <span class="volcount">{board.done} of {board.total} done</span>
-              {#if volunteerScope && !detailCard}
-                <button
-                  type="button"
-                  class="cptoggle"
-                  aria-pressed={commentsPanel.open}
-                  title={commentsPanel.open
-                    ? "Hide the comments panel"
-                    : "Show the comments panel"}
-                  onclick={() => {
-                    commentsPanel.open = !commentsPanel.open;
-                    writeSidePanel("comments", { ...commentsPanel });
-                  }}><PanelIcon /></button
-                >
-              {/if}
-            </div>
-            <div class="volrow">
-              <VolunteerView
-                {owner}
-                {repo}
-                cards={allCards}
-                {nextCard}
-                {taskDefs}
-                {locks}
-                {viewer}
-                pieces={previewPieces}
-                progress={pieceProgress}
-                pieceIndex={pieceIndexByTask}
-                busy={runner.busy}
-                panelOpen={!!detailCard}
-                bind:expandedPiece={volunteerPiece}
-                onact={actOnCard}
-                onopen={openTask}
-                onviewscore={viewScorePiece}
-              />
-              {#if detailCard}
-                {@render taskSide(detailCard, windowWidth < 1100)}
-              {:else if volunteerScope && commentsPanel.open}
-                <div class="cpholder">
-                  <CommentsPanel
-                    piece={volunteerScope.piece}
-                    zone={(volunteerScope.index % 8) + 1}
-                    cards={scopeCards}
-                    {comments}
-                    {logins}
-                    {viewer}
-                    {canPush}
-                    {runner}
-                    fitEmpty
-                    bind:panel={commentsPanel}
-                    onanchor={showCommentInScore}
-                    oncomment={postComment}
-                    onresolve={resolveCommentRow}
-                  />
-                </div>
-              {/if}
-            </div>
+      <div class="viewcol" class:capped={!!scoreView || !canPush}>
+        {#if !resolved}
+          <p class="msg muted">Finding the campaign…</p>
+        {:else if loading}
+          <p class="msg muted">Loading campaign…</p>
+        {:else if loadError}
+          <div class="banner bar err"><span>{loadError}</span></div>
+        {:else if notInitialised}
+          <div class="banner bar warn">
+            <span>
+              This repository has no tracking tables (<code
+                >tracking/task.csv</code
+              >,
+              <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>)
+              yet — it may not have been initialised. Create it through the home
+              page to initialise it.
+            </span>
           </div>
-        </div>
-      {:else}
-        <div class="hero">
-          <div class="hero-line">
-            <h1>{title || repo}</h1>
-            <a
-              class="mono slug"
-              href={`https://github.com/${owner}/${repo}`}
-              target="_blank"
-              rel="noreferrer">{owner}/{repo} <Icon name="external" size={12} /></a
-            >
+        {:else if scoreView}
+          {#key scoreView.piece.path}
+            <ScoreView
+              piece={scoreView.piece}
+              zone={(scoreView.index % 8) + 1}
+              campaignTitle={title || repo}
+              {owner}
+              {repo}
+              startPage={scoreStartPage}
+              {anchor}
+              cards={scoreCards}
+              {comments}
+              {logins}
+              {viewer}
+              {canPush}
+              {runner}
+              bind:panel={commentsPanel}
+              oncomment={postComment}
+              onresolve={resolveCommentRow}
+            />
+          {/key}
+        {:else if manage && canPush}
+          <div class="crumbrow">
             <button
               type="button"
-              class="infochip"
-              class:on={showInfo}
-              onclick={() => {
-                showInfo = !showInfo;
-                if (showInfo) loadScoreHead();
-              }}
-              title="Show or hide campaign information"
-              ><Icon name="info" /> Info <Icon name={showInfo ? "chevron-down" : "chevron-right"} size={12} /></button
+              class="backlink"
+              onclick={() => (manage = false)}
+              ><Icon name="arrow-left" /> Back to the board</button
             >
+            <span class="bcsep">/</span>
+            <span class="crumbtitle">{title || repo}</span>
+            <span class="crumbsub">· Manage</span>
+            <span class="ownerpill">owner</span>
             <span class="cspacer"></span>
-            {#if auth.user && canPush}
-              <button
-                type="button"
-                class="btn btn-lg managechip"
-                onclick={() => (manage = true)}
-                disabled={runner.busy}
-                title="Owner only: plan editor and expired-claim release"><Icon name="gear" /> Manage</button
-              >
-            {/if}
-            <button
-              type="button"
-              class="btn btn-lg btn-primary"
-              disabled={runner.busy || !auth.user || !nextCard}
-              title={!auth.user
-                ? "Log in to claim a task."
-                : !nextCard
-                  ? "Nothing to claim right now."
-                  : "Claim the first task that is open for you."}
-              onclick={actOnNext}>Claim the next task</button
-            >
-          </div>
-          {#if showInfo}
-            <div class="infoblock">
-              <div class="isec">
-                <span class="seclabel">Score</span>
-                {#if scoreHeadState === "loading"}
-                  <span class="muted inote">Loading the score header…</span>
-                {:else if scoreHeadState === "error"}
-                  <span class="muted inote">Could not read the score.</span>
-                {:else if scoreHeadState === "done" && !scoreHead}
-                  <span class="muted inote">The score has no MEI header.</span>
-                {:else if scoreHead}
-                  <div class="irow">
-                    <span>Title</span>
-                    <span>{scoreHead.title || "—"}</span>
-                  </div>
-                  <div class="irow">
-                    <span>Composer</span>
-                    <span>{scoreHead.composer || "—"}</span>
-                  </div>
-                  {#each scoreHead.contributors as c (c.role + c.name)}
-                    <div class="irow">
-                      <span>{c.role || "contributor"}</span>
-                      <span>{c.name}</span>
-                    </div>
-                  {/each}
-                {/if}
-                <div
-                  class="irow"
-                  title="Everyone the campaign history records: claims, submissions and reviews."
-                >
-                  <span>Worked on this</span>
-                  <span>
-                    {#if workedOn.length}
-                      {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
-                          class="mono"
-                          href={`https://github.com/${logins[u] || u}`}
-                          target="_blank"
-                          rel="noreferrer">@{logins[u] || u}</a
-                        >{/each}
-                    {:else}—{/if}
-                  </span>
-                </div>
-              </div>
-              <div class="isec">
-                <span class="seclabel">Campaign</span>
-                <div class="irow">
-                  <span>About</span>
-                  <span>{description || "—"}</span>
-                </div>
-                <div class="irow">
-                  <span>Visibility</span>
-                  <span>{isPrivate ? "Private" : "Public"}</span>
-                </div>
-                <div
-                  class="irow"
-                  title="Contributions to this campaign are published under this license."
-                >
-                  <span>License</span>
-                  <span>{license || "—"}</span>
-                </div>
-                <div
-                  class="irow"
-                  title="Passing reviews each task needs before it counts as done."
-                >
-                  <span>Reviews required</span>
-                  <span>{passThreshold}</span>
-                </div>
-              </div>
-            </div>
-          {/if}
-          <div class="hero-stats">
-            <span class="stat"><b class="c-ok">{board.done}</b> done</span>
-            <span class="sep">·</span>
-            <span class="stat"><b class="c-info">{board.inFlight}</b> in flight</span>
-            <span class="sep">·</span>
-            {#if board.attention > 0}
-              <button
-                type="button"
-                class="stat statbtn"
-                onclick={() => (showAttention = !showAttention)}
-                title="Show the tasks with unresolved fails, comments or questions."
-                ><b>{board.attention}</b> need{board.attention === 1
-                  ? "s"
-                  : ""} attention <Icon name={showAttention ? "chevron-down" : "chevron-right"} size={12} /></button
-              >
-            {:else}
-              <span class="stat"><b>0</b> need attention</span>
-            {/if}
-            <span class="sep">·</span>
-            <span class="stat"
-              ><b>{board.contributorsWeek}</b> contributor{board.contributorsWeek ===
-              1
-                ? ""
-                : "s"} this week</span
-            >
-            <div class="hbar">
-              <div
-                style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
-              ></div>
-            </div>
-            <span class="hbarlabel">{board.done}/{board.total} tasks done</span>
-            <div class="seg">
-              <button
-                type="button"
-                class:on={boardScope === "all"}
-                onclick={() => (boardScope = "all")}>All tasks</button
-              >
-              <button
-                type="button"
-                class:on={boardScope === "open"}
-                onclick={() => (boardScope = "open")}
-                title="Only tasks with something to do right now: open encodings and free review slots."
-                >Claimable</button
-              >
-            </div>
-          </div>
-          {#if showAttention && attentionCards.length > 0}
-            <div class="attnbox">
-              {#each attentionCards as card (card.task)}
-                <button
-                  type="button"
-                  class="attnrow"
-                  onclick={() => openTask(card.task)}
-                  title="Open this task"
-                >
-                  <span class="attntitle">{card.title}</span>
-                  <span class="mono card-id">{card.task}</span>
-                  <span class="attnspacer"></span>
-                  {#if card.counts.fails > 0}
-                    <span class="chip chip-fail"
-                      >{card.counts.fails} fail{card.counts.fails === 1
-                        ? ""
-                        : "s"}</span
-                    >
-                  {/if}
-                  {#if card.counts.comments > 0}
-                    <span class="chip chip-note"
-                      >{card.counts.comments} comment{card.counts.comments === 1
-                        ? ""
-                        : "s"}</span
-                    >
-                  {/if}
-                  {#if card.counts.questions > 0}
-                    <span class="chip chip-question"
-                      >{card.counts.questions} question{card.counts.questions ===
-                      1
-                        ? ""
-                        : "s"}</span
-                    >
-                  {/if}
-                  <span class="attnchev"><Icon name="chevron-right" /></span>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="instrow" bind:contentRect={instrowBox}>
-        {#if previewPieces.length > 0}
-          <div class="railslot">
-          <PieceRail
-            pieces={previewPieces}
-            compact={railCompact}
-            progress={pieceProgress}
-            counts={railCounts}
-            attention={attentionByPiece}
-            openCount={board.columns.find((c) => c.key === "ready")?.cards
-              .length ?? 0}
-            selected={selectedPiece}
-            onselect={(sel) => (selectedPiece = sel)}
-          />
-          </div>
-        {/if}
-        <div class="boardcol">
-        {#if railPiece}
-          {@const p = pieceProgress.get(railPiece.piece.path)}
-          <div
-            class="ctxstrip"
-            style="--zone: var(--zone-{(railPiece.index % 8) + 1})"
-          >
-            <span class="ctxpaper">
-              {#if stripPreview?.thumb}
-                <img src={stripPreview.thumb} alt="" loading="lazy" />
+            <span class="reapline">
+              {#if lastReap}
+                Expired claims were last released {elapsedLabel(
+                  lastReap.timestamp,
+                )}
+              {:else}
+                No expired claims have been released yet
               {/if}
             </span>
-            <div class="ctxinfo">
-              <span class="ctxname"
-                >{railPiece.piece.title || railPiece.piece.id}</span
-              >
-              <span class="ctxmeta"
-                >{stripPreview?.pageMeasures.length
-                  ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
-                  : ""}{p?.done ?? 0} of {p?.total ?? 0} done</span
-              >
-            </div>
-            <div class="ctxincipit">
-              {#if stripPreview?.incipit}
-                {@html stripPreview.incipit}
-              {:else if stripPreview?.incipitPending}
-                <span class="ctxincnote">incipit appears after the setup tasks</span>
-              {/if}
-            </div>
             <button
               type="button"
               class="btn"
-              onclick={() => viewScorePiece(railPiece.index)}
-              title="Show every page of this piece's score.">View score <Icon name="arrow-right" size={12} /></button
+              onclick={() => reaper()}
+              disabled={runner.busy}
+              title="Releases the claims whose lock has expired"
+              >Release expired claims now</button
             >
           </div>
-        {/if}
-        <div class="board">
-          {#each scopedColumns as col (col.key)}
-            <div class="bcol c-{col.key}">
-              <div class="bcol-head">
-                <h2 class="bcol-name">{col.label}</h2>
-                <span class="bcol-count">{col.cards.length}</span>
+          <PlanEditor
+            {taskDefs}
+            {rows}
+            {validationColumns}
+            {locks}
+            {logins}
+            {pieceNames}
+            busy={runner.busy}
+            onsave={savePlan}
+            oncancel={() => (manage = false)}
+          />
+        {:else if !canPush}
+          <div class="volwrap">
+            <!-- The group's width: the task column plus the side panel's default
+               width and the row's gap. It does not follow a dragged panel
+               width, so widening the panel narrows the column instead. -->
+            <div
+              class="volcenter"
+              style="--side: {detailCard || commentsPanel.open
+                ? `${DEFAULT_PANEL_WIDTH + 14}px`
+                : '0px'}"
+            >
+              <div class="volhead">
+                <div class="voltitle">
+                  <h1>{title || repo}</h1>
+                  {#if volStanding}
+                    <span class="volstanding">{volStanding}</span>
+                  {/if}
+                </div>
+                <span class="volspacer"></span>
+                <span class="volcount">{board.done} of {board.total} done</span>
+                {#if volunteerScope && !detailCard}
+                  <button
+                    type="button"
+                    class="cptoggle"
+                    aria-pressed={commentsPanel.open}
+                    title={commentsPanel.open
+                      ? "Hide the comments panel"
+                      : "Show the comments panel"}
+                    onclick={() => {
+                      commentsPanel.open = !commentsPanel.open;
+                      writeSidePanel("comments", { ...commentsPanel });
+                    }}><PanelIcon /></button
+                  >
+                {/if}
               </div>
-              <div class="well">
-                  {#each col.cards as card (card.task)}
-                    <!-- A focusable div, not a <button>: the run state inside
-                         it can render a PR link, which HTML does not allow
-                         nested in a button. -->
-                    <div
-                      class="card col-{card.column}"
-                      class:nextup={card.nextUp}
-                      class:justmoved={recentlyFinished.has(card.task)}
-                      class:pre={card.pre}
-                      class:tinted={previewPieces.length > 1}
-                      class:paneled={detailTask === card.task}
-                      style={previewPieces.length > 1
-                        ? `--piece-tint: var(--zone-${zoneOf(card.task)})`
-                        : undefined}
-                      class:failtint={card.counts.fails > 0 &&
-                        card.column !== "done"}
-                      role="button"
-                      tabindex="0"
-                      onclick={() => openTask(card.task)}
-                      onkeydown={(e) => {
-                        if (e.target !== e.currentTarget) return;
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          openTask(card.task);
-                        }
-                      }}
-                      title="Open this task"
-                    >
-                      {#if card.nextUp}
-                        <span class="nextup-badge">next task</span>
-                      {/if}
-                      {#if recentlyFinished.has(card.task)}
-                        <span class="justmoved-badge">just submitted</span>
-                      {/if}
-                      <div class="card-title">{card.title}</div>
-                      <div class="card-type">
-                        {card.column === "validation"
-                          ? `${card.typeLine} · ${card.passes} of ${card.threshold} reviews`
-                          : card.typeLine}
-                        <span class="mono card-id">{card.task}</span>
-                        <button
-                          type="button"
-                          class="card-score"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            viewCardScore(card);
-                          }}
-                          title="Open the score at this task's pages"
-                          >{cardPage(card) ? `p. ${cardPage(card)}` : "score"} <Icon name="arrow-right" size={11} /></button
-                        >
-                      </div>
-                      <TaskRunState task={card.task} />
-                      {#if card.column === "blocked"}
-                        <div class="card-foot">
-                          waits for <strong>{card.waitsFor}</strong>
-                        </div>
-                      {:else if card.column === "encoding" && card.worker}
-                        <div class="card-worker">
-                          <span class="avatar"
-                            >{initialOf(card.worker.login)}</span
-                          >
-                          <span class="worker-line"
-                            >{card.worker.login} · {card.worker
-                              .elapsed}</span
-                          >
-                        </div>
-                      {:else if card.column === "validation"}
-                        <div class="card-dots">
-                          {#each card.dots as key, i (i)}
-                            {@render slotDot(key)}
-                          {/each}
-                        </div>
-                      {:else if card.column === "done"}
-                        <div class="card-done">
-                          <img class="hand-done" src="/green-hand.svg" alt="" />
-                          {card.doneLine}
-                        </div>
-                      {/if}
-                      {#if card.column !== "done" && card.counts.fails + card.counts.comments + card.counts.questions > 0}
-                        <div class="card-chips">
-                          {#if card.counts.fails > 0}
-                            <span class="chip chip-fail"
-                              >{card.counts.fails} fail{card.counts.fails === 1
-                                ? ""
-                                : "s"}</span
-                            >
-                          {/if}
-                          {#if card.counts.comments > 0}
-                            <span class="chip chip-note"
-                              >{card.counts.comments} comment{card.counts
-                                .comments === 1
-                                ? ""
-                                : "s"}</span
-                            >
-                          {/if}
-                          {#if card.counts.questions > 0}
-                            <span class="chip chip-question"
-                              >{card.counts.questions} question{card.counts
-                                .questions === 1
-                                ? ""
-                                : "s"}</span
-                            >
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                  {/each}
+              <div class="volrow">
+                <VolunteerView
+                  {owner}
+                  {repo}
+                  cards={allCards}
+                  {nextCard}
+                  {taskDefs}
+                  {locks}
+                  {viewer}
+                  pieces={previewPieces}
+                  progress={pieceProgress}
+                  pieceIndex={pieceIndexByTask}
+                  busy={runner.busy}
+                  panelOpen={!!detailCard}
+                  bind:expandedPiece={volunteerPiece}
+                  onact={actOnCard}
+                  onopen={openTask}
+                  onviewscore={viewScorePiece}
+                />
+                {#if detailCard}
+                  {@render taskSide(detailCard, windowWidth < 1100)}
+                {:else if volunteerScope && commentsPanel.open}
+                  <div class="cpholder">
+                    <CommentsPanel
+                      piece={volunteerScope.piece}
+                      zone={(volunteerScope.index % 8) + 1}
+                      cards={scopeCards}
+                      {comments}
+                      {logins}
+                      {viewer}
+                      {canPush}
+                      {runner}
+                      fitEmpty
+                      bind:panel={commentsPanel}
+                      onanchor={showCommentInScore}
+                      oncomment={postComment}
+                      onresolve={resolveCommentRow}
+                    />
+                  </div>
+                {/if}
               </div>
             </div>
-          {/each}
-        </div>
-        </div>
-        {#if detailCard}
-          {@render taskSide(detailCard, panelFloats)}
-        {/if}
-        </div>
+          </div>
+        {:else}
+          <div class="hero">
+            <div class="hero-line">
+              <h1>{title || repo}</h1>
+              <a
+                class="mono slug"
+                href={`https://github.com/${owner}/${repo}`}
+                target="_blank"
+                rel="noreferrer"
+                >{owner}/{repo} <Icon name="external" size={12} /></a
+              >
+              <button
+                type="button"
+                class="infochip"
+                class:on={showInfo}
+                onclick={() => {
+                  showInfo = !showInfo;
+                  if (showInfo) loadScoreHead();
+                }}
+                title="Show or hide campaign information"
+                ><Icon name="info" /> Info <Icon
+                  name={showInfo ? "chevron-down" : "chevron-right"}
+                  size={12}
+                /></button
+              >
+              <span class="cspacer"></span>
+              {#if auth.user && canPush}
+                <button
+                  type="button"
+                  class="btn btn-lg managechip"
+                  onclick={() => (manage = true)}
+                  disabled={runner.busy}
+                  title="Owner only: plan editor and expired-claim release"
+                  ><Icon name="gear" /> Manage</button
+                >
+              {/if}
+              <button
+                type="button"
+                class="btn btn-lg btn-primary"
+                disabled={runner.busy || !auth.user || !nextCard}
+                title={!auth.user
+                  ? "Log in to claim a task."
+                  : !nextCard
+                    ? "Nothing to claim right now."
+                    : "Claim the first task that is open for you."}
+                onclick={actOnNext}>Claim the next task</button
+              >
+            </div>
+            {#if showInfo}
+              <div class="infoblock">
+                <div class="isec">
+                  <span class="seclabel">Score</span>
+                  {#if scoreHeadState === "loading"}
+                    <span class="muted inote">Loading the score header…</span>
+                  {:else if scoreHeadState === "error"}
+                    <span class="muted inote">Could not read the score.</span>
+                  {:else if scoreHeadState === "done" && !scoreHead}
+                    <span class="muted inote">The score has no MEI header.</span
+                    >
+                  {:else if scoreHead}
+                    <div class="irow">
+                      <span>Title</span>
+                      <span>{scoreHead.title || "—"}</span>
+                    </div>
+                    <div class="irow">
+                      <span>Composer</span>
+                      <span>{scoreHead.composer || "—"}</span>
+                    </div>
+                    {#each scoreHead.contributors as c (c.role + c.name)}
+                      <div class="irow">
+                        <span>{c.role || "contributor"}</span>
+                        <span>{c.name}</span>
+                      </div>
+                    {/each}
+                  {/if}
+                  <div
+                    class="irow"
+                    title="Everyone the campaign history records: claims, submissions and reviews."
+                  >
+                    <span>Worked on this</span>
+                    <span>
+                      {#if workedOn.length}
+                        {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
+                            class="mono"
+                            href={`https://github.com/${logins[u] || u}`}
+                            target="_blank"
+                            rel="noreferrer">@{logins[u] || u}</a
+                          >{/each}
+                      {:else}—{/if}
+                    </span>
+                  </div>
+                </div>
+                <div class="isec">
+                  <span class="seclabel">Campaign</span>
+                  <div class="irow">
+                    <span>About</span>
+                    <span>{description || "—"}</span>
+                  </div>
+                  <div class="irow">
+                    <span>Visibility</span>
+                    <span>{isPrivate ? "Private" : "Public"}</span>
+                  </div>
+                  <div
+                    class="irow"
+                    title="Contributions to this campaign are published under this license."
+                  >
+                    <span>License</span>
+                    <span>{license || "—"}</span>
+                  </div>
+                  <div
+                    class="irow"
+                    title="Passing reviews each task needs before it counts as done."
+                  >
+                    <span>Reviews required</span>
+                    <span>{passThreshold}</span>
+                  </div>
+                </div>
+              </div>
+            {/if}
+            <div class="hero-stats">
+              <span class="stat"><b class="c-ok">{board.done}</b> done</span>
+              <span class="sep">·</span>
+              <span class="stat"
+                ><b class="c-info">{board.inFlight}</b> in flight</span
+              >
+              <span class="sep">·</span>
+              {#if board.attention > 0}
+                <button
+                  type="button"
+                  class="stat statbtn"
+                  onclick={() => (showAttention = !showAttention)}
+                  title="Show the tasks with unresolved fails, comments or questions."
+                  ><b>{board.attention}</b> need{board.attention === 1
+                    ? "s"
+                    : ""} attention <Icon
+                    name={showAttention ? "chevron-down" : "chevron-right"}
+                    size={12}
+                  /></button
+                >
+              {:else}
+                <span class="stat"><b>0</b> need attention</span>
+              {/if}
+              <span class="sep">·</span>
+              <span class="stat"
+                ><b>{board.contributorsWeek}</b>
+                contributor{board.contributorsWeek === 1 ? "" : "s"} this week</span
+              >
+              <div class="hbar">
+                <div
+                  style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+                ></div>
+              </div>
+              <span class="hbarlabel"
+                >{board.done}/{board.total} tasks done</span
+              >
+              <div class="seg">
+                <button
+                  type="button"
+                  class:on={boardScope === "all"}
+                  onclick={() => (boardScope = "all")}>All tasks</button
+                >
+                <button
+                  type="button"
+                  class:on={boardScope === "open"}
+                  onclick={() => (boardScope = "open")}
+                  title="Only tasks with something to do right now: open encodings and free review slots."
+                  >Claimable</button
+                >
+              </div>
+            </div>
+            {#if showAttention && attentionCards.length > 0}
+              <div class="attnbox">
+                {#each attentionCards as card (card.task)}
+                  <button
+                    type="button"
+                    class="attnrow"
+                    onclick={() => openTask(card.task)}
+                    title="Open this task"
+                  >
+                    <span class="attntitle">{card.title}</span>
+                    <span class="mono card-id">{card.task}</span>
+                    <span class="attnspacer"></span>
+                    {#if card.counts.fails > 0}
+                      <span class="chip chip-fail"
+                        >{card.counts.fails} fail{card.counts.fails === 1
+                          ? ""
+                          : "s"}</span
+                      >
+                    {/if}
+                    {#if card.counts.comments > 0}
+                      <span class="chip chip-note"
+                        >{card.counts.comments} comment{card.counts.comments ===
+                        1
+                          ? ""
+                          : "s"}</span
+                      >
+                    {/if}
+                    {#if card.counts.questions > 0}
+                      <span class="chip chip-question"
+                        >{card.counts.questions} question{card.counts
+                          .questions === 1
+                          ? ""
+                          : "s"}</span
+                      >
+                    {/if}
+                    <span class="attnchev"><Icon name="chevron-right" /></span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
 
-        <div class="ticker">
-          <span class="ticker-label">Activity</span>
-          {#each board.ticker as t, i (i)}
-            {#if i > 0}<span class="ticker-sep" aria-hidden="true">|</span>{/if}
-            <span class="ticker-entry"
-              ><strong>{t.login}</strong>
-              {t.text}
-              <span class="ticker-when">· {t.elapsed}</span></span
-            >
-          {/each}
-          {#if board.ticker.length === 0}
-            <span class="ticker-entry muted">No activity yet.</span>
-          {/if}
-        </div>
-      {/if}
-    </div>
+          <div class="instrow" bind:contentRect={instrowBox}>
+            {#if previewPieces.length > 0}
+              <div class="railslot">
+                <PieceRail
+                  pieces={previewPieces}
+                  compact={railCompact}
+                  progress={pieceProgress}
+                  counts={railCounts}
+                  attention={attentionByPiece}
+                  openCount={board.columns.find((c) => c.key === "ready")?.cards
+                    .length ?? 0}
+                  selected={selectedPiece}
+                  onselect={(sel) => (selectedPiece = sel)}
+                />
+              </div>
+            {/if}
+            <div class="boardcol">
+              {#if railPiece}
+                {@const p = pieceProgress.get(railPiece.piece.path)}
+                <div
+                  class="ctxstrip"
+                  style="--zone: var(--zone-{(railPiece.index % 8) + 1})"
+                >
+                  <span class="ctxpaper">
+                    {#if stripPreview?.thumb}
+                      <img src={stripPreview.thumb} alt="" loading="lazy" />
+                    {/if}
+                  </span>
+                  <div class="ctxinfo">
+                    <span class="ctxname"
+                      >{railPiece.piece.title || railPiece.piece.id}</span
+                    >
+                    <span class="ctxmeta"
+                      >{stripPreview?.pageMeasures.length
+                        ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
+                        : ""}{p?.done ?? 0} of {p?.total ?? 0} done</span
+                    >
+                  </div>
+                  <div class="ctxincipit">
+                    {#if stripPreview?.incipit}
+                      {@html stripPreview.incipit}
+                    {:else if stripPreview?.incipitPending}
+                      <span class="ctxincnote"
+                        >incipit appears after the setup tasks</span
+                      >
+                    {/if}
+                  </div>
+                  <button
+                    type="button"
+                    class="btn"
+                    onclick={() => viewScorePiece(railPiece.index)}
+                    title="Show every page of this piece's score."
+                    >View score <Icon name="arrow-right" size={12} /></button
+                  >
+                </div>
+              {/if}
+              <div class="board">
+                {#each scopedColumns as col (col.key)}
+                  <div class="bcol c-{col.key}">
+                    <div class="bcol-head">
+                      <h2 class="bcol-name">{col.label}</h2>
+                      <span class="bcol-count">{col.cards.length}</span>
+                    </div>
+                    <div class="well">
+                      {#each col.cards as card (card.task)}
+                        <!-- A focusable div, not a <button>: the run state inside
+                         it can render a PR link, which HTML does not allow
+                         nested in a button. -->
+                        <div
+                          class="card col-{card.column}"
+                          class:nextup={card.nextUp}
+                          class:justmoved={recentlyFinished.has(card.task)}
+                          class:pre={card.pre}
+                          class:tinted={previewPieces.length > 1}
+                          class:paneled={detailTask === card.task}
+                          style={previewPieces.length > 1
+                            ? `--piece-tint: var(--zone-${zoneOf(card.task)})`
+                            : undefined}
+                          class:failtint={card.counts.fails > 0 &&
+                            card.column !== "done"}
+                          role="button"
+                          tabindex="0"
+                          onclick={() => openTask(card.task)}
+                          onkeydown={(e) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openTask(card.task);
+                            }
+                          }}
+                          title="Open this task"
+                        >
+                          {#if card.nextUp}
+                            <span class="nextup-badge">next task</span>
+                          {/if}
+                          {#if recentlyFinished.has(card.task)}
+                            <span class="justmoved-badge">just submitted</span>
+                          {/if}
+                          <div class="card-title">{card.title}</div>
+                          <div class="card-type">
+                            {card.column === "validation"
+                              ? `${card.typeLine} · ${card.passes} of ${card.threshold} reviews`
+                              : card.typeLine}
+                            <span class="mono card-id">{card.task}</span>
+                            <button
+                              type="button"
+                              class="card-score"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                viewCardScore(card);
+                              }}
+                              title="Open the score at this task's pages"
+                              >{cardPage(card)
+                                ? `p. ${cardPage(card)}`
+                                : "score"}
+                              <Icon name="arrow-right" size={11} /></button
+                            >
+                          </div>
+                          <TaskRunState task={card.task} />
+                          {#if card.column === "blocked"}
+                            <div class="card-foot">
+                              waits for <strong>{card.waitsFor}</strong>
+                            </div>
+                          {:else if card.column === "encoding" && card.worker}
+                            <div class="card-worker">
+                              <span class="avatar"
+                                >{initialOf(card.worker.login)}</span
+                              >
+                              <span class="worker-line"
+                                >{card.worker.login} · {card.worker
+                                  .elapsed}</span
+                              >
+                            </div>
+                          {:else if card.column === "validation"}
+                            <div class="card-dots">
+                              {#each card.dots as key, i (i)}
+                                {@render slotDot(key)}
+                              {/each}
+                            </div>
+                          {:else if card.column === "done"}
+                            <div class="card-done">
+                              <img
+                                class="hand-done"
+                                src="/green-hand.svg"
+                                alt=""
+                              />
+                              {card.doneLine}
+                            </div>
+                          {/if}
+                          {#if card.column !== "done" && card.counts.fails + card.counts.comments + card.counts.questions > 0}
+                            <div class="card-chips">
+                              {#if card.counts.fails > 0}
+                                <span class="chip chip-fail"
+                                  >{card.counts.fails} fail{card.counts
+                                    .fails === 1
+                                    ? ""
+                                    : "s"}</span
+                                >
+                              {/if}
+                              {#if card.counts.comments > 0}
+                                <span class="chip chip-note"
+                                  >{card.counts.comments} comment{card.counts
+                                    .comments === 1
+                                    ? ""
+                                    : "s"}</span
+                                >
+                              {/if}
+                              {#if card.counts.questions > 0}
+                                <span class="chip chip-question"
+                                  >{card.counts.questions} question{card.counts
+                                    .questions === 1
+                                    ? ""
+                                    : "s"}</span
+                                >
+                              {/if}
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+            {#if detailCard}
+              {@render taskSide(detailCard, panelFloats)}
+            {/if}
+          </div>
+
+          <div class="ticker">
+            <span class="ticker-label">Activity</span>
+            {#each board.ticker as t, i (i)}
+              {#if i > 0}<span class="ticker-sep" aria-hidden="true">|</span
+                >{/if}
+              <span class="ticker-entry"
+                ><strong>{t.login}</strong>
+                {t.text}
+                <span class="ticker-when">· {t.elapsed}</span></span
+              >
+            {/each}
+            {#if board.ticker.length === 0}
+              <span class="ticker-entry muted">No activity yet.</span>
+            {/if}
+          </div>
+        {/if}
+      </div>
     {/if}
   {/if}
 </div>
@@ -1498,16 +1584,8 @@
     flex-direction: column;
     background: var(--bg-alt);
     background-image:
-      radial-gradient(
-        60% 90% at 15% 0%,
-        var(--glow-blue),
-        transparent 60%
-      ),
-      radial-gradient(
-        60% 90% at 85% 10%,
-        var(--glow-green),
-        transparent 60%
-      );
+      radial-gradient(60% 90% at 15% 0%, var(--glow-blue), transparent 60%),
+      radial-gradient(60% 90% at 85% 10%, var(--glow-green), transparent 60%);
     /* Board-only aliases onto the global recessed-surface tokens. */
     --well: var(--bg-inset);
     --track: var(--bg-tint);

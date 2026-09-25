@@ -107,7 +107,11 @@
 
   const isReview = (card: BoardCard) => card.column === "validation";
   const sectionPill = (card: BoardCard) =>
-    isReview(card) ? "review" : card.pre ? card.typeLine.toLowerCase() : "encoding";
+    isReview(card)
+      ? "review"
+      : card.pre
+        ? card.typeLine.toLowerCase()
+        : "encoding";
   const sectionLabel = (card: BoardCard) => {
     const prefix = `${piece.title || piece.id} · `;
     const stripped = card.title.startsWith(prefix)
@@ -141,14 +145,16 @@
   }
   function moveResize(e: PointerEvent) {
     if (!resizing) return;
-    panel.width = clampPanelWidth(startWidth + (startX - e.clientX), window.innerWidth);
+    panel.width = clampPanelWidth(
+      startWidth + (startX - e.clientX),
+      window.innerWidth,
+    );
   }
   function endResize() {
     if (!resizing) return;
     resizing = false;
     writeSidePanel("comments", { ...panel });
   }
-
 </script>
 
 {#if panel.open}

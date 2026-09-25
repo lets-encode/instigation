@@ -34,7 +34,12 @@
   let natW = $state<number[]>([]);
   let natH = $state<number[]>([]);
   const fitPage = $derived(
-    fitPageZoom(bodyW, bodyH, perRow, natW.map((w, i) => (natH[i] ?? 0) / (w || 1))),
+    fitPageZoom(
+      bodyW,
+      bodyH,
+      perRow,
+      natW.map((w, i) => (natH[i] ?? 0) / (w || 1)),
+    ),
   );
 
   // One object URL per page, cached so a re-render hands the same <img> the same
@@ -50,7 +55,7 @@
         objectUrls.set(page.blob, url);
       }
       return url;
-    })
+    }),
   );
   onDestroy(() => {
     for (const url of objectUrls.values()) URL.revokeObjectURL(url);
@@ -71,7 +76,11 @@
       <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
       {#if toolbar}{@render toolbar()}{/if}
     </div>
-    <div class="material-body" bind:clientWidth={bodyW} bind:clientHeight={bodyH}>
+    <div
+      class="material-body"
+      bind:clientWidth={bodyW}
+      bind:clientHeight={bodyH}
+    >
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each urls as url, i (url)}
           <figure>

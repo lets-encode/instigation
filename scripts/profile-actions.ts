@@ -44,7 +44,9 @@ async function fetchRetry(url: string, init?: RequestInit): Promise<Response> {
       return await fetch(url, init);
     } catch (e) {
       if (attempt === 3) throw e;
-      console.error(`fetch ${url} failed (attempt ${attempt}), retrying: ${(e as Error).message}`);
+      console.error(
+        `fetch ${url} failed (attempt ${attempt}), retrying: ${(e as Error).message}`,
+      );
       await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
     }
   }
@@ -146,12 +148,15 @@ async function jobLog(jobId: number): Promise<string> {
     const location = res.headers.get("location");
     if (!location) throw new Error(`Job ${jobId} log redirect had no location`);
     const raw = await fetchRetry(location);
-    if (!raw.ok) throw new Error(`Job ${jobId} log fetch failed (${raw.status})`);
+    if (!raw.ok)
+      throw new Error(`Job ${jobId} log fetch failed (${raw.status})`);
     return await raw.text();
   }
   if (res.ok) return await res.text();
   if (res.status === 404 || res.status === 410) return "";
-  throw new Error(`Job ${jobId} logs failed (${res.status}): ${await res.text()}`);
+  throw new Error(
+    `Job ${jobId} logs failed (${res.status}): ${await res.text()}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +180,9 @@ const seconds = (
 
 async function main(): Promise<void> {
   const [runs, pulls] = await Promise.all([listRuns(), listPulls()]);
-  console.error(`${owner}/${repo}: ${runs.length} ${WORKFLOW} runs, ${pulls.length} PRs`);
+  console.error(
+    `${owner}/${repo}: ${runs.length} ${WORKFLOW} runs, ${pulls.length} PRs`,
+  );
   const pullByHeadSha = new Map(pulls.map((pr) => [pr.head.sha, pr]));
   const pullByNumber = new Map(pulls.map((pr) => [pr.number, pr]));
 
@@ -195,7 +202,9 @@ async function main(): Promise<void> {
   for (const run of runs.reverse()) {
     const pull =
       pullByHeadSha.get(run.head_sha) ??
-      (run.pull_requests[0] ? pullByNumber.get(run.pull_requests[0].number) : undefined);
+      (run.pull_requests[0]
+        ? pullByNumber.get(run.pull_requests[0].number)
+        : undefined);
     const isPrRun = run.event.startsWith("pull_request");
     const prNumber = isPrRun ? (pull?.number ?? null) : null;
     const kind = isPrRun ? (pull ? await prKind(pull.number) : "unknown") : "";

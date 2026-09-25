@@ -76,9 +76,18 @@
       return { id: piece?.id ?? path, path, title: piece?.title ?? "" };
     });
   });
-  const fragment = $derived(findRow(tables.taskDefs, taskId, "")?.fragment ?? "");
-  const index = $derived(Math.max(0, pieces.findIndex((p) => p.path === fragment)));
-  const piece = $derived(pieces[index] ?? { id: taskId, path: fragment, title: "" });
+  const fragment = $derived(
+    findRow(tables.taskDefs, taskId, "")?.fragment ?? "",
+  );
+  const index = $derived(
+    Math.max(
+      0,
+      pieces.findIndex((p) => p.path === fragment),
+    ),
+  );
+  const piece = $derived(
+    pieces[index] ?? { id: taskId, path: fragment, title: "" },
+  );
 
   const board = $derived(
     buildBoard(
@@ -100,7 +109,9 @@
   const cards = $derived(
     board.columns
       .flatMap((c) => c.cards)
-      .filter((c) => findRow(tables.taskDefs, c.task, "")?.fragment === piece.path),
+      .filter(
+        (c) => findRow(tables.taskDefs, c.task, "")?.fragment === piece.path,
+      ),
   );
 </script>
 

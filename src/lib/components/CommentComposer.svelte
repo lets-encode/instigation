@@ -62,10 +62,8 @@
     {#if replyTo}
       <div class="replying">
         Replying to <strong>{commentLogin(replyTo)}</strong>
-        <button
-          type="button"
-          class="linkish"
-          onclick={() => (replyTo = null)}>Cancel</button
+        <button type="button" class="linkish" onclick={() => (replyTo = null)}
+          >Cancel</button
         >
       </div>
     {:else}

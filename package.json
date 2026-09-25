@@ -11,6 +11,8 @@
     "check": "npm run check:app && npm run check:scripts",
     "check:app": "svelte-check --threshold error",
     "check:scripts": "tsc -p tsconfig.scripts.json",
+    "format": "prettier --write . && broker/.venv/bin/black broker",
+    "format:check": "prettier --check . && broker/.venv/bin/black --check broker",
     "test": "node --import tsx --test \"src/lib/**/*.test.ts\""
   },
   "devDependencies": {
@@ -19,6 +21,8 @@
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@types/node": "^22.20.1",
     "fast-xml-validator": "^1.4.0",
+    "prettier": "^3.7.4",
+    "prettier-plugin-svelte": "^3.5.2",
     "svelte": "^5.56.4",
     "svelte-check": "^4.7.4",
     "tsx": "^4.22.4",
