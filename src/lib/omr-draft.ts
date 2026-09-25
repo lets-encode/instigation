@@ -15,6 +15,7 @@
 // element of the staff's layer in the page's first measure, a key or meter as
 // a `<scoreDef>` before that measure. Regex over the document text, no DOM.
 
+import { pageOfLocator } from "./campaign-graph.ts";
 import { parseScoreDef } from "./mei-facsimile.ts";
 import { keysigFor } from "./omr-musicxml.ts";
 import type { PageOpening } from "./omr-stitch.ts";
@@ -181,7 +182,7 @@ export function insertPageDraft(
   opening: PageOpening = { clefs: [], fifths: null, time: null },
 ): DraftInsertion {
   const warnings: string[] = [];
-  const page = Number(/^surface-(\d+)$/.exec(locator)?.[1]);
+  const page = pageOfLocator(locator);
   const pbTag = new RegExp(`<pb\\b[^>]*\\bfacs="#${locator}"[^>]*>`);
   const pb = pbTag.exec(skeleton);
   if (!pb) throw new Error(`No page break found for ${locator}.`);

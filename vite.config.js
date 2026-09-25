@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { OCR_DATA_DIR, OCR_LANGUAGES } from "./src/lib/ocr-data.ts";
 
 // Each deployed instance builds from its own branch (README §6); the branch
 // selects the .env.<mode> overlay, so `npm run build` takes no --mode flag.
@@ -48,12 +49,11 @@ const serveWebsiteIndex = () => ({
   },
 });
 
-// The text recognition's language data (src/lib/ocr.ts), served at
+// The text recognition's language data (src/lib/ocr-data.ts), served at
 // /ocr/<lang>.traineddata.gz: tesseract.js builds the file names from a
 // directory URL itself, so the files need fixed names rather than hashed
 // asset URLs. Served from node_modules on the dev server and written into the
 // build output.
-const OCR_LANGUAGES = ["deu", "eng"];
 const ocrLanguageFile = (lang) =>
   join(
     import.meta.dirname,
@@ -67,9 +67,9 @@ const ocrLanguageData = () => ({
   name: "ocr-language-data",
   configureServer(server) {
     server.middlewares.use(async (req, res, next) => {
-      const lang = /^\/ocr\/([a-z]+)\.traineddata\.gz$/.exec(
-        new URL(req.url, "http://x").pathname,
-      )?.[1];
+      const lang = new RegExp(
+        `^/${OCR_DATA_DIR}/([a-z]+)\\.traineddata\\.gz$`,
+      ).exec(new URL(req.url, "http://x").pathname)?.[1];
       if (!lang || !OCR_LANGUAGES.includes(lang)) return next();
       res.setHeader("Content-Type", "application/octet-stream");
       res.end(await readFile(ocrLanguageFile(lang)));
@@ -79,7 +79,7 @@ const ocrLanguageData = () => ({
     for (const lang of OCR_LANGUAGES) {
       this.emitFile({
         type: "asset",
-        fileName: `ocr/${lang}.traineddata.gz`,
+        fileName: `${OCR_DATA_DIR}/${lang}.traineddata.gz`,
         source: await readFile(ocrLanguageFile(lang)),
       });
     }

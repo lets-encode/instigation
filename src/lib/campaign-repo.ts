@@ -15,6 +15,7 @@ import {
   type WizardRepo,
 } from "./wizard.svelte.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
+import { CONFIG_PATH } from "./campaign-tables.ts";
 
 /** The template file whose presence marks a repository generated for a campaign. */
 const TEMPLATE_MARKER = "templates/score.template.mei";
@@ -68,7 +69,7 @@ async function createOrAdoptRepo(
     if (marker !== null) {
       // Only the final step writes config.yaml, so a repository that has one
       // holds a finished campaign, which a new setup must not take over.
-      if ((await f.getRepoFile(owner, name, "config.yaml")) !== null) {
+      if ((await f.getRepoFile(owner, name, CONFIG_PATH)) !== null) {
         throw new Error(
           `A campaign already exists in ${owner}/${name}. ` +
             `Restart the setup under another name, or remove or rename that repository.`,

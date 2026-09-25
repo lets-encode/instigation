@@ -8,9 +8,11 @@ import {
   blockedBy,
   buildGraph,
   isPreTask,
+  pageOfLocator,
+  workStage,
   taskThreshold,
 } from "./campaign-graph.ts";
-import type { GraphData } from "./campaign-graph.ts";
+import type { GraphData, WorkStage } from "./campaign-graph.ts";
 import { cardTitle } from "./campaign-board.ts";
 import {
   configFlag,
@@ -28,6 +30,12 @@ import {
   parseTaskCsv,
   pieceNamesOf,
   resolveLogins,
+  COMMENT_PATH,
+  CONFIG_PATH,
+  HISTORY_PATH,
+  LOCK_PATH,
+  STATE_PATH,
+  TASK_PATH,
 } from "./campaign-tables.ts";
 import type {
   CommentRow,
@@ -151,22 +159,8 @@ export interface NextTask {
   /** The open review slot's subtask id (action 'review'); '' otherwise. */
   subtask: string;
   /** The work's stage, for labelling the suggestion. */
-  kind:
-    | "score setup"
-    | "measure correction"
-    | "layout correction"
-    | "encoding"
-    | "review";
+  kind: WorkStage | "review";
 }
-
-const workKind = (locator: string): NextTask["kind"] =>
-  locator === "score-setup"
-    ? "score setup"
-    : locator === "measure-zones"
-      ? "measure correction"
-      : locator === "omr-layout"
-        ? "layout correction"
-        : "encoding";
 
 /**
  * The campaign's suggested next task: the first task the viewer can act on
@@ -207,7 +201,7 @@ export function nextTask(
         ...base,
         action: "encode",
         subtask: "",
-        kind: workKind(base.locator),
+        kind: workStage(base.locator),
       };
     const slot = mine.slots.find((s) => s.claimable);
     if (slot)
@@ -220,7 +214,7 @@ export function nextTask(
       ...base,
       action: "continue",
       subtask: "",
-      kind: held?.kind === "validation" ? "review" : workKind(base.locator),
+      kind: held?.kind === "validation" ? "review" : workStage(base.locator),
     };
   }
   const open = nodes.find(
@@ -238,7 +232,7 @@ export function nextTask(
     kind:
       open.statusKey === "validation_required"
         ? "review"
-        : workKind(base.locator),
+        : workStage(base.locator),
   };
 }
 
@@ -324,12 +318,12 @@ async function fetchStats(
   const repo = summary.name;
   const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
     await Promise.all([
-      f.getRepoFile(owner, repo, "tracking/task.csv"),
-      f.getRepoFile(owner, repo, "tracking/state.csv"),
-      f.getRepoFile(owner, repo, "tracking/lock.csv"),
-      f.getRepoFile(owner, repo, "tracking/history.csv"),
-      f.getRepoFile(owner, repo, "tracking/comment.csv"),
-      f.getRepoFile(owner, repo, "config.yaml"),
+      f.getRepoFile(owner, repo, TASK_PATH),
+      f.getRepoFile(owner, repo, STATE_PATH),
+      f.getRepoFile(owner, repo, LOCK_PATH),
+      f.getRepoFile(owner, repo, HISTORY_PATH),
+      f.getRepoFile(owner, repo, COMMENT_PATH),
+      f.getRepoFile(owner, repo, CONFIG_PATH),
     ]);
   const taskDefs = taskCsv ? parseTaskCsv(taskCsv) : [];
   const state = stateCsv
@@ -359,10 +353,10 @@ async function fetchStats(
   });
 
   // Page count: the highest per-page locator, when the plan has any.
-  const pages = taskDefs.reduce((max, t) => {
-    const m = /^surface-(\d+)$/.exec(t.locator);
-    return m ? Math.max(max, Number(m[1])) : max;
-  }, 0);
+  const pages = taskDefs.reduce(
+    (max, t) => Math.max(max, pageOfLocator(t.locator) ?? 0),
+    0,
+  );
 
   const passThreshold = passThresholdOf(yaml, state.validationColumns.length);
   const staleAfterMinutes = configNumber(

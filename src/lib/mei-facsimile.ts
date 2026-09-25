@@ -22,8 +22,15 @@
 // defaulting to DEFAULT_SCORE_DEF — is parsed and re-emitted alongside it.
 
 import { addXmlIds } from "./mei-ids.ts";
+import { MEI_SCHEMA_URL } from "./mei-schema.ts";
 import { xmlEscape, xmlUnescape } from "./mei-xml.ts";
 import { pageSystems } from "./omr-layout.ts";
+
+/** The XML declaration, schema association and <mei> start tag of a generated score. */
+const MEI_OPENING =
+  `<?xml version="1.0" encoding="UTF-8"?>\n` +
+  `<?xml-model href="${MEI_SCHEMA_URL}" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
+  `<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">\n`;
 
 /** A detected measure box, in the page image's pixel space. */
 export interface MeasureBox {
@@ -449,9 +456,7 @@ export function buildFacsimileMei(
   );
 
   return addXmlIds(
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<?xml-model href="https://music-encoding.org/schema/5.1/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
-      `<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">\n` +
+    MEI_OPENING +
       model.headXml +
       `\n   <music>\n` +
       `      <facsimile>\n` +
@@ -494,9 +499,7 @@ export function buildBlankScoreMei(
     );
   }
   return addXmlIds(
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<?xml-model href="https://music-encoding.org/schema/5.1/mei-CMN.rng" type="application/xml" schematypens="http://relaxng.org/ns/structure/1.0"?>\n` +
-      `<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">\n` +
+    MEI_OPENING +
       headXml +
       `\n   <music>\n` +
       `      <body>\n` +

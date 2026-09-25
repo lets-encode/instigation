@@ -12,7 +12,14 @@
 // produce the authoritative table changes.
 
 import { boundaryCheck } from "./campaign-claim.ts";
-import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { layoutRecordPath } from "./omr-layout.ts";
+import { omrRecordPath } from "./omr-record.ts";
+import {
+  findRow,
+  isFinalValidation,
+  COMMENT_PATH,
+  STATE_PATH,
+} from "./campaign-tables.ts";
 import type {
   ParsedState,
   StateRow,
@@ -123,9 +130,8 @@ export function sideFilesOf(task: {
   locator: string;
   fragment: string;
 }): string[] {
-  const dir = task.fragment.slice(0, task.fragment.lastIndexOf("/") + 1);
-  if (task.locator === "omr-layout") return [`${dir}layout.json`];
-  if (task.locator === "score-setup") return [`${dir}omr.xml`];
+  if (task.locator === "omr-layout") return [layoutRecordPath(task.fragment)];
+  if (task.locator === "score-setup") return [omrRecordPath(task.fragment)];
   return [];
 }
 
@@ -218,12 +224,7 @@ export function checkValidation({
   if (intent.verdict !== "pass" && intent.verdict !== "fail")
     return reject("invalid_verdict");
   if (intent.verdict === "fail") {
-    if (
-      !boundaryCheck(changedPaths, [
-        "tracking/state.csv",
-        "tracking/comment.csv",
-      ])
-    ) {
+    if (!boundaryCheck(changedPaths, [STATE_PATH, COMMENT_PATH])) {
       return reject("out_of_bounds");
     }
     if (
@@ -235,7 +236,7 @@ export function checkValidation({
     ) {
       return reject("fail_without_comment");
     }
-  } else if (!boundaryCheck(changedPaths, ["tracking/state.csv"])) {
+  } else if (!boundaryCheck(changedPaths, [STATE_PATH])) {
     return reject("out_of_bounds");
   }
   if (row.status !== "validation_required") return reject("wrong_state");
@@ -301,7 +302,7 @@ export function checkSendBack({
 }: CheckSendBackArgs): SubmitResult {
   const row = findRow(state.rows, intent.task_id, "");
   if (!row) return reject("unknown_task");
-  if (!boundaryCheck(changedPaths, ["tracking/state.csv"]))
+  if (!boundaryCheck(changedPaths, [STATE_PATH]))
     return reject("out_of_bounds");
   if (row.status !== "validation_required") return reject("wrong_state");
 
@@ -363,7 +364,7 @@ export function checkComment({
   now,
   newId,
 }: CheckCommentArgs): CommentResult {
-  if (!boundaryCheck(changedPaths, ["tracking/comment.csv"]))
+  if (!boundaryCheck(changedPaths, [COMMENT_PATH]))
     return { ok: false, reason: "out_of_bounds" };
   if (!added) return { ok: false, reason: "malformed_comment" };
   if (!DISCUSSION_KINDS.includes(added.kind))
@@ -448,7 +449,7 @@ export function checkResolveComment({
   changedPaths,
   isCollaborator,
 }: CheckResolveCommentArgs): ResolveCommentResult {
-  if (!boundaryCheck(changedPaths, ["tracking/comment.csv"]))
+  if (!boundaryCheck(changedPaths, [COMMENT_PATH]))
     return { ok: false, reason: "out_of_bounds" };
   const row = comments.find((c) => c.comment_id === comment_id);
   if (!row) return { ok: false, reason: "unknown_comment" };

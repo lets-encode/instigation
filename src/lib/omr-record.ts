@@ -198,7 +198,8 @@ export function parseOmrRecord(xml: string | null): OmrRecord | null {
   };
 }
 
-const sameBox = (a: MeasureBox, b: MeasureBox): boolean =>
+/** Whether two boxes have the same corners. */
+export const sameBox = (a: MeasureBox, b: MeasureBox): boolean =>
   a.ulx === b.ulx && a.uly === b.uly && a.lrx === b.lrx && a.lry === b.lry;
 
 /**

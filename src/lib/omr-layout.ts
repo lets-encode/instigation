@@ -33,6 +33,10 @@ export interface LayoutRecord {
 export const LAYOUT_RECORD_NOTE =
   "Raw output of the layout model, not corrected. The corrected staff and measure boxes are the zones in score.mei.";
 
+/** The layout record's path for a score: `layout.json` in the score's directory. */
+export const layoutRecordPath = (fragment: string): string =>
+  `${fragment.slice(0, fragment.lastIndexOf("/") + 1)}layout.json`;
+
 /** The record for the pages' raw layouts, as `layout.json` is written. */
 export function layoutRecord(
   model: OmrPipeline,

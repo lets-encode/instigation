@@ -8,7 +8,7 @@
 // row — `user_id` is the PR author and `timestamp` is server time (passed in
 // as `now`), never values the fork supplied.
 
-import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { findRow, isFinalValidation, LOCK_PATH } from "./campaign-tables.ts";
 import type { ParsedState, TaskRow, LockRow } from "./campaign-tables.ts";
 
 /** What a PR is trying to claim: a task or subtask and the kind of work. */
@@ -65,8 +65,7 @@ export function checkClaim({
   passThreshold,
 }: CheckClaimArgs): ClaimResult {
   // A claim may only touch the lock table.
-  if (!boundaryCheck(changedPaths, ["tracking/lock.csv"]))
-    return reject("out_of_bounds");
+  if (!boundaryCheck(changedPaths, [LOCK_PATH])) return reject("out_of_bounds");
 
   if (!CLAIM_KINDS.includes(intent.kind)) return reject("invalid_kind");
   // Encoding is task-level, validation is subtask-level — the key must match.

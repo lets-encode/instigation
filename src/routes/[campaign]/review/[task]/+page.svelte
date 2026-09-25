@@ -33,7 +33,11 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import { preTaskRoute, statusPill } from "$lib/campaign-graph.ts";
+  import {
+    pageOfLocator,
+    preTaskRoute,
+    statusPill,
+  } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
@@ -103,8 +107,8 @@
   const fragment = $derived(taskDef?.fragment ?? "");
   /** The page a per-page task opens at, 0-based; null for a whole-piece task. */
   const taskPage = $derived.by(() => {
-    const p = /^surface-(\d+)$/.exec(taskDef?.locator ?? "");
-    return p ? Number(p[1]) - 1 : null;
+    const p = pageOfLocator(taskDef?.locator ?? "");
+    return p ? p - 1 : null;
   });
   const startPage = $derived(taskPage ?? 0);
 

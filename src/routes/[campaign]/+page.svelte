@@ -30,7 +30,11 @@
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
+  import {
+    pageOfLocator,
+    preTaskHref,
+    reviewHref,
+  } from "$lib/campaign-graph.ts";
   import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
@@ -427,7 +431,7 @@
   }
   // A task's score view opens at its page when the task covers one surface.
   const cardPage = (card: BoardCard) =>
-    /^surface-(\d+)$/.exec(card.locator)?.[1] ?? "";
+    String(pageOfLocator(card.locator) ?? "");
   function viewCardScore(card: BoardCard) {
     const page = cardPage(card);
     viewScorePiece(

@@ -106,6 +106,14 @@ export interface ParsedState {
   rows: StateRow[];
 }
 
+/** Repo paths of the campaign config and the five tracking tables. */
+export const CONFIG_PATH = "config.yaml";
+export const TASK_PATH = "tracking/task.csv";
+export const STATE_PATH = "tracking/state.csv";
+export const LOCK_PATH = "tracking/lock.csv";
+export const HISTORY_PATH = "tracking/history.csv";
+export const COMMENT_PATH = "tracking/comment.csv";
+
 export const TASK_COLUMNS = [
   "task_id",
   "subtask_id",

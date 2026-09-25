@@ -6,7 +6,9 @@
 // (vite.config.js), all from the app's own origin and loaded on first use
 // only.
 
+import { version as tesseractVersion } from "tesseract.js/package.json";
 import type { MeasureBox } from "./mei-facsimile.ts";
+import { OCR_DATA_DIR, OCR_LANGUAGES } from "./ocr-data.ts";
 
 /** An axis-aligned box in image pixels: left, top, right, bottom. */
 export type OcrBox = [number, number, number, number];
@@ -25,13 +27,10 @@ export interface OcrLine {
   words: OcrWord[];
 }
 
-/** The languages the recognition runs with. */
-const OCR_LANGUAGES = ["deu", "eng"];
-
 /** The engine as a recognition record names it; `version` is the bundled tesseract.js release. */
 export const OCR_ENGINE = {
   engine: "tesseract.js",
-  version: "7.0.0",
+  version: tesseractVersion,
   language: OCR_LANGUAGES.join("+"),
 };
 
@@ -57,7 +56,7 @@ async function createWorker() {
       workerPath: worker.default,
       corePath: core.default,
       workerBlobURL: false,
-      langPath: "/ocr",
+      langPath: `/${OCR_DATA_DIR}`,
       errorHandler: (e: unknown) =>
         failed(new Error(`text recognition could not start (${String(e)}).`)),
     }),

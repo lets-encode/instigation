@@ -129,8 +129,15 @@ export const reviewHref = (
     ? preTaskHref(campaign, locator, task)
     : `/${campaign}/review/${task}`;
 
-/** What a send-back returns a task to (its work stage), from its locator. */
-export const sendBackTarget = (locator: string): string =>
+/** A task's work stage. */
+export type WorkStage =
+  | "score setup"
+  | "measure correction"
+  | "layout correction"
+  | "encoding";
+
+/** A task's work stage from its locator; a send-back returns the task to it. */
+export const workStage = (locator: string): WorkStage =>
   locator === "score-setup"
     ? "score setup"
     : locator === "measure-zones"
@@ -149,13 +156,19 @@ export const taskThreshold = (
   subtaskCount: number,
 ): number => passThreshold * subtaskCount;
 
+/** The page number of a per-page (`surface-N`) locator; null for any other. */
+export function pageOfLocator(locator: string): number | null {
+  const m = /^surface-(\d+)$/.exec(locator);
+  return m ? Number(m[1]) : null;
+}
+
 /** The task's human type from its locator. */
 export function typeLabel(locator: string): string {
   if (locator === "score-setup") return "Score setup";
   if (locator === "measure-zones") return "Measure correction";
   if (locator === "omr-layout") return "Layout correction";
-  const page = /^surface-(\d+)$/.exec(locator);
-  return page ? `Encoding · page ${page[1]}` : "Encoding";
+  const page = pageOfLocator(locator);
+  return page ? `Encoding · page ${page}` : "Encoding";
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +352,7 @@ function slotState(
   return {
     key: "open",
     sub: waiting
-      ? `waiting for ${sendBackTarget(locator)}`
+      ? `waiting for ${workStage(locator)}`
       : needsAnother
         ? "open — needs another volunteer"
         : "open — claim to review",

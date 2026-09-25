@@ -39,6 +39,14 @@ import {
 } from "./wizard.svelte.ts";
 import { ProgressLog } from "./progress-log.svelte.ts";
 import type { FileChange } from "./forge/types.ts";
+import {
+  COMMENT_PATH,
+  CONFIG_PATH,
+  HISTORY_PATH,
+  LOCK_PATH,
+  STATE_PATH,
+  TASK_PATH,
+} from "./campaign-tables.ts";
 
 export class CampaignFinisher {
   busy = $state(false);
@@ -137,7 +145,7 @@ export class CampaignFinisher {
       // scores, and volunteers may be working in it; a retry after a failed
       // registration or topic goes straight to those steps.
       const committed =
-        (await f.getRepoFile(repo.owner, repo.name, "config.yaml")) != null;
+        (await f.getRepoFile(repo.owner, repo.name, CONFIG_PATH)) != null;
       if (!committed) {
         if (!this.detected) this.detected = await this.measurePages();
         const detected = this.detected;
@@ -284,19 +292,19 @@ export class CampaignFinisher {
         );
 
         const files: FileChange[] = [
-          { path: "config.yaml", content: configToYaml(config) },
+          { path: CONFIG_PATH, content: configToYaml(config) },
           ...scores,
           {
-            path: "tracking/task.csv",
+            path: TASK_PATH,
             content: buildTaskCsv(config, surfaces),
           },
           {
-            path: "tracking/state.csv",
+            path: STATE_PATH,
             content: buildStateCsv(config, surfaces),
           },
-          { path: "tracking/lock.csv", content: buildLockCsv() },
-          { path: "tracking/history.csv", content: buildHistoryCsv() },
-          { path: "tracking/comment.csv", content: buildCommentCsv() },
+          { path: LOCK_PATH, content: buildLockCsv() },
+          { path: HISTORY_PATH, content: buildHistoryCsv() },
+          { path: COMMENT_PATH, content: buildCommentCsv() },
         ];
         this.log.step(`Committing the campaign (${files.length} file(s))`);
         await f.commitFiles(

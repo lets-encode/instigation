@@ -9,7 +9,8 @@ import {
   blockedBy,
   handle,
   isPreTask,
-  sendBackTarget,
+  pageOfLocator,
+  workStage,
   typeLabel,
 } from "./campaign-graph.ts";
 import type {
@@ -65,8 +66,8 @@ export function cardTitle(
   locator: string,
   names: PieceNames = {},
 ): string {
-  const page = /^surface-(\d+)$/.exec(locator);
-  if (page) return `${pieceLabel(fragment, names)} · p. ${page[1]}`;
+  const page = pageOfLocator(locator);
+  if (page) return `${pieceLabel(fragment, names)} · p. ${page}`;
   if (locator === "score-setup")
     return `${pieceLabel(fragment, names)} · setup`;
   if (locator === "omr-layout")
@@ -303,7 +304,7 @@ function tickerText(h: HistoryRow, title: string, locator = ""): string | null {
         ? `failed a review on ${title}`
         : `passed a review on ${title}`;
     case "send_back":
-      return `sent ${title} back for ${sendBackTarget(locator)}`;
+      return `sent ${title} back for ${workStage(locator)}`;
     case "submit_comment":
       return `commented on ${title}`;
     case "resolve_comment":

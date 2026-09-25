@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- Repo paths, page locators, work stages, the MEI opening and the OCR settings are each defined once.
 - Board cards show the piece colour as a dot before the title instead of a coloured left edge.
 - The console shows lock expiry with the coordinator's 120-minute default when the config sets none.
 - The campaign name `ocr` is reserved.

@@ -13,7 +13,7 @@
   import { findRow } from "$lib/campaign-tables.ts";
   import type { CommentRow, LockRow, StateRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, preTaskHref } from "$lib/campaign-graph.ts";
+  import { handle, pageOfLocator, preTaskHref } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import {
     buildRecord,
@@ -131,7 +131,7 @@
 
   // The task's page, linking the status line to the score and prefilling a
   // fail's anchor.
-  const taskPage = $derived(/^surface-(\d+)$/.exec(card.locator)?.[1] ?? "");
+  const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
   const scoreLink = $derived(taskPage ? `p. ${taskPage}` : "score");
 
   const threads = $derived(buildThreads(comments, card.task));

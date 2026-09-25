@@ -9,7 +9,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, sendBackTarget } from "$lib/campaign-graph.ts";
+  import { handle, workStage } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { buildRecord, elapsed, orphanedFails } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
@@ -187,8 +187,8 @@
                 class="btn btn-danger"
                 onclick={() => onsendback(card.task)}
                 disabled={runner.busy || sendBackPending}
-                title={`Return the task to ${sendBackTarget(card.locator)}: attribution and reviews reset.`}
-                >{`Send back ${card.pre ? "to" : "for"} ${sendBackTarget(card.locator)}`}</button
+                title={`Return the task to ${workStage(card.locator)}: attribution and reviews reset.`}
+                >{`Send back ${card.pre ? "to" : "for"} ${workStage(card.locator)}`}</button
               >
             {/if}
           </div>

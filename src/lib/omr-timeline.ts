@@ -18,6 +18,7 @@ import {
   staffClefToken,
   type ClefCorrectionState,
 } from "./omr-musicxml.ts";
+import { sameBox } from "./omr-record.ts";
 import type { OmrRecord, OmrStaffEntry } from "./omr-record.ts";
 import { suggestStaffAssignment, type ScoreStaff } from "./omr-staff-assign.ts";
 import { clefTokenOf, stitchPage, type PageSignatures } from "./omr-stitch.ts";
@@ -37,9 +38,6 @@ export interface PageStaves {
   /** Each box's transcription with the clef corrections applied; null for none. */
   transcriptions: (string | null)[][];
 }
-
-const sameBox = (a: MeasureBox, b: MeasureBox): boolean =>
-  a.ulx === b.ulx && a.uly === b.uly && a.lrx === b.lrx && a.lry === b.lry;
 
 /** The score's staves for the staff assignment: clef token without octave and label. */
 export const scoreStaves = (

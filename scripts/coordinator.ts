@@ -33,6 +33,12 @@ import {
   configNumber,
   DEFAULT_STALE_MINUTES,
   passThresholdOf,
+  COMMENT_PATH,
+  CONFIG_PATH,
+  HISTORY_PATH,
+  LOCK_PATH,
+  STATE_PATH,
+  TASK_PATH,
 } from "../src/lib/campaign-tables.ts";
 import type {
   ParsedState,
@@ -141,12 +147,6 @@ function bindPullRequest(pr: PullRequestContext): void {
   headRef = pr.headRef;
 }
 
-const TASK_PATH = "tracking/task.csv";
-const STATE_PATH = "tracking/state.csv";
-const LOCK_PATH = "tracking/lock.csv";
-const HISTORY_PATH = "tracking/history.csv";
-const COMMENT_PATH = "tracking/comment.csv";
-const CONFIG_PATH = "config.yaml";
 const MAX_ATTEMPTS = 5;
 // Open non-draft pull requests one author may have on a campaign, counting
 // the one being processed; beyond it a pull request is closed unprocessed and

@@ -1,4 +1,10 @@
-import { COMMENT_COLUMNS, parseCsv } from "./campaign-tables.ts";
+import {
+  COMMENT_COLUMNS,
+  parseCsv,
+  COMMENT_PATH,
+  LOCK_PATH,
+  STATE_PATH,
+} from "./campaign-tables.ts";
 import type {
   CommentRow,
   HistoryRow,
@@ -279,9 +285,9 @@ export function touchesCampaignPaths(changedPaths: string[]): boolean {
 }
 
 export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
-  if (changedPaths.includes("tracking/lock.csv")) return "claim";
-  if (changedPaths.includes("tracking/state.csv")) return "validation";
-  if (changedPaths.includes("tracking/comment.csv")) return "comment";
+  if (changedPaths.includes(LOCK_PATH)) return "claim";
+  if (changedPaths.includes(STATE_PATH)) return "validation";
+  if (changedPaths.includes(COMMENT_PATH)) return "comment";
   return "encoding";
 }
 

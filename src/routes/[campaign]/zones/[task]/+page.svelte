@@ -13,7 +13,7 @@
     CampaignTables,
   } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
-  import { handle, sendBackTarget, typeLabel } from "$lib/campaign-graph.ts";
+  import { handle, workStage, typeLabel } from "$lib/campaign-graph.ts";
   import { elapsed } from "$lib/campaign-board.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
@@ -104,7 +104,7 @@
   // The task's kind: measure correction, or layout correction for an
   // OMR-prepared piece. Both are edited here.
   const taskTitle = $derived(typeLabel(data?.locator ?? "measure-zones"));
-  const stage = $derived(sendBackTarget(data?.locator ?? "measure-zones"));
+  const stage = $derived(workStage(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
   // A layout task's three steps: the staff boxes, the grand-staff boxes, the measures.
   let layoutStep = $state<1 | 2 | 3>(1);

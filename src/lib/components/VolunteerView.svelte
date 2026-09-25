@@ -12,6 +12,7 @@
   import { findRow } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
   import { cardPill } from "$lib/campaign-board.ts";
+  import { pageOfLocator } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
@@ -147,10 +148,7 @@
   const typeOf = (c: BoardCard) =>
     c.column === "validation" ? "validation" : c.typeLine.toLowerCase();
 
-  const startPage = (c: BoardCard): number | null => {
-    const m = /^surface-(\d+)$/.exec(c.locator);
-    return m ? Number(m[1]) : null;
-  };
+  const startPage = (c: BoardCard): number | null => pageOfLocator(c.locator);
 
   // First-page thumbnails, page crops and measure counts, loaded per piece.
   let previews = $state<Record<string, PiecePreview>>({});

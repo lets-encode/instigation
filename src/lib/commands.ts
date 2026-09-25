@@ -33,10 +33,16 @@ import {
   configFlag,
   configPieces,
   resolveLogins,
+  COMMENT_PATH,
+  CONFIG_PATH,
+  HISTORY_PATH,
+  LOCK_PATH,
+  STATE_PATH,
+  TASK_PATH,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { resetTaskRows, resolveCommentThread } from "./campaign-submit.ts";
-import { sendBackTarget } from "./campaign-graph.ts";
+import { pageOfLocator, workStage } from "./campaign-graph.ts";
 import type {
   TaskRow,
   StateRow,
@@ -65,14 +71,10 @@ import { WorkflowRunWatch } from "./run-watch.ts";
 import { checkMei } from "./mei-check.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import type { OmrModels } from "./omr-page-draft.ts";
+import { layoutRecordPath } from "./omr-layout.ts";
 import type { LayoutRecord } from "./omr-layout.ts";
 import { omrRecordPath } from "./omr-record.ts";
 
-const TASK_PATH = "tracking/task.csv";
-const STATE_PATH = "tracking/state.csv";
-const LOCK_PATH = "tracking/lock.csv";
-const HISTORY_PATH = "tracking/history.csv";
-const COMMENT_PATH = "tracking/comment.csv";
 const MAX_LOG_ATTEMPTS = 3;
 
 /** What a command invocation is run against: the campaign, the user, the forge. */
@@ -662,7 +664,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
       f.getRepoFile(owner, repo, LOCK_PATH),
       f.getRepoFile(owner, repo, HISTORY_PATH),
       f.getRepoFile(owner, repo, COMMENT_PATH),
-      f.getRepoFile(owner, repo, "config.yaml"),
+      f.getRepoFile(owner, repo, CONFIG_PATH),
       f.getRepoAccess(owner, repo),
     ]);
     if (taskCsv == null || stateCsv == null || lockCsv == null) {
@@ -743,7 +745,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
       const [taskCsv, stateCsv, configYaml] = await Promise.all([
         f.getRepoFile(owner, repo, TASK_PATH),
         f.getRepoFile(owner, repo, STATE_PATH),
-        f.getRepoFile(owner, repo, "config.yaml"),
+        f.getRepoFile(owner, repo, CONFIG_PATH),
       ]);
       const taskDef = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
       const fragment = taskDef?.fragment;
@@ -813,7 +815,7 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
       // made from the piece's recognition record, committed to the fresh
       // branch before mei-friend opens. A branch with work in progress keeps it.
       let draft: { note: string; warn: boolean } | null = null;
-      const pageNo = Number(/^surface-(\d+)$/.exec(taskDef.locator)?.[1]);
+      const pageNo = pageOfLocator(taskDef.locator);
       if (
         fresh &&
         pageNo &&
@@ -981,7 +983,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
         if (task.locator.startsWith("surface-")) {
           const [baseMei, configYaml] = await Promise.all([
             f.getRepoFile(owner, repo, task.fragment),
-            f.getRepoFile(owner, repo, "config.yaml"),
+            f.getRepoFile(owner, repo, CONFIG_PATH),
           ]);
           if (baseMei == null)
             throw new Error(`${task.fragment} is missing from the campaign.`);
@@ -1263,7 +1265,7 @@ const sendBack: CommandDef<{ task_id: string }, Result> = {
         if (!row) throw new Error(`unknown task ${task_id}.`);
         const locator =
           findRow(parseTaskCsv(taskCsv ?? ""), task_id, "")?.locator ?? "";
-        const stage = sendBackTarget(locator);
+        const stage = workStage(locator);
         resetTaskRows(state.rows, state.validationColumns, task_id);
         const body = `Sends ${task_id} back for ${stage} after a failed validation. Opened from the campaign console.`;
         const pr = await f.openChangePr(owner, repo, {
@@ -1470,7 +1472,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
         f.getRepoFile(owner, repo, STATE_PATH),
         f.getRepoFile(owner, repo, LOCK_PATH),
         f.getRepoFile(owner, repo, COMMENT_PATH),
-        f.getRepoFile(owner, repo, "config.yaml"),
+        f.getRepoFile(owner, repo, CONFIG_PATH),
         f.getRepoHead(owner, repo),
       ]);
     const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
@@ -1618,7 +1620,7 @@ async function submitFacsimile(
     const files: FileChange[] = [{ path: fragment, content }];
     if (rawLayout) {
       files.push({
-        path: `${fragment.slice(0, fragment.lastIndexOf("/") + 1)}layout.json`,
+        path: layoutRecordPath(fragment),
         content: JSON.stringify(rawLayout, null, "\t") + "\n",
       });
     }
@@ -1727,7 +1729,7 @@ const submitScoreSetup: CommandDef<
       await muteOnce(ctx);
       const [taskCsv, configYaml] = await Promise.all([
         f.getRepoFile(owner, repo, TASK_PATH),
-        f.getRepoFile(owner, repo, "config.yaml"),
+        f.getRepoFile(owner, repo, CONFIG_PATH),
       ]);
       const fragment = findRow(
         parseTaskCsv(taskCsv ?? ""),
