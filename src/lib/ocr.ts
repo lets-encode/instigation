@@ -125,12 +125,15 @@ export async function createOcrReader(): Promise<OcrReader> {
  * image: the words read in the margin left of the staves, enlarged, each
  * given to the staff of its system whose middle is nearest, within that
  * staff's height (a label between two braced staves goes to one of them). A
- * word outside every system's height, such as a page foot, is given to none.
- * '' for a box with no label.
+ * system's margin ends where its own staves begin, so a system indented
+ * further than the others (an introduction) keeps the label in its indent.
+ * A word outside every system's height, such as a page foot, right of its
+ * system's margin, or without a letter is given to none. '' for a box with
+ * no label.
  */
 export async function readStaffLabels(image: Blob, systems: MeasureBox[][]): Promise<string[][]> {
-	const boxes = systems.flat();
-	const right = boxes.length ? Math.min(...boxes.map((box) => box.ulx)) - 2 : 0;
+	const margins = systems.map((system) => (system.length ? Math.min(...system.map((box) => box.ulx)) - 2 : 0));
+	const right = Math.max(0, ...margins);
 	if (right < 10) return systems.map((system) => system.map(() => ''));
 	const bitmap = await createImageBitmap(image);
 	const reader = await createOcrReader();
@@ -145,7 +148,8 @@ export async function readStaffLabels(image: Blob, systems: MeasureBox[][]): Pro
 					middle >= Math.min(...system.map((box) => box.uly)) &&
 					middle <= Math.max(...system.map((box) => box.lry))
 			);
-			if (s < 0) continue;
+			// A word without a letter is a brace or bracket read as text.
+			if (s < 0 || word.box[2] > margins[s] || !/\p{L}/u.test(word.text)) continue;
 			let best = -1;
 			let distance = Infinity;
 			systems[s].forEach((box, i) => {

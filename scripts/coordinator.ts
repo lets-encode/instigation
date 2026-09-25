@@ -56,7 +56,11 @@ import {
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
 import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
-import { recordContribution } from "../src/lib/mei-provenance.ts";
+import {
+  applicationNamesIn,
+  recordApplications,
+  recordContribution,
+} from "../src/lib/mei-provenance.ts";
 import { reapLocks } from "../src/lib/campaign-reaper.ts";
 import {
   addedRowFromPatch,
@@ -507,6 +511,15 @@ async function decideEncoding(
         mei = physical
           ? splicePageSpan(baseMei, forkMei, task.locator)
           : splicePage(baseMei, forkMei, task.locator);
+        // The splice keeps the base header. The recognition models an OMR
+        // page draft names in the fork's header are carried over; no other
+        // entry is taken from a fork.
+        mei = recordApplications(
+          mei,
+          applicationNamesIn(forkMei).filter((name) =>
+            /^Musibot [\w.-]+ [\w.-]+$/.test(name),
+          ),
+        );
       } catch (err) {
         const message = (err as Error).message;
         console.warn(

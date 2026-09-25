@@ -5,6 +5,11 @@ parentheses.
 
 ## Unreleased
 
+- The mei-friend URL is set only in `services.json`.
+- OMR layout correction has a grand-staff step between the staff boxes and the measures.
+- The coordinator keeps the Musibot models of an OMR page draft in the score header when it splices the page.
+- Instrument labels are read in front of an indented system too, such as a piano introduction.
+- The wizard's OMR option says the staves are transcribed in the score setup.
 - OMR staff assignment runs through the whole piece, following the staves the previous system showed, with the clef only breaking ties.
 - OMR page drafts start in the clefs, key and meter the earlier pages leave in force and apply the clef corrections made in the score setup.
 - Score setup of an OMR piece transcribes every staff into `omr.xml`, and page drafts are made from it.

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SyntaxValidator } from 'fast-xml-validator';
-import { recordContribution } from '../mei-provenance.ts';
+import { applicationNamesIn, recordContribution, recordApplications } from '../mei-provenance.ts';
 import { buildPieceHead, emptySourceMetadata } from '../source-metadata.ts';
 
 const CONTRIBUTION = {
@@ -119,4 +119,11 @@ test('omits the application when none is given', () => {
 	const out = recordContribution(pieceScore(), { ...CONTRIBUTION, application: undefined });
 	assert.ok(!out.includes('mei-friend'));
 	assert.match(out, /<change n="2"/);
+});
+
+test('applicationNamesIn lists the applications recordApplications writes', () => {
+	const mei = '<mei><meiHead><fileDesc></fileDesc></meiHead><music/></mei>';
+	assert.deepEqual(applicationNamesIn(mei), []);
+	const out = recordApplications(mei, ['Musibot mzk-staff 1', 'A & B']);
+	assert.deepEqual(applicationNamesIn(out), ['Musibot mzk-staff 1', 'A & B']);
 });

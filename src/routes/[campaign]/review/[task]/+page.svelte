@@ -13,7 +13,6 @@
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
-  import { meiFriendUrl } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
   import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
@@ -137,7 +136,7 @@
   });
 
   const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo }, { meiFriendUrl });
+    runner.context(f, { repoId, owner, repo });
 
   // Read the tracking tables for the task's record, discussion and controls.
   // Only the first read shows the loading state; refreshes update in place.

@@ -31,8 +31,8 @@
       id: "omr",
       name: "Optical music recognition",
       info:
-        "Staves and measures are detected and corrected in a layout task. Each page is then " +
-        "transcribed when its encoding task is claimed, and encoding starts from that draft. " +
+        "Staves and measures are detected and corrected in a layout task. The staves are then " +
+        "transcribed in the score setup, and each page's encoding starts from that draft. " +
         "Page images are sent to the Musibot service (Charles University) for recognition.",
     },
   ];

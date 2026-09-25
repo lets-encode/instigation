@@ -39,6 +39,7 @@ export function layoutRecord(model: OmrPipeline, pages: { image: string; layout:
 export interface PageLayout {
 	measures: MeasureBox[];
 	staves: MeasureBox[];
+	grandstaves: MeasureBox[];
 }
 
 /**
@@ -50,7 +51,7 @@ export interface PageLayout {
 export const LAYOUT_PARAMETERS: Record<string, unknown> = {};
 
 /**
- * The measure and staff boxes of a layout, scaled to `page`'s pixel size when
+ * The measure, staff and grand-staff boxes of a layout, scaled to `page`'s pixel size when
  * the document declares another image size, clamped to the page, rounded to
  * whole pixels. Boxes with no area after clamping are dropped.
  */
@@ -59,10 +60,17 @@ export function layoutBoxes(layout: CocoLayout, page: { width: number; height: n
 	const declared = layout.images?.[0];
 	const sx = declared?.width ? page.width / declared.width : 1;
 	const sy = declared?.height ? page.height / declared.height : 1;
-	const out: PageLayout = { measures: [], staves: [] };
+	const out: PageLayout = { measures: [], staves: [], grandstaves: [] };
 	for (const a of layout.annotations ?? []) {
 		const name = names.get(a.category_id);
-		const target = name === 'systemMeasure' ? out.measures : name === 'staff' ? out.staves : null;
+		const target =
+			name === 'systemMeasure'
+				? out.measures
+				: name === 'staff'
+					? out.staves
+					: name === 'grandstaff'
+						? out.grandstaves
+						: null;
 		if (!target || !Array.isArray(a.bbox) || a.bbox.length !== 4) continue;
 		const [x, y, w, h] = a.bbox;
 		const box = {

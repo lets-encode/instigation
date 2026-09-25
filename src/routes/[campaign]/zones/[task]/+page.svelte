@@ -59,7 +59,7 @@
     sb: boolean;
     mdiv: boolean;
   };
-  // A staff box of an OMR-prepared piece: geometry only.
+  // A staff or grand-staff box of an OMR-prepared piece: geometry only.
   type EditStaff = { box: MeasureBox };
   type EditPage = {
     image: string;
@@ -71,11 +71,12 @@
     failed: boolean;
     zones: EditZone[];
     staves: EditStaff[];
+    grandstaves: EditStaff[];
   };
-  // The two box layers. A measure-correction task edits measures with their
+  // The box layers. A measure-correction task edits measures with their
   // numbers and breaks; a layout task (OMR) edits the staff boxes first, then
-  // the measures, one layer at a time.
-  type Layer = "measures" | "staves";
+  // the grand-staff boxes, then the measures, one layer at a time.
+  type Layer = "measures" | "staves" | "grandstaves";
 
   let loading = $state(false);
   // Whether a load has been attempted for the current params; a failed load
@@ -88,17 +89,18 @@
   const taskTitle = $derived(typeLabel(data?.locator ?? "measure-zones"));
   const stage = $derived(sendBackTarget(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
-  // A layout task's two steps: the staff boxes, then the measures.
-  let layoutStep = $state<1 | 2>(1);
-  // The layer the pointer edits; in a layout task the other is not drawn.
-  const tool = $derived<Layer>(omr && layoutStep === 1 ? "staves" : "measures");
-  function setLayoutStep(step: 1 | 2) {
+  // A layout task's three steps: the staff boxes, the grand-staff boxes, the measures.
+  let layoutStep = $state<1 | 2 | 3>(1);
+  const STEP_LAYERS: Layer[] = ["staves", "grandstaves", "measures"];
+  // The layer the pointer edits; in a layout task the others are not drawn.
+  const tool = $derived<Layer>(omr ? STEP_LAYERS[layoutStep - 1] : "measures");
+  function setLayoutStep(step: 1 | 2 | 3) {
     layoutStep = step;
     selected = null;
   }
-  // A page's boxes in a layer, for the geometry code shared by both.
+  // A page's boxes in a layer, for the geometry code shared by all.
   const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
-    layer === "staves" ? pages[p].staves : pages[p].zones;
+    layer === "staves" ? pages[p].staves : layer === "grandstaves" ? pages[p].grandstaves : pages[p].zones;
   // The campaign tables behind the comments panel; refreshed on their own so
   // a posted comment never reloads the editor.
   let tables = $state<CampaignTables | null>(null);
@@ -186,7 +188,7 @@
 
   // The pages a layout task has shown in each step. Submission waits until
   // every page has been on screen in both steps.
-  let seen = $state<Record<Layer, number[]>>({ staves: [], measures: [] });
+  let seen = $state<Record<Layer, number[]>>({ staves: [], grandstaves: [], measures: [] });
   $effect(() => {
     if (!omr) return;
     const shown = spread.pages;
@@ -201,10 +203,12 @@
   const submitBlock = $derived.by(() => {
     if (!omr) return null;
     const unseen = (layer: Layer) => pages.flatMap((_, p) => (seen[layer].includes(p) ? [] : [p]));
-    const staves = unseen("staves");
-    if (staves.length) return `Show every page in step 1 before submitting. Not yet shown: page ${pageList(staves)}.`;
-    const measures = unseen("measures");
-    if (measures.length) return `Show every page in step 2 before submitting. Not yet shown: page ${pageList(measures)}.`;
+    for (const [i, layer] of STEP_LAYERS.entries()) {
+      const pending = unseen(layer);
+      if (pending.length) {
+        return `Show every page in step ${i + 1} before submitting. Not yet shown: page ${pageList(pending)}.`;
+      }
+    }
     const noMeasures = pages.flatMap((pg, p) => (pg.staves.length && !pg.zones.length ? [p] : []));
     if (noMeasures.length) {
       return `Page ${pageList(noMeasures)} has staff boxes but no measures. Add its measures, or remove its staff boxes if the page has no music.`;
@@ -267,9 +271,9 @@
     renumber();
   }
 
-  // Staves are kept top to bottom, then left to right.
-  function resortStaves(p: number) {
-    pages[p].staves.sort((a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx);
+  // Staff and grand-staff boxes are kept top to bottom, then left to right.
+  function resortStaves(p: number, layer: "staves" | "grandstaves" = "staves") {
+    pages[p][layer].sort((a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx);
   }
 
   async function load() {
@@ -292,7 +296,7 @@
       data = d;
       tables = t;
       rawLayouts = {};
-      seen = { staves: [], measures: [] };
+      seen = { staves: [], grandstaves: [], measures: [] };
       pages = d.model.pages.map((pg, i) => ({
         image: pg.image,
         width: pg.width,
@@ -307,6 +311,7 @@
           mdiv: z.mdiv,
         })),
         staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
+        grandstaves: (pg.grandstaves ?? []).map((box) => ({ box: { ...box } })),
       }));
       // A score of one or two pages is shown whole: one page, or both side by
       // side. Longer scores keep the two-up view with page 1 as a recto.
@@ -647,7 +652,12 @@
         sb: z.sb,
         mdiv: z.mdiv,
       })),
-      ...(omr ? { staves: pg.staves.map((s) => ({ ...s.box })) } : {}),
+      ...(omr
+        ? {
+            staves: pg.staves.map((s) => ({ ...s.box })),
+            grandstaves: pg.grandstaves.map((g) => ({ ...g.box })),
+          }
+        : {}),
     }));
   }
 
@@ -730,6 +740,7 @@
       }
       let measures = 0;
       let staves = 0;
+      let grandstaves = 0;
       for (const [p, pg] of pages.entries()) {
         runner.log.step(`Detecting the layout of page ${p + 1} of ${pages.length}`);
         let layout = cached[pg.image];
@@ -749,17 +760,22 @@
           mdiv: false,
         }));
         pages[p].staves = boxes.staves.map((box) => ({ box }));
+        pages[p].grandstaves = boxes.grandstaves.map((box) => ({ box }));
         resortStaves(p);
+        resortStaves(p, "grandstaves");
         measures += boxes.measures.length;
         staves += boxes.staves.length;
-        runner.log.detail(`${boxes.staves.length} staves, ${boxes.measures.length} measures`);
+        grandstaves += boxes.grandstaves.length;
+        runner.log.detail(
+          `${boxes.staves.length} staves, ${boxes.grandstaves.length} grand staves, ${boxes.measures.length} measures`,
+        );
       }
       seedLayout();
       setLayoutStep(1);
       resetHistory();
       return {
         ok: true,
-        message: `Layout detected: ${staves} staves and ${measures} measures on ${pages.length} page(s). Correct the staff boxes, then the measures, then submit.`,
+        message: `Layout detected: ${staves} staves, ${grandstaves} grand staves and ${measures} measures on ${pages.length} page(s). Correct the staff boxes, then the grand staves, then the measures, then submit.`,
       };
     } catch (e) {
       return { error: `Layout detection failed: ${(e as Error).message}` };
@@ -809,6 +825,7 @@
       ...pg,
       zones: pg.zones.map((z) => ({ ...z, box: { ...z.box } })),
       staves: pg.staves.map((s) => ({ box: { ...s.box } })),
+      grandstaves: pg.grandstaves.map((g) => ({ box: { ...g.box } })),
     }));
   }
 
@@ -833,8 +850,8 @@
   // no extra click, then record the step.
   function commitGeometry(p: number, z: number) {
     const item = items(p)[z];
-    if (tool === "staves") resortStaves(p);
-    else resort(p);
+    if (tool === "measures") resort(p);
+    else resortStaves(p, tool);
     selected = { p, z: items(p).indexOf(item) };
     commit();
   }
@@ -1023,7 +1040,7 @@
       const threshold = DRAW_THRESHOLD_PX * (pg.width / (canvasW[drag.p] || pg.width));
       if (Math.hypot(dx, dy) < threshold) return;
       const box = { ...drag.orig };
-      if (drag.layer === "staves") pages[drag.p].staves.push({ box });
+      if (drag.layer !== "measures") pages[drag.p][drag.layer].push({ box });
       else pages[drag.p].zones.push({ box, override: null, label: "", sb: false, mdiv: false });
       drag.z = items(drag.p, drag.layer).length - 1;
       drag.started = true;
@@ -1081,8 +1098,8 @@
   function deleteZone(p: number, z: number) {
     if (!canEdit) return;
     items(p).splice(z, 1);
-    if (tool === "staves") resortStaves(p);
-    else resort(p);
+    if (tool === "measures") resort(p);
+    else resortStaves(p, tool);
     selected = null;
     commit();
   }
@@ -1123,10 +1140,10 @@
     return entries;
   }
 
-  // Same for the staff layer: the selected staff paints last.
+  // Same for the staff and grand-staff layers: the selected box paints last.
   function staffPaintOrder(pg: EditPage, p: number): { staff: EditStaff; s: number }[] {
-    const entries = pg.staves.map((staff, s) => ({ staff, s }));
-    if (tool === "staves" && selected?.p === p) {
+    const entries = (tool === "grandstaves" ? pg.grandstaves : pg.staves).map((staff, s) => ({ staff, s }));
+    if (tool !== "measures" && selected?.p === p) {
       const i = entries.findIndex((e) => e.s === selected!.z);
       if (i >= 0) entries.push(entries.splice(i, 1)[0]);
     }
@@ -1135,6 +1152,7 @@
 
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
   const staffCount = $derived(pages.reduce((n, p) => n + p.staves.length, 0));
+  const grandstaffCount = $derived(pages.reduce((n, p) => n + p.grandstaves.length, 0));
   const movementCount = $derived(
     1 +
       pages.reduce(
@@ -1178,11 +1196,13 @@
     [
       ...(canEdit
         ? [
-            `drag on the page to draw a ${tool === "staves" ? "staff" : "measure"} · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)`,
+            `drag on the page to draw a ${tool === "staves" ? "staff" : tool === "grandstaves" ? "grand staff" : "measure"} · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)`,
           ]
         : []),
       "⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages",
-      omr ? "red = staff · teal = measure · purple = movement start" : "purple = movement start",
+      omr
+        ? "red = staff · green = grand staff (the staves a brace joins) · teal = measure · purple = movement start"
+        : "purple = movement start",
     ].join("\n"),
   );
 </script>
@@ -1380,6 +1400,7 @@
                 bind:this={svgEls[p]}
                 viewBox={`0 0 ${pg.width} ${pg.height}`}
                 class:staves={tool === "staves"}
+                class:grandstaves={tool === "grandstaves"}
                 role="application"
                 aria-label={`Page ${p + 1} ${tool}`}
                 onpointerdown={(e) => backgroundPointerDown(e, p)}
@@ -1392,14 +1413,15 @@
                     onerror={() => (pages[p].failed = true)}
                   />
                 {/if}
-                {#each tool === "staves" ? staffPaintOrder(pg, p) : [] as { staff, s } (s)}
+                {#each tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
                   <rect
                     class="staff"
+                    class:grand={tool === "grandstaves"}
                     class:selected={selected?.p === p && selected?.z === s}
                     vector-effect="non-scaling-stroke"
                     role="button"
                     tabindex={0}
-                    aria-label={`Staff ${s + 1}: select, drag or resize`}
+                    aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}: select, drag or resize`}
                     x={staff.box.ulx}
                     y={staff.box.uly}
                     width={staff.box.lrx - staff.box.ulx}
@@ -1408,7 +1430,7 @@
                     onkeydown={(e) => zoneKeydown(e, p, s)}
                   />
                   {#if canEdit && selected?.p === p && selected?.z === s}
-                    {@render handles(p, s, staff.box, `Staff ${s + 1}`, 0, 0)}
+                    {@render handles(p, s, staff.box, `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`, 0, 0)}
                   {/if}
                 {/each}
                 {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
@@ -1595,7 +1617,8 @@
         </div>
         <div class="tbsection">
         <span class="abcount">
-          {#if omr}{staffCount} {staffCount === 1 ? "staff" : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1 ? "" : "s"}
+          {#if omr}{staffCount} {staffCount === 1 ? "staff" : "staves"} · {grandstaffCount} grand
+            {grandstaffCount === 1 ? "staff" : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1 ? "" : "s"}
           · {movementCount} movement{movementCount === 1 ? "" : "s"}
         </span>
         {#if holds}
@@ -1619,9 +1642,10 @@
           <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={busy}>Claim task</button>
         {/if}
         {#if omr}
-          <div class="seg steps" title="The two steps of the layout correction. Each step shows only its own boxes.">
+          <div class="seg steps" title="The three steps of the layout correction. Each step shows only its own boxes.">
             <button type="button" class:on={layoutStep === 1} onclick={() => setLayoutStep(1)}>1 · Staff boxes</button>
-            <button type="button" class:on={layoutStep === 2} onclick={() => setLayoutStep(2)}>2 · Measures</button>
+            <button type="button" class:on={layoutStep === 2} onclick={() => setLayoutStep(2)}>2 · Grand staves</button>
+            <button type="button" class:on={layoutStep === 3} onclick={() => setLayoutStep(3)}>3 · Measures</button>
           </div>
         {/if}
         {#if omr && layoutStep === 1}
@@ -1629,7 +1653,16 @@
             type="button"
             class="btn btn-secondary submitbtn"
             onclick={() => setLayoutStep(2)}
-            title="Go on to step 2: the measures, their numbers and breaks. Submission is in step 2."
+            title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
+          >
+            Next: grand staves
+          </button>
+        {:else if omr && layoutStep === 2}
+          <button
+            type="button"
+            class="btn btn-secondary submitbtn"
+            onclick={() => setLayoutStep(3)}
+            title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
           >
             Next: measures
           </button>
@@ -1641,7 +1674,7 @@
             disabled={busy || !canEdit || submitBlock !== null}
             title={submitBlock ??
               (omr
-                ? "Submit the corrected staves, measures, breaks and movements for review"
+                ? "Submit the corrected staves, grand staves, measures, breaks and movements for review"
                 : "Submit the corrected measures, breaks and movements for review")}
           >
             Submit corrections
@@ -2116,6 +2149,17 @@
   }
   .staves .handle {
     stroke: rgba(214, 40, 40, 0.9);
+  }
+  /* Green for grand-staff boxes, the complement of the staff red. */
+  .staff.grand {
+    fill: rgba(30, 150, 70, 0.08);
+    stroke: rgba(30, 150, 70, 0.9);
+  }
+  .staff.grand.selected {
+    fill: rgba(30, 150, 70, 0.18);
+  }
+  .grandstaves .handle {
+    stroke: rgba(30, 150, 70, 0.9);
   }
   .steps {
     align-self: stretch;

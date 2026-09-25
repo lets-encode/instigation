@@ -12,7 +12,7 @@ const categories = [
 	{ id: 6, name: 'systemMeasure' }
 ];
 
-test('systemMeasure boxes become measures, staff boxes staves; other categories are ignored', () => {
+test('systemMeasure boxes become measures, staff boxes staves, grandstaff boxes grand staves; other categories are ignored', () => {
 	const layout = {
 		categories,
 		images: [{ id: 0, width: 1000, height: 1500, file_name: 'image.jpg' }],
@@ -26,7 +26,8 @@ test('systemMeasure boxes become measures, staff boxes staves; other categories 
 	};
 	assert.deepEqual(layoutBoxes(layout, { width: 1000, height: 1500 }), {
 		measures: [{ ulx: 100, uly: 201, lrx: 400, lry: 321 }],
-		staves: [{ ulx: 90, uly: 210, lrx: 890, lry: 250 }]
+		staves: [{ ulx: 90, uly: 210, lrx: 890, lry: 250 }],
+		grandstaves: [{ ulx: 80, uly: 190, lrx: 930, lry: 340 }]
 	});
 });
 
@@ -42,12 +43,13 @@ test('boxes are scaled to the page when the document declares another image size
 	};
 	assert.deepEqual(layoutBoxes(layout, { width: 1000, height: 1500 }), {
 		measures: [{ ulx: 800, uly: 1400, lrx: 1000, lry: 1500 }],
-		staves: []
+		staves: [],
+		grandstaves: []
 	});
 });
 
 test('a layout without annotations or categories is an empty page', () => {
-	assert.deepEqual(layoutBoxes({}, { width: 10, height: 10 }), { measures: [], staves: [] });
+	assert.deepEqual(layoutBoxes({}, { width: 10, height: 10 }), { measures: [], staves: [], grandstaves: [] });
 });
 
 test('staffCrops grows each staff by its height times the margin, clamped to the page', () => {

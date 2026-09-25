@@ -126,6 +126,23 @@ test('staff zones are written as type="staff", round-trip, and reference nothing
 	assert.equal(buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }), mei);
 });
 
+test('grand-staff zones are written as type="grandstaff" beside the staff zones and round-trip', () => {
+	const m = model();
+	m.pages[0].staves = [
+		{ ulx: 100, uly: 300, lrx: 1000, lry: 360 },
+		{ ulx: 100, uly: 420, lrx: 1000, lry: 480 }
+	];
+	m.pages[0].grandstaves = [{ ulx: 80, uly: 290, lrx: 1000, lry: 490 }];
+	const mei = buildFacsimileMei(m);
+	assert.equal(SyntaxValidator.validate(mei), true);
+	assert.ok(mei.includes('<zone xml:id="grandstaff-zone-1-1" type="grandstaff" ulx="80" uly="290" lrx="1000" lry="490"/>'));
+	const parsed = parseFacsimileMei(mei);
+	assert.deepEqual(parsed.pages[0].grandstaves, m.pages[0].grandstaves);
+	assert.deepEqual(parsed.pages[0].staves, m.pages[0].staves);
+	assert.equal(parsed.pages[1].grandstaves, undefined);
+	assert.equal(buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }), mei);
+});
+
 test('emptyMeasures: stage C measures hold staves with empty layers, no rests', () => {
 	const mei = buildFacsimileMei(model(), { withBreaks: true, emptyMeasures: true });
 	assert.equal(SyntaxValidator.validate(mei), true);

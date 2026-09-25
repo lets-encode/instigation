@@ -16,7 +16,7 @@
     readForge,
     viewerId,
   } from "$lib/command-runner.svelte.ts";
-  import { provider, meiFriendUrl } from "$lib/forge/config.ts";
+  import { provider } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { elapsed } from "$lib/campaign-board.ts";
@@ -138,7 +138,6 @@
     runner.context(
       readForge(),
       { repoId: s.repoId, owner: s.owner, repo: s.repo },
-      { meiFriendUrl },
     );
 
   const ctxFor = (t: MyTask): CommandContext | null => {

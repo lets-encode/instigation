@@ -4,7 +4,6 @@
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
-  import { meiFriendUrl } from "$lib/forge/config.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { lookupSlug, resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
@@ -423,7 +422,7 @@
   // The context every command runs against; progress updates feed the busy
   // overlay's step log.
   const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo }, { meiFriendUrl });
+    runner.context(f, { repoId, owner, repo });
 
   // Read the tracking tables (and privacy/config) for the console. Only the
   // first read shows the loading state; refreshes update the tables in place.

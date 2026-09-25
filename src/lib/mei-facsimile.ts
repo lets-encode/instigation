@@ -67,6 +67,12 @@ export interface PageModel {
 	 * corrects them and whose transcription crops them.
 	 */
 	staves?: MeasureBox[];
+	/**
+	 * Grand-staff boxes (the staves a brace joins), written as `<zone
+	 * type="grandstaff">` and referenced by nothing in the body. Present on
+	 * pieces prepared by OMR, whose layout task corrects them.
+	 */
+	grandstaves?: MeasureBox[];
 }
 
 /** One staff of the score definition. */
@@ -381,6 +387,13 @@ export function buildFacsimileMei(
 					`lrx="${Math.round(box.lrx)}" lry="${Math.round(box.lry)}"/>`
 			);
 		});
+		(page.grandstaves ?? []).forEach((box, gi) => {
+			zones.push(
+				`            <zone xml:id="grandstaff-zone-${p}-${gi + 1}" type="grandstaff" ` +
+					`ulx="${Math.round(box.ulx)}" uly="${Math.round(box.uly)}" ` +
+					`lrx="${Math.round(box.lrx)}" lry="${Math.round(box.lry)}"/>`
+			);
+		});
 
 		surfaces.push(
 			`         <surface xml:id="${surfaceId}" n="${p}" ulx="0" uly="0" ` +
@@ -639,6 +652,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 		const zones: ZoneModel[] = [];
 		const boxesOnly: MeasureBox[] = [];
 		const staves: MeasureBox[] = [];
+		const grandstaves: MeasureBox[] = [];
 		for (const zoneMatch of body.matchAll(/<zone\b[^>]*>/g)) {
 			const tag = zoneMatch[0];
 			const box = {
@@ -649,6 +663,10 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 			};
 			if (attr(tag, 'type') === 'staff') {
 				staves.push(box);
+				continue;
+			}
+			if (attr(tag, 'type') === 'grandstaff') {
+				grandstaves.push(box);
 				continue;
 			}
 			if (attr(tag, 'type') !== 'measure') continue;
@@ -672,7 +690,8 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
 			width: Number(attr(graphic, 'width') ?? 0),
 			height: Number(attr(graphic, 'height') ?? 0),
 			zones,
-			...(staves.length ? { staves } : {})
+			...(staves.length ? { staves } : {}),
+			...(grandstaves.length ? { grandstaves } : {})
 		});
 	}
 

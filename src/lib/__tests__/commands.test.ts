@@ -28,6 +28,7 @@ function context(forge: ForgeClient): CommandContext {
 		repo: 'campaign',
 		viewer: '9001',
 		viewerLogin: 'volunteer',
+		meiFriendUrl: 'https://mei-friend.example',
 		progress: () => {}
 	};
 }
