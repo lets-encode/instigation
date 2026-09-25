@@ -159,10 +159,10 @@ def reject_cross_origin_writes():
 # path is passed through unchanged by the production reverse proxy and by the
 # Vite dev proxy.
 try:
-    from .registry import registry
+    from .registry import GITHUB_API, registry
 except ImportError:
     # Run as a top-level module (flask --app app run, gunicorn app:app).
-    from registry import registry
+    from registry import GITHUB_API, registry
 app.register_blueprint(registry, url_prefix="/registry")
 
 # The registry's admin routes serve only when ADMIN_TOKEN and
@@ -223,7 +223,6 @@ github = oauth.register(
     },
 )
 
-GITHUB_API = "https://api.github.com"
 # The proxy relays only GitHub REST API calls (the SPA does no git smart-HTTP).
 ALLOWED_DOMAINS = ["api.github.com"]
 
@@ -691,9 +690,7 @@ def proxy(url):
     url = requests.utils.unquote(url)
     if not url.startswith("http"):
         url = "https://" + url
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
+    parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc not in ALLOWED_DOMAINS:
         return jsonify(error="Domain not allowed"), 400
     if request.query_string:

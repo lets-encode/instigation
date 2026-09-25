@@ -30,7 +30,7 @@
   } from "$lib/campaign-tables.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { handle, preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
+  import { preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
   import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
@@ -1438,12 +1438,7 @@
                           class="card col-{card.column}"
                           class:nextup={card.nextUp}
                           class:justmoved={recentlyFinished.has(card.task)}
-                          class:pre={card.pre}
-                          class:tinted={previewPieces.length > 1}
                           class:paneled={detailTask === card.task}
-                          style={previewPieces.length > 1
-                            ? `--piece-tint: var(--zone-${zoneOf(card.task)})`
-                            : undefined}
                           class:failtint={card.counts.fails > 0 &&
                             card.column !== "done"}
                           role="button"
@@ -1464,7 +1459,14 @@
                           {#if recentlyFinished.has(card.task)}
                             <span class="justmoved-badge">just submitted</span>
                           {/if}
-                          <div class="card-title">{card.title}</div>
+                          <div class="card-title">
+                            {#if previewPieces.length > 1}
+                              <span
+                                class="piece-dot"
+                                style="--zone: var(--zone-{zoneOf(card.task)})"
+                              ></span>
+                            {/if}{card.title}
+                          </div>
                           <div class="card-type">
                             {card.column === "validation"
                               ? `${card.typeLine} · ${card.passes} of ${card.threshold} reviews`
@@ -2196,10 +2198,6 @@
     min-height: 88px;
     box-sizing: border-box;
   }
-  /* The piece's colour threads from the rail through every card's edge. */
-  .card.tinted {
-    border-left: 3px solid var(--piece-tint);
-  }
   /* The card whose task panel is open. */
   .card.paneled {
     background: var(--info-bg);
@@ -2220,9 +2218,6 @@
   }
   .card.col-done {
     box-shadow: none;
-  }
-  .card.pre {
-    border-left: 3px solid var(--pre);
   }
   /* Before .card.failtint: a recorded fail outweighs the finished highlight. */
   .card.justmoved {
@@ -2271,6 +2266,16 @@
     font-size: 13px;
     font-weight: 600;
     overflow-wrap: anywhere;
+  }
+  /* The piece's colour, as on its dot in the piece rail. */
+  .piece-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--zone);
+    vertical-align: 1px;
   }
   .card.col-blocked .card-title,
   .card.col-done .card-title {

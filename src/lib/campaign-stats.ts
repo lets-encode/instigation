@@ -16,6 +16,7 @@ import {
   configFlag,
   configNumber,
   configPieces,
+  DEFAULT_STALE_MINUTES,
   passThresholdOf,
   configString,
   findRow,
@@ -364,7 +365,11 @@ async function fetchStats(
   }, 0);
 
   const passThreshold = passThresholdOf(yaml, state.validationColumns.length);
-  const staleAfterMinutes = configNumber(yaml, "stale_after_minutes", 0);
+  const staleAfterMinutes = configNumber(
+    yaml,
+    "stale_after_minutes",
+    DEFAULT_STALE_MINUTES,
+  );
 
   const composer = configString(yaml, "composer");
 

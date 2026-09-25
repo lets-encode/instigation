@@ -29,9 +29,11 @@ import {
   STATE_BASE_COLUMNS,
   TASK_COLUMNS,
   csvRow,
+  DEFAULT_STALE_MINUTES,
 } from "./campaign-tables.ts";
+import { DEFAULT_LICENSE } from "./licenses.ts";
 
-/** The central automation pointer the campaign's caller workflow reads (§4a). */
+/** The central automation pointer the campaign's caller workflow reads (DESIGN.md §4). */
 export interface AutomationPointer {
   central_repository: string;
   ref: string;
@@ -140,10 +142,10 @@ export interface CampaignFields {
 // Defaults for fields the create form does not surface.
 const DEFAULTS = {
   language: "en",
-  license: "CC-BY-4.0",
+  license: DEFAULT_LICENSE,
   required_validations: 1,
   pass_threshold: 1,
-  stale_after_minutes: 120,
+  stale_after_minutes: DEFAULT_STALE_MINUTES,
 };
 
 /** The repo path a piece's MEI is committed to, and its tasks address. */

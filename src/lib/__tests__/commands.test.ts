@@ -34,6 +34,10 @@ function context(forge: ForgeClient): CommandContext {
     viewer: "9001",
     viewerLogin: "volunteer",
     meiFriendUrl: "https://mei-friend.example",
+    omr: {
+      layoutModel: { name: "layout", version: "1" },
+      staffPipeline: { name: "staff", version: "1" },
+    },
     progress: () => {},
   };
 }

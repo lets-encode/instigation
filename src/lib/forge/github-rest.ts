@@ -17,7 +17,7 @@ export const SESSION = "@session";
 
 let sessionApiBase: string | null = null;
 
-/** Register the broker proxy base (e.g. `/oauth/proxy/api.github.com`) that SESSION calls go to. */
+/** Register the broker proxy base (e.g. `/auth/proxy/api.github.com`) that SESSION calls go to. */
 export function routeSessionVia(base: string): void {
   sessionApiBase = base;
 }

@@ -26,6 +26,8 @@ RESERVED_NAMES: frozenset[str] = frozenset(
         # reverse-proxy / vite mounts on the app origin
         "auth",
         "registry",
+        # directories the build writes into the document root
+        "ocr",
         # current and likely future top-level routes / root paths
         "campaign",
         "campaigns",

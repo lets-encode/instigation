@@ -28,10 +28,10 @@ import {
   serializeStateCsv,
   serializeLockCsv,
   serializeCommentCsv,
-  appendComments,
   appendHistory,
   configFlag,
   configNumber,
+  DEFAULT_STALE_MINUTES,
   passThresholdOf,
 } from "../src/lib/campaign-tables.ts";
 import type {
@@ -148,7 +148,6 @@ const HISTORY_PATH = "tracking/history.csv";
 const COMMENT_PATH = "tracking/comment.csv";
 const CONFIG_PATH = "config.yaml";
 const MAX_ATTEMPTS = 5;
-const DEFAULT_STALE_MINUTES = 120;
 // Open non-draft pull requests one author may have on a campaign, counting
 // the one being processed; beyond it a pull request is closed unprocessed and
 // without a history row.

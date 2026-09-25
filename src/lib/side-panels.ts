@@ -1,7 +1,7 @@
 // The campaign view's in-page side panels (the comments panel and the task
-// panel): whether one is open and how wide it is, kept per browser like the
-// dock layouts (preview-dock.ts). The task panel's open state follows the
-// ?task= parameter, so only its width applies. The width is ONE value shared
+// panel): whether one is open and how wide it is, kept per browser. The task
+// panel's open state follows the ?task= parameter, so only its width applies.
+// The width is ONE value shared
 // by both panels — they occupy the same place in the layout, and a differing
 // width would shift the centred board when one replaces the other.
 

@@ -89,8 +89,8 @@ export interface CommandContext {
   viewerLogin: string;
   /** Editor instance used for the mei-friend hand-off. */
   meiFriendUrl: string;
-  /** The OMR models, pinned by version; unset when OMR is not configured. */
-  omr?: OmrModels;
+  /** The OMR models, pinned by version. */
+  omr: OmrModels;
   /**
    * Progress for a busy indicator: `step` opens a new stage, `detail` says
    * which part of the running stage is being worked on. Pass a no-op when
@@ -231,13 +231,6 @@ async function muteOnce(ctx: CommandContext): Promise<void> {
   }
 }
 
-// Wait until the campaign automation has processed a PR (it closes the PR
-// when done) and return its verdict comment. A timeout means the run is still
-// in flight, not failed. Once the PR is closed, a `head` branch
-// the console created in the user's fork is deleted: the automation deletes
-// the head branches of PRs opened within the campaign repo itself, but it has
-// no rights on a fork, so that half of the cleanup happens here with the
-// user's own session.
 type PrProcessingResult =
   | { state: "closed"; verdict: string | null }
   | { state: "run_failed"; runUrl: string }
@@ -250,6 +243,13 @@ type PrProcessingResult =
 export const RUN_REQUIREMENTS =
   "a submission must change at most two files, must not be a draft, and must come from a user account";
 
+// Wait until the campaign automation has processed a PR (it closes the PR
+// when done) and return its verdict comment. A timeout means the run is still
+// in flight, not failed. Once the PR is closed, a `head` branch
+// the console created in the user's fork is deleted: the automation deletes
+// the head branches of PRs opened within the campaign repo itself, but it has
+// no rights on a fork, so that half of the cleanup happens here with the
+// user's own session.
 async function waitForPrProcessed(
   ctx: CommandContext,
   pr: {
@@ -819,12 +819,6 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
         pageNo &&
         pieceFieldForPath(configYaml, fragment, "preparation") === "omr"
       ) {
-        if (!ctx.omr) {
-          return {
-            error:
-              "This page needs a transcription draft, but OMR is not configured here.",
-          };
-        }
         ctx.progress({ step: "Preparing the transcription draft…" });
         try {
           const { draftPage } = await import("./omr-page-draft.ts");

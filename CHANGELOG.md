@@ -5,6 +5,10 @@ parentheses.
 
 ## Unreleased
 
+- Board cards show the piece colour as a dot before the title instead of a coloured left edge.
+- The console shows lock expiry with the coordinator's 120-minute default when the config sets none.
+- The campaign name `ocr` is reserved.
+- Unused code and stale comments are removed.
 - Code is formatted with Prettier (2 spaces) and the broker with Black (80 columns).
 - A pre-commit hook rejects unformatted files.
 - The mei-friend URL is set only in `services.json`.

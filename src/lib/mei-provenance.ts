@@ -7,7 +7,7 @@
 // rest of the file. Same conventions as source-metadata.ts: pure regex and
 // string handling, no DOM, filesystem or network access.
 
-import { escapeRegex, indent, xmlEscape } from "./mei-xml.ts";
+import { escapeRegex, indent, xmlEscape, xmlUnescape } from "./mei-xml.ts";
 
 /** One accepted contribution, as recorded in the header. */
 export interface Contribution {
@@ -114,10 +114,6 @@ function withChange(head: string, c: Contribution): string {
   );
 }
 
-/**
- * Record applications in the score's <appInfo>, each once, matched by name.
- * The score is returned unchanged when it has no <meiHead>.
- */
 /** The application names a document's header records in <appInfo>, in order. */
 export function applicationNamesIn(mei: string): string[] {
   const head = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(mei)?.[0] ?? "";
@@ -126,15 +122,13 @@ export function applicationNamesIn(mei: string): string[] {
     ...appInfo.matchAll(
       /<application\b[^>]*>[\s\S]*?<name\b[^>]*>\s*([^<]*?)\s*<\/name>/g,
     ),
-  ].map((m) =>
-    m[1]
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, "&"),
-  );
+  ].map((m) => xmlUnescape(m[1]));
 }
 
+/**
+ * Record applications in the score's <appInfo>, each once, matched by name.
+ * The score is returned unchanged when it has no <meiHead>.
+ */
 export function recordApplications(mei: string, names: string[]): string {
   const match = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(mei);
   if (!match) return mei;

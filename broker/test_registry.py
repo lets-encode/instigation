@@ -342,8 +342,9 @@ class RegistryTest(unittest.TestCase):
         # A campaign lives at /<name> on the app's own origin, so every
         # top-level path the origin serves must never be claimable as a
         # campaign name: it must fail slug syntax or be reserved. Covers the
-        # SvelteKit routes, the static root files, SvelteKit's own mounts, and
-        # the reverse-proxy / vite mounts (README.md §6, vite.config.js).
+        # SvelteKit routes, the static root files, SvelteKit's own mounts, the
+        # reverse-proxy / vite mounts (README.md §6, vite.config.js), and the
+        # directories the build writes (ocr/, vite.config.js).
         root = Path(__file__).resolve().parent.parent
         names = {
             entry.name
@@ -351,7 +352,7 @@ class RegistryTest(unittest.TestCase):
             if entry.is_dir() and not entry.name.startswith("[")
         }
         names |= {entry.name for entry in (root / "static").iterdir()}
-        names |= {"_app", "auth", "registry"}
+        names |= {"_app", "auth", "registry", "ocr"}
         for name in names:
             with self.subTest(name=name):
                 self.assertIsNotNone(slug_validation.registration_error(name))

@@ -104,7 +104,7 @@ export async function recognisePiece(
       `Continuing with ${fromCache} staves transcribed earlier in this browser`,
     );
 
-  const todo = o.pages.flatMap((pg, p) =>
+  const todo = o.pages.flatMap((_, p) =>
     entries[p].some((e) => !e) ? [p] : [],
   );
   if (todo.length) {
