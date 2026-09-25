@@ -260,7 +260,6 @@
     align-self: center;
     gap: 9px;
     margin-right: auto;
-    max-width: 480px;
     font-size: 12.5px;
     font-weight: 400;
     line-height: 1.5;

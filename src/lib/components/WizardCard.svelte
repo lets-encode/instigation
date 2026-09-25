@@ -674,19 +674,32 @@
 
   /* ---- Centered stage (steps without material) --------------------------- */
   /* The area right of the rail; the card centres in it, sitting a little above
-     the vertical middle. Auto margins on the card keep its top reachable when
-     it is taller than the stage. */
+     the vertical middle. The offset comes from unequal spacers rather than
+     padding, so it gives way to nothing when space is short: a card that fits
+     never makes the stage scroll, and one taller than it keeps its top
+     reachable. */
   .stage {
     flex: 1;
     min-width: 0;
     display: flex;
+    flex-direction: column;
+    align-items: center;
     overflow: auto;
     box-sizing: border-box;
-    padding: 24px 24px 60px;
+    padding: 8px 24px;
+  }
+  /* The spacers make the gap above and below the card beyond the padding's
+     8px, so it closes before the stage scrolls. */
+  .stage::before,
+  .stage::after {
+    content: "";
+    flex: 2 1 0;
+  }
+  .stage::after {
+    flex-grow: 3;
   }
   .card.solo {
     flex: none;
-    margin: auto;
     width: 680px;
     max-width: 100%;
     padding: 36px 42px;
