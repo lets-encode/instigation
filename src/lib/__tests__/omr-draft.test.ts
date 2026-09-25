@@ -122,3 +122,38 @@ test('a clef verovio put inside a tremolo follows the tremolo', () => {
 	const result = insertPageDraft(skeleton([1], 1), 'surface-1', converted, [1], allPrinted(1, 1));
 	assert.match(result.mei, /<bTrem><note xml:id="t1" pname="c" oct="4" dur="2"\/><\/bTrem><clef shape="F" line="4"\/><\/layer>/);
 });
+
+test('the page opening puts its clefs first in the page\'s first layers and its key and meter before the first measure', () => {
+	const result = insertPageDraft(skeleton([1, 1]), 'surface-1', converted(2), [1, 1], allPrinted(2), {
+		clefs: [null, 'G2-1'],
+		fifths: -3,
+		time: { beats: '6', beatType: '8', symbol: '' }
+	});
+	assert.match(
+		result.mei,
+		/<scoreDef><keySig sig="3f"\/><meterSig count="6" unit="8"\/><\/scoreDef><measure xml:id="measure-1"/
+	);
+	assert.match(result.mei, /<staff n="2" facs="#z1-2"><layer n="1"><clef shape="G" line="2" dis="8" dis.place="below"\/><note xml:id="n1-2"/);
+	assert.equal((result.mei.match(/<clef /g) ?? []).length, 1);
+	assert.equal((result.mei.match(/<scoreDef>/g) ?? []).length, 1);
+});
+
+test('a key or meter change verovio writes before a measure goes before the skeleton measure it fills', () => {
+	const converted =
+		'<mei><score><scoreDef><keySig sig="0"/></scoreDef><section>' +
+		'<measure n="1"><staff n="1"><layer n="1"/></staff></measure><sb/>' +
+		'<scoreDef ppq="8"/><scoreDef ppq="4"><keySig sig="1f"/></scoreDef><measure n="2"><staff n="1"><layer n="1"/></staff></measure>' +
+		'</section></score></mei>';
+	const result = insertPageDraft(skeleton([1, 1], 1), 'surface-1', converted, [1, 1], allPrinted(2, 1));
+	// The document's own scoreDef is not taken; the change lands between the system break and measure 2.
+	assert.doesNotMatch(result.mei, /keySig sig="0"/);
+	assert.match(result.mei, /<sb [^>]*\/>\s*<scoreDef><keySig sig="1f"\/><\/scoreDef><measure xml:id="measure-2"/);
+});
+
+test('a staff the system does not print keeps the clef change verovio placed on it', () => {
+	const converted =
+		'<mei><section><measure n="1"><staff n="1"><layer n="1"><note xml:id="c1" pname="c" oct="4" dur="1"/></layer></staff>' +
+		'<staff n="2"><layer n="1"><clef shape="C" line="3"/></layer></staff></measure></section></mei>';
+	const result = insertPageDraft(skeleton([1]), 'surface-1', converted, [1], [new Map([[1, 'a']])]);
+	assert.match(result.mei, /<staff n="2"><layer n="1"><mRest\/><clef shape="C" line="3"\/><\/layer><\/staff>/);
+});

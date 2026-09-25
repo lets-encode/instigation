@@ -1,6 +1,6 @@
 import { COMMENT_COLUMNS, parseCsv } from './campaign-tables.ts';
 import type { CommentRow, HistoryRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
-import { resetTaskRows } from './campaign-submit.ts';
+import { resetTaskRows, sideFilesOf } from './campaign-submit.ts';
 import type { CommandEnvelope } from './command-envelope.ts';
 
 export type PullRequestKind = 'claim' | 'validation' | 'comment' | 'encoding';
@@ -174,7 +174,12 @@ export function resolveEncodingTask(options: {
 	author: string;
 }): TaskRow | undefined {
 	const { tasks, locks, changedPaths, envelope, headRef, author } = options;
-	const candidates = tasks.filter((task) => task.subtask_id === '' && changedPaths.includes(task.fragment));
+	// A pre-task's submission may change only a side file (see sideFilesOf).
+	const candidates = tasks.filter(
+		(task) =>
+			task.subtask_id === '' &&
+			[task.fragment, ...sideFilesOf(task)].some((path) => changedPaths.includes(path))
+	);
 	if (candidates.length <= 1) return candidates[0];
 
 	const claimed = String(envelope?.input?.task_id ?? '');

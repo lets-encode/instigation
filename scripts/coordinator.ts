@@ -53,6 +53,7 @@ import {
   checkResolveComment,
   checkSendBack,
   checkValidation,
+  sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
 import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
 import { recordContribution } from "../src/lib/mei-provenance.ts";
@@ -575,11 +576,27 @@ async function decideEncoding(
     };
   }
 
+  // The side files the submission changed (a layout correction's raw layout,
+  // a score setup's recognition record) are taken from the fork as they are.
+  const sidePaths = sideFilesOf(task).filter((path) =>
+    changedPaths.includes(path),
+  );
+  const sideContents = await Promise.all(
+    sidePaths.map((path) =>
+      getRepoFile(token, headOwner, headRepo, path, headSha),
+    ),
+  );
+  const sideFiles = sidePaths.flatMap((path, i) => {
+    const content = sideContents[i];
+    return content == null ? [] : [{ path, content }];
+  });
+
   return {
     ok: true,
     history,
     files: [
       { path: task.fragment, content: mei! },
+      ...sideFiles,
       { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
       { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
     ],

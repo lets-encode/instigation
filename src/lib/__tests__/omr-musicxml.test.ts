@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { keysigFor, proposeScoreDef, readAttributes, toClef } from '../omr-musicxml.ts';
+import { clefStaff, correctClef, keysigFor, proposeScoreDef, readAttributes, staffClefToken } from '../omr-musicxml.ts';
 
 // The shape the staff model writes: one part, attributes on the first measure.
 const staff = (attributes: string) =>
@@ -82,21 +82,83 @@ test('proposeScoreDef: signatures are read from the given sources before the cle
 	assert.equal(`${proposal.meterCount}/${proposal.meterUnit}`, '6/8');
 });
 
-test('toClef moves the notes so they keep their places on the staff', () => {
-	const xml = (clef: string, notes: string) =>
-		`<score-partwise><part id="P1"><measure><attributes><divisions>1</divisions>${clef}</attributes>${notes}</measure></part></score-partwise>`;
-	const G = '<clef><sign>G</sign><line>2</line></clef>';
-	const pitch = (step: string, octave: number, alter = '') =>
-		`<note><pitch><step>${step}</step>${alter}<octave>${octave}</octave></pitch></note>`;
-	// Treble to bass: the bottom line E4 becomes G2.
-	const bass = toClef(xml(G, pitch('E', 4) + pitch('F', 5, '<alter>1</alter>')), 'F4');
-	assert.match(bass, /<clef><sign>F<\/sign><line>4<\/line><\/clef>/);
-	assert.match(bass, /<step>G<\/step><octave>2<\/octave>/);
-	assert.match(bass, /<step>A<\/step><alter>1<\/alter><octave>3<\/octave>/);
-	// Already in the clef, several clefs, or an unpitched clef: unchanged.
-	const same = xml(G, pitch('E', 4));
-	assert.equal(toClef(same, 'G2'), same);
-	const two = xml(G + G, pitch('E', 4));
-	assert.equal(toClef(two, 'F4'), two);
-	assert.equal(toClef(same, 'perc'), same);
+const C3 = '<clef><sign>C</sign><line>3</line></clef>';
+const doc = (...measures: string[]) =>
+	`<score-partwise><part id="P1">${measures.map((m) => `<measure>${m}</measure>`).join('')}</part></score-partwise>`;
+const opening = (clef: string) => `<attributes><divisions>1</divisions>${clef}</attributes>`;
+const pitch = (step: string, octave: number, extra = '') =>
+	`<note><pitch><step>${step}</step>${extra.includes('<alter>') ? /<alter>.*?<\/alter>/.exec(extra)![0] : ''}<octave>${octave}</octave></pitch>${extra.replace(/<alter>.*?<\/alter>/, '')}</note>`;
+const pitches = (xml: string) =>
+	[...xml.matchAll(/<pitch><step>([A-G])<\/step>(?:<alter>(-?\d+)<\/alter>)?<octave>(-?\d+)<\/octave><\/pitch>/g)].map(
+		(m) => `${m[1]}${m[2] ? (Number(m[2]) > 0 ? '#' : 'b') : ''}${m[3]}`
+	);
+
+test('correctClef moves the notes so they keep their lines and spaces', () => {
+	// Read in treble, printed in bass: the bottom line E4 is G2.
+	const { musicxml, state } = correctClef(doc(opening(G) + pitch('E', 4) + pitch('A', 5)), 'G2', 'F4', 'misread');
+	assert.equal(state, 'misread');
+	assert.match(musicxml, /<clef><sign>F<\/sign><line>4<\/line><\/clef>/);
+	assert.deepEqual(pitches(musicxml), ['G2', 'C4']);
+});
+
+test('correctClef takes the alter from the printed accidental, which holds to the barline', () => {
+	const sharp = '<alter>1</alter><accidental>sharp</accidental>';
+	const { musicxml } = correctClef(
+		// A key-signature flat read as alter without an accidental; a printed sharp, then the same line again.
+		doc(opening(G) + pitch('B', 4, '<alter>-1</alter>') + pitch('F', 4, sharp) + pitch('F', 4), pitch('F', 4)),
+		'G2',
+		'F4',
+		'misread'
+	);
+	// B4 → D3 follows the key; F4 → A2 keeps the printed sharp, the next A2 carries it, the next measure does not.
+	assert.deepEqual(pitches(musicxml), ['D3', 'A#2', 'A#2', 'A2']);
+});
+
+test('correctClef stops at the first clef read as something else, for good', () => {
+	const change = `<attributes>${C3}</attributes>`;
+	const back = `<attributes>${G}</attributes>`;
+	const first = correctClef(doc(opening(G) + pitch('E', 4), change + pitch('C', 4), back + pitch('E', 4)), 'G2', 'F4', 'misread');
+	assert.equal(first.state, 'ended');
+	assert.deepEqual(pitches(first.musicxml), ['G2', 'C4', 'E4']);
+	// The misread clef after the real change is kept as read.
+	assert.equal((first.musicxml.match(/<sign>G<\/sign>/g) ?? []).length, 1);
+	// An inactive correction, or one without pitch, leaves the staff alone.
+	const staff = doc(opening(G) + pitch('E', 4));
+	assert.deepEqual(correctClef(staff, 'G2', 'F4', 'ended'), { musicxml: staff, state: 'ended' });
+	assert.deepEqual(correctClef(staff, 'G2', 'perc', 'misread'), { musicxml: staff, state: 'misread' });
+});
+
+test('correctClef moves a staff without a clef, which continues in the misread one', () => {
+	const { musicxml, state } = correctClef(doc(pitch('E', 4)), 'G2', 'F4', 'misread');
+	assert.equal(state, 'misread');
+	assert.deepEqual(pitches(musicxml), ['G2']);
+	assert.deepEqual(pitches(correctClef(doc(opening(F) + pitch('G', 2)), 'F4', 'G2-1', 'misread').musicxml), ['E3']);
+});
+
+test('clef tokens and staff values convert both ways', () => {
+	for (const token of ['G2', 'F4', 'C3', 'G2-1', 'F4+2', 'perc', 'TAB']) {
+		assert.equal(staffClefToken(clefStaff(token)), token);
+	}
+});
+
+test('correctClef keeps the alter of a note tied from the measure before', () => {
+	const tieStop = '<alter>1</alter><tie type="stop"/>';
+	const { musicxml } = correctClef(doc(opening(G) + pitch('C', 5, '<alter>1</alter><accidental>sharp</accidental>'), pitch('C', 5, tieStop)), 'G2', 'C3', 'misread');
+	assert.deepEqual(pitches(musicxml), ['D#4', 'D#4']);
+});
+
+test('correctClef leaves a clef read as the corrected one in force, and replaces a clef of the same lines', () => {
+	const bass = `<attributes>${F}</attributes>`;
+	const { musicxml, state } = correctClef(doc(opening(G) + pitch('E', 4), bass + pitch('G', 2), `<attributes>${G}</attributes>` + pitch('E', 4)), 'G2', 'F4', 'misread');
+	assert.equal(state, 'misread');
+	assert.deepEqual(pitches(musicxml), ['G2', 'G2', 'G2']);
+	// A staff that ended in the corrected clef as read continues unmoved.
+	const after = correctClef(doc(opening(G) + pitch('E', 4), bass + pitch('G', 2)), 'G2', 'F4', 'misread');
+	assert.equal(after.state, 'read');
+	assert.deepEqual(pitches(correctClef(doc(pitch('G', 2)), 'G2', 'F4', after.state).musicxml), ['G2']);
+	// F3 and C5 put the same pitch on the bottom line: only the clef changes.
+	const F3 = '<clef><sign>F</sign><line>3</line></clef>';
+	const same = correctClef(doc(opening(F3) + pitch('B', 2, '<alter>-1</alter>')), 'F3', 'C5', 'misread').musicxml;
+	assert.match(same, /<sign>C<\/sign><line>5<\/line>/);
+	assert.deepEqual(pitches(same), ['Bb2']);
 });

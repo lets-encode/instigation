@@ -105,8 +105,20 @@ export function resetTaskRows(rows: StateRow[], validationColumns: string[], tas
 }
 
 /**
- * Encoding submission. The PR may change only the task's fragment (plus
- * `layout.json` beside it for a layout correction), the author
+ * The files a pre-task's submission may commit beside its score: the layout
+ * model's raw output (`layout.json`) for a layout correction, the recognition
+ * record (`omr.xml`) for a score setup.
+ */
+export function sideFilesOf(task: { locator: string; fragment: string }): string[] {
+	const dir = task.fragment.slice(0, task.fragment.lastIndexOf('/') + 1);
+	if (task.locator === 'omr-layout') return [`${dir}layout.json`];
+	if (task.locator === 'score-setup') return [`${dir}omr.xml`];
+	return [];
+}
+
+/**
+ * Encoding submission. The PR may change only the task's fragment (plus its
+ * side files, see sideFilesOf), the author
  * must hold the active encoding lock, and the MEI must pass the machine-check
  * (`meiValid`, computed by the coordinator). On accept: the task row advances
  * to validation_required with encoder/encoded_at set, its pending subtasks
@@ -117,13 +129,7 @@ export function checkEncoding({ tasks, state, locks, intent, author, changedPath
 	const task = findRow(tasks, intent.task_id, '');
 	const row = findRow(state.rows, intent.task_id, '');
 	if (!task || !row) return reject('unknown_task');
-	// A layout correction may also commit the layout model's raw output,
-	// `layout.json` next to the score.
-	const allowed = [task.fragment];
-	if (task.locator === 'omr-layout') {
-		allowed.push(`${task.fragment.slice(0, task.fragment.lastIndexOf('/') + 1)}layout.json`);
-	}
-	if (!boundaryCheck(changedPaths, allowed)) return reject('out_of_bounds');
+	if (!boundaryCheck(changedPaths, [task.fragment, ...sideFilesOf(task)])) return reject('out_of_bounds');
 	if (row.status !== 'encoding_required') return reject('wrong_state');
 
 	const holdsLock = locks.some(

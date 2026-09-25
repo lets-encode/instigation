@@ -122,6 +122,28 @@ test('encoding: a layout correction may also commit layout.json beside the score
 	assert.deepEqual(enc({ ...base, tasks: TASKS }), { ok: false, reason: 'out_of_bounds' });
 });
 
+test('encoding: a score setup may also commit omr.xml beside the score, alone or with it', () => {
+	const tasks = parseTaskCsv(
+		'task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n' +
+			'T0001,,sources/score.mei,score-setup,,,\n' +
+			'T0001,S0001,sources/score.mei,,,,\n'
+	);
+	const base = {
+		state: encodingState(),
+		locks: encodingLock,
+		intent: { task_id: 'T0001' },
+		author: 'bob',
+		meiValid: true,
+		now: NOW
+	};
+	assert.equal(enc({ ...base, tasks, changedPaths: ['sources/score.mei', 'sources/omr.xml'] }).ok, true);
+	assert.equal(enc({ ...base, tasks, changedPaths: ['sources/omr.xml'] }).ok, true);
+	assert.deepEqual(enc({ ...base, tasks, changedPaths: ['sources/score.mei', 'sources/layout.json'] }), {
+		ok: false,
+		reason: 'out_of_bounds'
+	});
+});
+
 test('encoding: rejects a PR that touches anything but the fragment', () => {
 	const v = enc({
 		tasks: TASKS,

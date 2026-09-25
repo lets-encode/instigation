@@ -4,7 +4,7 @@
 // pass it to `run` as the follow-up.
 
 import { auth, forge } from './auth.svelte.ts';
-import { omr, provider } from './forge/config.ts';
+import { omr } from './forge/config.ts';
 import { createForge } from './forge/index.ts';
 import type { ForgeClient } from './forge/index.ts';
 import { ProgressLog } from './progress-log.svelte.ts';
@@ -48,7 +48,6 @@ export class CommandRunner {
 			...target,
 			viewer: viewerId(),
 			viewerLogin: auth.user?.login ?? '',
-			brokerUrl: provider.brokerUrl,
 			omr,
 			...opts,
 			progress: (u) => {

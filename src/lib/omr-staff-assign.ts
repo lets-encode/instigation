@@ -2,13 +2,17 @@
 // shows. A system may print only some of the definition's staves (an
 // orchestral score leaves out the instruments that rest), so a box's position
 // in its system does not give its staff. The suggestion keeps the system's
-// order and places its staves on the definition's: a staff scores for a clef
-// equal to the definition staff's and more for a printed label (as OCR read
-// it) that abbreviates the staff's label, and each gap between neighbouring
-// boxes is compared with the widest gap a reference system (one box per
-// definition staff) has across the same staves, so a wide gap such as the one between
-// winds and strings falls on a group boundary. Among equal placements the one
-// using the earlier staves wins. Pure functions, no DOM.
+// order and places its staves on the definition's: a staff scores for a
+// printed label (as OCR read it) that abbreviates the staff's label, and less
+// for being a staff the previous system showed (instruments tend to rest for
+// several systems); each gap between neighbouring boxes is compared with the
+// widest gap a reference system (one box per definition staff) has across the
+// same staves, so a wide gap such as the one between winds and strings falls
+// on a group boundary. A clef equal to the staff's clef in force only breaks
+// ties, since clefs change along a piece. Among equal placements the one
+// using the earlier staves wins. A box a volunteer placed keeps its staff
+// where the order of the boxes allows it.
+// Pure functions, no DOM.
 
 import type { MeasureBox } from './mei-facsimile.ts';
 
@@ -17,6 +21,12 @@ const GAP_TOLERANCE = 0.1;
 /** Gaps are measured in multiples of the system's median gap, and floored here. */
 const MIN_GAP = 0.05;
 const EPSILON = 1e-9;
+/** The score for a staff the previous system showed. */
+const CONTINUITY = 0.5;
+/** The score for a clef equal to the staff's clef in force. */
+const CLEF_TIE = 0.1;
+/** The score that holds a box on the staff a volunteer placed it on. */
+const FIXED = 1000;
 
 // ---------------------------------------------------------------------------
 // Labels
@@ -167,6 +177,16 @@ export interface ScoreStaff {
 	label: string;
 }
 
+/** What the systems before a system leave for its assignment. */
+export interface AssignmentContext {
+	/** The clef token in force on each definition staff; the staff's own clef where absent. */
+	clefs?: (string | null)[];
+	/** The staves (1-based) the previous system showed. */
+	previous?: number[];
+	/** Per box: the staff (1-based, 0 for none) a volunteer placed it on; undefined for none placed. */
+	fixed?: (number | undefined)[];
+}
+
 /**
  * The staff (1-based @n) each box of a system shows, top to bottom, or 0 for
  * a box left out (a system with more boxes than the definition has staves
@@ -176,17 +196,48 @@ export interface ScoreStaff {
 export function suggestStaffAssignment(
 	printed: PrintedStaff[],
 	parts: ScoreStaff[],
-	reference?: MeasureBox[]
+	reference?: MeasureBox[],
+	context: AssignmentContext = {}
 ): number[] {
+	const given = context.fixed ?? [];
+	// A box placed on no staff takes no part in the ordering of the others.
+	if (given.some((f) => f === 0)) {
+		const kept = printed.flatMap((_, i) => (given[i] === 0 ? [] : [i]));
+		const placed = suggestStaffAssignment(
+			kept.map((i) => printed[i]),
+			parts,
+			reference,
+			{ ...context, fixed: kept.map((i) => given[i]) }
+		);
+		const out = printed.map(() => 0);
+		kept.forEach((i, j) => (out[i] = placed[j]));
+		return out;
+	}
+	// Volunteer placements the order of the boxes allows: below every kept
+	// placement above, with a staff for each box between and below. Others are
+	// not kept.
+	const fixed: (number | undefined)[] = [];
+	let last = { box: -1, staff: 0 };
+	given.forEach((f, i) => {
+		if (f === undefined) return;
+		if (f - last.staff >= i - last.box && f <= parts.length - (printed.length - 1 - i)) {
+			fixed[i] = f;
+			last = { box: i, staff: f };
+		}
+	});
 	const n = printed.length;
 	const m = parts.length;
+	// A system of at least as many boxes as staves is read in order; placements do not move it.
 	if (n >= m) return printed.map((_, i) => (i < m ? i + 1 : 0));
 	const gaps = relativeGaps(printed.map((s) => s.box));
 	const refGaps = reference && reference.length === m ? relativeGaps(reference) : null;
 	const labels = parts.map((part) => part.label);
 	const readings = printed.map((staff) => (staff.label ? readLabel(staff.label, labels) : null));
+	const previous = new Set(context.previous ?? []);
 	const staffScore = (i: number, p: number) =>
-		(printed[i].clef !== null && printed[i].clef === parts[p].clef ? 1 : 0) +
+		(fixed[i] !== undefined ? (fixed[i] === p + 1 ? FIXED : -FIXED) : 0) +
+		(printed[i].clef !== null && printed[i].clef === (context.clefs?.[p] ?? parts[p].clef) ? CLEF_TIE : 0) +
+		(previous.has(p + 1) ? CONTINUITY : 0) +
 		(readings[i] ? partsScore(readings[i], parts[p].label) : 0);
 	// The cost of boxes i and i+1 showing staves p and q > p.
 	const gapCost = (i: number, p: number, q: number) => {

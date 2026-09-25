@@ -28,6 +28,9 @@ export interface OcrLine {
 /** The languages the recognition runs with. */
 const OCR_LANGUAGES = ['deu', 'eng'];
 
+/** The engine as a recognition record names it; `version` is the bundled tesseract.js release. */
+export const OCR_ENGINE = { engine: 'tesseract.js', version: '7.0.0', language: OCR_LANGUAGES.join('+') };
+
 /** The smallest part of a word's confidence kept; lower readings are noise. */
 const MIN_WORD_CONF = 30;
 

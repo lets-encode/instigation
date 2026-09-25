@@ -248,6 +248,17 @@ test('shared-fragment encoding tasks resolve by envelope, branch, or one active 
 	assert.equal(resolveEncodingTask({ ...base, envelope: null, headRef: 'unrelated' }), undefined);
 });
 
+test('a pre-task submission that changes only a side file resolves to its task', () => {
+	const tasks: TaskRow[] = [
+		{ task_id: 'P0001', subtask_id: '', fragment: 'sources/a/score.mei', locator: 'omr-layout', allowlist: '', blocklist: '', depends_on: '' },
+		{ task_id: 'P0002', subtask_id: '', fragment: 'sources/a/score.mei', locator: 'score-setup', allowlist: '', blocklist: '', depends_on: 'P0001' },
+		{ task_id: 'T0001', subtask_id: '', fragment: 'sources/a/score.mei', locator: 'surface-1', allowlist: '', blocklist: '', depends_on: 'P0002' }
+	];
+	const base = { tasks, locks: [] as LockRow[], envelope: null, headRef: 'unrelated', author: 'alice' };
+	assert.equal(resolveEncodingTask({ ...base, changedPaths: ['sources/a/omr.xml'] })?.task_id, 'P0002');
+	assert.equal(resolveEncodingTask({ ...base, changedPaths: ['sources/a/layout.json'] })?.task_id, 'P0001');
+});
+
 test('pieceKindForPath reads the piece kind from the canonical config shape', () => {
 	const config =
 		'pieces:\n' +

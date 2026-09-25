@@ -1,28 +1,25 @@
 // The draft an OMR-prepared piece's page task starts from. Run when the
-// encoding task's branch has just been created: the page's staff boxes are
-// cropped from the committed image, each staff is transcribed by the staff
-// pipeline, the transcriptions are stitched into a page score (each staff on
-// the score staff suggested for it from its clef, the instrument label OCR
-// reads in front of it and the staff spacing, since a system may print fewer
-// staves than the score has), converted to MEI by
-// verovio and put into the page's measures of the piece's score, which is
-// then committed to the task branch mei-friend opens. Browser only:
-// canvas crops and the verovio WASM module.
+// encoding task's branch has just been created: the page's staff
+// transcriptions and labels are taken from the piece's recognition record
+// (`omr.xml`, committed by the score setup), with its clef corrections,
+// stitched into a page score (each staff on the score staff suggested for it
+// from its clef, its instrument label and the staff spacing, since a system
+// may print fewer staves than the score has) that starts in the clefs, key
+// and meter the pages before it leave in force, converted to MEI by verovio
+// and put into the page's measures of the piece's score, which is then
+// committed to the task branch mei-friend opens. No recognition runs here.
+// Browser only: the verovio WASM module.
 
 import type { ForgeClient } from './forge/types.ts';
-import { createOmrClient, type OmrPipeline } from './omr-client.ts';
+import type { OmrPipeline } from './omr-client.ts';
 import { parseFacsimileMei } from './mei-facsimile.ts';
-import { pageSystems, staffCrops } from './omr-layout.ts';
-import { cropStaves, transcribeStaves } from './omr-transcribe.ts';
 import { stitchPage } from './omr-stitch.ts';
-import { suggestStaffAssignment } from './omr-staff-assign.ts';
-import { readStaffLabels } from './ocr.ts';
-import { clefToken } from './omr-musicxml.ts';
+import { pageStart, pieceStaves, placementsOf, scoreStaves } from './omr-timeline.ts';
 import { insertPageDraft } from './omr-draft.ts';
+import { omrRecordPath, parseOmrRecord } from './omr-record.ts';
 import { recordApplications } from './mei-provenance.ts';
 import { addXmlIds } from './mei-ids.ts';
 import { checkMei } from './mei-check.ts';
-import { resolveRepoRelativeTarget } from './facsimile-images.ts';
 import { getVerovio } from './verovio-render.ts';
 
 /** The Musibot models the OMR preparation runs, pinned by version. */
@@ -43,7 +40,6 @@ export interface PageDraftOptions {
 	/** The piece's score path and the page (1-based) the task covers. */
 	fragment: string;
 	page: number;
-	brokerUrl: string;
 	models: OmrModels;
 	progress: (step: string) => void;
 }
@@ -61,84 +57,55 @@ export const applicationNames = (models: OmrModels): string[] =>
 
 export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
 	const { forge, owner, repo, fragment, page } = o;
-	const score = await forge.getRepoFile(owner, repo, fragment, o.headSha);
+	const [score, recordXml] = await Promise.all([
+		forge.getRepoFile(owner, repo, fragment, o.headSha),
+		forge.getRepoFile(owner, repo, omrRecordPath(fragment), o.headSha)
+	]);
 	if (score == null) throw new Error(`Could not read ${fragment}.`);
 	const parsed = parseFacsimileMei(score);
 	const pg = parsed.pages[page - 1];
 	if (!pg) throw new Error(`${fragment} has no page ${page}.`);
-	const staves = pg.staves ?? [];
-	if (!staves.length) {
-		return { note: `Page ${page} has no staff boxes, so nothing was transcribed.`, warn: true };
+	if (!pg.staves?.length) {
+		return { note: `Page ${page} has no staff boxes, so it has no draft.`, warn: true };
 	}
-
-	const client = createOmrClient(o.brokerUrl);
-	o.progress('Checking the recognition service');
-	await client.requirePipelines([o.models.staffPipeline]);
-
-	o.progress(`Cropping ${staves.length} staves of page ${page}`);
-	const path = resolveRepoRelativeTarget(fragment, pg.image);
-	const image = path ? await forge.getRepoFileBytes(owner, repo, path, o.headSha) : null;
-	if (!image) throw new Error(`The image of page ${page} (${pg.image}) could not be read.`);
-	const { systems, unplaced } = pageSystems(pg);
-	const flat = systems.flat();
-	if (!flat.length) {
+	const record = parseOmrRecord(recordXml);
+	if (!record) {
 		return {
-			note: `Page ${page}: no staff box lies on a system of measure boxes, so nothing was transcribed.`,
+			note: `The piece has no recognition record (${omrRecordPath(fragment)}), so page ${page} has no draft.`,
 			warn: true
 		};
 	}
-	const crops = await cropStaves(image, staffCrops(flat, pg));
-
-	o.progress(`Transcribing ${flat.length} staves`);
-	const xmls = await transcribeStaves(client, o.models.staffPipeline, crops);
-	let k = 0;
-	const perSystem = systems.map((system) => system.map(() => xmls[k++]));
-	const failed = xmls.filter((x) => x === null).length;
-
-	o.progress('Reading the instrument labels');
-	// The labels only refine the placement, so a failed reading leaves it to
-	// the clefs and the spacing, with a warning.
-	let labelError = '';
-	const labels = await readStaffLabels(image, systems).catch((e: Error) => {
-		labelError = e.message;
-		return systems.map((system) => system.map(() => ''));
-	});
+	o.progress('Reading the recognition record');
+	// The piece read through to this page: clef corrections, and the clefs,
+	// key and meter in force where the page starts.
+	const pieces = pieceStaves(parsed, record, scoreStaves(parsed));
+	const staves = pieces[page - 1];
+	const flat = staves.systems.flat();
+	if (!flat.length) {
+		return {
+			note: `Page ${page}: no staff box lies on a system of measure boxes, so it has no draft.`,
+			warn: true
+		};
+	}
+	const unrecorded = staves.entries.flat().filter((e) => !e).length;
+	const failed = staves.entries.flat().filter((e) => e && !e.musicxml).length;
 
 	o.progress('Assembling the page');
-	const parts = parsed.scoreDef.staves.map((s) => ({
-		clef: s.clefShape === 'perc' || s.clefShape === 'TAB' ? s.clefShape : `${s.clefShape}${s.clefLine}`,
-		label: s.label
-	}));
-	const partClefs = parts.map((part) => part.clef);
-	// The score staff of each staff box (1-based, 0 for none), measured
-	// against a system of the piece that shows every staff.
-	const reference = parsed.pages
-		.flatMap((p) => pageSystems(p).systems)
-		.find((system) => system.length === parts.length);
-	const assigned = systems.map((system, s) =>
-		suggestStaffAssignment(
-			system.map((box, i) => ({ box, clef: clefToken(perSystem[s][i]), label: labels[s][i] })),
-			parts,
-			reference
-		)
-	);
-	const printed = systems.map((system, s) => {
+	const printed = staves.systems.map((system, s) => {
 		const map = new Map<number, string>();
-		system.forEach((box, i) => {
-			if (assigned[s][i] > 0) map.set(assigned[s][i], `staff-zone-${page}-${staves.indexOf(box) + 1}`);
+		system.forEach((_, i) => {
+			if (staves.assigned[s][i] > 0) map.set(staves.assigned[s][i], staves.zones[s][i]);
 		});
 		return map;
 	});
-	const left = assigned.flat().filter((n) => n === 0).length;
-	const stitched = stitchPage(
-		perSystem,
-		partClefs,
-		assigned.map((system) => system.map((n) => n - 1))
-	);
+	const left = staves.assigned.flat().filter((n) => n === 0).length;
+	const start = pageStart(parsed, pieces, page);
+	const stitched = stitchPage(staves.transcriptions, start.clefs, placementsOf(staves), start);
 	const tk = await getVerovio();
 	if (!tk.loadData(stitched.musicxml)) throw new Error('Verovio could not read the transcription.');
-	const draft = insertPageDraft(score, `surface-${page}`, tk.getMEI({}), stitched.measuresPerSystem, printed);
-	const content = addXmlIds(recordApplications(draft.mei, applicationNames(o.models)));
+	const draft = insertPageDraft(score, `surface-${page}`, tk.getMEI({}), stitched.measuresPerSystem, printed, stitched.opening);
+	const models = { layoutModel: o.models.layoutModel, staffPipeline: record.staffPipeline };
+	const content = addXmlIds(recordApplications(draft.mei, applicationNames(models)));
 	const meiError = await checkMei(content);
 	if (meiError) throw new Error(`The draft fails the MEI schema check (${meiError}).`);
 
@@ -147,20 +114,22 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
 		o.workRepo.owner,
 		o.workRepo.repo,
 		[{ path: fragment, content }],
-		`Transcription draft of page ${page} (${o.models.staffPipeline.name} ${o.models.staffPipeline.version})`,
+		`Transcription draft of page ${page} (${record.staffPipeline.name} ${record.staffPipeline.version})`,
 		{ branch: o.branch }
 	);
 
 	const warnings = [
-		...(unplaced ? [`${unplaced} staff box(es) lie on no system of measure boxes and were left out.`] : []),
+		...(staves.unplaced ? [`${staves.unplaced} staff box(es) lie on no system of measure boxes and were left out.`] : []),
 		...(failed ? [`${failed} of ${flat.length} staves could not be transcribed and stay empty.`] : []),
+		...(unrecorded
+			? [`${unrecorded} of ${flat.length} staves are not in the recognition record, since their boxes changed after the score setup, and stay empty.`]
+			: []),
 		...(left ? [`${left} staff box(es) are more than the score has staves and were left out.`] : []),
-		...(labelError ? [`The instrument labels could not be read (${labelError}); the staves were placed by clef and spacing.`] : []),
 		...draft.warnings
 	];
 	return {
 		note:
-			`Page ${page} was transcribed into ${draft.filled} measure(s).` +
+			`Page ${page} was drafted into ${draft.filled} measure(s).` +
 			(warnings.length ? ` ${warnings.join(' ')}` : ''),
 		warn: warnings.length > 0
 	};

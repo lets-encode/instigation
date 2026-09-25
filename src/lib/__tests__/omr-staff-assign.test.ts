@@ -23,7 +23,7 @@ test('a full or overfull system keeps its order; extra bottom staves get none', 
 	assert.deepEqual(suggestStaffAssignment(printed([30, 30], ['G2', 'F4', 'F4']), parts(['G2', 'F4'])), [1, 2, 0]);
 });
 
-test('clefs place a short system; on a tie the earlier staves win', () => {
+test('clefs break ties in a short system; on a full tie the earlier staves win', () => {
 	// A piano introduction (G, F) under a voice + piano definition (G, G, F).
 	assert.deepEqual(suggestStaffAssignment(printed([30], ['G2', 'F4']), parts(['G2', 'G2', 'F4'])), [1, 3]);
 	assert.deepEqual(suggestStaffAssignment(printed([30], ['C3', 'F4']), parts(['C3', 'G2', 'F4'])), [1, 3]);
@@ -46,6 +46,42 @@ test('printed labels decide between staves with the same clef', () => {
 	assert.deepEqual(suggestStaffAssignment(printed([30], ['G2', 'G2'], ['Fl. I', 'Ob. I']), definition), [1, 3]);
 	// Numerals choose between Flöte I and II.
 	assert.deepEqual(suggestStaffAssignment(printed([], ['G2'], ['Fl. II']), definition), [2]);
+});
+
+test('the clef in force breaks the tie, not the staff definition clef', () => {
+	// The middle staff changed to bass earlier in the piece: an F staff under G is now that staff.
+	const definition = parts(['G2', 'G2', 'F4']);
+	assert.deepEqual(suggestStaffAssignment(printed([30], ['G2', 'F4']), definition, undefined, { clefs: ['G2', 'F4', 'G2'] }), [1, 2]);
+});
+
+test('a label outweighs the clef', () => {
+	const definition = parts(['G2', 'F4'], ['Violine', 'Violoncello']);
+	// A cello staff read in treble clef: its label places it.
+	assert.deepEqual(suggestStaffAssignment(printed([], ['G2'], ['Vc.']), definition), [2]);
+});
+
+test('a system keeps to the staves the previous system showed', () => {
+	const definition = parts(['G2', 'G2', 'G2', 'G2']);
+	// Two staves, nothing read: the earlier staves, unless the previous system showed others.
+	assert.deepEqual(suggestStaffAssignment(printed([30], [null, null]), definition), [1, 2]);
+	assert.deepEqual(suggestStaffAssignment(printed([30], [null, null]), definition, undefined, { previous: [3, 4] }), [3, 4]);
+});
+
+test('a box a volunteer placed keeps its staff, and the others fit around it', () => {
+	const definition = parts(['G2', 'G2', 'G2', 'G2']);
+	assert.deepEqual(suggestStaffAssignment(printed([30, 30], [null, null, null]), definition, undefined, { fixed: [undefined, 3] }), [1, 3, 4]);
+	assert.deepEqual(suggestStaffAssignment(printed([30], [null, null]), definition, undefined, { fixed: [0, undefined] }), [0, 1]);
+});
+
+test('placements the box order does not allow are not kept', () => {
+	const three = parts(['G2', 'G2', 'G2']);
+	// A full system stays in order.
+	assert.deepEqual(suggestStaffAssignment(printed([30, 30], [null, null, null]), three, undefined, { fixed: [undefined, 1] }), [1, 2, 3]);
+	// No room below the top box, placements out of order, a staff the definition does not have.
+	assert.deepEqual(suggestStaffAssignment(printed([30], [null, null]), three, undefined, { fixed: [3] }), [1, 2]);
+	assert.deepEqual(suggestStaffAssignment(printed([30], [null, null]), three, undefined, { fixed: [3, 1] }), [1, 2]);
+	assert.deepEqual(suggestStaffAssignment(printed([30], [null, null]), three, undefined, { fixed: [2, 1] }), [2, 3]);
+	assert.deepEqual(suggestStaffAssignment(printed([], [null]), three, undefined, { fixed: [5] }), [1]);
 });
 
 test('label readings: abbreviations, OCR misreadings and numerals', () => {

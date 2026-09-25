@@ -50,6 +50,7 @@ import { checkMei } from './mei-check.ts';
 import type { ProgressUpdate } from './run-watch.ts';
 import type { OmrModels } from './omr-page-draft.ts';
 import type { LayoutRecord } from './omr-layout.ts';
+import { omrRecordPath } from './omr-record.ts';
 
 const TASK_PATH = 'tracking/task.csv';
 const STATE_PATH = 'tracking/state.csv';
@@ -73,8 +74,6 @@ export interface CommandContext {
 	viewerLogin: string;
 	/** Editor instance used for the mei-friend hand-off. */
 	meiFriendUrl?: string;
-	/** The session broker's mount, for the OMR relay; unset when the caller has no broker. */
-	brokerUrl?: string;
 	/** The OMR models, pinned by version; unset when OMR is not configured. */
 	omr?: OmrModels;
 	/**
@@ -663,13 +662,13 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 			}
 			const meiParam = '&connect=true';
 
-			// A page task of an OMR-prepared piece starts from a transcription of
-			// its page, committed to the fresh branch before mei-friend opens. A
-			// branch with work in progress keeps it.
+			// A page task of an OMR-prepared piece starts from a draft of its page
+			// made from the piece's recognition record, committed to the fresh
+			// branch before mei-friend opens. A branch with work in progress keeps it.
 			let draft: { note: string; warn: boolean } | null = null;
 			const pageNo = Number(/^surface-(\d+)$/.exec(taskDef.locator)?.[1]);
 			if (fresh && pageNo && pieceFieldForPath(configYaml, fragment, 'preparation') === 'omr') {
-				if (!ctx.brokerUrl || !ctx.omr) {
+				if (!ctx.omr) {
 					return { error: 'This page needs a transcription draft, but OMR is not configured here.' };
 				}
 				ctx.progress({ step: 'Preparing the transcription draft…' });
@@ -684,7 +683,6 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
 						branch: ref,
 						fragment,
 						page: pageNo,
-						brokerUrl: ctx.brokerUrl,
 						models: ctx.omr,
 						progress: (detail) => ctx.progress({ detail })
 					});
@@ -1384,8 +1382,10 @@ const submitOmrLayout: CommandDef<
 // OMR-prepared piece is rebuilt with empty measures while it holds no
 // notation, so its staff count can still change; once transcriptions are in
 // its measures only its <scoreDef> is replaced, since a rebuild would discard
-// them. The validation subtask reviews the entered values.
-const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel }, Result> = {
+// them. `omr` is an OMR-prepared piece's recognition record, committed as
+// `omr.xml` next to the score for the page drafts. The validation subtask
+// reviews the entered values.
+const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel; omr?: string }, Result> = {
 	id: 'campaign.submitScoreSetup',
 	version: 1,
 	log: 'pr',
@@ -1397,7 +1397,7 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 		keysig: scoreDef.keysig,
 		meter: scoreDef.meterSym || `${scoreDef.meterCount}/${scoreDef.meterUnit}`
 	}),
-	async run({ task_id, scoreDef }, ctx, envelope) {
+	async run({ task_id, scoreDef, omr: record }, ctx, envelope) {
 		const { forge: f, owner, repo } = ctx;
 		try {
 			await muteOnce(ctx);
@@ -1425,9 +1425,11 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 								{ headXml: parsed.headXml, scoreDef, pages: parsed.pages },
 								{ withBreaks: parsed.hasBreaks }
 							);
+			const recordPath = omrRecordPath(fragment);
+			const recordChanged = record !== undefined && record !== (await f.getRepoFile(owner, repo, recordPath));
 			// A no-op would open an empty PR the path-filtered caller never runs;
 			// guard against that rather than leaving the console polling forever.
-			if (content === current) {
+			if (content === current && !recordChanged) {
 				return {
 					ok: true,
 					warn: true,
@@ -1442,7 +1444,10 @@ const submitScoreSetup: CommandDef<{ task_id: string; scoreDef: ScoreDefModel },
 				console.log('[setup] opening PR', { task_id });
 				const pr = await f.openChangePr(owner, repo, {
 					branch: `setup-${task_id}-${rand()}`,
-					files: [{ path: fragment, content }],
+					files: [
+						...(content === current ? [] : [{ path: fragment, content }]),
+						...(recordChanged ? [{ path: recordPath, content: record! }] : [])
+					],
 					message: title,
 					title,
 					body: envelope ? appendEnvelopeToPrBody(body, envelope) : body

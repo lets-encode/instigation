@@ -1,9 +1,10 @@
 // Reading the staff model's MusicXML: the opening attributes of a transcribed
 // staff (clef, key, time) and, from several staves, a proposed score
-// definition for the setup editor; and putting a transcribed staff into
-// another clef. Regex over the document text, no DOM.
+// definition for the setup editor; and correcting a misread clef. Regex over
+// the document text, no DOM.
 
 import type { ScoreDefModel, StaffModel } from './mei-facsimile.ts';
+import { clefTokenOf, clefXml } from './omr-stitch.ts';
 
 /** What the first `<attributes>` of a MusicXML part declares; absent parts are null. */
 export interface StaffAttributes {
@@ -72,6 +73,12 @@ function staffFor(attributes: StaffAttributes): StaffModel {
 export const keysigFor = (fifths: number): string =>
 	fifths === 0 ? '0' : `${Math.min(7, Math.abs(fifths))}${fifths > 0 ? 's' : 'f'}`;
 
+/** MusicXML fifths for an MEI @keysig: '2s' → 2, '3f' → -3; 0 for anything else. */
+export function fifthsFor(keysig: string): number {
+	const m = /^([1-7])([sf])$/.exec(keysig);
+	return m ? Number(m[1]) * (m[2] === 's' ? 1 : -1) : 0;
+}
+
 /** A staff's clef as one token (`G2`, `F4`, `perc`), or null when unknown. */
 export function clefToken(musicxml: string | null): string | null {
 	const clef = musicxml ? readAttributes(musicxml).clef : null;
@@ -131,32 +138,135 @@ function moved(step: string, octave: string, delta: number): { step: string; oct
 	return { step: STEPS[((n % 7) + 7) % 7], octave: Math.floor(n / 7) };
 }
 
+/** Alter for a printed MusicXML accidental; undefined for one that gives none (quarter tones and the like). */
+const ACCIDENTAL_ALTER: Record<string, number> = {
+	sharp: 1,
+	flat: -1,
+	natural: 0,
+	'double-sharp': 2,
+	'sharp-sharp': 2,
+	'flat-flat': -2,
+	'natural-sharp': 1,
+	'natural-flat': -1
+};
+
+/** The diatonic number of a clef token's bottom line; null for a token without pitch. */
+function tokenBottomLine(token: string): number | null {
+	const m = /^([GFC])(\d)([+-]\d)?$/.exec(token);
+	return m ? bottomLine(m[1], Number(m[2]), Number(m[3] ?? 0)) : null;
+}
+
 /**
- * A staff transcription put into the clef `token` (`G2`, `F4`, `C3`): read
- * in another clef, its notes are moved so they keep their places on the staff
- * (a viola read as treble gets the pitches its alto clef gives), and its clef
- * becomes `token`. Left as it is when it is already in that clef, holds more
- * than one clef, or either clef has no pitch (percussion, tablature).
+ * A segment of a staff's MusicXML (between two clefs) with its notes moved by
+ * `delta` diatonic steps, so each keeps its line or space. A moved note's
+ * alter follows what is printed: a printed accidental gives it, and holds for
+ * the same step and octave to the end of the measure; a note tied from the
+ * one before keeps its alter; any other note without one loses its alter and
+ * follows the key. Rests' display positions move the same way.
  */
-export function toClef(musicxml: string, token: string): string {
-	const clefs = musicxml.match(/<clef\b[^>]*>[\s\S]*?<\/clef>/g) ?? [];
-	const target = /^([GFC])(\d)$/.exec(token);
-	if (clefs.length !== 1 || !target) return musicxml;
-	const read = readAttributes(musicxml).clef;
-	if (!read) return musicxml;
-	const from = bottomLine(read.sign, read.line, read.octaveChange);
-	const to = bottomLine(target[1], Number(target[2]));
-	if (from === null || to === null) return musicxml;
-	const clef = `<clef><sign>${target[1]}</sign><line>${target[2]}</line></clef>`;
-	const delta = to - from;
-	const shift = (xml: string, stepTag: string, octaveTag: string) =>
-		xml.replace(
-			new RegExp(`<${stepTag}>\\s*([A-G])\\s*</${stepTag}>(\\s*(?:<alter>[^<]*</alter>\\s*)?)<${octaveTag}>\\s*(-?\\d+)\\s*</${octaveTag}>`, 'g'),
+function shiftSegment(segment: string, delta: number, carried: Map<string, number>): string {
+	return segment.replace(/<\/measure>|<note\b[\s\S]*?<\/note>/g, (element) => {
+		if (element === '</measure>') {
+			carried.clear();
+			return element;
+		}
+		let note = element.replace(
+			/<display-step>\s*([A-G])\s*<\/display-step>(\s*)<display-octave>\s*(-?\d+)\s*<\/display-octave>/,
 			(whole, step: string, between: string, octave: string) => {
 				const m = moved(step, octave, delta);
-				return m ? `<${stepTag}>${m.step}</${stepTag}>${between}<${octaveTag}>${m.octave}</${octaveTag}>` : whole;
+				return m ? `<display-step>${m.step}</display-step>${between}<display-octave>${m.octave}</display-octave>` : whole;
 			}
 		);
-	const out = delta ? shift(shift(musicxml, 'step', 'octave'), 'display-step', 'display-octave') : musicxml;
-	return out.replace(clefs[0], clef);
+		const pitch = /<pitch>\s*<step>\s*([A-G])\s*<\/step>\s*(?:<alter>[^<]*<\/alter>\s*)?<octave>\s*(-?\d+)\s*<\/octave>\s*<\/pitch>/.exec(note);
+		if (!pitch) return note;
+		const m = moved(pitch[1], pitch[2], delta);
+		if (!m) return note;
+		const accidental = /<accidental\b[^>]*>\s*([a-z-]+)\s*<\/accidental>/.exec(note)?.[1];
+		const place = `${m.step}${m.octave}`;
+		const printed = accidental === undefined ? undefined : ACCIDENTAL_ALTER[accidental];
+		if (printed !== undefined) carried.set(place, printed);
+		const oldAlter = /<alter>\s*([^<]*?)\s*<\/alter>/.exec(pitch[0])?.[1];
+		const tiedOn = /<tie\b[^>]*\btype="stop"/.test(note);
+		const alter =
+			printed !== undefined
+				? printed
+				: accidental !== undefined || tiedOn
+					? Number(oldAlter ?? 0)
+					: (carried.get(place) ?? 0);
+		const alterXml = alter ? `<alter>${alter}</alter>` : '';
+		note = note.replace(pitch[0], `<pitch><step>${m.step}</step>${alterXml}<octave>${m.octave}</octave></pitch>`);
+		return note;
+	});
+}
+
+const CLEF = /<clef\b[^>]*>[\s\S]*?<\/clef>/g;
+
+/**
+ * Where a clef correction stands on a staff: `misread` while the model reads
+ * the staff in the misread clef, `read` while it reads the corrected clef
+ * itself, `ended` after it read any other clef, which is a real change.
+ */
+export type ClefCorrectionState = 'misread' | 'read' | 'ended';
+
+/**
+ * A staff transcription with a misread clef corrected, from `state` (where
+ * the staff stood at the end of its previous transcription; `misread` at the
+ * piece's start). Every clef the model read as `read` becomes `corrected`,
+ * and the notes it governs, and those before the first clef while the state
+ * is `misread`, are moved so they keep their places on the staff. A clef read
+ * as `corrected` is no change, and its notes stay. The first clef read as
+ * anything else ends the correction for good: a later `read` clef is kept as
+ * read. Returned unchanged when either clef has no pitch.
+ */
+export function correctClef(
+	musicxml: string,
+	read: string,
+	corrected: string,
+	state: ClefCorrectionState
+): { musicxml: string; state: ClefCorrectionState } {
+	const from = tokenBottomLine(read);
+	const to = tokenBottomLine(corrected);
+	if (state === 'ended' || from === null || to === null) return { musicxml, state };
+	const delta = to - from;
+	const carried = new Map<string, number>();
+	const clefs = [...musicxml.matchAll(CLEF)];
+	let out = '';
+	let at = 0;
+	for (const clef of clefs) {
+		const segment = musicxml.slice(at, clef.index);
+		out += state === 'misread' && delta ? shiftSegment(segment, delta, carried) : segment;
+		const token = clefTokenOf(clef[0]);
+		if (state !== 'ended' && token === read) {
+			state = 'misread';
+			out += clefXml(corrected);
+		} else {
+			if (state !== 'ended') state = token === corrected ? 'read' : 'ended';
+			out += clef[0];
+		}
+		at = clef.index! + clef[0].length;
+	}
+	const rest = musicxml.slice(at);
+	out += state === 'misread' && delta ? shiftSegment(rest, delta, carried) : rest;
+	return { musicxml: out, state };
+}
+
+/** The staff values of a clef token (see clefXml): shape, line and octave displacement. */
+export function clefStaff(token: string): Pick<StaffModel, 'clefShape' | 'clefLine' | 'clefDis' | 'clefDisPlace'> {
+	if (token === 'perc' || token === 'TAB') return { clefShape: token, clefLine: 3, clefDis: '', clefDisPlace: '' };
+	const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
+	if (!m) return { clefShape: 'G', clefLine: 2, clefDis: '', clefDisPlace: '' };
+	const octaves = Math.abs(Number(m[3] ?? 0));
+	return {
+		clefShape: m[1],
+		clefLine: Number(m[2]),
+		clefDis: octaves === 1 ? '8' : octaves === 2 ? '15' : octaves === 3 ? '22' : '',
+		clefDisPlace: octaves ? (Number(m[3]) < 0 ? 'below' : 'above') : ''
+	};
+}
+
+/** The clef token of a score staff, with its octave displacement (see clefXml). */
+export function staffClefToken(staff: Pick<StaffModel, 'clefShape' | 'clefLine' | 'clefDis' | 'clefDisPlace'>): string {
+	if (staff.clefShape === 'perc' || staff.clefShape === 'TAB') return staff.clefShape;
+	const octaves = staff.clefDis === '8' ? 1 : staff.clefDis === '15' ? 2 : staff.clefDis === '22' ? 3 : 0;
+	return `${staff.clefShape}${staff.clefLine}${octaves ? `${staff.clefDisPlace === 'below' ? '-' : '+'}${octaves}` : ''}`;
 }

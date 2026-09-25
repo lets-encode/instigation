@@ -7,10 +7,17 @@
 // tags (xml:id, @n, @facs), its page and system breaks and everything outside
 // the page stay as they are. Each system's staves are written as `printed`
 // gives them: a printed staff takes the converted staff of its number and
-// links its staff zone (@facs); a staff the system leaves out rests. Regex
-// over the document text, no DOM.
+// links its staff zone (@facs); a staff the system leaves out rests, keeping
+// any clef change verovio placed on it. Key and meter changes verovio writes
+// as a `<scoreDef>` before a measure go before the skeleton measure it fills.
+// What the page's first system changes against the page start (`opening`,
+// from the stitching) is written by the insertion itself: a clef as the first
+// element of the staff's layer in the page's first measure, a key or meter as
+// a `<scoreDef>` before that measure. Regex over the document text, no DOM.
 
 import { parseScoreDef } from './mei-facsimile.ts';
+import { keysigFor } from './omr-musicxml.ts';
+import type { PageOpening } from './omr-stitch.ts';
 
 export interface DraftInsertion {
 	mei: string;
@@ -20,15 +27,63 @@ export interface DraftInsertion {
 	warnings: string[];
 }
 
-const MEASURE = /<measure\b[^>]*>[\s\S]*?<\/measure>|<measure\b[^>]*\/>/g;
+const MEASURE_OR_SCOREDEF =
+	/<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>|<measure\b[^>]*>[\s\S]*?<\/measure>|<measure\b[^>]*\/>/g;
 
-/** The `<measure>` elements of a document in order, each with its inner content. */
-function measuresOf(mei: string): { text: string; inner: string }[] {
-	return (mei.match(MEASURE) ?? []).map((text) => ({
-		text,
-		inner: /\/>$/.test(text) ? '' : text.replace(/^<measure\b[^>]*>/, '').replace(/<\/measure>$/, '')
-	}));
+/**
+ * The `<measure>` elements of a converted document's sections in order, each
+ * with its inner content and the `<scoreDef>` elements since the measure
+ * before it.
+ */
+function measuresOf(mei: string): { text: string; inner: string; before: string }[] {
+	const sections = mei.slice(Math.max(0, mei.search(/<section\b/)));
+	const measures: { text: string; inner: string; before: string }[] = [];
+	let before = '';
+	for (const text of sections.match(MEASURE_OR_SCOREDEF) ?? []) {
+		if (text.startsWith('<scoreDef')) {
+			// Only a key or meter change, without verovio's ppq, which also makes up scoreDefs of its own.
+			if (/<(keySig|meterSig)\b|\s(keysig|meter\.(count|unit|sym))=/.test(text)) {
+				before += text.replace(/^(<scoreDef\b[^>]*?)\s+ppq="[^"]*"/, '$1');
+			}
+			continue;
+		}
+		measures.push({
+			text,
+			inner: /\/>$/.test(text) ? '' : text.replace(/^<measure\b[^>]*>/, '').replace(/<\/measure>$/, ''),
+			before
+		});
+		before = '';
+	}
+	return measures;
 }
+
+/** An MEI `<clef>` for a clef token (`G2`, `F4`, `G2-1`, `perc`, `TAB`; see `clefXml`). */
+export function meiClef(token: string): string {
+	const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
+	if (!m) return `<clef shape="${token === 'TAB' ? 'TAB' : 'perc'}"/>`;
+	const octaves = Math.abs(Number(m[3] ?? 0));
+	const dis = octaves
+		? ` dis="${octaves === 1 ? 8 : octaves === 2 ? 15 : 22}" dis.place="${Number(m[3]) < 0 ? 'below' : 'above'}"`
+		: '';
+	return `<clef shape="${m[1]}" line="${m[2]}"${dis}/>`;
+}
+
+/** A `<scoreDef>` for the key and meter the page's first system changes, or '' when it changes neither. */
+function openingScoreDef(opening: PageOpening): string {
+	const key = opening.fifths !== null ? `<keySig sig="${keysigFor(opening.fifths)}"/>` : '';
+	const time = opening.time
+		? opening.time.symbol
+			? `<meterSig sym="${opening.time.symbol}"/>`
+			: `<meterSig count="${opening.time.beats}" unit="${opening.time.beatType}"/>`
+		: '';
+	return key || time ? `<scoreDef>${key}${time}</scoreDef>` : '';
+}
+
+/** Staff content with `clef` as the first element of its first layer. */
+const withLeadingClef = (content: string, clef: string): string =>
+	/^\s*<layer\b[^>]*\/>/.test(content)
+		? content.replace(/^\s*<layer\b([^>]*?)\s*\/>/, `<layer$1>${clef}</layer>`)
+		: content.replace(/<layer\b[^>]*>/, (tag) => `${tag}${clef}`);
 
 // The self-closing form comes first, so it never runs on to the next </staff>.
 const STAFF = /<staff\b[^>]*\/>|<staff\b[^>]*>[\s\S]*?<\/staff>/g;
@@ -49,21 +104,32 @@ function clefsOutOfTremolos(content: string): string {
 /**
  * A measure's staves 1…staffCount from converted content: a staff in
  * `printed` (staff n → staff zone id) takes the converted staff's content and
- * links its zone, the others rest; the converted control events follow.
+ * links its zone, with `leadingClefs` (staff n → MEI clef) put first in its
+ * layer; the others rest, followed by the clefs their converted content
+ * holds. The converted control events follow.
  */
-function measureStaves(content: string, staffCount: number, printed: Map<number, string>): string {
+function measureStaves(
+	content: string,
+	staffCount: number,
+	printed: Map<number, string>,
+	leadingClefs: Map<number, string> = new Map()
+): string {
 	const convertedStaves = content.match(STAFF) ?? [];
 	const byN = new Map(convertedStaves.map((staff) => [Number(/\bn="(\d+)"/.exec(staff)?.[1]), staff]));
 	const staves = Array.from({ length: staffCount }, (_, i) => {
 		const n = i + 1;
 		const zone = printed.get(n);
-		if (!zone) return `<staff n="${n}"><layer n="1"><mRest/></layer></staff>`;
 		const converted = byN.get(n);
+		if (!zone) {
+			const clefs = converted?.match(/<clef\b[^>]*\/>/g)?.join('') ?? '';
+			return `<staff n="${n}"><layer n="1"><mRest/>${clefs}</layer></staff>`;
+		}
 		const inner =
 			!converted || /\/>$/.test(converted)
 				? '<layer n="1"/>'
 				: clefsOutOfTremolos(converted.replace(/^<staff\b[^>]*>/, '').replace(/<\/staff>$/, ''));
-		return `<staff n="${n}" facs="#${zone}">${inner}</staff>`;
+		const clef = leadingClefs.get(n);
+		return `<staff n="${n}" facs="#${zone}">${clef ? withLeadingClef(inner, clef) : inner}</staff>`;
 	});
 	const controlEvents = convertedStaves.reduce((rest, staff) => rest.replace(staff, ''), content).trim();
 	return staves.join('\n') + (controlEvents ? `\n${controlEvents}` : '');
@@ -81,7 +147,8 @@ function withContent(measure: string, content: string): string {
  * opened by a `<pb>` or `<sb>`; the converted document's systems are given by
  * `measuresPerSystem` (what the stitching produced), one entry per skeleton
  * system, and a different system count is refused. `printed` gives, per
- * system, the staves it prints (staff n → staff zone id). Converted staves
+ * system, the staves it prints (staff n → staff zone id). `opening` is what
+ * the page's first system changes against the page start. Converted staves
  * beyond the score definition's staff count are dropped with a warning,
  * since a staff without a staffDef is invalid.
  */
@@ -90,7 +157,8 @@ export function insertPageDraft(
 	locator: string,
 	converted: string,
 	measuresPerSystem: number[],
-	printed: Map<number, string>[]
+	printed: Map<number, string>[],
+	opening: PageOpening = { clefs: [], fifths: null, time: null }
 ): DraftInsertion {
 	const warnings: string[] = [];
 	const page = Number(/^surface-(\d+)$/.exec(locator)?.[1]);
@@ -126,6 +194,12 @@ export function insertPageDraft(
 		);
 	}
 
+	const leadingClefs = new Map<number, string>();
+	opening.clefs.forEach((token, k) => {
+		if (token) leadingClefs.set(k + 1, meiClef(token));
+	});
+	const startScoreDef = openingScoreDef(opening);
+
 	let filled = 0;
 	let dropped = false;
 	let cursor = 0;
@@ -151,8 +225,10 @@ export function insertPageDraft(
 					dropped = true;
 				}
 			}
-			const staves = measureStaves(content, staffCount, printed[s] ?? new Map());
-			result = result.replace(system[i].text, () => withContent(system[i].text, staves));
+			const first = s === 0 && i === 0;
+			const staves = measureStaves(content, staffCount, printed[s] ?? new Map(), first ? leadingClefs : undefined);
+			const before = (first ? startScoreDef : '') + measure.before;
+			result = result.replace(system[i].text, () => before + withContent(system[i].text, staves));
 			filled++;
 		}
 		cursor += available;

@@ -13,13 +13,15 @@
   import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
   import type { MeasureBox, ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
-  import { pageSystems, staffCountOf, staffCrops } from "$lib/omr-layout.ts";
-  import { clefToken, proposeScoreDef } from "$lib/omr-musicxml.ts";
+  import { pageSystems, staffCountOf } from "$lib/omr-layout.ts";
+  import { clefStaff, clefToken, proposeScoreDef, staffClefToken } from "$lib/omr-musicxml.ts";
+  import { openingClefs, pieceStaves } from "$lib/omr-timeline.ts";
   import { suggestStaffAssignment } from "$lib/omr-staff-assign.ts";
-  import { readStaffLabels } from "$lib/ocr.ts";
-  import { cropStaves, transcribeStaves } from "$lib/omr-transcribe.ts";
+  import { omrRecordPath, parseOmrRecord, serializeOmrRecord } from "$lib/omr-record.ts";
+  import type { OmrRecord } from "$lib/omr-record.ts";
+  import { recognisePiece } from "$lib/omr-piece-recognition.ts";
+  import type { PieceRecognition } from "$lib/omr-piece-recognition.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
-  import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
   import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
@@ -186,7 +188,7 @@
       meterCount = d.model.scoreDef.meterCount;
       meterUnit = d.model.scoreDef.meterUnit;
       // An OMR-prepared piece still at the default definition opens with the
-      // staff count its layout has; the clefs, key and meter follow from
+      // staff count its layout has; the clefs, key and meter follow from the
       // recognition once the task is held.
       unset = JSON.stringify(d.model.scoreDef) === JSON.stringify(DEFAULT_SCORE_DEF);
       if (d.preparation === "omr" && unset) {
@@ -272,9 +274,8 @@
     );
   }
 
-  // A claim of an OMR piece's setup task whose definition is still the
-  // default continues into the recognition pre-fill in the same overlay: one
-  // step list, one Continue.
+  // A claim of an OMR piece's setup task continues into the piece's
+  // recognition in the same overlay: one step list, one Continue.
   async function claim() {
     const f = forge();
     if (!f) return;
@@ -283,9 +284,9 @@
       if (result.error) return result;
       runner.log.step("Reloading…");
       await load();
-      if (!data || !(omr && canEdit && unset)) return result;
-      prefilledFor = taskId;
-      return prefillSteps(f, data);
+      if (!data || !(omr && canEdit)) return result;
+      recognisedFor = taskId;
+      return recognitionSteps(f, data);
     });
   }
 
@@ -524,32 +525,79 @@
 
   const submit = () =>
     run(
-      (c) => invoke(commands.submitScoreSetup, { task_id: taskId, scoreDef }, c),
+      (c) =>
+        invoke(
+          commands.submitScoreSetup,
+          {
+            task_id: taskId,
+            scoreDef,
+            ...(omr && recognition ? { omr: serializeOmrRecord(withClefCorrections(recognition.record)) } : {}),
+          },
+          c,
+        ),
       { overviewOnSuccess: true },
     );
 
   // ------------------------------------------------------------------------
-  // Pre-fill from recognition (OMR-prepared pieces)
+  // Recognition (OMR-prepared pieces)
   //
-  // The staff count starts from the layout correction: the staves per system
-  // most systems have. Clefs come from transcribing the system with the most
-  // staves (a first system may leave a staff out, a resting voice above a
-  // piano introduction), key and meter from the piece's first system, where
-  // signatures are printed — once when the claim holder opens a task whose
-  // definition is still the default. The instrument labels are read (OCR)
-  // in front of the first system, where they are usually written out, and in
-  // front of the fullest system for a staff the first leaves out; a staff
-  // that already has a label keeps it. Groups are not recognised. The count stays editable until the
-  // piece holds notation, since the setup submission rebuilds empty measures
-  // for it until then.
+  // When the claim holder opens the task, every staff box of the piece is
+  // transcribed and its instrument label read; the record goes into the
+  // submission as `omr.xml`, which the page drafts are made from. Staves the
+  // head's record or this browser already holds are not transcribed again.
+  //
+  // A definition still at the default is filled in from the record. The
+  // staff count starts from the layout correction. Each staff's clef is the
+  // one it opens with where it first appears (a first system may leave a
+  // staff out, a resting voice above a piano introduction), placed by the
+  // system with the most staves; key and meter come from the piece's first
+  // system, where signatures are printed. A clef submitted other than the
+  // one read is recorded as a correction: the page drafts then read that
+  // staff in the submitted clef until the model reads a real change. The instrument
+  // labels are those read in front of the first system, where they are
+  // usually written out, and in front of the fullest system for a staff the
+  // first leaves out; a staff that already has a label keeps it. Groups are
+  // not recognised. The count stays editable until the piece holds notation,
+  // since the setup submission rebuilds empty measures for it until then.
   const omr = $derived(data?.preparation === "omr");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
-  let prefilledFor = $state<string | null>(null);
+  let recognition = $state<PieceRecognition | null>(null);
+  let recognisedFor = $state<string | null>(null);
   $effect(() => {
-    if (omr && canEdit && data && unset && !runner.busy && prefilledFor !== taskId) {
-      prefilledFor = taskId;
-      fillFromRecognition();
+    void taskId;
+    recognition = null;
+  });
+
+  /** Clef tokens of the form's staves for placing the boxes. */
+  const formParts = () =>
+    staves.map((s) => ({
+      clef: s.clefShape === "perc" || s.clefShape === "TAB" ? s.clefShape : `${s.clefShape}${s.clefLine}`,
+      label: s.label.trim(),
+    }));
+  const pitched = (token: string) => /^[GFC]\d/.test(token);
+  /**
+   * The record with a clef correction for each staff submitted in another
+   * clef than it opens with in the recognition, the boxes placed on the
+   * form's staves as the page drafts will place them.
+   */
+  function withClefCorrections(record: OmrRecord): OmrRecord {
+    const readClefs = data
+      ? openingClefs(pieceStaves(data.model, { ...record, clefs: [] }, formParts()), staves.length)
+      : [];
+    const clefs = staves.flatMap((staff, i) => {
+      const read = readClefs[i];
+      const corrected = staffClefToken(staff);
+      return read && read !== corrected && pitched(read) && pitched(corrected)
+        ? [{ staff: i + 1, read, corrected }]
+        : [];
+    });
+    return { ...record, clefs };
+  }
+  $effect(() => {
+    if (omr && canEdit && data && !runner.busy && recognisedFor !== taskId) {
+      recognisedFor = taskId;
+      recognise();
     }
   });
 
@@ -565,104 +613,122 @@
     meterUnit = proposal.meterUnit;
   }
 
-  async function fillFromRecognition() {
+  async function recognise() {
     const f = forge();
     if (!f || !data) return;
     const d = data;
-    await runner.run(() => prefillSteps(f, d));
+    await runner.run(() => recognitionSteps(f, d));
+  }
+
+  /** The definition proposed from a record, and the labels it reads; a note says what was used. */
+  function proposalFrom(d: FacsimileTaskData, record: OmrRecord): { note: string } {
+    type System = { p: number; index: number; staves: MeasureBox[] };
+    let first: System | null = null;
+    let fullest: System | null = null;
+    for (const [p, pg] of d.model.pages.entries()) {
+      for (const [index, system] of pageSystems(pg).systems.entries()) {
+        if (!system.length) continue;
+        first ??= { p, index, staves: system };
+        if (!fullest || system.length > fullest.staves.length) fullest = { p, index, staves: system };
+      }
+    }
+    if (!first || !fullest) throw new Error("the layout has no system with staves.");
+    const same = first.p === fullest.p && first.index === fullest.index;
+    const entriesOf = (system: System) =>
+      system.staves.map((box) => {
+        const zone = `staff-zone-${system.p + 1}-${d.model.pages[system.p].staves!.indexOf(box) + 1}`;
+        return record.pages.find((pg) => pg.n === system.p + 1)?.staves.find((e) => e.zone === zone) ?? null;
+      });
+    const fullestEntries = entriesOf(fullest);
+    const firstEntries = same ? fullestEntries : entriesOf(first);
+    const fullestXmls = fullestEntries.map((e) => e?.musicxml ?? null);
+    const firstXmls = firstEntries.map((e) => e?.musicxml ?? null);
+    const proposal = proposeScoreDef(fullestXmls, same ? [] : firstXmls);
+    // Each staff opens in the clef of its first appearance, placed by the fullest system's clefs.
+    const placedBy = proposal.staves.map((staff) => ({
+      clef: staff.clefShape === "perc" || staff.clefShape === "TAB" ? staff.clefShape : `${staff.clefShape}${staff.clefLine}`,
+      label: "",
+    }));
+    openingClefs(pieceStaves(d.model, { ...record, clefs: [] }, placedBy), proposal.staves.length).forEach(
+      (token, i) => {
+        if (token) proposal.staves[i] = { ...proposal.staves[i], ...clefStaff(token) };
+      },
+    );
+    applyProposal(proposal);
+
+    // The fullest system shows every staff of the definition, in order.
+    const read = fullestEntries.map((e) => e?.label ?? "");
+    if (!same) {
+      const token = (staff: StaffModel) =>
+        staff.clefShape === "perc" || staff.clefShape === "TAB"
+          ? staff.clefShape
+          : `${staff.clefShape}${staff.clefLine}`;
+      const onFirst = suggestStaffAssignment(
+        first.staves.map((box, i) => ({ box, clef: clefToken(firstXmls[i]), label: "" })),
+        proposal.staves.map((staff) => ({ clef: token(staff), label: "" })),
+        fullest.staves,
+      );
+      onFirst.forEach((n, i) => {
+        const label = firstEntries[i]?.label;
+        if (n > 0 && label) read[n - 1] = label;
+      });
+    }
+    let filled = 0;
+    staves = staves.map((staff, i) => {
+      if (staff.label.trim() || !read[i]) return staff;
+      filled++;
+      return { ...staff, label: read[i] };
+    });
+    const clefs = proposal.staves
+      .map((s) => `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`)
+      .join(", ");
+    const meter = proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
+    return {
+      note:
+        ` Filled in: clefs ${clefs}, each where its staff first appears; key signature ${proposal.keysig} and meter ${meter} from the first system; instrument labels for ${filled} of ${staves.length} staves.` +
+        " Check the values, then submit.",
+    };
   }
 
   // The recognition steps, logged to the running command's overlay.
-  async function prefillSteps(f: ForgeClient, d: FacsimileTaskData): Promise<Result> {
+  async function recognitionSteps(f: ForgeClient, d: FacsimileTaskData): Promise<Result> {
     const client = createOmrClient(provider.brokerUrl);
+    // A run finishing after the page moved to another task is dropped.
+    const task = taskId;
     try {
-      runner.log.step("Checking the recognition service");
-      await client.requirePipelines([omrModels.staffPipeline]);
-      // The first system that holds staves, and the one with the most.
-      type System = { p: number; index: number; staves: MeasureBox[] };
-      let first: System | null = null;
-      let fullest: System | null = null;
-      for (const [p, pg] of d.model.pages.entries()) {
-        for (const [index, system] of pageSystems(pg).systems.entries()) {
-          if (!system.length) continue;
-          first ??= { p, index, staves: system };
-          if (!fullest || system.length > fullest.staves.length) fullest = { p, index, staves: system };
-        }
-      }
-      if (!first || !fullest) throw new Error("the layout has no system with staves.");
-      const same = first.p === fullest.p && first.index === fullest.index;
-      const images = new Map<number, Blob>();
-      const cropsOf = async (system: System) => {
-        const pg = d.model.pages[system.p];
-        if (!images.has(system.p)) {
-          const path = resolveRepoRelativeTarget(d.fragment, pg.image);
-          const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
-          if (!image) throw new Error(`the image of page ${system.p + 1} could not be read.`);
-          images.set(system.p, image);
-        }
-        return cropStaves(images.get(system.p)!, staffCrops(system.staves, pg));
-      };
-      runner.log.step(
-        same
-          ? `Cropping ${first.staves.length} staves of page ${first.p + 1}`
-          : `Cropping ${fullest.staves.length + first.staves.length} staves of pages ${fullest.p + 1} and ${first.p + 1}`,
-      );
-      const fullestCrops = await cropsOf(fullest);
-      const firstCrops = same ? [] : await cropsOf(first);
-      runner.log.step(same ? "Transcribing the first system" : "Transcribing the fullest and the first system");
-      const xmls = await transcribeStaves(client, omrModels.staffPipeline, [...fullestCrops, ...firstCrops]);
-      const fullestXmls = xmls.slice(0, fullestCrops.length);
-      const firstXmls = xmls.slice(fullestCrops.length);
-      const proposal = proposeScoreDef(fullestXmls, firstXmls);
-      applyProposal(proposal);
-      const failed = xmls.filter((x) => x === null).length;
-
-      runner.log.step("Reading the instrument labels");
-      let labelNote = "";
-      let labelFailed = false;
-      try {
-        const [firstLabels] = await readStaffLabels(images.get(first.p)!, [first.staves]);
-        // The fullest system shows every staff of the definition, in order.
-        const read = same
-          ? firstLabels
-          : (await readStaffLabels(images.get(fullest.p)!, [fullest.staves]))[0];
-        if (!same) {
-          const token = (staff: StaffModel) =>
-            staff.clefShape === "perc" || staff.clefShape === "TAB"
-              ? staff.clefShape
-              : `${staff.clefShape}${staff.clefLine}`;
-          const onFirst = suggestStaffAssignment(
-            first.staves.map((box, i) => ({ box, clef: clefToken(firstXmls[i] ?? null), label: "" })),
-            proposal.staves.map((staff) => ({ clef: token(staff), label: "" })),
-            fullest.staves,
-          );
-          onFirst.forEach((n, i) => {
-            if (n > 0 && firstLabels[i]) read[n - 1] = firstLabels[i];
-          });
-        }
-        let filled = 0;
-        staves = staves.map((staff, i) => {
-          if (staff.label.trim() || !read[i]) return staff;
-          filled++;
-          return { ...staff, label: read[i] };
-        });
-        labelNote = ` Instrument labels read for ${filled} of ${staves.length} staves.`;
-      } catch (e) {
-        labelFailed = true;
-        labelNote = ` The instrument labels could not be read (${(e as Error).message}).`;
-      }
-      const clefs = proposal.staves
-        .map((s) => `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`)
-        .join(", ");
-      const meter = proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
+      runner.log.step("Reading the recognition record");
+      const existing =
+        recognition?.record ??
+        parseOmrRecord(await f.getRepoFile(owner, repo, omrRecordPath(d.fragment)));
+      const result = await recognisePiece({
+        forge: f,
+        client,
+        owner,
+        repo,
+        repoId,
+        fragment: d.fragment,
+        pages: d.model.pages,
+        existing,
+        pipeline: omrModels.staffPipeline,
+        progress: (step) => runner.log.step(step),
+      });
+      if (task !== taskId) return { error: "The recognition finished after another task was opened." };
+      recognition = result;
+      const total = result.record.pages.reduce((n, pg) => n + pg.staves.length, 0);
+      const failed = result.failed.length
+        ? ` ${result.failed.length} of ${total} staves could not be transcribed (${result.failed
+            .map((s) => `page ${s.page}, staff ${s.staff}`)
+            .join("; ")}); use “Transcribe failed staves again”.`
+        : "";
+      const labels = result.labelErrors.length
+        ? ` The instrument labels could not be read on page${result.labelErrors.length === 1 ? "" : "s"} ${result.labelErrors.map((e) => e.page).join(", ")} (${result.labelErrors[0].error}).`
+        : "";
+      const filled = unset ? proposalFrom(d, result.record).note : "";
+      unset = false;
       return {
         ok: true,
-        warn: failed > 0 || labelFailed,
-        message:
-          `Recognised ${same ? "the first system" : `system ${fullest.index + 1} of page ${fullest.p + 1} (clefs) and the first system (signatures)`}: clefs ${clefs}; key signature ${proposal.keysig}; meter ${meter}.` +
-          (failed ? ` ${failed} of ${xmls.length} staves could not be transcribed and keep the treble clef.` : "") +
-          labelNote +
-          " Check the values, then submit.",
+        warn: result.failed.length > 0 || result.labelErrors.length > 0,
+        message: `${total - result.failed.length} of ${total} staves are transcribed.${failed}${labels}${filled}`,
       };
     } catch (e) {
       return { error: `Recognition failed: ${(e as Error).message}` };
@@ -1149,12 +1215,35 @@
           <span class="lockpill amber">unclaimed — read-only</span>
           <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={busy}>Claim task</button>
         {/if}
+        {#if omr && canEdit && recognition && recognition.failed.length > 0}
+          <button
+            type="button"
+            class="btn"
+            onclick={() => recognise()}
+            disabled={busy}
+            title="Run the staff model again on the {recognition.failed.length} staves it could not transcribe"
+          >
+            Transcribe failed staves again
+          </button>
+        {:else if omr && canEdit && !recognition && recognisedFor === taskId}
+          <button
+            type="button"
+            class="btn"
+            onclick={() => recognise()}
+            disabled={busy}
+            title="Transcribe the staves again; staves already transcribed in this browser are kept"
+          >
+            Transcribe the staves again
+          </button>
+        {/if}
         <button
           type="button"
           class="btn btn-primary submitbtn"
           onclick={() => submit()}
-          disabled={busy || !canEdit || !meterValid || !groupsValid}
-          title="Submit the staves, clefs, key signature and meter for review"
+          disabled={busy || !canEdit || !meterValid || !groupsValid || (omr && !recognition)}
+          title={omr && canEdit && !recognition
+            ? "The staves have to be transcribed before the setup can be submitted"
+            : "Submit the staves, clefs, key signature and meter for review"}
         >
           Submit setup
         </button>

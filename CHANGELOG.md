@@ -5,6 +5,11 @@ parentheses.
 
 ## Unreleased
 
+- OMR staff assignment runs through the whole piece, following the staves the previous system showed, with the clef only breaking ties.
+- OMR page drafts start in the clefs, key and meter the earlier pages leave in force and apply the clef corrections made in the score setup.
+- Score setup of an OMR piece transcribes every staff into `omr.xml`, and page drafts are made from it.
+- The coordinator commits the `layout.json` and `omr.xml` a pre-task submits beside its score.
+- OMR page drafts keep the recognised clefs and change key or meter only where most staves of a system read the change.
 - OMR page drafts no longer fail the MEI schema check when a clef change follows a tremolo.
 - OMR page drafts keep every staff of the score, so a system that leaves out staves no longer shifts the staves below.
 - OMR page drafts place the staves of a shorter system on their score staves by clef, printed instrument label and staff spacing.
