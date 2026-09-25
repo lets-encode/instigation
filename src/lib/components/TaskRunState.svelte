@@ -12,18 +12,21 @@
   let {
     task,
     bar = false,
+    large = false,
   }: {
     /** The task id whose run state renders, e.g. "T0002". */
     task: string;
     /** Render as a full-width strip (task panel) instead of a card badge. */
     bar?: boolean;
+    /** Render at the next-task card's text size. */
+    large?: boolean;
   } = $props();
 
   const entry = $derived(pendingVerdicts.forTask(task));
 </script>
 
 {#if entry}
-  <div class="runstate {entry.state}" class:bar aria-live="polite">
+  <div class="runstate {entry.state}" class:bar class:large aria-live="polite">
     {#if entry.state === "opening"}
       <span class="spinner" aria-hidden="true"></span>
       <span>opening the submission…</span>
@@ -39,7 +42,9 @@
         >…</span
       >
     {:else if entry.state === "accepted"}
-      <span class="mark" aria-hidden="true"><Icon name="check" size={12} /></span>
+      <span class="mark" aria-hidden="true"
+        ><Icon name="check" size={12} /></span
+      >
       <span>submission #{entry.prNumber} accepted</span>
     {:else if entry.state === "timeout"}
       <span class="mark" aria-hidden="true">…</span>
@@ -52,8 +57,16 @@
         > is still being processed</span
       >
     {:else}
-      <span class="mark" aria-hidden="true"><Icon name="close" size={12} /></span>
-      <span>{entry.prNumber ? `submission #${entry.prNumber} rejected` : "submission failed"}</span>
+      <span class="mark" aria-hidden="true"
+        ><Icon name="close" size={12} /></span
+      >
+      <span
+        >{entry.runFailed
+          ? `run for submission #${entry.prNumber} failed`
+          : entry.prNumber
+            ? `submission #${entry.prNumber} rejected`
+            : "submission failed"}</span
+      >
     {/if}
   </div>
 {/if}
@@ -75,6 +88,14 @@
     font-size: 12px;
     border-bottom: 1px solid var(--line);
     background: var(--card);
+  }
+  .runstate.large {
+    margin-top: 0;
+    font-size: 13px;
+  }
+  .runstate.large .spinner {
+    width: 16px;
+    height: 16px;
   }
   .runstate a {
     color: var(--link);

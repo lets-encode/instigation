@@ -121,13 +121,11 @@
     <span class="sname">{piece.title || piece.id}</span>
     <span class="scamp">{campaignTitle}</span>
     <span class="sspacer"></span>
-        <button
+    <button
       type="button"
       aria-pressed={panel.open}
       class="btn"
-      title={panel.open
-        ? "Hide the comments panel"
-        : "Show the comments panel"}
+      title={panel.open ? "Hide the comments panel" : "Show the comments panel"}
       onclick={() => {
         panel.open = !panel.open;
         writeSidePanel("comments", { ...panel });
@@ -213,7 +211,8 @@
     background: var(--info-bg);
     border: 1px solid var(--info-line);
     border-radius: 999px;
-    padding: 0 7px;
+    line-height: 1;
+    padding: 2px 7px;
   }
   .srow {
     flex: 1;

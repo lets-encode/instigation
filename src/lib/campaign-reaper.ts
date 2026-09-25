@@ -5,32 +5,38 @@
 // it does not depend on how frequently or punctually the reaper runs. See
 // DESIGN.md §5.
 
-import type { LockRow } from './campaign-tables.ts';
+import type { LockRow } from "./campaign-tables.ts";
 
 export interface ReapLocksArgs {
-	locks: LockRow[];
-	staleAfterMinutes: number;
-	now: string;
+  locks: LockRow[];
+  staleAfterMinutes: number;
+  now: string;
 }
 
 export interface ReapLocksResult {
-	kept: LockRow[];
-	removed: LockRow[];
+  kept: LockRow[];
+  removed: LockRow[];
 }
 
-export function reapLocks({ locks, staleAfterMinutes, now }: ReapLocksArgs): ReapLocksResult {
-	const cutoffMs = staleAfterMinutes * 60_000;
-	const nowMs = Date.parse(now);
-	const kept: LockRow[] = [];
-	const removed: LockRow[] = [];
-	for (const lock of locks) {
-		const lockedMs = Date.parse(lock.timestamp);
-		// A lock is stale only if we can read both times and it's past the cutoff;
-		// anything with an unparseable timestamp is kept (don't free what we can't
-		// reason about).
-		const stale =
-			Number.isFinite(lockedMs) && Number.isFinite(nowMs) && nowMs - lockedMs > cutoffMs;
-		(stale ? removed : kept).push(lock);
-	}
-	return { kept, removed };
+export function reapLocks({
+  locks,
+  staleAfterMinutes,
+  now,
+}: ReapLocksArgs): ReapLocksResult {
+  const cutoffMs = staleAfterMinutes * 60_000;
+  const nowMs = Date.parse(now);
+  const kept: LockRow[] = [];
+  const removed: LockRow[] = [];
+  for (const lock of locks) {
+    const lockedMs = Date.parse(lock.timestamp);
+    // A lock is stale only if we can read both times and it's past the cutoff;
+    // anything with an unparseable timestamp is kept (don't free what we can't
+    // reason about).
+    const stale =
+      Number.isFinite(lockedMs) &&
+      Number.isFinite(nowMs) &&
+      nowMs - lockedMs > cutoffMs;
+    (stale ? removed : kept).push(lock);
+  }
+  return { kept, removed };
 }

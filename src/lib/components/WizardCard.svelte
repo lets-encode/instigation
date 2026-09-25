@@ -4,12 +4,12 @@
   XML) gets the three-zone workbench: material pane in the centre, work card
   fixed on the right, so the primary action always sits bottom-right. A step
   without material gets its card centered in the freed area instead, with a
-  "Step N of 6" kicker — the upload step widens that to a bare hero column for
+  "Step N of M" kicker — the upload step widens that to a bare hero column for
   its dropzone.
 
   The rail is derived from the wizard store: completed steps show a one-line
   summary of what they collected and navigate back on click; upcoming steps are
-  disabled.
+  disabled; steps with nothing to do for this campaign are left out.
 
   The footer is built here from the handlers a step passes, so the buttons are
   written once. A step whose controls do not fit that shape — the name step,
@@ -27,14 +27,18 @@
   import Icon from "$lib/components/Icon.svelte";
   import type { Snippet } from "svelte";
   import { goto } from "$app/navigation";
-  import { auth } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
   import { releaseClaim } from "$lib/campaign-resolve.ts";
-  import { discardDraft } from "$lib/wizard-draft.ts";
+  import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
   import {
     WIZARD_STEPS,
+    draftSnapshot,
     draftStatus,
+    isSkipped,
     resetWizard,
+    resumeDraft,
+    saveDraft,
     stepIndex,
     wizard,
     type WizardStepId,
@@ -79,7 +83,14 @@
     footer?: Snippet;
   } = $props();
 
-  const current = $derived(stepIndex(step));
+  // Whether a step is skipped follows from the upload, so steps are left out
+  // only once the upload step is done; before that the whole flow is listed.
+  const steps = $derived(
+    WIZARD_STEPS.filter(
+      (s) => !(isSkipped(s.id) && stepIndex(step) > stepIndex("upload")),
+    ),
+  );
+  const current = $derived(steps.findIndex((s) => s.id === step));
 
   // One-line summaries for the rail's completed steps, read from the store.
   const uploadSummary = $derived.by(() => {
@@ -89,14 +100,19 @@
     if (pdfs) parts.push(`${pdfs} PDF${pdfs === 1 ? "" : "s"}`);
     if (others) parts.push(`${others} file${others === 1 ? "" : "s"}`);
     if (wizard.iiifManifestUrl.trim()) parts.push("IIIF manifest");
-    if (wizard.candidates.length) parts.push(`${wizard.candidates.length} pages`);
+    if (wizard.candidates.length)
+      parts.push(`${wizard.candidates.length} pages`);
     else if (!parts.length && wizard.encodings.length)
-      parts.push(`${wizard.encodings.length} encoding${wizard.encodings.length === 1 ? "" : "s"}`);
+      parts.push(
+        `${wizard.encodings.length} encoding${wizard.encodings.length === 1 ? "" : "s"}`,
+      );
     return parts.join(" · ") || "no material";
   });
 
   const sourceSummary = $derived.by(() => {
-    const imprint = [wizard.source.publisher, wizard.source.date].filter(Boolean).join(", ");
+    const imprint = [wizard.source.publisher, wizard.source.date]
+      .filter(Boolean)
+      .join(", ");
     return [wizard.source.title, imprint].filter(Boolean).join(" · ");
   });
 
@@ -111,6 +127,7 @@
         : "",
     source: sourceSummary,
     pieces: "",
+    preparation: "",
   });
 
   // "Draft saved · just now": a clock that only needs to be roughly right, so
@@ -128,6 +145,35 @@
     if (minutes < 60) return `${minutes} min ago`;
     return `${Math.floor(minutes / 60)} h ago`;
   });
+
+  // Other setups of this account stored in the browser, listed so one of them
+  // can be picked up from here. Read again after each save of this one, since a
+  // save is when the stored set changes.
+  const otherDrafts = $derived.by(() => {
+    draftStatus.savedAt;
+    const owner = auth.user?.login;
+    if (!owner) return [];
+    const handle = wizard.handle.trim();
+    return resumableDrafts(owner).filter((d) => d.handle !== handle);
+  });
+  let resuming = $state<string | null>(null);
+  let resumeError = $state<string | null>(null);
+
+  async function resumeOther(handle: string) {
+    if (resuming) return;
+    resumeError = null;
+    resuming = handle;
+    // The setup being left is saved on a debounce; write it now so its last
+    // edits are kept.
+    const owner = auth.user?.login;
+    if (owner) saveDraft(owner, draftSnapshot());
+    try {
+      await resumeDraft(forge(), handle, () => {});
+    } catch (err) {
+      resumeError = `Could not resume “${handle}”: ${(err as Error).message}`;
+    }
+    resuming = null;
+  }
 
   // Dragging the divider left of the work card resizes it; the material pane
   // takes whatever is left. Sized in pixels so the choice survives a window
@@ -180,7 +226,7 @@
     </div>
 
     <ol class="steps">
-      {#each WIZARD_STEPS as s, i (s.id)}
+      {#each steps as s, i (s.id)}
         {@const done = i < current}
         {@const active = i === current}
         <li>
@@ -195,7 +241,7 @@
               <span class="bubble" class:done class:active>
                 {#if done}<Icon name="check" size={12} />{:else}{i + 1}{/if}
               </span>
-              {#if i < WIZARD_STEPS.length - 1}
+              {#if i < steps.length - 1}
                 <span
                   class="connector"
                   class:done
@@ -204,7 +250,11 @@
               {/if}
             </span>
             <span class="step-text">
-              <span class="step-label" class:active class:upcoming={!done && !active}>
+              <span
+                class="step-label"
+                class:active
+                class:upcoming={!done && !active}
+              >
                 {s.label}
               </span>
               {#if active && status}
@@ -220,7 +270,9 @@
 
     <div class="rail-foot">
       {#if savedAgo}
-        <div class="saved"><span class="saved-dot"></span>Draft saved · {savedAgo}</div>
+        <div class="saved">
+          <span class="saved-dot"></span>Draft saved · {savedAgo}
+        </div>
       {/if}
       {#if confirmingDiscard}
         <div class="discard-confirm">
@@ -229,15 +281,38 @@
             <button type="button" class="discard danger" onclick={discardSetup}>
               Discard for good
             </button>
-            <button type="button" class="discard" onclick={() => (confirmingDiscard = false)}>
+            <button
+              type="button"
+              class="discard"
+              onclick={() => (confirmingDiscard = false)}
+            >
               Keep it
             </button>
           </span>
         </div>
       {:else}
-        <button type="button" class="discard" onclick={() => (confirmingDiscard = true)}>
+        <button
+          type="button"
+          class="discard"
+          onclick={() => (confirmingDiscard = true)}
+        >
           Discard this setup
         </button>
+      {/if}
+      {#each otherDrafts as draft (draft.handle)}
+        <button
+          type="button"
+          class="discard other-draft"
+          onclick={() => resumeOther(draft.handle)}
+          disabled={resuming !== null}
+        >
+          {resuming === draft.handle
+            ? "Working…"
+            : `Resume setup of “${draft.entries?.title?.trim() || draft.handle}”`}
+        </button>
+      {/each}
+      {#if resumeError}
+        <p class="msg-error" role="alert">{resumeError}</p>
       {/if}
     </div>
   </nav>
@@ -274,9 +349,14 @@
 </div>
 
 {#snippet workCard(solo: boolean)}
-  <section class="card" class:solo class:wide={solo && step === "upload"} aria-label={heading}>
+  <section
+    class="card"
+    class:solo
+    class:wide={solo && step === "upload"}
+    aria-label={heading}
+  >
     {#if solo}
-      <div class="kicker">Step {current + 1} of {WIZARD_STEPS.length}</div>
+      <div class="kicker">Step {current + 1} of {steps.length}</div>
     {/if}
     <h1>{heading}</h1>
     {#if intro}<p class="intro">{intro}</p>{/if}
@@ -365,7 +445,10 @@
     overflow-wrap: anywhere;
   }
   .rail-slug {
-    font: 400 12px ui-monospace, Menlo, monospace;
+    font:
+      400 12px ui-monospace,
+      Menlo,
+      monospace;
     color: var(--ink-faint);
   }
   .rail-unnamed {
@@ -505,6 +588,14 @@
   }
   .discard:hover {
     color: var(--danger);
+  }
+  .other-draft {
+    display: flex;
+    margin-top: 6px;
+    text-align: left;
+  }
+  .other-draft:hover {
+    color: var(--accent);
   }
   .discard.danger {
     color: var(--danger);

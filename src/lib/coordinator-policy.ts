@@ -1,54 +1,94 @@
-import { COMMENT_COLUMNS, parseCsv } from './campaign-tables.ts';
-import type { CommentRow, LockRow, StateRow, TaskRow } from './campaign-tables.ts';
-import { resetTaskRows } from './campaign-submit.ts';
-import type { CommandEnvelope } from './command-envelope.ts';
+import {
+  COMMENT_COLUMNS,
+  parseCsv,
+  COMMENT_PATH,
+  LOCK_PATH,
+  STATE_PATH,
+} from "./campaign-tables.ts";
+import type {
+  CommentRow,
+  HistoryRow,
+  LockRow,
+  StateRow,
+  TaskRow,
+} from "./campaign-tables.ts";
+import { resetTaskRows, sideFilesOf } from "./campaign-submit.ts";
+import type { CommandEnvelope } from "./command-envelope.ts";
 
-export type PullRequestKind = 'claim' | 'validation' | 'comment' | 'encoding';
+export type PullRequestKind = "claim" | "validation" | "comment" | "encoding";
 
 /**
- * The kind of the config.yaml piece whose path is `path`, or null when no
- * piece carries it. Reads the canonical shape configToYaml emits — each piece
- * entry opens with `- id:` and lists `kind:` and `path:` as quoted scalars —
- * so the coordinator can tell a physical piece (page spans joined wholesale)
- * from a facsimile one (measures matched by id) without a YAML parser.
+ * One quoted scalar field (`kind`, `preparation`, …) of the config.yaml piece
+ * whose path is `path`, or null when no piece carries the path or the piece
+ * has no such field. Reads the canonical shape configToYaml emits — each
+ * piece entry opens with `- id:` and lists its fields as quoted scalars — so
+ * the coordinator and the console need no YAML parser.
  */
-export function pieceKindForPath(configText: string | null, path: string): string | null {
-	for (const entry of (configText ?? '').split(/^\s*- id:/m).slice(1)) {
-		const kind = /^\s*kind:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
-		const entryPath = /^\s*path:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
-		if (!kind || !entryPath) continue;
-		if (JSON.parse(`"${entryPath[1]}"`) === path) return JSON.parse(`"${kind[1]}"`);
-	}
-	return null;
+export function pieceFieldForPath(
+  configText: string | null,
+  path: string,
+  key: string,
+): string | null {
+  for (const entry of (configText ?? "").split(/^\s*- id:/m).slice(1)) {
+    const entryPath = /^\s*path:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
+    if (!entryPath || JSON.parse(`"${entryPath[1]}"`) !== path) continue;
+    const value = new RegExp(
+      `^\\s*${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"`,
+      "m",
+    ).exec(entry);
+    return value ? JSON.parse(`"${value[1]}"`) : null;
+  }
+  return null;
+}
+
+/**
+ * The kind of the piece at `path`: a physical piece's page spans are joined
+ * wholesale, a facsimile piece's measures are matched by id.
+ */
+export function pieceKindForPath(
+  configText: string | null,
+  path: string,
+): string | null {
+  return pieceFieldForPath(configText, path, "kind");
 }
 
 /** Return the sole added CSV row in a patch that removes no rows. */
 export function addedRowFromPatch(patch: string | undefined): string | null {
-	if (!patch) return null;
-	const added: string[] = [];
-	let removed = 0;
-	for (const line of patch.split('\n')) {
-		if (line.startsWith('+++') || line.startsWith('---')) continue;
-		if (line.startsWith('+')) added.push(line.slice(1));
-		else if (line.startsWith('-')) removed++;
-	}
-	return removed === 0 && added.length === 1 ? added[0] : null;
+  if (!patch) return null;
+  const added: string[] = [];
+  let removed = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added.push(line.slice(1));
+    else if (line.startsWith("-")) removed++;
+  }
+  return removed === 0 && added.length === 1 ? added[0] : null;
 }
 
 // The CSV records a unified-diff patch removes and adds, parsed with full CSV
 // quoting (a quoted field may span several patch lines; the physical lines of
 // one record are contiguous within their +/- group). Null when there is no
 // patch at all.
-function csvRowsFromPatch(patch: string | undefined): { added: string[][]; removed: string[][] } | null {
-	if (!patch) return null;
-	const added: string[] = [];
-	const removed: string[] = [];
-	for (const line of patch.split('\n')) {
-		if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('\\')) continue;
-		if (line.startsWith('+')) added.push(line.slice(1));
-		else if (line.startsWith('-')) removed.push(line.slice(1));
-	}
-	return { added: parseCsv(added.join('\n')), removed: parseCsv(removed.join('\n')) };
+function csvRowsFromPatch(
+  patch: string | undefined,
+): { added: string[][]; removed: string[][] } | null {
+  if (!patch) return null;
+  const added: string[] = [];
+  const removed: string[] = [];
+  for (const line of patch.split("\n")) {
+    if (
+      line.startsWith("+++") ||
+      line.startsWith("---") ||
+      line.startsWith("\\")
+    )
+      continue;
+    if (line.startsWith("+")) added.push(line.slice(1));
+    else if (line.startsWith("-")) removed.push(line.slice(1));
+  }
+  return {
+    added: parseCsv(added.join("\n")),
+    removed: parseCsv(removed.join("\n")),
+  };
 }
 
 /**
@@ -58,26 +98,37 @@ function csvRowsFromPatch(patch: string | undefined): { added: string[][]; remov
  * header; the base columns and validation slots are positionally stable).
  */
 export function validationIntentFromPatch(
-	patch: string | undefined,
-	header: string[]
-): { task_id: string; subtask_id: string; column: string; value: string } | null {
-	const rows = csvRowsFromPatch(patch);
-	if (!rows || rows.added.length !== 1 || rows.removed.length !== 1) return null;
-	const [base] = rows.removed;
-	const [head] = rows.added;
-	if ((head[0] ?? '') === '' || base[0] !== head[0] || (base[1] ?? '') !== (head[1] ?? '')) return null;
-	const width = Math.max(base.length, head.length, header.length);
-	let diff: { column: string; value: string } | null = null;
-	for (let i = 0; i < width; i++) {
-		if ((base[i] ?? '') === (head[i] ?? '')) continue;
-		if (diff || i >= header.length) return null;
-		diff = { column: header[i], value: head[i] ?? '' };
-	}
-	return diff ? { task_id: head[0], subtask_id: head[1] ?? '', ...diff } : null;
+  patch: string | undefined,
+  header: string[],
+): {
+  task_id: string;
+  subtask_id: string;
+  column: string;
+  value: string;
+} | null {
+  const rows = csvRowsFromPatch(patch);
+  if (!rows || rows.added.length !== 1 || rows.removed.length !== 1)
+    return null;
+  const [base] = rows.removed;
+  const [head] = rows.added;
+  if (
+    (head[0] ?? "") === "" ||
+    base[0] !== head[0] ||
+    (base[1] ?? "") !== (head[1] ?? "")
+  )
+    return null;
+  const width = Math.max(base.length, head.length, header.length);
+  let diff: { column: string; value: string } | null = null;
+  for (let i = 0; i < width; i++) {
+    if ((base[i] ?? "") === (head[i] ?? "")) continue;
+    if (diff || i >= header.length) return null;
+    diff = { column: header[i], value: head[i] ?? "" };
+  }
+  return diff ? { task_id: head[0], subtask_id: head[1] ?? "", ...diff } : null;
 }
 
-export function validationVerdict(value: string): 'pass' | 'fail' | null {
-	return value === 'pass' || value === 'fail' ? value : null;
+export function validationVerdict(value: string): "pass" | "fail" | null {
+  return value === "pass" || value === "fail" ? value : null;
 }
 
 /**
@@ -87,30 +138,37 @@ export function validationVerdict(value: string): 'pass' | 'fail' | null {
  * reset resetTaskRows writes; nothing else may change.
  */
 export function taskResetFromPatch(
-	patch: string | undefined,
-	header: string[],
-	validationColumns: string[]
+  patch: string | undefined,
+  header: string[],
+  validationColumns: string[],
 ): { task_id: string } | null {
-	const rows = csvRowsFromPatch(patch);
-	if (!rows || rows.added.length === 0 || rows.added.length !== rows.removed.length) return null;
-	const toRow = (cells: string[]): StateRow =>
-		Object.fromEntries(header.map((column, i) => [column, cells[i] ?? ''])) as StateRow;
-	const base = rows.removed.map(toRow);
-	const head = rows.added.map(toRow);
-	const task_id = head[0].task_id;
-	if (task_id === '') return null;
-	for (let i = 0; i < head.length; i++) {
-		if (head[i].task_id !== task_id || base[i].task_id !== task_id) return null;
-		if (base[i].subtask_id !== head[i].subtask_id) return null;
-	}
-	const expected = base.map((r) => ({ ...r }));
-	resetTaskRows(expected, validationColumns, task_id);
-	for (let i = 0; i < head.length; i++) {
-		for (const column of header) {
-			if ((expected[i][column] ?? '') !== (head[i][column] ?? '')) return null;
-		}
-	}
-	return { task_id };
+  const rows = csvRowsFromPatch(patch);
+  if (
+    !rows ||
+    rows.added.length === 0 ||
+    rows.added.length !== rows.removed.length
+  )
+    return null;
+  const toRow = (cells: string[]): StateRow =>
+    Object.fromEntries(
+      header.map((column, i) => [column, cells[i] ?? ""]),
+    ) as StateRow;
+  const base = rows.removed.map(toRow);
+  const head = rows.added.map(toRow);
+  const task_id = head[0].task_id;
+  if (task_id === "") return null;
+  for (let i = 0; i < head.length; i++) {
+    if (head[i].task_id !== task_id || base[i].task_id !== task_id) return null;
+    if (base[i].subtask_id !== head[i].subtask_id) return null;
+  }
+  const expected = base.map((r) => ({ ...r }));
+  resetTaskRows(expected, validationColumns, task_id);
+  for (let i = 0; i < head.length; i++) {
+    for (const column of header) {
+      if ((expected[i][column] ?? "") !== (head[i][column] ?? "")) return null;
+    }
+  }
+  return { task_id };
 }
 
 /**
@@ -118,17 +176,22 @@ export function taskResetFromPatch(
  * relative to the PR's own merge base — or null when it removes or edits
  * anything.
  */
-export function appendedCommentsFromPatch(patch: string | undefined): CommentRow[] | null {
-	const rows = csvRowsFromPatch(patch);
-	if (!rows || rows.removed.length !== 0 || rows.added.length === 0) return null;
-	return rows.added.map(
-		(cells) =>
-			Object.fromEntries(COMMENT_COLUMNS.map((column, i) => [column, cells[i] ?? ''])) as unknown as CommentRow
-	);
+export function appendedCommentsFromPatch(
+  patch: string | undefined,
+): CommentRow[] | null {
+  const rows = csvRowsFromPatch(patch);
+  if (!rows || rows.removed.length !== 0 || rows.added.length === 0)
+    return null;
+  return rows.added.map(
+    (cells) =>
+      Object.fromEntries(
+        COMMENT_COLUMNS.map((column, i) => [column, cells[i] ?? ""]),
+      ) as unknown as CommentRow,
+  );
 }
 
-const RESOLVED_CELL = COMMENT_COLUMNS.indexOf('resolved');
-const PARENT_CELL = COMMENT_COLUMNS.indexOf('parent_id');
+const RESOLVED_CELL = COMMENT_COLUMNS.indexOf("resolved");
+const PARENT_CELL = COMMENT_COLUMNS.indexOf("parent_id");
 
 /**
  * The top-level comment a comment.csv patch resolves — every changed row only
@@ -136,56 +199,78 @@ const PARENT_CELL = COMMENT_COLUMNS.indexOf('parent_id');
  * parent_id) — or null for any other diff. Flipped replies ride along; the
  * coordinator resolves the root's whole thread authoritatively.
  */
-export function resolvedCommentFromPatch(patch: string | undefined): { comment_id: string } | null {
-	const rows = csvRowsFromPatch(patch);
-	if (!rows || rows.added.length === 0 || rows.added.length !== rows.removed.length) return null;
-	let root: string | null = null;
-	for (let i = 0; i < rows.added.length; i++) {
-		const base = rows.removed[i];
-		const head = rows.added[i];
-		if ((head[0] ?? '') === '' || (base[0] ?? '') !== (head[0] ?? '')) return null;
-		const width = Math.max(base.length, head.length);
-		for (let j = 0; j < width; j++) {
-			if ((base[j] ?? '') === (head[j] ?? '')) continue;
-			if (j !== RESOLVED_CELL || (base[j] ?? '') !== '' || (head[j] ?? '') !== 'true') return null;
-		}
-		if ((head[PARENT_CELL] ?? '') === '') {
-			if (root !== null) return null;
-			root = head[0];
-		}
-	}
-	return root === null ? null : { comment_id: root };
+export function resolvedCommentFromPatch(
+  patch: string | undefined,
+): { comment_id: string } | null {
+  const rows = csvRowsFromPatch(patch);
+  if (
+    !rows ||
+    rows.added.length === 0 ||
+    rows.added.length !== rows.removed.length
+  )
+    return null;
+  let root: string | null = null;
+  for (let i = 0; i < rows.added.length; i++) {
+    const base = rows.removed[i];
+    const head = rows.added[i];
+    if ((head[0] ?? "") === "" || (base[0] ?? "") !== (head[0] ?? ""))
+      return null;
+    const width = Math.max(base.length, head.length);
+    for (let j = 0; j < width; j++) {
+      if ((base[j] ?? "") === (head[j] ?? "")) continue;
+      if (
+        j !== RESOLVED_CELL ||
+        (base[j] ?? "") !== "" ||
+        (head[j] ?? "") !== "true"
+      )
+        return null;
+    }
+    if ((head[PARENT_CELL] ?? "") === "") {
+      if (root !== null) return null;
+      root = head[0];
+    }
+  }
+  return root === null ? null : { comment_id: root };
 }
 
 export function resolveEncodingTask(options: {
-	tasks: TaskRow[];
-	locks: LockRow[];
-	changedPaths: string[];
-	envelope: CommandEnvelope | null;
-	headRef: string;
-	author: string;
+  tasks: TaskRow[];
+  locks: LockRow[];
+  changedPaths: string[];
+  envelope: CommandEnvelope | null;
+  headRef: string;
+  author: string;
 }): TaskRow | undefined {
-	const { tasks, locks, changedPaths, envelope, headRef, author } = options;
-	const candidates = tasks.filter((task) => task.subtask_id === '' && changedPaths.includes(task.fragment));
-	if (candidates.length <= 1) return candidates[0];
+  const { tasks, locks, changedPaths, envelope, headRef, author } = options;
+  // A pre-task's submission may change only a side file (see sideFilesOf).
+  const candidates = tasks.filter(
+    (task) =>
+      task.subtask_id === "" &&
+      [task.fragment, ...sideFilesOf(task)].some((path) =>
+        changedPaths.includes(path),
+      ),
+  );
+  if (candidates.length <= 1) return candidates[0];
 
-	const claimed = String(envelope?.input?.task_id ?? '');
-	const byEnvelope = candidates.find((task) => task.task_id === claimed);
-	if (byEnvelope) return byEnvelope;
+  const claimed = String(envelope?.input?.task_id ?? "");
+  const byEnvelope = candidates.find((task) => task.task_id === claimed);
+  if (byEnvelope) return byEnvelope;
 
-	const byBranch = candidates.find((task) => headRef === `encode-${task.task_id}`);
-	if (byBranch) return byBranch;
+  const byBranch = candidates.find(
+    (task) => headRef === `encode-${task.task_id}`,
+  );
+  if (byBranch) return byBranch;
 
-	const held = candidates.filter((task) =>
-		locks.some(
-			(lock) =>
-				lock.task_id === task.task_id &&
-				lock.subtask_id === '' &&
-				lock.kind === 'encoding' &&
-				lock.user_id === author
-		)
-	);
-	return held.length === 1 ? held[0] : undefined;
+  const held = candidates.filter((task) =>
+    locks.some(
+      (lock) =>
+        lock.task_id === task.task_id &&
+        lock.subtask_id === "" &&
+        lock.kind === "encoding" &&
+        lock.user_id === author,
+    ),
+  );
+  return held.length === 1 ? held[0] : undefined;
 }
 
 /**
@@ -194,16 +279,36 @@ export function resolveEncodingTask(options: {
  * operation.
  */
 export function touchesCampaignPaths(changedPaths: string[]): boolean {
-	return changedPaths.some((p) => p.startsWith('tracking/') || p.startsWith('sources/'));
+  return changedPaths.some(
+    (p) => p.startsWith("tracking/") || p.startsWith("sources/"),
+  );
 }
 
 export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
-	if (changedPaths.includes('tracking/lock.csv')) return 'claim';
-	if (changedPaths.includes('tracking/state.csv')) return 'validation';
-	if (changedPaths.includes('tracking/comment.csv')) return 'comment';
-	return 'encoding';
+  if (changedPaths.includes(LOCK_PATH)) return "claim";
+  if (changedPaths.includes(STATE_PATH)) return "validation";
+  if (changedPaths.includes(COMMENT_PATH)) return "comment";
+  return "encoding";
 }
 
-export function shouldCleanupSubmission(kind: 'encoding' | 'validation', accepted: boolean): boolean {
-	return accepted || kind === 'validation';
+export function shouldCleanupSubmission(
+  kind: "encoding" | "validation",
+  accepted: boolean,
+): boolean {
+  return accepted || kind === "validation";
+}
+
+/**
+ * The history row that decided pull request `prNumber`, or null when none
+ * has. A pull request is one operation: a run that finds such a row reports
+ * that decision instead of deciding the operation again.
+ */
+export function priorDecision(
+  history: HistoryRow[],
+  prNumber: number,
+): HistoryRow | null {
+  const pr = String(prNumber);
+  for (let i = history.length - 1; i >= 0; i--)
+    if (history[i].pr === pr) return history[i];
+  return null;
 }

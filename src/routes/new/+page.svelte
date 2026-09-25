@@ -14,6 +14,7 @@
   import CampaignPagesStep from "$lib/components/CampaignPagesStep.svelte";
   import CampaignSourceStep from "$lib/components/CampaignSourceStep.svelte";
   import CampaignPiecesStep from "$lib/components/CampaignPiecesStep.svelte";
+  import CampaignPreparationStep from "$lib/components/CampaignPreparationStep.svelte";
   import WizardCard from "$lib/components/WizardCard.svelte";
 
   // Mirror the wizard's entries into the browser as they change, so a setup
@@ -52,7 +53,11 @@
       progress live in a repository on your account.
     </p>
     {#snippet footer()}
-      <button type="button" class="btn btn-lg btn-primary" onclick={() => login()}>
+      <button
+        type="button"
+        class="btn btn-lg btn-primary"
+        onclick={() => login()}
+      >
         Log in with GitHub
       </button>
     {/snippet}
@@ -67,8 +72,10 @@
   <CampaignPagesStep />
 {:else if wizard.step === "source"}
   <CampaignSourceStep />
-{:else}
+{:else if wizard.step === "pieces"}
   <CampaignPiecesStep />
+{:else}
+  <CampaignPreparationStep />
 {/if}
 
 <style>

@@ -9,7 +9,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, sendBackTarget } from "$lib/campaign-graph.ts";
+  import { handle, workStage } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { buildRecord, elapsed, orphanedFails } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
@@ -132,37 +132,179 @@
 {/snippet}
 
 {#if rows.length > 0 || orphanFails.length > 0}
-<div class="rsec">
-  <div class="rlabel">Validation record</div>
-  {#each rows as r (r.sub + "/" + r.slot)}
-    {#if r.key === "fail"}
+  <div class="rsec">
+    <div class="rlabel">Review record</div>
+    {#each rows as r (r.sub + "/" + r.slot)}
+      {#if r.key === "fail"}
+        <div class="failbox">
+          <div class="failhead">
+            {@render slotDot("fail")}
+            <span class="failtitle">Slot {r.slot + 1} · fail</span>
+            <span class="rwho">{r.login} · {r.elapsed}</span>
+          </div>
+          {#if r.comment}
+            <div class="failbody">“{r.comment.body}”</div>
+            {#if hasAnchor(r.comment)}
+              <div class="failchips">
+                <button
+                  type="button"
+                  class="chip chip-question anchorchip"
+                  onclick={() => onshowanchor(r.comment!)}
+                  title="Highlight this measure range in the preview"
+                  >{anchorLabel(r.comment)} — show in the preview</button
+                >
+              </div>
+            {/if}
+          {:else}
+            <div class="failbody muted">
+              No comment was recorded with this fail.
+            </div>
+          {/if}
+          <div class="failacts">
+            {#if r.comment && r.comment.resolved !== "true" && canResolve(r.comment)}
+              {#if resolvePending(r.comment.comment_id)}
+                <span class="resolving">
+                  <span class="spinner" aria-hidden="true"></span>
+                  Resolving…
+                </span>
+              {:else}
+                <button
+                  type="button"
+                  class="linkish"
+                  onclick={() => resolve(r.comment!.comment_id)}
+                  disabled={runner.busy || resolving !== null}
+                  title="Mark this fail's comment as handled — it leaves the attention counts."
+                  >Resolve</button
+                >
+              {/if}
+            {:else if r.comment?.resolved === "true"}
+              <span class="muted small-note">resolved</span>
+            {/if}
+            <span class="mspacer"></span>
+            {#if viewer !== "" && (canPush || r.userId === viewer)}
+              <button
+                type="button"
+                class="btn btn-danger"
+                onclick={() => onsendback(card.task)}
+                disabled={runner.busy || sendBackPending}
+                title={`Return the task to ${workStage(card.locator)}: attribution and reviews reset.`}
+                >{`Send back ${card.pre ? "to" : "for"} ${workStage(card.locator)}`}</button
+              >
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <div class="rrow">
+          {@render slotDot(r.key)}
+          <span class="rslot"
+            >Slot {r.slot + 1} · {r.key === "review"
+              ? "in review"
+              : r.key}</span
+          >
+          {#if r.login}
+            <span class="rwho">{r.login} · {r.elapsed}</span>
+          {/if}
+          <span class="mspacer"></span>
+          {#if r.key === "pass"}
+            <span class="muted small-note">no remarks</span>
+          {:else if r.key === "open" && r.claimable && variant !== "side"}
+            <button
+              type="button"
+              class="btn btn-review"
+              onclick={() => onclaim(card.task, r.sub)}
+              disabled={runner.busy || verdictPending(r.sub)}
+              title="Reserve this review slot.">Claim to review</button
+            >
+          {:else if r.key === "open"}
+            <span class="muted small-note">{r.note}</span>
+          {:else if r.mine}
+            <span class="rverdict">
+              <button
+                type="button"
+                class="btn btn-primary btn-finish"
+                onclick={() => onvalidate(card.task, r.sub, "pass")}
+                disabled={runner.busy || verdictPending(r.sub)}
+                title="Record a passing verdict.">Pass</button
+              >
+              <button
+                type="button"
+                class="btn btn-danger failbtn"
+                class:on={failForm?.sub === r.sub}
+                onclick={() =>
+                  (failForm =
+                    failForm?.sub === r.sub
+                      ? null
+                      : { sub: r.sub, body: "", ...prefill() })}
+                disabled={runner.busy || verdictPending(r.sub)}
+                title="Record a failing verdict — a fail carries a comment saying why."
+                >Fail</button
+              >
+            </span>
+          {/if}
+        </div>
+        {#if failForm && failForm.sub === r.sub && r.mine}
+          <div class="failform">
+            <textarea
+              rows="3"
+              bind:value={failForm.body}
+              placeholder="Why does this fail? (required)"
+            ></textarea>
+            <div class="failform-anchor">
+              <label>p. <input size="3" bind:value={failForm.page} /></label>
+              <label
+                >m. <input
+                  size="4"
+                  bind:value={failForm.m1}
+                  placeholder="from"
+                /></label
+              >
+              <label
+                >– <input
+                  size="4"
+                  bind:value={failForm.m2}
+                  placeholder="to"
+                /></label
+              >
+              <span class="mspacer"></span>
+              <button
+                type="button"
+                class="btn btn-danger"
+                onclick={submitFail}
+                disabled={runner.busy ||
+                  !failForm.body.trim() ||
+                  verdictPending(failForm.sub)}>Submit fail</button
+              >
+            </div>
+          </div>
+        {/if}
+      {/if}
+    {/each}
+    {#each orphanFails as c (c.comment_id)}
       <div class="failbox">
         <div class="failhead">
           {@render slotDot("fail")}
-          <span class="failtitle">Slot {r.slot + 1} · fail</span>
-          <span class="rwho">{r.login} · {r.elapsed}</span>
+          <span
+            class="failtitle"
+            title="This fail was recorded before the task was sent back."
+            >Fail · before send-back</span
+          >
+          <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
         </div>
-        {#if r.comment}
-          <div class="failbody">“{r.comment.body}”</div>
-          {#if hasAnchor(r.comment)}
-            <div class="failchips">
-              <button
-                type="button"
-                class="chip chip-question anchorchip"
-                onclick={() => onshowanchor(r.comment!)}
-                title="Highlight this measure range in the preview"
-                >{anchorLabel(r.comment)} — show in the preview</button
-              >
-            </div>
-          {/if}
-        {:else}
-          <div class="failbody muted">
-            No comment was recorded with this fail.
+        <div class="failbody">“{c.body}”</div>
+        {#if hasAnchor(c)}
+          <div class="failchips">
+            <button
+              type="button"
+              class="chip chip-question anchorchip"
+              onclick={() => onshowanchor(c)}
+              title="Highlight this place in the preview"
+              >{anchorLabel(c)} — show in the preview</button
+            >
           </div>
         {/if}
-        <div class="failacts">
-          {#if r.comment && r.comment.resolved !== "true" && canResolve(r.comment)}
-            {#if resolvePending(r.comment.comment_id)}
+        {#if canResolve(c)}
+          <div class="failacts">
+            {#if resolvePending(c.comment_id)}
               <span class="resolving">
                 <span class="spinner" aria-hidden="true"></span>
                 Resolving…
@@ -171,161 +313,17 @@
               <button
                 type="button"
                 class="linkish"
-                onclick={() => resolve(r.comment!.comment_id)}
+                onclick={() => resolve(c.comment_id)}
                 disabled={runner.busy || resolving !== null}
                 title="Mark this fail's comment as handled — it leaves the attention counts."
                 >Resolve</button
               >
             {/if}
-          {:else if r.comment?.resolved === "true"}
-            <span class="muted small-note">resolved</span>
-          {/if}
-          <span class="mspacer"></span>
-          {#if viewer !== "" && (canPush || r.userId === viewer)}
-            <button
-              type="button"
-              class="btn btn-danger"
-              onclick={() => onsendback(card.task)}
-              disabled={runner.busy || sendBackPending}
-              title={`Return the task to ${sendBackTarget(card.locator)}: attribution and validations reset.`}
-              >{`Send back ${card.pre ? "to" : "for"} ${sendBackTarget(card.locator)}`}</button
-            >
-          {/if}
-        </div>
-      </div>
-    {:else}
-      <div class="rrow">
-        {@render slotDot(r.key)}
-        <span class="rslot"
-          >Slot {r.slot + 1} · {r.key === "review"
-            ? "in review"
-            : r.key}</span
-        >
-        {#if r.login}
-          <span class="rwho">{r.login} · {r.elapsed}</span>
-        {/if}
-        <span class="mspacer"></span>
-        {#if r.key === "pass"}
-          <span class="muted small-note">no remarks</span>
-        {:else if r.key === "open" && r.claimable && variant !== "side"}
-          <button
-            type="button"
-            class="btn btn-review"
-            onclick={() => onclaim(card.task, r.sub)}
-            disabled={runner.busy || verdictPending(r.sub)}
-            title="Reserve this validation slot for review."
-            >Claim to review</button
-          >
-        {:else if r.key === "open"}
-          <span class="muted small-note">{r.note}</span>
-        {:else if r.mine}
-          <button
-            type="button"
-            class="btn btn-primary btn-finish"
-            onclick={() => onvalidate(card.task, r.sub, "pass")}
-            disabled={runner.busy || verdictPending(r.sub)}
-            title="Record a passing verdict.">Pass</button
-          >
-          <button
-            type="button"
-            class="btn btn-danger failbtn"
-            class:on={failForm?.sub === r.sub}
-            onclick={() =>
-              (failForm =
-                failForm?.sub === r.sub
-                  ? null
-                  : { sub: r.sub, body: "", ...prefill() })}
-            disabled={runner.busy || verdictPending(r.sub)}
-            title="Record a failing verdict — a fail carries a comment saying why."
-            >Fail</button
-          >
-        {/if}
-      </div>
-      {#if failForm && failForm.sub === r.sub && r.mine}
-        <div class="failform">
-          <textarea
-            rows="3"
-            bind:value={failForm.body}
-            placeholder="Why does this fail? (required)"
-          ></textarea>
-          <div class="failform-anchor">
-            <label
-              >p. <input size="3" bind:value={failForm.page} /></label
-            >
-            <label
-              >m. <input
-                size="4"
-                bind:value={failForm.m1}
-                placeholder="from"
-              /></label
-            >
-            <label
-              >– <input
-                size="4"
-                bind:value={failForm.m2}
-                placeholder="to"
-              /></label
-            >
-            <span class="mspacer"></span>
-            <button
-              type="button"
-              class="btn btn-danger"
-              onclick={submitFail}
-              disabled={runner.busy ||
-                !failForm.body.trim() ||
-                verdictPending(failForm.sub)}
-              >Submit fail</button
-            >
           </div>
-        </div>
-      {/if}
-    {/if}
-  {/each}
-  {#each orphanFails as c (c.comment_id)}
-    <div class="failbox">
-      <div class="failhead">
-        {@render slotDot("fail")}
-        <span
-          class="failtitle"
-          title="This fail was recorded before the task was sent back."
-          >Fail · before send-back</span
-        >
-        <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
+        {/if}
       </div>
-      <div class="failbody">“{c.body}”</div>
-      {#if hasAnchor(c)}
-        <div class="failchips">
-          <button
-            type="button"
-            class="chip chip-question anchorchip"
-            onclick={() => onshowanchor(c)}
-            title="Highlight this place in the preview"
-            >{anchorLabel(c)} — show in the preview</button
-          >
-        </div>
-      {/if}
-      {#if canResolve(c)}
-        <div class="failacts">
-          {#if resolvePending(c.comment_id)}
-            <span class="resolving">
-              <span class="spinner" aria-hidden="true"></span>
-              Resolving…
-            </span>
-          {:else}
-            <button
-              type="button"
-              class="linkish"
-              onclick={() => resolve(c.comment_id)}
-              disabled={runner.busy || resolving !== null}
-              title="Mark this fail's comment as handled — it leaves the attention counts."
-              >Resolve</button
-            >
-          {/if}
-        </div>
-      {/if}
-    </div>
-  {/each}
-</div>
+    {/each}
+  </div>
 {/if}
 
 <style>
@@ -353,7 +351,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 8px;
+    line-height: 1;
+    padding: 3px 8px;
     white-space: nowrap;
   }
   .chip-question {
@@ -391,7 +390,7 @@
     color: var(--ink-faint);
     padding-bottom: 4px;
   }
-  /* Wraps so the verdict buttons stay visible in a narrow panel. */
+  /* Wraps so the trailing controls stay visible in a narrow panel. */
   .rrow {
     display: flex;
     align-items: center;
@@ -414,6 +413,13 @@
   .small-note {
     font-size: 11.5px;
     white-space: nowrap;
+  }
+  /* The verdict pair occupies its own line so the two buttons never split. */
+  .rverdict {
+    display: flex;
+    gap: 10px;
+    flex-basis: 100%;
+    justify-content: flex-end;
   }
   /* The open fail form keeps its trigger tinted, still an outline. */
   .failbtn.on {

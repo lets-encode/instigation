@@ -9,29 +9,39 @@
 // What is collected is also mirrored into the browser's storage as a draft, so a
 // setup that is interrupted can be continued; see wizard-draft.ts.
 
-import type { EncodingSource, PageCandidate, PageImage } from './prepare-images.ts';
-import { emptySourceMetadata, type SourceMetadata } from './source-metadata.ts';
-import type { Piece } from './pieces.ts';
-import { DEFAULT_LICENSE } from './licenses.ts';
+import type { Preparation } from "./campaign-init.ts";
+import type {
+  EncodingSource,
+  PageCandidate,
+  PageImage,
+} from "./prepare-images.ts";
+import { emptySourceMetadata, type SourceMetadata } from "./source-metadata.ts";
+import type { Piece } from "./pieces.ts";
+import { DEFAULT_LICENSE } from "./licenses.ts";
 import {
-	DRAFT_VERSION,
-	discardDraft,
-	writeDraft,
-	type DraftEntries,
-	type WizardDraft
-} from './wizard-draft.ts';
+  DRAFT_VERSION,
+  MissingDraftImageError,
+  discardDraft,
+  fetchDraftImages,
+  readDraft,
+  writeDraft,
+  type DraftEntries,
+  type WizardDraft,
+} from "./wizard-draft.ts";
+import type { ForgeClient } from "./forge/types.ts";
 
 /** The wizard's steps, in order. Drives navigation and the progress header. */
 export const WIZARD_STEPS = [
-	{ id: 'name', label: 'Name' },
-	{ id: 'license', label: 'Licence' },
-	{ id: 'upload', label: 'Upload' },
-	{ id: 'pages', label: 'Pages' },
-	{ id: 'source', label: 'Source' },
-	{ id: 'pieces', label: 'Pieces' }
+  { id: "name", label: "Name" },
+  { id: "license", label: "Licence" },
+  { id: "upload", label: "Upload" },
+  { id: "pages", label: "Pages" },
+  { id: "source", label: "Source" },
+  { id: "pieces", label: "Pieces" },
+  { id: "preparation", label: "Preparation" },
 ] as const;
 
-export type WizardStepId = (typeof WIZARD_STEPS)[number]['id'];
+export type WizardStepId = (typeof WIZARD_STEPS)[number]["id"];
 
 /** Character limit on the campaign description. */
 export const MAX_DESCRIPTION_LENGTH = 300;
@@ -42,23 +52,23 @@ export const MAX_DESCRIPTION_LENGTH = 300;
  * registered under the same value, so the repo name and the slug cannot diverge.
  */
 export interface WizardClaim {
-	name: string;
-	/** The right to register this name, or to give it back. */
-	token: string;
+  name: string;
+  /** The right to register this name, or to give it back. */
+  token: string;
 }
 
 /** A page the upload offers, with whether the pages step keeps it. */
 export interface PageChoice extends PageCandidate {
-	include: boolean;
+  include: boolean;
 }
 
 /** The campaign repository, once the pages step has created it. */
 export interface WizardRepo {
-	owner: string;
-	name: string;
-	full_name: string;
-	html_url: string;
-	id: number;
+  owner: string;
+  name: string;
+  full_name: string;
+  html_url: string;
+  id: number;
 }
 
 /**
@@ -66,125 +76,144 @@ export interface WizardRepo {
  * campaign can record which wording was agreed to.
  */
 export const COPYRIGHT_ACKNOWLEDGEMENT = {
-	version: '1',
-	text: 'I have the right to publish these materials, or they are in the public domain.'
+  version: "1",
+  text: "I have the right to publish these materials, and/or they are in the public domain.",
 } as const;
 
 export const wizard = $state<{
-	step: WizardStepId;
-	/**
-	 * The campaign's name: repo name, registry slug and address at once. Editable
-	 * until the name step holds it in the registry, after which `claim` carries it
-	 * and this only mirrors it.
-	 */
-	handle: string;
-	/** The held name, from the name step until the campaign is registered. */
-	claim: WizardClaim | null;
-	/** Human-readable label for the campaign. */
-	title: string;
-	/** Short statement of what the campaign sets out to encode. Optional. */
-	description: string;
-	/** SPDX id of the licence the encoding is published under. */
-	license: string;
-	/** Page images, PDFs and encodings picked in the upload step. */
-	files: File[];
-	/** A IIIF Presentation manifest whose canvases are fetched and committed. */
-	iiifManifestUrl: string;
-	copyrightAccepted: boolean;
-	/**
-	 * Every page the upload offers, in the order they are to be committed, with
-	 * which of them the pages step keeps. A source is usually larger than the part
-	 * of it a campaign encodes, so this holds previews only — the pages kept are
-	 * fetched at committing size by the pages step.
-	 */
-	candidates: PageChoice[];
-	/**
-	 * What `candidates` was prepared from, so returning to the upload step and
-	 * continuing again does not read a long source a second time.
-	 */
-	uploadKey: string;
-	repo: WizardRepo | null;
-	/**
-	 * The page images committed by the pages step, kept with their bytes: later
-	 * steps display them, and a PDF's rendered pages exist nowhere else in the
-	 * browser once that step has run.
-	 */
-	images: PageImage[];
-	/**
-	 * Uploaded encodings, converted to MEI. Held in the browser until the final
-	 * step, which writes them at their piece paths alongside config and tables.
-	 */
-	encodings: EncodingSource[];
-	/** Whole-source metadata, copied into each piece's header at the end. */
-	source: SourceMetadata;
-	/** The works within the source; one MEI and one task group each. */
-	pieces: Piece[];
+  step: WizardStepId;
+  /**
+   * The campaign's name: repo name, registry slug and address at once. Editable
+   * until the name step holds it in the registry, after which `claim` carries it
+   * and this only mirrors it.
+   */
+  handle: string;
+  /** The held name, from the name step until the campaign is registered. */
+  claim: WizardClaim | null;
+  /** Human-readable label for the campaign. */
+  title: string;
+  /** Short statement of what the campaign sets out to encode. Optional. */
+  description: string;
+  /** SPDX id of the licence the encoding is published under. */
+  license: string;
+  /** Page images, PDFs and encodings picked in the upload step. */
+  files: File[];
+  /** A IIIF Presentation manifest whose canvases are fetched and committed. */
+  iiifManifestUrl: string;
+  copyrightAccepted: boolean;
+  /**
+   * Every page the upload offers, in the order they are to be committed, with
+   * which of them the pages step keeps. A source is usually larger than the part
+   * of it a campaign encodes, so this holds previews only — the pages kept are
+   * fetched at committing size by the pages step.
+   */
+  candidates: PageChoice[];
+  /**
+   * What `candidates` was prepared from, so returning to the upload step and
+   * continuing again does not read a long source a second time.
+   */
+  uploadKey: string;
+  repo: WizardRepo | null;
+  /**
+   * The page images committed by the pages step, kept with their bytes: later
+   * steps display them, and a PDF's rendered pages exist nowhere else in the
+   * browser once that step has run.
+   */
+  images: PageImage[];
+  /**
+   * Uploaded encodings, converted to MEI. Held in the browser until the final
+   * step, which writes them at their piece paths alongside config and tables.
+   */
+  encodings: EncodingSource[];
+  /** Whole-source metadata, copied into each piece's header at the end. */
+  source: SourceMetadata;
+  /** The works within the source; one MEI and one task group each. */
+  pieces: Piece[];
+  /**
+   * How the facsimile pieces are prepared: measure boxes detected when the
+   * campaign is finished, or staff and measure boxes recognised in each
+   * piece's layout task with encoding starting from a transcription.
+   */
+  preparation: Preparation;
 }>({
-	step: 'name',
-	handle: '',
-	claim: null,
-	title: '',
-	description: '',
-	license: DEFAULT_LICENSE,
-	files: [],
-	iiifManifestUrl: '',
-	copyrightAccepted: false,
-	candidates: [],
-	uploadKey: '',
-	repo: null,
-	images: [],
-	encodings: [],
-	source: emptySourceMetadata(),
-	pieces: []
+  step: "name",
+  handle: "",
+  claim: null,
+  title: "",
+  description: "",
+  license: DEFAULT_LICENSE,
+  files: [],
+  iiifManifestUrl: "",
+  copyrightAccepted: false,
+  candidates: [],
+  uploadKey: "",
+  repo: null,
+  images: [],
+  encodings: [],
+  source: emptySourceMetadata(),
+  pieces: [],
+  preparation: "measure-detection",
 });
 
-export const stepIndex = (id: WizardStepId) => WIZARD_STEPS.findIndex((s) => s.id === id);
+export const stepIndex = (id: WizardStepId) =>
+  WIZARD_STEPS.findIndex((s) => s.id === id);
 
-// The pages step exists to choose between page images; an upload that offers
-// none has nothing to choose, so navigation passes over it in both directions.
-// The repository it would have created is created by the upload step instead.
-const skipped = (id: WizardStepId) => id === 'pages' && wizard.candidates.length === 0;
+/**
+ * Whether a step has nothing to do for this campaign, so navigation and the
+ * step rail pass over it. The pages step exists to choose between page images;
+ * an upload that offers none has nothing to choose (the repository it would
+ * have created is created by the upload step instead). The preparation step
+ * decides how facsimile pieces get their measures; without page images —
+ * committed, or still to be chosen from the upload — there are none, and the
+ * pieces step finishes the setup.
+ */
+export const isSkipped = (id: WizardStepId): boolean =>
+  (id === "pages" && wizard.candidates.length === 0) ||
+  (id === "preparation" &&
+    wizard.images.length === 0 &&
+    wizard.candidates.length === 0);
 
 /** Advance to the next step (passing over steps with nothing to do), if there is one. */
 export function nextStep(): void {
-	for (let i = stepIndex(wizard.step) + 1; i < WIZARD_STEPS.length; i++) {
-		if (skipped(WIZARD_STEPS[i].id)) continue;
-		wizard.step = WIZARD_STEPS[i].id;
-		break;
-	}
-	draftStatus.resumeNotice = null;
+  for (let i = stepIndex(wizard.step) + 1; i < WIZARD_STEPS.length; i++) {
+    if (isSkipped(WIZARD_STEPS[i].id)) continue;
+    wizard.step = WIZARD_STEPS[i].id;
+    break;
+  }
+  draftStatus.resumeNotice = null;
 }
 
 /** Return to the previous step (passing over steps with nothing to do), if there is one. */
 export function previousStep(): void {
-	for (let i = stepIndex(wizard.step) - 1; i >= 0; i--) {
-		if (skipped(WIZARD_STEPS[i].id)) continue;
-		wizard.step = WIZARD_STEPS[i].id;
-		break;
-	}
-	draftStatus.resumeNotice = null;
+  for (let i = stepIndex(wizard.step) - 1; i >= 0; i--) {
+    if (isSkipped(WIZARD_STEPS[i].id)) continue;
+    wizard.step = WIZARD_STEPS[i].id;
+    break;
+  }
+  draftStatus.resumeNotice = null;
 }
 
 /** Discard everything collected and return to the first step. */
 export function resetWizard(): void {
-	savedHandle = null;
-	draftStatus.savedAt = null;
-	wizard.step = 'name';
-	wizard.handle = '';
-	wizard.claim = null;
-	wizard.title = '';
-	wizard.description = '';
-	wizard.license = DEFAULT_LICENSE;
-	wizard.files = [];
-	wizard.iiifManifestUrl = '';
-	wizard.copyrightAccepted = false;
-	wizard.candidates = [];
-	wizard.uploadKey = '';
-	wizard.repo = null;
-	wizard.images = [];
-	wizard.encodings = [];
-	wizard.source = emptySourceMetadata();
-	wizard.pieces = [];
+  savedHandle = null;
+  draftStatus.savedAt = null;
+  wizard.step = "name";
+  wizard.handle = "";
+  wizard.claim = null;
+  wizard.title = "";
+  wizard.description = "";
+  wizard.license = DEFAULT_LICENSE;
+  wizard.files = [];
+  wizard.iiifManifestUrl = "";
+  wizard.copyrightAccepted = false;
+  wizard.candidates = [];
+  wizard.uploadKey = "";
+  wizard.repo = null;
+  wizard.images = [];
+  wizard.encodings = [];
+  wizard.source = emptySourceMetadata();
+  wizard.pieces = [];
+  wizard.preparation = "measure-detection";
 }
 
 // ---------------------------------------------------------------------------
@@ -193,11 +222,11 @@ export function resetWizard(): void {
 
 /** Whether the setup's draft could be stored. Surfaced by the wizard frame. */
 export const draftStatus = $state<{
-	saveError: string | null;
-	/** When the draft was last written, as epoch milliseconds. */
-	savedAt: number | null;
-	/** Why a continued setup opened where it did, when that needs saying. */
-	resumeNotice: string | null;
+  saveError: string | null;
+  /** When the draft was last written, as epoch milliseconds. */
+  savedAt: number | null;
+  /** Why a continued setup opened where it did, when that needs saying. */
+  resumeNotice: string | null;
 }>({ saveError: null, savedAt: null, resumeNotice: null });
 
 // The name the draft was last stored under. A campaign renamed before its
@@ -206,10 +235,10 @@ let savedHandle: string | null = null;
 
 /** Everything a draft record carries, apart from the account it belongs to. */
 export interface DraftSnapshot {
-	handle: string;
-	claim: WizardClaim | null;
-	repo: WizardRepo | null;
-	entries: DraftEntries;
+  handle: string;
+  claim: WizardClaim | null;
+  repo: WizardRepo | null;
+  entries: DraftEntries;
 }
 
 /**
@@ -218,23 +247,24 @@ export interface DraftSnapshot {
  * depends on all of them, and can write the result on a debounce.
  */
 export function draftSnapshot(): DraftSnapshot {
-	return {
-		handle: wizard.handle,
-		claim: wizard.claim ? { ...wizard.claim } : null,
-		repo: wizard.repo ? { ...wizard.repo } : null,
-		entries: {
-			step: wizard.step,
-			title: wizard.title,
-			description: wizard.description,
-			license: wizard.license,
-			iiifManifestUrl: wizard.iiifManifestUrl,
-			copyrightAccepted: wizard.copyrightAccepted,
-			imagePaths: wizard.images.map((image) => image.path),
-			encodings: wizard.encodings.map((encoding) => ({ ...encoding })),
-			source: $state.snapshot(wizard.source),
-			pieces: $state.snapshot(wizard.pieces)
-		}
-	};
+  return {
+    handle: wizard.handle,
+    claim: wizard.claim ? { ...wizard.claim } : null,
+    repo: wizard.repo ? { ...wizard.repo } : null,
+    entries: {
+      step: wizard.step,
+      title: wizard.title,
+      description: wizard.description,
+      license: wizard.license,
+      iiifManifestUrl: wizard.iiifManifestUrl,
+      copyrightAccepted: wizard.copyrightAccepted,
+      imagePaths: wizard.images.map((image) => image.path),
+      encodings: wizard.encodings.map((encoding) => ({ ...encoding })),
+      source: $state.snapshot(wizard.source),
+      pieces: $state.snapshot(wizard.pieces),
+      preparation: wizard.preparation,
+    },
+  };
 }
 
 /**
@@ -243,20 +273,20 @@ export function draftSnapshot(): DraftSnapshot {
  * continued under.
  */
 export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
-	const name = snapshot.handle.trim();
-	if (!owner || !name || snapshot.entries.step === 'name') return;
-	if (savedHandle && savedHandle !== name) discardDraft(savedHandle);
-	savedHandle = name;
-	draftStatus.saveError = writeDraft({
-		version: DRAFT_VERSION,
-		owner,
-		handle: name,
-		updatedAt: new Date().toISOString(),
-		claim: snapshot.claim,
-		repo: snapshot.repo,
-		entries: snapshot.entries
-	});
-	if (!draftStatus.saveError) draftStatus.savedAt = Date.now();
+  const name = snapshot.handle.trim();
+  if (!owner || !name || snapshot.entries.step === "name") return;
+  if (savedHandle && savedHandle !== name) discardDraft(savedHandle);
+  savedHandle = name;
+  draftStatus.saveError = writeDraft({
+    version: DRAFT_VERSION,
+    owner,
+    handle: name,
+    updatedAt: new Date().toISOString(),
+    claim: snapshot.claim,
+    repo: snapshot.repo,
+    entries: snapshot.entries,
+  });
+  if (!draftStatus.saveError) draftStatus.savedAt = Date.now();
 }
 
 /**
@@ -265,42 +295,76 @@ export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
  * campaign repository, which this module does not talk to.
  */
 export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
-	const entries = draft.entries;
-	if (!entries) return;
-	wizard.handle = draft.handle;
-	wizard.claim = draft.claim ?? null;
-	wizard.title = entries.title;
-	wizard.description = entries.description;
-	wizard.license = entries.license;
-	wizard.iiifManifestUrl = entries.iiifManifestUrl;
-	wizard.copyrightAccepted = entries.copyrightAccepted;
-	wizard.repo = draft.repo;
-	// Fields added to SourceMetadata since a draft was stored default to empty.
-	wizard.source = { ...emptySourceMetadata(), ...entries.source };
-	wizard.pieces = entries.pieces.map((piece) => ({
-		...piece,
-		meta: { ...emptySourceMetadata(), ...piece.meta }
-	}));
-	wizard.encodings = entries.encodings;
-	wizard.images = images;
-	// Picked files are not part of a draft; the upload step collects them again.
-	// The candidate pages read from them go the same way.
-	wizard.files = [];
-	wizard.candidates = [];
-	wizard.uploadKey = '';
-	savedHandle = draft.handle;
-	draftStatus.saveError = null;
-	// Page images the draft records but that could not be read back: every step
-	// after the upload works on them, so there is nothing to continue from until
-	// they are uploaded again.
-	const withoutImages = entries.imagePaths.length > 0 && images.length === 0;
-	draftStatus.resumeNotice = withoutImages
-		? 'The page images this setup committed are no longer in its repository. Please upload the images again.'
-		: null;
-	// Choosing pages needs the files they come from, so a setup left on that step
-	// is continued from the upload step, where they are picked again.
-	const step = entries.step === 'pages' || withoutImages ? 'upload' : entries.step;
-	wizard.step = stepIndex(step) < 0 ? 'name' : step;
+  const entries = draft.entries;
+  if (!entries) return;
+  wizard.handle = draft.handle;
+  wizard.claim = draft.claim ?? null;
+  wizard.title = entries.title;
+  wizard.description = entries.description;
+  wizard.license = entries.license;
+  wizard.iiifManifestUrl = entries.iiifManifestUrl;
+  wizard.copyrightAccepted = entries.copyrightAccepted;
+  wizard.repo = draft.repo;
+  // Fields added to SourceMetadata since a draft was stored default to empty.
+  wizard.source = { ...emptySourceMetadata(), ...entries.source };
+  wizard.pieces = entries.pieces.map((piece) => ({
+    ...piece,
+    meta: { ...emptySourceMetadata(), ...piece.meta },
+  }));
+  wizard.encodings = entries.encodings;
+  wizard.preparation = entries.preparation ?? "measure-detection";
+  wizard.images = images;
+  // Picked files are not part of a draft; the upload step collects them again.
+  // The candidate pages read from them go the same way.
+  wizard.files = [];
+  wizard.candidates = [];
+  wizard.uploadKey = "";
+  savedHandle = draft.handle;
+  draftStatus.saveError = null;
+  // Page images the draft records but that could not be read back: every step
+  // after the upload works on them, so there is nothing to continue from until
+  // they are uploaded again.
+  const withoutImages = entries.imagePaths.length > 0 && images.length === 0;
+  draftStatus.resumeNotice = withoutImages
+    ? "The page images this setup committed are no longer in its repository. Please upload the images again."
+    : null;
+  // Choosing pages needs the files they come from, so a setup left on that step
+  // is continued from the upload step, where they are picked again.
+  const step =
+    entries.step === "pages" || withoutImages ? "upload" : entries.step;
+  wizard.step = stepIndex(step) < 0 ? "name" : step;
+}
+
+/**
+ * Continue the setup stored under `handle`: read its record, read the page
+ * images it committed back from its repository, and put it into the wizard.
+ * The stored record decides what is continued, not a listing read earlier, since
+ * the setup may have been finished or discarded in another tab since. Throws
+ * with a message that names what went wrong.
+ */
+export async function resumeDraft(
+  client: ForgeClient | null,
+  handle: string,
+  onProgress: (done: number, total: number) => void,
+): Promise<void> {
+  const stored = readDraft(handle);
+  if (!stored)
+    throw new Error("it has since been finished or discarded in this browser");
+  const paths = stored.entries.imagePaths;
+  let images: PageImage[] = [];
+  if (stored.repo && paths.length) {
+    if (!client) throw new Error("you are no longer signed in");
+    try {
+      images = await fetchDraftImages(client, stored.repo, paths, onProgress);
+    } catch (err) {
+      // Pages that are not in the repository any more cannot be read back, but
+      // they can be uploaded again: applyDraft puts a setup without its images
+      // on the upload step.
+      if (!(err instanceof MissingDraftImageError)) throw err;
+      images = [];
+    }
+  }
+  applyDraft(stored, images);
 }
 
 /**
@@ -310,6 +374,6 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
  * setup again — saveDraft keeps nothing without a name.
  */
 export function clearFinishedSetup(): void {
-	discardDraft(wizard.handle.trim());
-	resetWizard();
+  discardDraft(wizard.handle.trim());
+  resetWizard();
 }

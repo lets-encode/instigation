@@ -12,10 +12,18 @@
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
-  import { claimName, lookupSlug, releaseClaim } from "$lib/campaign-resolve.ts";
+  import {
+    claimName,
+    lookupSlug,
+    releaseClaim,
+  } from "$lib/campaign-resolve.ts";
   import { readDraft } from "$lib/wizard-draft.ts";
   import { isValidHandle } from "$lib/campaign-handle.ts";
-  import { wizard, nextStep, MAX_DESCRIPTION_LENGTH } from "$lib/wizard.svelte.ts";
+  import {
+    wizard,
+    nextStep,
+    MAX_DESCRIPTION_LENGTH,
+  } from "$lib/wizard.svelte.ts";
   import type { RepoSummary } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
 
@@ -96,10 +104,10 @@
         // The slug registry is authoritative for the name, so check it too: a
         // name can be free on the user's GitHub yet already registered to
         // another repo, which would only surface as a 409 after the repo was
-        // created. A null slug means the registry couldn't be reached — treat
-        // that as "unknown" rather than falsely "available".
+        // created. A registry that can't be reached gives a null slug — treated
+        // as "unknown" rather than falsely "available".
         const [slug, exists] = await Promise.all([
-          lookupSlug(h),
+          lookupSlug(h).catch(() => null),
           repoExists(user.login, h, token),
         ]);
         if (seq !== handleCheckSeq) return;
@@ -178,7 +186,12 @@
   function adoptClaim() {
     const h = wizard.handle.trim();
     const draft = readDraft(h);
-    if (draft?.owner !== auth.user?.login || draft?.claim?.name !== h || draft?.repo) return;
+    if (
+      draft?.owner !== auth.user?.login ||
+      draft?.claim?.name !== h ||
+      draft?.repo
+    )
+      return;
     wizard.claim = draft.claim;
   }
 
@@ -216,14 +229,21 @@
       {#if handleCheck.state === "checking"}
         <span class="hint">Checking availability…</span>
       {:else if handleCheck.state === "held"}
-        <span class="hint hint-ok"><Icon name="check" size={12} /> Reserved for this campaign</span>
+        <span class="hint hint-ok"
+          ><Icon name="check" size={12} /> Reserved for this campaign</span
+        >
       {:else if handleCheck.state === "available"}
-        <span class="hint hint-ok"><Icon name="check" size={12} /> Available</span>
+        <span class="hint hint-ok"
+          ><Icon name="check" size={12} /> Available</span
+        >
       {:else if handleCheck.state === "taken"}
-        <span class="hint hint-err"><Icon name="close" size={12} /> Already used by {handleCheck.by}</span>
+        <span class="hint hint-err"
+          ><Icon name="close" size={12} /> Already used by {handleCheck.by}</span
+        >
       {:else if handleCheck.state === "draft"}
         <span class="hint hint-err">
-          <Icon name="close" size={12} /> Reserved by your unfinished setup of this campaign
+          <Icon name="close" size={12} /> Reserved by your unfinished setup of this
+          campaign
         </span>
         {#if handleCheck.resumable}
           <a class="hint" href="/campaigns">
@@ -294,8 +314,14 @@
 
     <!-- Continue submits the form, so this step draws its own footer. -->
     {#snippet footer()}
-      <button type="submit" class="btn btn-lg btn-primary" disabled={!canAdvance || claiming}>
-        {claiming ? "Reserving the name…" : "Continue"}{#if !claiming}<Icon name="arrow-right" />{/if}
+      <button
+        type="submit"
+        class="btn btn-lg btn-primary"
+        disabled={!canAdvance || claiming}
+      >
+        {claiming ? "Reserving the name…" : "Continue"}{#if !claiming}<Icon
+            name="arrow-right"
+          />{/if}
       </button>
     {/snippet}
   </WizardCard>

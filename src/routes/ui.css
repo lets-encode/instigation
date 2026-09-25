@@ -189,7 +189,7 @@ a.btn {
 
 /* A small pill control: view switchers, inline actions. `.on` marks the active
    one of a set. `.pill-sm` is the tighter size used inside dense cards. */
-.pill {
+button.pill {
   cursor: pointer;
   font: 12px var(--font);
   padding: 6px 16px;
@@ -199,21 +199,21 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: 999px;
 }
-.pill:hover:not(:disabled):not(.on) {
+button.pill:hover:not(:disabled):not(.on) {
   color: var(--accent);
   border-color: var(--accent);
 }
-.pill.on {
+button.pill.on {
   font-weight: 600;
   color: #fff;
   background: var(--accent-btn);
   border-color: var(--accent-btn);
 }
-.pill.pill-sm {
+button.pill.pill-sm {
   font-size: 11.5px;
   padding: 4px 11px;
 }
-.pill:disabled {
+button.pill:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -259,7 +259,8 @@ a.btn {
   background: var(--ok-bg);
   border: 1px solid var(--ok-line);
   border-radius: 999px;
-  padding: 3px 10px;
+  line-height: 1;
+  padding: 4px 10px;
   white-space: nowrap;
 }
 button.chip {
@@ -535,7 +536,10 @@ textarea.input {
   background: var(--card);
 }
 .material-toolbar .toolbar-name {
-  font: 11.5px ui-monospace, Menlo, monospace;
+  font:
+    11.5px ui-monospace,
+    Menlo,
+    monospace;
   color: var(--ink-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -573,7 +577,10 @@ textarea.input {
 }
 .material-grid .page-caption {
   text-align: center;
-  font: 10.5px ui-monospace, Menlo, monospace;
+  font:
+    10.5px ui-monospace,
+    Menlo,
+    monospace;
   color: var(--ink-faint);
 }
 

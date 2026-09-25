@@ -9,13 +9,20 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
-  import { meiFriendUrl } from "$lib/forge/config.ts";
+  import {
+    CommandRunner,
+    readForge,
+    viewerId,
+  } from "$lib/command-runner.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
-  import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
+  import {
+    resolveCampaign,
+    resolveFailureMessage,
+  } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
   import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
   import type {
@@ -26,7 +33,11 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import { preTaskRoute, statusPill } from "$lib/campaign-graph.ts";
+  import {
+    pageOfLocator,
+    preTaskRoute,
+    statusPill,
+  } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
@@ -73,7 +84,14 @@
 
   const board = $derived(
     buildBoard(
-      { taskDefs, rows, validationColumns, locks, passThreshold, allowSelfValidation },
+      {
+        taskDefs,
+        rows,
+        validationColumns,
+        locks,
+        passThreshold,
+        allowSelfValidation,
+      },
       comments,
       history,
       viewer,
@@ -87,11 +105,12 @@
   );
   const taskDef = $derived(findRow(taskDefs, taskId, ""));
   const fragment = $derived(taskDef?.fragment ?? "");
-  /** The page a per-page task opens at, 0-based. */
-  const startPage = $derived.by(() => {
-    const p = /^surface-(\d+)$/.exec(taskDef?.locator ?? "");
-    return p ? Number(p[1]) - 1 : 0;
+  /** The page a per-page task opens at, 0-based; null for a whole-piece task. */
+  const taskPage = $derived.by(() => {
+    const p = pageOfLocator(taskDef?.locator ?? "");
+    return p ? p - 1 : null;
   });
+  const startPage = $derived(taskPage ?? 0);
 
   // The score viewer, bound for the anchor jump and the fail-form prefill.
   let preview = $state<ReturnType<typeof ScorePreview>>();
@@ -135,7 +154,7 @@
   });
 
   const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo }, { meiFriendUrl });
+    runner.context(f, { repoId, owner, repo });
 
   // Read the tracking tables for the task's record, discussion and controls.
   // Only the first read shows the loading state; refreshes update in place.
@@ -182,7 +201,13 @@
   });
 
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolveError || resolving)
+    if (
+      auth.status === "loading" ||
+      resolved ||
+      notFound ||
+      resolveError ||
+      resolving
+    )
       return;
     resolving = true;
     const name = campaign;
@@ -211,13 +236,22 @@
   );
 
   // Run a command: show the busy overlay, capture its result banner, then
-  // refresh the tables.
-  async function run(command: (c: CommandContext) => Promise<Result>) {
+  // refresh the tables. A verdict or send-back returns to the campaign page,
+  // where its run state shows on the task.
+  async function run(
+    command: (c: CommandContext) => Promise<Result>,
+    opts: { overviewOnSuccess?: boolean } = {},
+  ) {
     const f = forge();
     if (!f) return;
     await runner.run(
       () => command(ctx(f)),
       async (result) => {
+        if (result.error) return;
+        if (opts.overviewOnSuccess) {
+          if (result.ok && !result.warn) await goto(`/${campaign}`);
+          return;
+        }
         // A background command changed nothing yet — the settle listener
         // refreshes when its verdict lands.
         if (result.background) return;
@@ -236,16 +270,20 @@
     verdict: string,
     comment?: FailComment,
   ) =>
-    run((c) =>
-      invoke(
-        commands.submitValidation,
-        { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
-        c,
-      ),
+    run(
+      (c) =>
+        invoke(
+          commands.submitValidation,
+          { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
+          c,
+        ),
+      { overviewOnSuccess: true },
     );
 
   const sendBackTask = (task_id: string) =>
-    run((c) => invoke(commands.sendBack, { task_id }, c));
+    run((c) => invoke(commands.sendBack, { task_id }, c), {
+      overviewOnSuccess: true,
+    });
 
   const postComment = (
     task_id: string,
@@ -275,7 +313,7 @@
 </script>
 
 <svelte:head>
-  <title>{card ? `Review · ${card.title}` : 'Review'} · Let's Encode!</title>
+  <title>{card ? `Review · ${card.title}` : "Review"} · Let's Encode!</title>
 </svelte:head>
 
 {#if runner.busy && runner.overlay}
@@ -293,11 +331,15 @@
       <span>
         {runner.result.error}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View submission <Icon name="external" size={12} /></a
+          >
         {/if}
       </span>
-      <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-        >Dismiss</button
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {:else if runner.result && runner.result.ok && !runner.result.background}
@@ -305,11 +347,15 @@
       <span>
         {runner.result.message}
         {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>
+          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
+            >View submission <Icon name="external" size={12} /></a
+          >
         {/if}
       </span>
-      <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-        >Dismiss</button
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
       >
     </div>
   {/if}
@@ -322,8 +368,10 @@
     <div class="msg banner err">
       <span>
         {resolveError}
-        <button type="button" class="linkish" onclick={() => (resolveError = null)}
-          >Try again</button
+        <button
+          type="button"
+          class="linkish"
+          onclick={() => (resolveError = null)}>Try again</button
         >
       </span>
     </div>
@@ -363,7 +411,7 @@
     </div>
   {:else}
     {#snippet reopenComments()}
-            <button
+      <button
         type="button"
         aria-pressed={commentsPanel.open}
         class="btn"
@@ -392,7 +440,7 @@
         <div class="tbstatus">
           <span class="pill s-{card.statusKey}">
             {card.statusKey === "validation_required"
-              ? `validation · ${card.passes} of ${card.threshold} passes`
+              ? `review · ${card.passes} of ${card.threshold} reviews`
               : statusPill(card.statusKey, card.pre)}
           </span>
         </div>
@@ -436,6 +484,7 @@
           {startPage}
           {anchor}
           initialPane="both"
+          initialView={taskPage === null ? null : "single"}
           onmeasureselect={(label) => (selectedMeasure = label)}
           trailing={reopenComments}
         />
@@ -563,7 +612,8 @@
     gap: 4px;
     font-weight: 600;
     font-size: 11px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
     border-radius: 999px;
     white-space: nowrap;
     background: var(--bg-alt);

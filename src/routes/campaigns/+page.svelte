@@ -16,11 +16,11 @@
     readForge,
     viewerId,
   } from "$lib/command-runner.svelte.ts";
-  import { provider, meiFriendUrl } from "$lib/forge/config.ts";
+  import { provider } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { elapsed } from "$lib/campaign-board.ts";
-  import { handle, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { handle, preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
   import {
     commentsOnMyWork,
     invalidateStats,
@@ -64,10 +64,14 @@
   // lands rather than waiting for the slowest repository.
   async function loadAll() {
     try {
-      const listing = await loadAllCampaignStats(readForge(), provider.repoTopic, {
-        onEach: (s) =>
-          (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
-      });
+      const listing = await loadAllCampaignStats(
+        readForge(),
+        provider.repoTopic,
+        {
+          onEach: (s) =>
+            (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
+        },
+      );
       listFailed = listing.failed;
       listFailureMessage = listing.failureMessage;
       listError = null;
@@ -102,7 +106,8 @@
           .flatMap((s) => commentsOnMyWork(s, viewer))
           .filter(
             (f) =>
-              (f.comment.kind === "question" || f.comment.kind === "addition") &&
+              (f.comment.kind === "question" ||
+                f.comment.kind === "addition") &&
               f.comment.resolved !== "true",
           )
           .sort(
@@ -135,11 +140,11 @@
   const runner = new CommandRunner();
 
   const ctxOf = (s: CampaignStats): CommandContext =>
-    runner.context(
-      readForge(),
-      { repoId: s.repoId, owner: s.owner, repo: s.repo },
-      { meiFriendUrl },
-    );
+    runner.context(readForge(), {
+      repoId: s.repoId,
+      owner: s.owner,
+      repo: s.repo,
+    });
 
   const ctxFor = (t: MyTask): CommandContext | null => {
     const s = stats.find((x) => x.name === t.campaignSlug);
@@ -198,7 +203,11 @@
 
   const openEditor = async (t: MyTask) => {
     await run(t, (c) => invoke(commands.openEditor, { task_id: t.task }, c));
-    if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+    if (
+      runner.result?.ok &&
+      !runner.result.warn &&
+      runner.result.meiFriendUrl
+    ) {
       window.open(runner.result.meiFriendUrl, "_blank", "noopener");
     }
   };
@@ -210,7 +219,7 @@
   // claim lands on the place the review happens.
   async function claimNext(s: CampaignStats, next: NextTask) {
     if (next.action === "encode" && next.pre) {
-      await goto(`/${s.name}/${preTaskRoute(next.locator)}/${next.task}`);
+      await goto(preTaskHref(s.name, next.locator, next.task));
       return;
     }
     const c = ctxOf(s);
@@ -223,7 +232,11 @@
         () => invoke(commands.openEditor, { task_id: next.task }, c),
         refresh,
       );
-      if (runner.result?.ok && !runner.result.warn && runner.result.meiFriendUrl) {
+      if (
+        runner.result?.ok &&
+        !runner.result.warn &&
+        runner.result.meiFriendUrl
+      ) {
         window.open(runner.result.meiFriendUrl, "_blank", "noopener");
       }
     } else if (next.action === "review") {
@@ -237,11 +250,7 @@
         refresh,
       );
       if (runner.result?.ok && !runner.result.warn) {
-        await goto(
-          next.pre
-            ? `/${s.name}/${preTaskRoute(next.locator)}/${next.task}`
-            : `/${s.name}/review/${next.task}`,
-        );
+        await goto(reviewHref(s.name, next.locator, next.task));
       }
     }
   }
@@ -297,7 +306,8 @@
   const filtered = $derived.by(() => {
     const list = stats.filter(matchesSearch).filter(matchesFilter);
     const ts = (v: string) => Date.parse(v || "0") || 0;
-    if (sort === "newest") list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    if (sort === "newest")
+      list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
     else if (sort === "progress")
       list.sort(
         (a, b) =>
@@ -351,7 +361,8 @@
   {#if auth.user && (fix.length > 0 || openComments.length > 0)}
     <section class="block">
       <h2 class="slabel danger">
-        <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your attention
+        <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your
+        attention
       </h2>
       <div class="rows">
         {#each fix as t (t.campaignSlug + t.task)}
@@ -365,7 +376,9 @@
               >
             {/if}
             <span class="spacer"></span>
-            <span class="golink red">Open task <Icon name="arrow-right" size={12} /></span>
+            <span class="golink red"
+              >Open task <Icon name="arrow-right" size={12} /></span
+            >
           </a>
         {/each}
         {#each openComments as f (f.comment.comment_id || f.comment.timestamp + f.task)}
@@ -379,7 +392,9 @@
                 .body}”</span
             >
             <span class="spacer"></span>
-            <span class="golink">Reply <Icon name="arrow-right" size={12} /></span>
+            <span class="golink"
+              >Reply <Icon name="arrow-right" size={12} /></span
+            >
           </a>
         {/each}
       </div>
@@ -391,7 +406,7 @@
       <div class="shead">
         <h2 class="slabel">Your open work</h2>
         <span class="smeta"
-          >{since ? `contributing since ${since} · ` : ""}{done.length} completed</span
+          >{since ? `contributing since ${since} · ` : ""}{done.length} done</span
         >
         <span class="spacer"></span>
         {#if done.length > 0}
@@ -399,7 +414,10 @@
             type="button"
             class="expander"
             onclick={() => (showCompleted = !showCompleted)}
-            >{done.length} completed <Icon name={showCompleted ? "chevron-down" : "chevron-right"} size={12} /></button
+            >{done.length} done <Icon
+              name={showCompleted ? "chevron-down" : "chevron-right"}
+              size={12}
+            /></button
           >
         {/if}
       </div>
@@ -407,9 +425,7 @@
         {#if listLoading && tasks.length === 0}
           <p class="note">Loading your claimed tasks…</p>
         {:else if encoding.length === 0 && validating.length === 0 && awaiting.length === 0 && fix.length === 0}
-          <p class="note">
-            No open work. Claim a task from a campaign below.
-          </p>
+          <p class="note">No open work. Claim a task from a campaign below.</p>
         {/if}
         {#each encoding as t (t.campaignSlug + t.task)}
           <div class="row">
@@ -425,7 +441,8 @@
               type="button"
               class="btn"
               disabled={runner.busy}
-              onclick={() => openEditor(t)}>Open editor <Icon name="external" /></button
+              onclick={() => openEditor(t)}
+              >Open editor <Icon name="external" /></button
             >
             <button
               type="button"
@@ -438,7 +455,7 @@
         {#each validating as t (t.campaignSlug + t.task)}
           <div class="row">
             <span class="rowtitle">{taskLine(t)}</span>
-            <span class="pill grey">validating</span>
+            <span class="pill grey">reviewing</span>
             <span class="rowmeta"
               >claimed {ago(t.claimedAt)}{expiresIn(t)
                 ? ` · ${expiresIn(t)}`
@@ -453,10 +470,12 @@
         {#each awaiting as t (t.campaignSlug + t.task)}
           <div class="row">
             <span class="rowtitle">{taskLine(t)}</span>
-            <span class="pill green">awaiting validation</span>
+            <span class="pill green">awaiting review</span>
             <span class="rowmeta"
-              >{t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}{t.passes}
-              of {t.threshold} passes</span
+              >{t.submittedAt
+                ? `submitted ${ago(t.submittedAt)} · `
+                : ""}{t.passes}
+              of {t.threshold} reviews</span
             >
             <span class="spacer"></span>
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
@@ -471,7 +490,7 @@
               <span class="rowtitle">{taskLine(t)}</span>
               <span class="spacer"></span>
               <span class="rowmeta"
-                >passed {t.passes} of {t.threshold}{t.submittedAt
+                >{t.passes} of {t.threshold} reviews{t.submittedAt
                   ? ` · ${ago(t.submittedAt)}`
                   : ""}</span
               >
@@ -556,14 +575,14 @@
             more,
           ) === 1
             ? ""
-            : "s"} <Icon name="chevron-down" size={12} /></button
+            : "s"}
+          <Icon name="chevron-down" size={12} /></button
         >
       {/if}
     {/if}
     {#if !listError && listFailed > 0}
       <p class="note partial">
-        {listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded
-        — {listFailureMessage}
+        {listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded — {listFailureMessage}
       </p>
     {/if}
     {#if !auth.user && auth.status === "anonymous"}
@@ -668,10 +687,16 @@
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 10px 16px;
+    padding: 6px 16px;
+    min-height: 42px;
+    box-sizing: border-box;
     color: inherit;
     text-decoration: none;
     min-width: 0;
+  }
+  .row .btn {
+    min-height: 0;
+    padding: 4px 10px;
   }
   a.row:hover {
     border-color: var(--info-line);
@@ -721,7 +746,8 @@
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 9px;
+    line-height: 1;
+    padding: 3px 9px;
     white-space: nowrap;
   }
   .pill.red {
@@ -828,7 +854,8 @@
     color: var(--ink-soft);
     background: var(--bg-tint);
     border-radius: 999px;
-    padding: 1px 8px;
+    line-height: 1;
+    padding: 3px 8px;
   }
   .shelf {
     display: flex;

@@ -21,7 +21,7 @@
   --bg-alt: #eef1f7;
   --bg-tint: #e6eaf3;
   --card: #ffffff;
-  --topbar-bg: rgba(255, 255, 255, .78);
+  --topbar-bg: rgba(255, 255, 255, 0.78);
 
   --accent: #1b66c7;
   --link: #1b66c7;
@@ -47,13 +47,15 @@
   --page-max: 1600px;
   /* The page-glow pair: radial washes of the blue and green hands, painted
      over --bg-alt on full-bleed canvases. */
-  --glow-blue: rgba(109, 195, 255, .38);
-  --glow-green: rgba(118, 222, 118, .30);
-  --shadow: 0 1px 2px rgba(31, 36, 51, .06), 0 12px 30px rgba(31, 36, 51, .13);
+  --glow-blue: rgba(109, 195, 255, 0.38);
+  --glow-green: rgba(118, 222, 118, 0.3);
+  --shadow:
+    0 1px 2px rgba(31, 36, 51, 0.06), 0 12px 30px rgba(31, 36, 51, 0.13);
   /* Recessed surfaces sink; pairs with --bg-inset / --desk. */
-  --shadow-inset: inset 0 1px 4px rgba(31, 36, 51, .11);
+  --shadow-inset: inset 0 1px 4px rgba(31, 36, 51, 0.11);
 
-  --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font:
+    "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
 
   /* Facsimile / PDF page images always sit on white paper, in both themes, so
      scanned scores keep their true contrast (decision: theme port). */
@@ -122,12 +124,12 @@
   /* Text on a filled accent surface. */
   --invert-ink: #ffffff;
   /* Covers the page while a modal action runs. */
-  --scrim: rgba(249, 250, 254, .72);
+  --scrim: rgba(249, 250, 254, 0.72);
 
-  --shadow-sm: 0 1px 3px rgba(31, 36, 51, .08);
-  --shadow-md: 0 2px 8px rgba(31, 36, 51, .14);
+  --shadow-sm: 0 1px 3px rgba(31, 36, 51, 0.08);
+  --shadow-md: 0 2px 8px rgba(31, 36, 51, 0.14);
   /* For a shadow whose geometry is the rule's own. */
-  --shade: rgba(31, 36, 51, .16);
+  --shade: rgba(31, 36, 51, 0.16);
 
   /* Piece / zone colours for the region editors, rails, mosaics and piece
      tints. Each piece is drawn in a distinct hue; --zone-N is the stroke/label
@@ -143,7 +145,7 @@
   --zone-6: #74749f;
   --zone-7: #748c50;
   --zone-8: #a08a52;
-  --zone-fill-alpha: .18;
+  --zone-fill-alpha: 0.18;
 }
 
 /* Dark theme. Applied via [data-theme="dark"] on <html>, which an inline head
@@ -162,7 +164,7 @@
   --bg-alt: #131726;
   --bg-tint: #212739;
   --card: #1b1f2f;
-  --topbar-bg: rgba(16, 19, 30, .9);
+  --topbar-bg: rgba(16, 19, 30, 0.9);
 
   --accent: #7ecafd;
   --link: #7ecafd;
@@ -178,51 +180,51 @@
   /* One step below --bg-alt; the inset shadow carries the recession. */
   --bg-inset: #101423;
 
-  --glow-blue: rgba(109, 195, 255, .16);
-  --glow-green: rgba(118, 222, 118, .13);
+  --glow-blue: rgba(109, 195, 255, 0.16);
+  --glow-green: rgba(118, 222, 118, 0.13);
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 12px 32px rgba(0, 0, 0, .5);
-  --shadow-inset: inset 0 1px 5px rgba(0, 0, 0, .55);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, .45);
-  --shade: rgba(0, 0, 0, .5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-inset: inset 0 1px 5px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shade: rgba(0, 0, 0, 0.5);
 
   --ok: #76de76;
-  --ok-bg: rgba(118, 222, 118, .16);
+  --ok-bg: rgba(118, 222, 118, 0.16);
   --ok-line: #3a7350;
   --ok-solid: #26794a;
-  --ok-wash: rgba(118, 222, 118, .07);
+  --ok-wash: rgba(118, 222, 118, 0.07);
   --warn: #ffa76d;
-  --warn-bg: rgba(255, 167, 109, .17);
+  --warn-bg: rgba(255, 167, 109, 0.17);
   --warn-line: #6e5530;
-  --warn-wash: rgba(255, 167, 109, .07);
+  --warn-wash: rgba(255, 167, 109, 0.07);
   /* Solid badges darken on dark — a bright fill under white text glares. */
   --warn-solid: #a8672e;
   --warn-btn-hover: #8d5526;
   --danger: #f2765e;
-  --danger-bg: rgba(242, 118, 94, .2);
-  --danger-line: rgba(242, 118, 94, .45);
+  --danger-bg: rgba(242, 118, 94, 0.2);
+  --danger-line: rgba(242, 118, 94, 0.45);
   --danger-solid: #c8452f;
-  --danger-wash: rgba(242, 118, 94, .08);
+  --danger-wash: rgba(242, 118, 94, 0.08);
   --info: #7ecafd;
-  --info-bg: rgba(126, 202, 253, .18);
+  --info-bg: rgba(126, 202, 253, 0.18);
   --info-line: #46689a;
   --info-solid: #2a72c8;
   --pre: #b899dd;
   --pre-btn: #8360b0;
   --pre-btn-hover: #7454a0;
-  --pre-wash: rgba(184, 153, 221, .1);
+  --pre-wash: rgba(184, 153, 221, 0.1);
   --pre-solid: #7f5ba6;
   --owner: #ffa76d;
-  --owner-bg: rgba(255, 167, 109, .15);
+  --owner-bg: rgba(255, 167, 109, 0.15);
   --owner-line: #6e5530;
-  --owner-track: rgba(255, 167, 109, .26);
+  --owner-track: rgba(255, 167, 109, 0.26);
   --desk: #101423;
 
-  --accent-tint: rgba(126, 202, 253, .07);
-  --accent-tint-strong: rgba(126, 202, 253, .16);
-  --accent-line: rgba(126, 202, 253, .3);
-  --accent-line-strong: rgba(126, 202, 253, .55);
+  --accent-tint: rgba(126, 202, 253, 0.07);
+  --accent-tint-strong: rgba(126, 202, 253, 0.16);
+  --accent-line: rgba(126, 202, 253, 0.3);
+  --accent-line-strong: rgba(126, 202, 253, 0.55);
 
   --line-strong: #3c455e;
   /* Page scans stay light — they are paper — but warmed a step so they do not
@@ -231,7 +233,7 @@
 
   --mat: #272c3e;
   --invert-ink: #131828;
-  --scrim: rgba(12, 14, 23, .66);
+  --scrim: rgba(12, 14, 23, 0.66);
 
   /* Lighter muted piece hues, so regions and tints read on the dark canvas. */
   --zone-1: #8ea8d0;
@@ -242,5 +244,5 @@
   --zone-6: #a8a8cf;
   --zone-7: #a9bd8c;
   --zone-8: #cdb88a;
-  --zone-fill-alpha: .24;
+  --zone-fill-alpha: 0.24;
 }

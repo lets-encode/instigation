@@ -59,7 +59,9 @@
   const railStatus = $derived.by(() => {
     const parts: string[] = [];
     if (wizard.files.length)
-      parts.push(`${wizard.files.length} file${wizard.files.length === 1 ? "" : "s"} added`);
+      parts.push(
+        `${wizard.files.length} file${wizard.files.length === 1 ? "" : "s"} added`,
+      );
     if (manifestUrl) parts.push("IIIF manifest");
     return parts.join(" · ") || "adding material";
   });

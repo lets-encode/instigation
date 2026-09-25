@@ -1,0 +1,26 @@
+#!/bin/sh
+# Rejects a commit whose staged files are not formatted (Prettier for the app,
+# Black for the broker). `npm run format` fixes them.
+# Enabled by `git config core.hooksPath .githooks`.
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+status=0
+
+web=$(printf '%s\n' "$staged" | grep -E '\.(ts|js|mjs|cjs|svelte|json|css|md|yml|yaml)$')
+if [ -n "$web" ]; then
+  printf '%s\n' "$web" | xargs npx prettier --check --ignore-unknown --log-level warn || status=1
+fi
+
+py=$(printf '%s\n' "$staged" | grep -E '^broker/.*\.py$')
+if [ -n "$py" ]; then
+  if [ -x broker/.venv/bin/black ]; then
+    printf '%s\n' "$py" | xargs broker/.venv/bin/black --check || status=1
+  else
+    echo "pre-commit: Black is not installed; run: uv pip install --python broker/.venv/bin/python -r broker/requirements-dev.txt"
+    status=1
+  fi
+fi
+
+[ $status -ne 0 ] && echo "pre-commit: unformatted files; run npm run format"
+exit $status

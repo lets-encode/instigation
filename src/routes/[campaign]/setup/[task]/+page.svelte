@@ -5,22 +5,58 @@
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
-  import type { CommandContext, Result, FacsimileTaskData, CampaignTables } from "$lib/commands.ts";
+  import type {
+    CommandContext,
+    Result,
+    FacsimileTaskData,
+    CampaignTables,
+  } from "$lib/commands.ts";
   import { handle } from "$lib/campaign-graph.ts";
   import { elapsed } from "$lib/campaign-board.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
-  import { buildBlankScoreMei } from "$lib/mei-facsimile.ts";
-  import type { ScoreDefModel, StaffModel, StaffGroupModel } from "$lib/mei-facsimile.ts";
+  import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
+  import type {
+    MeasureBox,
+    ScoreDefModel,
+    StaffModel,
+    StaffGroupModel,
+  } from "$lib/mei-facsimile.ts";
+  import { createOmrClient } from "$lib/omr-client.ts";
+  import { pageSystems, staffCountOf } from "$lib/omr-layout.ts";
+  import {
+    clefStaff,
+    clefToken,
+    proposeScoreDef,
+    staffClefToken,
+  } from "$lib/omr-musicxml.ts";
+  import { openingClefs, pieceStaves } from "$lib/omr-timeline.ts";
+  import { suggestStaffAssignment } from "$lib/omr-staff-assign.ts";
+  import {
+    omrRecordPath,
+    parseOmrRecord,
+    serializeOmrRecord,
+  } from "$lib/omr-record.ts";
+  import type { OmrRecord } from "$lib/omr-record.ts";
+  import { recognisePiece } from "$lib/omr-piece-recognition.ts";
+  import type { PieceRecognition } from "$lib/omr-piece-recognition.ts";
+  import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import { CommandRunner, readForge, viewerId } from "$lib/command-runner.svelte.ts";
+  import {
+    CommandRunner,
+    readForge,
+    viewerId,
+  } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { resolveCampaign, resolveFailureMessage } from "$lib/campaign-resolve.ts";
+  import {
+    resolveCampaign,
+    resolveFailureMessage,
+  } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
@@ -45,15 +81,87 @@
   // A modern (guitar) tablature staff shows the TAB lettering as its clef;
   // the lute kinds carry no clef.
   const CLEF_OPTIONS = [
-    { value: "G", label: "G (treble)", clefShape: "G", clefDis: "", notationType: "", clefLine: 2, lines: 5 },
-    { value: "G8", label: "G, octave down", clefShape: "G", clefDis: "8", notationType: "", clefLine: 2, lines: 5 },
-    { value: "F", label: "F (bass)", clefShape: "F", clefDis: "", notationType: "", clefLine: 4, lines: 5 },
-    { value: "C", label: "C (alto, tenor)", clefShape: "C", clefDis: "", notationType: "", clefLine: 3, lines: 5 },
-    { value: "perc", label: "Percussion", clefShape: "perc", clefDis: "", notationType: "", clefLine: 3, lines: 5 },
-    { value: "TAB", label: "Tablature, modern", clefShape: "TAB", clefDis: "", notationType: "tab.guitar", clefLine: 3, lines: 6 },
-    { value: "TABfr", label: "Tablature, French", clefShape: "TAB", clefDis: "", notationType: "tab.lute.french", clefLine: 3, lines: 6 },
-    { value: "TABit", label: "Tablature, Italian", clefShape: "TAB", clefDis: "", notationType: "tab.lute.italian", clefLine: 3, lines: 6 },
-    { value: "TABde", label: "Tablature, German", clefShape: "TAB", clefDis: "", notationType: "tab.lute.german", clefLine: 3, lines: 6 },
+    {
+      value: "G",
+      label: "G (treble)",
+      clefShape: "G",
+      clefDis: "",
+      notationType: "",
+      clefLine: 2,
+      lines: 5,
+    },
+    {
+      value: "G8",
+      label: "G, octave down",
+      clefShape: "G",
+      clefDis: "8",
+      notationType: "",
+      clefLine: 2,
+      lines: 5,
+    },
+    {
+      value: "F",
+      label: "F (bass)",
+      clefShape: "F",
+      clefDis: "",
+      notationType: "",
+      clefLine: 4,
+      lines: 5,
+    },
+    {
+      value: "C",
+      label: "C (alto, tenor)",
+      clefShape: "C",
+      clefDis: "",
+      notationType: "",
+      clefLine: 3,
+      lines: 5,
+    },
+    {
+      value: "perc",
+      label: "Percussion",
+      clefShape: "perc",
+      clefDis: "",
+      notationType: "",
+      clefLine: 3,
+      lines: 5,
+    },
+    {
+      value: "TAB",
+      label: "Tablature, modern",
+      clefShape: "TAB",
+      clefDis: "",
+      notationType: "tab.guitar",
+      clefLine: 3,
+      lines: 6,
+    },
+    {
+      value: "TABfr",
+      label: "Tablature, French",
+      clefShape: "TAB",
+      clefDis: "",
+      notationType: "tab.lute.french",
+      clefLine: 3,
+      lines: 6,
+    },
+    {
+      value: "TABit",
+      label: "Tablature, Italian",
+      clefShape: "TAB",
+      clefDis: "",
+      notationType: "tab.lute.italian",
+      clefLine: 3,
+      lines: 6,
+    },
+    {
+      value: "TABde",
+      label: "Tablature, German",
+      clefShape: "TAB",
+      clefDis: "",
+      notationType: "tab.lute.german",
+      clefLine: 3,
+      lines: 6,
+    },
   ] as const;
   // The option behind a staff's stored values; an unlisted combination falls
   // back to its shape.
@@ -110,9 +218,14 @@
 
   const runner = new CommandRunner();
 
-  const canEdit = $derived(
+  const holds = $derived(
     Boolean(data?.holdsLock) && data?.status === "encoding_required",
   );
+  // The submission runs in the background; the form holds until its verdict
+  // lands, since a repeat would only be rejected.
+  const submitting = $derived(pendingVerdicts.isProcessing(`encode:${taskId}`));
+  const canEdit = $derived(holds && !submitting);
+  const busy = $derived(runner.busy || submitting);
 
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
@@ -143,8 +256,13 @@
     groups: groups.map((g) => ({ ...g, label: g.label.trim() })),
     keysig,
     meterCount:
-      meterType === "numeric" ? meterCount.trim() : meterType === "cut" ? "2" : "4",
-    meterUnit: meterType === "numeric" ? meterUnit : meterType === "cut" ? "2" : "4",
+      meterType === "numeric"
+        ? meterCount.trim()
+        : meterType === "cut"
+          ? "2"
+          : "4",
+    meterUnit:
+      meterType === "numeric" ? meterUnit : meterType === "cut" ? "2" : "4",
     meterSym: meterType === "numeric" ? "" : meterType,
   });
 
@@ -169,11 +287,25 @@
       groups = d.model.scoreDef.groups.map((g) => ({ ...g }));
       keysig = d.model.scoreDef.keysig;
       meterType =
-        d.model.scoreDef.meterSym === "" ? "numeric" : (d.model.scoreDef.meterSym as "common" | "cut");
+        d.model.scoreDef.meterSym === ""
+          ? "numeric"
+          : (d.model.scoreDef.meterSym as "common" | "cut");
       meterCount = d.model.scoreDef.meterCount;
       meterUnit = d.model.scoreDef.meterUnit;
+      // An OMR-prepared piece still at the default definition opens with the
+      // staff count its layout has; the clefs, key and meter follow from the
+      // recognition once the task is held.
+      unset =
+        JSON.stringify(d.model.scoreDef) === JSON.stringify(DEFAULT_SCORE_DEF);
+      if (d.preparation === "omr" && unset) {
+        staves = Array.from(
+          { length: staffCountOf(d.model.pages) },
+          plainStaff,
+        );
+      }
     } catch (e) {
-      if (!stale()) loadError = `Could not load ${task}: ${(e as Error).message}`;
+      if (!stale())
+        loadError = `Could not load ${task}: ${(e as Error).message}`;
     } finally {
       if (!stale()) loading = false;
     }
@@ -199,7 +331,13 @@
   // Resolve the campaign name to its repo first; the load effect is gated on
   // `owner`/`repo` so it waits for this.
   $effect(() => {
-    if (auth.status === "loading" || resolved || notFound || resolveError || resolving)
+    if (
+      auth.status === "loading" ||
+      resolved ||
+      notFound ||
+      resolveError ||
+      resolving
+    )
       return;
     resolving = true;
     // A result for a name the page has since navigated away from is dropped.
@@ -252,8 +390,25 @@
     );
   }
 
-  const claim = () =>
-    run((c) => invoke(commands.claimTask, { task_id: taskId }, c));
+  // A claim of an OMR piece's setup task continues into the piece's
+  // recognition in the same overlay: one step list, one Continue.
+  async function claim() {
+    const f = forge();
+    if (!f) return;
+    await runner.run(async () => {
+      const result = await invoke(
+        commands.claimTask,
+        { task_id: taskId },
+        ctx(f),
+      );
+      if (result.error) return result;
+      runner.log.step("Reloading…");
+      await load();
+      if (!data || !(omr && canEdit)) return result;
+      recognisedFor = taskId;
+      return recognitionSteps(f, data);
+    });
+  }
 
   // Opening the editor claims the task, the same way opening a score in
   // mei-friend does — a read-only look is served by the console's score
@@ -284,7 +439,9 @@
   // controls hold until it lands — a repeat would only be rejected.
   const verdictPending = $derived(
     !!validation &&
-      pendingVerdicts.isProcessing(`validate:${taskId}/${validation.subtask_id}`),
+      pendingVerdicts.isProcessing(
+        `validate:${taskId}/${validation.subtask_id}`,
+      ),
   );
   // A settled background verdict changed the tables; reload the read-only
   // view so it shows the recorded state. An edit session only refreshes the
@@ -307,7 +464,10 @@
     viewer !== "" && validation?.lockUser === viewer,
   );
   const selfValidation = $derived(
-    !!data && data.encoder !== "" && data.encoder === viewer && !data.allowSelfValidation,
+    !!data &&
+      data.encoder !== "" &&
+      data.encoder === viewer &&
+      !data.allowSelfValidation,
   );
   // One verdict per person: a validator who already recorded pass/fail here
   // cannot claim another slot (matching the campaign automation's rule).
@@ -418,8 +578,10 @@
   let logins = $state<Record<string, string>>({});
   $effect(() => {
     const ids = new Set<string>();
-    for (const v of data?.validation?.verdicts ?? []) if (v.user) ids.add(v.user);
-    for (const c of data?.failComments ?? []) if (c.author_id) ids.add(c.author_id);
+    for (const v of data?.validation?.verdicts ?? [])
+      if (v.user) ids.add(v.user);
+    for (const c of data?.failComments ?? [])
+      if (c.author_id) ids.add(c.author_id);
     if (data?.encodingLockUser) ids.add(data.encodingLockUser);
     for (const id of ids) {
       if (logins[id]) continue;
@@ -490,28 +652,279 @@
 
   const submit = () =>
     run(
-      (c) => invoke(commands.submitScoreSetup, { task_id: taskId, scoreDef }, c),
+      (c) =>
+        invoke(
+          commands.submitScoreSetup,
+          {
+            task_id: taskId,
+            scoreDef,
+            ...(omr && recognition
+              ? {
+                  omr: serializeOmrRecord(
+                    withClefCorrections(recognition.record),
+                  ),
+                }
+              : {}),
+          },
+          c,
+        ),
       { overviewOnSuccess: true },
     );
 
+  // ------------------------------------------------------------------------
+  // Recognition (OMR-prepared pieces)
+  //
+  // When the claim holder opens the task, every staff box of the piece is
+  // transcribed and its instrument label read; the record goes into the
+  // submission as `omr.xml`, which the page drafts are made from. Staves the
+  // head's record or this browser already holds are not transcribed again.
+  //
+  // A definition still at the default is filled in from the record. The
+  // staff count starts from the layout correction. Each staff's clef is the
+  // one it opens with where it first appears (a first system may leave a
+  // staff out, a resting voice above a piano introduction), placed by the
+  // system with the most staves; key and meter come from the piece's first
+  // system, where signatures are printed. A clef submitted other than the
+  // one read is recorded as a correction: the page drafts then read that
+  // staff in the submitted clef until the model reads a real change. The instrument
+  // labels are those read in front of the first system, where they are
+  // usually written out, and in front of the fullest system for a staff the
+  // first leaves out; a staff that already has a label keeps it. Groups are
+  // not recognised. The count stays editable until the piece holds notation,
+  // since the setup submission rebuilds empty measures for it until then.
+  const omr = $derived(data?.preparation === "omr");
+  // Whether the file still carries the default definition (set on load).
+  let unset = $state(false);
+  let recognition = $state<PieceRecognition | null>(null);
+  let recognisedFor = $state<string | null>(null);
+  $effect(() => {
+    void taskId;
+    recognition = null;
+  });
+
+  /** Clef tokens of the form's staves for placing the boxes. */
+  const formParts = () =>
+    staves.map((s) => ({
+      clef:
+        s.clefShape === "perc" || s.clefShape === "TAB"
+          ? s.clefShape
+          : `${s.clefShape}${s.clefLine}`,
+      label: s.label.trim(),
+    }));
+  const pitched = (token: string) => /^[GFC]\d/.test(token);
+  /**
+   * The record with a clef correction for each staff submitted in another
+   * clef than it opens with in the recognition, the boxes placed on the
+   * form's staves as the page drafts will place them.
+   */
+  function withClefCorrections(record: OmrRecord): OmrRecord {
+    const readClefs = data
+      ? openingClefs(
+          pieceStaves(data.model, { ...record, clefs: [] }, formParts()),
+          staves.length,
+        )
+      : [];
+    const clefs = staves.flatMap((staff, i) => {
+      const read = readClefs[i];
+      const corrected = staffClefToken(staff);
+      return read && read !== corrected && pitched(read) && pitched(corrected)
+        ? [{ staff: i + 1, read, corrected }]
+        : [];
+    });
+    return { ...record, clefs };
+  }
+  $effect(() => {
+    if (omr && canEdit && data && !runner.busy && recognisedFor !== taskId) {
+      recognisedFor = taskId;
+      recognise();
+    }
+  });
+
+  function applyProposal(proposal: ScoreDefModel) {
+    // A clef per staff the layout has; a staff beyond the recognised system
+    // keeps its own. Labels stay.
+    staves = staves.map((s, i) =>
+      proposal.staves[i] ? { ...proposal.staves[i], label: s.label } : s,
+    );
+    keysig = proposal.keysig;
+    meterType =
+      proposal.meterSym === ""
+        ? "numeric"
+        : (proposal.meterSym as "common" | "cut");
+    meterCount = proposal.meterCount;
+    meterUnit = proposal.meterUnit;
+  }
+
+  async function recognise() {
+    const f = forge();
+    if (!f || !data) return;
+    const d = data;
+    await runner.run(() => recognitionSteps(f, d));
+  }
+
+  /** The definition proposed from a record, and the labels it reads; a note says what was used. */
+  function proposalFrom(
+    d: FacsimileTaskData,
+    record: OmrRecord,
+  ): { note: string } {
+    type System = { p: number; index: number; staves: MeasureBox[] };
+    let first: System | null = null;
+    let fullest: System | null = null;
+    for (const [p, pg] of d.model.pages.entries()) {
+      for (const [index, system] of pageSystems(pg).systems.entries()) {
+        if (!system.length) continue;
+        first ??= { p, index, staves: system };
+        if (!fullest || system.length > fullest.staves.length)
+          fullest = { p, index, staves: system };
+      }
+    }
+    if (!first || !fullest)
+      throw new Error("the layout has no system with staves.");
+    const same = first.p === fullest.p && first.index === fullest.index;
+    const entriesOf = (system: System) =>
+      system.staves.map((box) => {
+        const zone = `staff-zone-${system.p + 1}-${d.model.pages[system.p].staves!.indexOf(box) + 1}`;
+        return (
+          record.pages
+            .find((pg) => pg.n === system.p + 1)
+            ?.staves.find((e) => e.zone === zone) ?? null
+        );
+      });
+    const fullestEntries = entriesOf(fullest);
+    const firstEntries = same ? fullestEntries : entriesOf(first);
+    const fullestXmls = fullestEntries.map((e) => e?.musicxml ?? null);
+    const firstXmls = firstEntries.map((e) => e?.musicxml ?? null);
+    const proposal = proposeScoreDef(fullestXmls, same ? [] : firstXmls);
+    // Each staff opens in the clef of its first appearance, placed by the fullest system's clefs.
+    const placedBy = proposal.staves.map((staff) => ({
+      clef:
+        staff.clefShape === "perc" || staff.clefShape === "TAB"
+          ? staff.clefShape
+          : `${staff.clefShape}${staff.clefLine}`,
+      label: "",
+    }));
+    openingClefs(
+      pieceStaves(d.model, { ...record, clefs: [] }, placedBy),
+      proposal.staves.length,
+    ).forEach((token, i) => {
+      if (token)
+        proposal.staves[i] = { ...proposal.staves[i], ...clefStaff(token) };
+    });
+    applyProposal(proposal);
+
+    // The fullest system shows every staff of the definition, in order.
+    const read = fullestEntries.map((e) => e?.label ?? "");
+    if (!same) {
+      const token = (staff: StaffModel) =>
+        staff.clefShape === "perc" || staff.clefShape === "TAB"
+          ? staff.clefShape
+          : `${staff.clefShape}${staff.clefLine}`;
+      const onFirst = suggestStaffAssignment(
+        first.staves.map((box, i) => ({
+          box,
+          clef: clefToken(firstXmls[i]),
+          label: "",
+        })),
+        proposal.staves.map((staff) => ({ clef: token(staff), label: "" })),
+        fullest.staves,
+      );
+      onFirst.forEach((n, i) => {
+        const label = firstEntries[i]?.label;
+        if (n > 0 && label) read[n - 1] = label;
+      });
+    }
+    let filled = 0;
+    staves = staves.map((staff, i) => {
+      if (staff.label.trim() || !read[i]) return staff;
+      filled++;
+      return { ...staff, label: read[i] };
+    });
+    const clefs = proposal.staves
+      .map(
+        (s) =>
+          `${s.clefShape}${s.clefLine}${s.clefDis ? ` ${s.clefDis}${s.clefDisPlace === "below" ? "vb" : "va"}` : ""}`,
+      )
+      .join(", ");
+    const meter =
+      proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
+    return {
+      note:
+        ` Filled in: clefs ${clefs}, each where its staff first appears; key signature ${proposal.keysig} and meter ${meter} from the first system; instrument labels for ${filled} of ${staves.length} staves.` +
+        " Check the values, then submit.",
+    };
+  }
+
+  // The recognition steps, logged to the running command's overlay.
+  async function recognitionSteps(
+    f: ForgeClient,
+    d: FacsimileTaskData,
+  ): Promise<Result> {
+    const client = createOmrClient(provider.brokerUrl);
+    // A run finishing after the page moved to another task is dropped.
+    const task = taskId;
+    try {
+      runner.log.step("Reading the recognition record");
+      const existing =
+        recognition?.record ??
+        parseOmrRecord(
+          await f.getRepoFile(owner, repo, omrRecordPath(d.fragment)),
+        );
+      const result = await recognisePiece({
+        forge: f,
+        client,
+        owner,
+        repo,
+        repoId,
+        fragment: d.fragment,
+        pages: d.model.pages,
+        existing,
+        pipeline: omrModels.staffPipeline,
+        progress: (step) => runner.log.step(step),
+      });
+      if (task !== taskId)
+        return {
+          error: "The recognition finished after another task was opened.",
+        };
+      recognition = result;
+      const total = result.record.pages.reduce(
+        (n, pg) => n + pg.staves.length,
+        0,
+      );
+      const failed = result.failed.length
+        ? ` ${result.failed.length} of ${total} staves could not be transcribed (${result.failed
+            .map((s) => `page ${s.page}, staff ${s.staff}`)
+            .join("; ")}); use “Transcribe failed staves again”.`
+        : "";
+      const labels = result.labelErrors.length
+        ? ` The instrument labels could not be read on page${result.labelErrors.length === 1 ? "" : "s"} ${result.labelErrors.map((e) => e.page).join(", ")} (${result.labelErrors[0].error}).`
+        : "";
+      const filled = unset ? proposalFrom(d, result.record).note : "";
+      unset = false;
+      return {
+        ok: true,
+        warn: result.failed.length > 0 || result.labelErrors.length > 0,
+        message: `${total - result.failed.length} of ${total} staves are transcribed.${failed}${labels}${filled}`,
+      };
+    } catch (e) {
+      return { error: `Recognition failed: ${(e as Error).message}` };
+    }
+  }
 
   // ------------------------------------------------------------------------
   // The form
 
+  const plainStaff = (): StaffModel => ({
+    clefShape: "G",
+    clefLine: 2,
+    clefDis: "",
+    clefDisPlace: "",
+    lines: 5,
+    notationType: "",
+    label: "",
+  });
   function addStaff() {
     if (staves.length >= MAX_STAVES) return;
-    staves = [
-      ...staves,
-      {
-        clefShape: "G",
-        clefLine: 2,
-        clefDis: "",
-        clefDisPlace: "",
-        lines: 5,
-        notationType: "",
-        label: "",
-      },
-    ];
+    staves = [...staves, plainStaff()];
   }
   function addGroup() {
     groups = [
@@ -561,7 +974,8 @@
     getVerovio()
       .then((tk) => {
         if (dropped) return;
-        if (!loadSnippet(tk, mei)) throw new Error("the score could not be rendered.");
+        if (!loadSnippet(tk, mei))
+          throw new Error("the score could not be rendered.");
         previewSvg = renderPage(tk, 1);
         previewError = "";
       })
@@ -591,8 +1005,10 @@
       <div class="banner err">
         <span>
           {resolveError}
-          <button type="button" class="linkish" onclick={() => (resolveError = null)}
-            >Try again</button
+          <button
+            type="button"
+            class="linkish"
+            onclick={() => (resolveError = null)}>Try again</button
           >
         </span>
       </div>
@@ -612,7 +1028,9 @@
     <div class="deskwrap">
       <div class="banner warn">
         <span>
-          Please <button type="button" class="linkish" onclick={() => login()}>log in with GitHub</button>
+          Please <button type="button" class="linkish" onclick={() => login()}
+            >log in with GitHub</button
+          >
           to work on this task.
         </span>
       </div>
@@ -624,7 +1042,9 @@
       <div class="banner err">
         <span>
           {loadError}
-          <button type="button" class="linkish" onclick={() => load()}>Try again</button>
+          <button type="button" class="linkish" onclick={() => load()}
+            >Try again</button
+          >
         </span>
       </div>
     </div>
@@ -634,14 +1054,24 @@
         <div class="banner err bar">
           <span>
             {runner.result.error}
-            {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
+            {#if runner.result.prUrl}<a
+                href={runner.result.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                >View submission <Icon name="external" size={12} /></a
+              >{/if}
           </span>
         </div>
       {:else if runner.result && runner.result.ok && !runner.result.background}
         <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
           <span>
             {runner.result.message}
-            {#if runner.result.prUrl}<a href={runner.result.prUrl} target="_blank" rel="noreferrer">View submission <Icon name="external" size={12} /></a>{/if}
+            {#if runner.result.prUrl}<a
+                href={runner.result.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                >View submission <Icon name="external" size={12} /></a
+              >{/if}
           </span>
         </div>
       {/if}
@@ -649,250 +1079,268 @@
 
       <div class="desk">
         <div class="formcol">
-        <form class="setup" onsubmit={(e) => e.preventDefault()}>
-          <fieldset disabled={!canEdit}>
-            <p class="grouphead">Staves</p>
-            <ol class="staves">
-              {#each staves as staff, i (i)}
-                <li class="staffrow">
-                  <span class="staffno">{i + 1}</span>
-                  <label class="field">
-                    <span>Clef</span>
-                    <select
-                      value={clefKey(staff)}
-                      onchange={(e) =>
-                        setClef(staff, (e.target as HTMLSelectElement).value)}
-                      title="The clef this staff opens with. Picking one sets its usual line."
-                    >
-                      {#each CLEF_OPTIONS as option (option.value)}
-                        <option value={option.value}>{option.label}</option>
-                      {/each}
-                    </select>
-                  </label>
-                  {#if staff.notationType === "tab.lute.german"}
-                    <label class="field narrow">
-                      <span>Lines</span>
-                      <select disabled title="German tablature is written in letters, without staff lines.">
-                        <option>—</option>
-                      </select>
-                    </label>
-                  {:else if clefLineFixed(staff)}
-                    <label class="field narrow">
-                      <span>Lines</span>
+          <form class="setup" onsubmit={(e) => e.preventDefault()}>
+            <fieldset disabled={!canEdit}>
+              <p class="grouphead">Staves</p>
+              <ol class="staves">
+                {#each staves as staff, i (i)}
+                  <li class="staffrow">
+                    <span class="staffno">{i + 1}</span>
+                    <label class="field">
+                      <span>Clef</span>
                       <select
-                        value={String(staff.lines)}
-                        onchange={(e) => {
-                          staff.lines = Number(
-                            (e.target as HTMLSelectElement).value,
-                          );
-                          // Keep the clef on the staff: centred on the lines
-                          // it actually has.
-                          staff.clefLine = Math.ceil(staff.lines / 2);
-                        }}
-                        title="How many lines the staff has — one per string for a tablature, up to five for percussion."
-                      >
-                        {#each linesChoices(staff) as count (count)}
-                          <option value={String(count)}>{count}</option>
-                        {/each}
-                      </select>
-                    </label>
-                  {:else}
-                    <label class="field narrow">
-                      <span>Line</span>
-                      <select
-                        value={String(staff.clefLine)}
+                        value={clefKey(staff)}
                         onchange={(e) =>
-                          (staff.clefLine = Number(
-                            (e.target as HTMLSelectElement).value,
-                          ))}
-                        title="The staff line the clef sits on, counted from the bottom line up."
+                          setClef(staff, (e.target as HTMLSelectElement).value)}
+                        title="The clef this staff opens with. Picking one sets its usual line."
                       >
-                        {#each CLEF_LINES as line (line)}
-                          <option value={String(line)}>{line}</option>
+                        {#each CLEF_OPTIONS as option (option.value)}
+                          <option value={option.value}>{option.label}</option>
                         {/each}
                       </select>
                     </label>
-                  {/if}
-                  <label class="field wide">
-                    <span>Instrument</span>
-                    <input
-                      type="text"
-                      bind:value={staff.label}
-                      placeholder="optional"
-                      title="The instrument or voice name printed in front of this staff. Leave empty for none."
-                    />
-                  </label>
-                  <div class="rowbtns">
-                    <button
-                      type="button"
-                      class="btn btn-icon"
-                      onclick={() => moveStaff(i, -1)}
-                      disabled={i === 0}
-                      aria-label={`Move staff ${i + 1} up`}
-                      title="Move this staff up"><Icon name="arrow-up" /></button
-                    >
-                    <button
-                      type="button"
-                      class="btn btn-icon"
-                      onclick={() => moveStaff(i, 1)}
-                      disabled={i === staves.length - 1}
-                      aria-label={`Move staff ${i + 1} down`}
-                      title="Move this staff down"><Icon name="arrow-down" /></button
-                    >
-                    <button
-                      type="button"
-                      class="btn btn-icon"
-                      onclick={() => removeStaff(i)}
-                      disabled={staves.length <= 1}
-                      aria-label={`Remove staff ${i + 1}`}
-                      title="Remove this staff"><Icon name="close" /></button
-                    >
-                  </div>
-                </li>
-              {/each}
-            </ol>
-            <button
-              type="button"
-              class="btn addbtn"
-              onclick={() => addStaff()}
-              disabled={staves.length >= MAX_STAVES}
-              title="Add a staff below the last one."
-              >Add staff</button
-            >
-
-            {#if staves.length > 1 || groups.length > 0}
-              <p class="grouphead sub">Groups</p>
-              {#each groups as group, i (i)}
-                <div class="grouprow">
-                  <label class="field">
-                    <span>Symbol</span>
-                    <select
-                      bind:value={group.symbol}
-                      title="A brace joins the staves of one instrument, like a piano. A bracket joins a section, like the strings."
-                    >
-                      <option value="brace">Brace (one instrument)</option>
-                      <option value="bracket">Bracket (section)</option>
-                    </select>
-                  </label>
-                  <label class="field narrow">
-                    <span>From staff</span>
-                    <select bind:value={group.start} title="The group's first staff.">
-                      {#each staves as _, n (n)}
-                        <option value={n + 1}>{n + 1}</option>
-                      {/each}
-                    </select>
-                  </label>
-                  <label class="field narrow">
-                    <span>To staff</span>
-                    <select bind:value={group.end} title="The group's last staff.">
-                      {#each staves as _, n (n)}
-                        <option value={n + 1}>{n + 1}</option>
-                      {/each}
-                    </select>
-                  </label>
-                  <label class="field grow">
-                    <span>Label</span>
-                    <input
-                      type="text"
-                      bind:value={group.label}
-                      placeholder="optional"
-                      title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
-                    />
-                  </label>
-                  <div class="rowbtns">
-                    <button
-                      type="button"
-                      class="btn btn-icon"
-                      onclick={() => removeGroup(i)}
-                      aria-label={`Remove group ${i + 1}`}
-                      title="Remove this group"><Icon name="close" /></button
-                    >
-                  </div>
-                </div>
-              {/each}
+                    {#if staff.notationType === "tab.lute.german"}
+                      <label class="field narrow">
+                        <span>Lines</span>
+                        <select
+                          disabled
+                          title="German tablature is written in letters, without staff lines."
+                        >
+                          <option>—</option>
+                        </select>
+                      </label>
+                    {:else if clefLineFixed(staff)}
+                      <label class="field narrow">
+                        <span>Lines</span>
+                        <select
+                          value={String(staff.lines)}
+                          onchange={(e) => {
+                            staff.lines = Number(
+                              (e.target as HTMLSelectElement).value,
+                            );
+                            // Keep the clef on the staff: centred on the lines
+                            // it actually has.
+                            staff.clefLine = Math.ceil(staff.lines / 2);
+                          }}
+                          title="How many lines the staff has — one per string for a tablature, up to five for percussion."
+                        >
+                          {#each linesChoices(staff) as count (count)}
+                            <option value={String(count)}>{count}</option>
+                          {/each}
+                        </select>
+                      </label>
+                    {:else}
+                      <label class="field narrow">
+                        <span>Line</span>
+                        <select
+                          value={String(staff.clefLine)}
+                          onchange={(e) =>
+                            (staff.clefLine = Number(
+                              (e.target as HTMLSelectElement).value,
+                            ))}
+                          title="The staff line the clef sits on, counted from the bottom line up."
+                        >
+                          {#each CLEF_LINES as line (line)}
+                            <option value={String(line)}>{line}</option>
+                          {/each}
+                        </select>
+                      </label>
+                    {/if}
+                    <label class="field wide">
+                      <span>Instrument</span>
+                      <input
+                        type="text"
+                        bind:value={staff.label}
+                        placeholder="optional"
+                        title="The instrument or voice name printed in front of this staff. Leave empty for none."
+                      />
+                    </label>
+                    <div class="rowbtns">
+                      <button
+                        type="button"
+                        class="btn btn-icon"
+                        onclick={() => moveStaff(i, -1)}
+                        disabled={i === 0}
+                        aria-label={`Move staff ${i + 1} up`}
+                        title="Move this staff up"
+                        ><Icon name="arrow-up" /></button
+                      >
+                      <button
+                        type="button"
+                        class="btn btn-icon"
+                        onclick={() => moveStaff(i, 1)}
+                        disabled={i === staves.length - 1}
+                        aria-label={`Move staff ${i + 1} down`}
+                        title="Move this staff down"
+                        ><Icon name="arrow-down" /></button
+                      >
+                      <button
+                        type="button"
+                        class="btn btn-icon"
+                        onclick={() => removeStaff(i)}
+                        disabled={staves.length <= 1 ||
+                          (omr && data?.hasNotation)}
+                        aria-label={`Remove staff ${i + 1}`}
+                        title={omr && data?.hasNotation
+                          ? "The staff count is fixed once the piece holds notation"
+                          : "Remove this staff"}><Icon name="close" /></button
+                      >
+                    </div>
+                  </li>
+                {/each}
+              </ol>
               <button
                 type="button"
                 class="btn addbtn"
-                onclick={() => addGroup()}
-                title="Join a run of staves with a brace or bracket."
-                >Add group</button
+                onclick={() => addStaff()}
+                disabled={staves.length >= MAX_STAVES ||
+                  (omr && data?.hasNotation)}
+                title={omr && data?.hasNotation
+                  ? "The staff count is fixed once the piece holds notation"
+                  : "Add a staff below the last one."}>Add staff</button
               >
-              {#if !groupsValid}
-                <p class="groupwarn">
-                  Groups must fit the staves and must not overlap.
-                </p>
-              {/if}
-            {/if}
-          </fieldset>
 
-          <fieldset disabled={!canEdit}>
-            <p class="grouphead">Key signature and meter</p>
-            <div class="pair">
-              <label class="field">
-                <span>Key signature</span>
-                <select
-                  bind:value={keysig}
-                  title="The accidentals the score opens with, on every staff."
+              {#if staves.length > 1 || groups.length > 0}
+                <p class="grouphead sub">Groups</p>
+                {#each groups as group, i (i)}
+                  <div class="grouprow">
+                    <label class="field">
+                      <span>Symbol</span>
+                      <select
+                        bind:value={group.symbol}
+                        title="A brace joins the staves of one instrument, like a piano. A bracket joins a section, like the strings."
+                      >
+                        <option value="brace">Brace (one instrument)</option>
+                        <option value="bracket">Bracket (section)</option>
+                      </select>
+                    </label>
+                    <label class="field narrow">
+                      <span>From staff</span>
+                      <select
+                        bind:value={group.start}
+                        title="The group's first staff."
+                      >
+                        {#each staves as _, n (n)}
+                          <option value={n + 1}>{n + 1}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label class="field narrow">
+                      <span>To staff</span>
+                      <select
+                        bind:value={group.end}
+                        title="The group's last staff."
+                      >
+                        {#each staves as _, n (n)}
+                          <option value={n + 1}>{n + 1}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label class="field grow">
+                      <span>Label</span>
+                      <input
+                        type="text"
+                        bind:value={group.label}
+                        placeholder="optional"
+                        title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
+                      />
+                    </label>
+                    <div class="rowbtns">
+                      <button
+                        type="button"
+                        class="btn btn-icon"
+                        onclick={() => removeGroup(i)}
+                        aria-label={`Remove group ${i + 1}`}
+                        title="Remove this group"><Icon name="close" /></button
+                      >
+                    </div>
+                  </div>
+                {/each}
+                <button
+                  type="button"
+                  class="btn addbtn"
+                  onclick={() => addGroup()}
+                  title="Join a run of staves with a brace or bracket."
+                  >Add group</button
                 >
-                  {#each KEY_SIGNATURES as key (key.value)}
-                    <option value={key.value}>{key.label}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="field">
-                <span>Time signature</span>
-                <select
-                  bind:value={meterType}
-                  title="Numbers (beats over a beat unit), or a symbol: common time (C) or cut time (¢)."
-                >
-                  <option value="numeric">Numbers</option>
-                  <option value="common">Common time (C)</option>
-                  <option value="cut">Cut time (¢)</option>
-                </select>
-              </label>
-              {#if meterType === "numeric"}
-                <label class="field narrow">
-                  <span>Beats</span>
-                  <input
-                    type="text"
-                    inputmode="numeric"
-                    bind:value={meterCount}
-                    class:bad={!meterValid}
-                    title="The number of beats in a bar — the upper number of the time signature."
-                  />
-                </label>
-                <label class="field narrow">
-                  <span>Beat unit</span>
+                {#if !groupsValid}
+                  <p class="groupwarn">
+                    Groups must fit the staves and must not overlap.
+                  </p>
+                {/if}
+              {/if}
+            </fieldset>
+
+            <fieldset disabled={!canEdit}>
+              <p class="grouphead">Key signature and meter</p>
+              <div class="pair">
+                <label class="field">
+                  <span>Key signature</span>
                   <select
-                    bind:value={meterUnit}
-                    title="The note value that counts as one beat — the lower number of the time signature."
+                    bind:value={keysig}
+                    title="The accidentals the score opens with, on every staff."
                   >
-                    {#each METER_UNITS as unit (unit)}
-                      <option value={String(unit)}>{unit}</option>
+                    {#each KEY_SIGNATURES as key (key.value)}
+                      <option value={key.value}>{key.label}</option>
                     {/each}
                   </select>
                 </label>
-              {/if}
-            </div>
-          </fieldset>
+                <label class="field">
+                  <span>Time signature</span>
+                  <select
+                    bind:value={meterType}
+                    title="Numbers (beats over a beat unit), or a symbol: common time (C) or cut time (¢)."
+                  >
+                    <option value="numeric">Numbers</option>
+                    <option value="common">Common time (C)</option>
+                    <option value="cut">Cut time (¢)</option>
+                  </select>
+                </label>
+                {#if meterType === "numeric"}
+                  <label class="field narrow">
+                    <span>Beats</span>
+                    <input
+                      type="text"
+                      inputmode="numeric"
+                      bind:value={meterCount}
+                      class:bad={!meterValid}
+                      title="The number of beats in a bar — the upper number of the time signature."
+                    />
+                  </label>
+                  <label class="field narrow">
+                    <span>Beat unit</span>
+                    <select
+                      bind:value={meterUnit}
+                      title="The note value that counts as one beat — the lower number of the time signature."
+                    >
+                      {#each METER_UNITS as unit (unit)}
+                        <option value={String(unit)}>{unit}</option>
+                      {/each}
+                    </select>
+                  </label>
+                {/if}
+              </div>
+            </fieldset>
 
-          <section class="previewbox">
-            <span class="sb-label">Preview</span>
-            {#if !meterValid}
-              <p class="muted">Enter a whole number of beats to see the preview.</p>
-            {:else if !groupsValid}
-              <p class="muted">Fix the staff groups to see the preview.</p>
-            {:else if previewError}
-              <p class="muted">{previewError}</p>
-            {:else if previewSvg}
-              <!-- Rendered by Verovio and sanitised in verovio-render.ts. -->
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-              <div class="sheet">{@html previewSvg}</div>
-            {:else}
-              <p class="muted">Rendering…</p>
-            {/if}
-          </section>
-        </form>
+            <section class="previewbox">
+              <span class="sb-label">Preview</span>
+              {#if !meterValid}
+                <p class="muted">
+                  Enter a whole number of beats to see the preview.
+                </p>
+              {:else if !groupsValid}
+                <p class="muted">Fix the staff groups to see the preview.</p>
+              {:else if previewError}
+                <p class="muted">{previewError}</p>
+              {:else if previewSvg}
+                <!-- Rendered by Verovio and sanitised in verovio-render.ts. -->
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                <div class="sheet">{@html previewSvg}</div>
+              {:else}
+                <p class="muted">Rendering…</p>
+              {/if}
+            </section>
+          </form>
         </div>
 
         <!-- The piece's committed score beside the form — the same viewer the
@@ -911,7 +1359,7 @@
             {anchor}
           >
             {#snippet trailing()}
-                            <button
+              <button
                 type="button"
                 aria-pressed={commentsPanel.open}
                 class="btn"
@@ -944,138 +1392,194 @@
           <code class="taskchip">{taskId}</code>
         </div>
         <div class="tbsection">
-        <span class="abcount">
-          {staves.length} stave{staves.length === 1 ? "" : "s"}
-          · {meterType === "numeric"
-            ? `${meterCount}/${meterUnit}`
-            : meterType === "common"
-              ? "common time"
-              : "cut time"}
-        </span>
-        {#if canEdit}
-          <span class="lockpill ok">you hold this task</span>
-        {:else if d.status === "completed"}
-          <span class="lockpill grey">completed — read-only</span>
-        {:else if d.status !== "encoding_required"}
-          {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
-            <span class="lockpill red">validation failed — read-only</span>
-          {:else}
-            <span class="lockpill amber">submitted — awaiting validation, read-only</span>
-          {/if}
-        {:else if d.blockedBy}
-          <span class="lockpill grey">waits for {d.blockedBy} — read-only</span>
-        {:else if d.encodingLockUser}
-          <span class="lockpill amber"
-            >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
-          >
-        {:else}
-          <span class="lockpill amber">unclaimed — read-only</span>
-          <button type="button" class="btn btn-pre" onclick={() => claim()} disabled={runner.busy}>Claim task</button>
-        {/if}
-        <button
-          type="button"
-          class="btn btn-primary submitbtn"
-          onclick={() => submit()}
-          disabled={runner.busy || !canEdit || !meterValid || !groupsValid}
-          title="Submit the staves, clefs, key signature and meter for validation"
-        >
-          Submit setup
-        </button>
-      </div>
-
-      {#if failComments.length > 0}
-        <div class="tbsection">
-          <span class="sb-label">Fail comments</span>
-          {#each failComments as c (c.comment_id)}
-            <div class="failnote" class:resolved={c.resolved === "true"}>
-              <span class="failwho"
-                >@{handle(logins, c.author_id)} · {elapsed(c.timestamp)}{c.resolved ===
-                "true"
-                  ? " · resolved"
-                  : ""}</span
-              >
-              <div class="failtext">“{c.body}”</div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      {#if validation && submitted}
-        <div class="tbsection sb-validation">
-          <span class="sb-label">Validation</span>
-          <span class="vstatus">
-            {#if validation.status === "completed"}
-              Validation complete
-            {:else if verdictPending}
-              Your verdict is being processed…
-            {:else if validation.lockUser}
-              {holdsValidation ? "You are validating" : `@${lockUserLogin || validation.lockUser} validating`}
-            {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
-              Failed — send it back to redo the setup
-            {:else if selfValidation}
-              Your own submission
-            {:else if alreadyValidated}
-              You validated this — another volunteer is needed
-            {:else}
-              Awaiting validation
-            {/if}
+          <span class="abcount">
+            {staves.length} stave{staves.length === 1 ? "" : "s"}
+            · {meterType === "numeric"
+              ? `${meterCount}/${meterUnit}`
+              : meterType === "common"
+                ? "common time"
+                : "cut time"}
           </span>
-          {#each validation.verdicts as v, i (i)}
-            <span class="vrow {v.verdict}"
-              >{#if v.verdict === "pass"}<img
-                  class="hand-pass"
-                  src="/green-hand.svg"
-                  alt=""
-                /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(logins, v.user)} · {elapsed(
-                v.ts,
-              )}</span
-            >
-          {/each}
-          {#if canClaimValidation}
-            <div class="sb-row one">
-              <button type="button" class="btn btn-review" onclick={() => claimValidation()} disabled={runner.busy}
-                title="Reserve this subtask for validation.">Claim</button>
-            </div>
-          {:else if holdsValidation && !verdictPending}
-            <div class="sb-row two">
-              <button type="button" class="btn btn-primary btn-finish" onclick={() => validate("pass")} disabled={runner.busy}
-                title="Record a passing verdict.">Pass</button>
-              <button type="button" class="btn btn-danger vfail" class:on={failOpen} onclick={() => (failOpen = !failOpen)} disabled={runner.busy}
-                title="Record a failing verdict — a fail carries a comment saying why.">Fail</button>
-            </div>
-          {/if}
-          {#if failOpen && holdsValidation}
-            <input
-              class="fail-note"
-              bind:value={failText}
-              placeholder="Why does this fail?"
-              onkeydown={(e) => {
-                if (e.key === "Enter" && failText.trim()) validate("fail");
-              }}
-            />
-            <div class="sb-row one">
-              <button
-                type="button"
-                class="btn btn-danger"
-                onclick={() => validate("fail")}
-                disabled={runner.busy || !failText.trim() || verdictPending}
-                title="Submit the failing verdict with this comment."
-                >Submit fail</button
+          {#if holds}
+            <span class="lockpill ok">you hold this task</span>
+          {:else if d.status === "completed"}
+            <span class="lockpill grey">done — read-only</span>
+          {:else if d.status !== "encoding_required"}
+            {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
+              <span class="lockpill red">review failed — read-only</span>
+            {:else}
+              <span class="lockpill amber"
+                >submitted — awaiting review, read-only</span
               >
-            </div>
-          {/if}
-          {#if canSendBack}
+            {/if}
+          {:else if d.blockedBy}
+            <span class="lockpill grey"
+              >waits for {d.blockedBy} — read-only</span
+            >
+          {:else if d.encodingLockUser}
+            <span class="lockpill amber"
+              >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
+            >
+          {:else}
+            <span class="lockpill amber">unclaimed — read-only</span>
             <button
               type="button"
-              class="btn btn-danger sendbackbtn"
-              onclick={() => sendBack()}
-              disabled={runner.busy || sendBackPending}
-              title="Return the task to score setup: attribution and validations reset."
-              >Send back to score setup</button
+              class="btn btn-pre"
+              onclick={() => claim()}
+              disabled={busy}>Claim task</button
             >
           {/if}
+          {#if omr && canEdit && recognition && recognition.failed.length > 0}
+            <button
+              type="button"
+              class="btn"
+              onclick={() => recognise()}
+              disabled={busy}
+              title="Run the staff model again on the {recognition.failed
+                .length} staves it could not transcribe"
+            >
+              Transcribe failed staves again
+            </button>
+          {:else if omr && canEdit && !recognition && recognisedFor === taskId}
+            <button
+              type="button"
+              class="btn"
+              onclick={() => recognise()}
+              disabled={busy}
+              title="Transcribe the staves again; staves already transcribed in this browser are kept"
+            >
+              Transcribe the staves again
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="btn btn-primary submitbtn"
+            onclick={() => submit()}
+            disabled={busy ||
+              !canEdit ||
+              !meterValid ||
+              !groupsValid ||
+              (omr && !recognition)}
+            title={omr && canEdit && !recognition
+              ? "The staves have to be transcribed before the setup can be submitted"
+              : "Submit the staves, clefs, key signature and meter for review"}
+          >
+            Submit setup
+          </button>
         </div>
-      {/if}
+
+        {#if failComments.length > 0}
+          <div class="tbsection">
+            <span class="sb-label">Fail comments</span>
+            {#each failComments as c (c.comment_id)}
+              <div class="failnote" class:resolved={c.resolved === "true"}>
+                <span class="failwho"
+                  >@{handle(logins, c.author_id)} · {elapsed(
+                    c.timestamp,
+                  )}{c.resolved === "true" ? " · resolved" : ""}</span
+                >
+                <div class="failtext">“{c.body}”</div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        {#if validation && submitted}
+          <div class="tbsection sb-validation">
+            <span class="sb-label">Review</span>
+            <span class="vstatus">
+              {#if validation.status === "completed"}
+                Review done
+              {:else if verdictPending}
+                Your verdict is being processed…
+              {:else if validation.lockUser}
+                {holdsValidation
+                  ? "You are reviewing"
+                  : `@${lockUserLogin || validation.lockUser} reviewing`}
+              {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
+                Failed — send it back to redo the setup
+              {:else if selfValidation}
+                Your own submission
+              {:else if alreadyValidated}
+                You reviewed this — another volunteer is needed
+              {:else}
+                Awaiting review
+              {/if}
+            </span>
+            {#each validation.verdicts as v, i (i)}
+              <span class="vrow {v.verdict}"
+                >{#if v.verdict === "pass"}<img
+                    class="hand-pass"
+                    src="/green-hand.svg"
+                    alt=""
+                  /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(
+                  logins,
+                  v.user,
+                )} · {elapsed(v.ts)}</span
+              >
+            {/each}
+            {#if canClaimValidation}
+              <div class="sb-row one">
+                <button
+                  type="button"
+                  class="btn btn-review"
+                  onclick={() => claimValidation()}
+                  disabled={runner.busy}
+                  title="Reserve this review slot.">Claim to review</button
+                >
+              </div>
+            {:else if holdsValidation && !verdictPending}
+              <div class="sb-row two">
+                <button
+                  type="button"
+                  class="btn btn-primary btn-finish"
+                  onclick={() => validate("pass")}
+                  disabled={runner.busy}
+                  title="Record a passing verdict.">Pass</button
+                >
+                <button
+                  type="button"
+                  class="btn btn-danger vfail"
+                  class:on={failOpen}
+                  onclick={() => (failOpen = !failOpen)}
+                  disabled={runner.busy}
+                  title="Record a failing verdict — a fail carries a comment saying why."
+                  >Fail</button
+                >
+              </div>
+            {/if}
+            {#if failOpen && holdsValidation}
+              <input
+                class="fail-note"
+                bind:value={failText}
+                placeholder="Why does this fail?"
+                onkeydown={(e) => {
+                  if (e.key === "Enter" && failText.trim()) validate("fail");
+                }}
+              />
+              <div class="sb-row one">
+                <button
+                  type="button"
+                  class="btn btn-danger"
+                  onclick={() => validate("fail")}
+                  disabled={runner.busy || !failText.trim() || verdictPending}
+                  title="Submit the failing verdict with this comment."
+                  >Submit fail</button
+                >
+              </div>
+            {/if}
+            {#if canSendBack}
+              <button
+                type="button"
+                class="btn btn-danger sendbackbtn"
+                onclick={() => sendBack()}
+                disabled={runner.busy || sendBackPending}
+                title="Return the task to score setup: attribution and reviews reset."
+                >Send back to score setup</button
+              >
+            {/if}
+          </div>
+        {/if}
       </div>
     {/snippet}
 
@@ -1382,7 +1886,8 @@
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 2px 10px;
+    line-height: 1;
+    padding: 3px 10px;
   }
   .lockpill.ok {
     color: var(--ok);

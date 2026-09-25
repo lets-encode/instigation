@@ -194,7 +194,10 @@
     min-width: 0;
   }
   .name {
-    font: 12.5px ui-monospace, Menlo, monospace;
+    font:
+      12.5px ui-monospace,
+      Menlo,
+      monospace;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

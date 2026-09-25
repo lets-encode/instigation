@@ -19,15 +19,28 @@
   import { onDestroy, type Snippet } from "svelte";
   import type { PageImage } from "$lib/prepare-images.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel from "./ZoomLevel.svelte";
+  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
 
   // `toolbar` renders extra controls at the end of the toolbar.
   let { pages, toolbar }: { pages: PageImage[]; toolbar?: Snippet } = $props();
 
-  // One page per row: the imprint has to be readable while it is copied into
-  // the form beside it.
-  let perRow = $state(1);
+  // Two pages per row, each shown whole, to begin with.
+  let perRow = $state(2);
   let zoom = $state(100);
+  let fit = $state<"width" | "page" | null>("page");
+  // The body's inner size and each image's own size, for the page fit.
+  let bodyW = $state(0);
+  let bodyH = $state(0);
+  let natW = $state<number[]>([]);
+  let natH = $state<number[]>([]);
+  const fitPage = $derived(
+    fitPageZoom(
+      bodyW,
+      bodyH,
+      perRow,
+      natW.map((w, i) => (natH[i] ?? 0) / (w || 1)),
+    ),
+  );
 
   // One object URL per page, cached so a re-render hands the same <img> the same
   // src. Revoking eagerly when the list changes would pull the URL out from
@@ -42,7 +55,7 @@
         objectUrls.set(page.blob, url);
       }
       return url;
-    })
+    }),
   );
   onDestroy(() => {
     for (const url of objectUrls.values()) URL.revokeObjectURL(url);
@@ -60,14 +73,23 @@
       >
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
-      <ZoomLevel bind:value={zoom} />
+      <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
       {#if toolbar}{@render toolbar()}{/if}
     </div>
-    <div class="material-body">
+    <div
+      class="material-body"
+      bind:clientWidth={bodyW}
+      bind:clientHeight={bodyH}
+    >
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each urls as url, i (url)}
           <figure>
-            <img src={url} alt="Page {i + 1}" />
+            <img
+              src={url}
+              alt="Page {i + 1}"
+              bind:naturalWidth={natW[i]}
+              bind:naturalHeight={natH[i]}
+            />
             <figcaption class="page-caption">p. {i + 1}</figcaption>
           </figure>
         {/each}

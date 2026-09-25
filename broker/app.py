@@ -15,21 +15,27 @@ Config (environment variables, loaded from broker/.env if present):
   GITHUB_CLIENT_SECRET   the OAuth app's client secret (secret; only here)
   FLASK_SECRET           key that signs the session cookie (secret; generate one)
   REDIRECT_URL           the OAuth callback as the browser reaches it, e.g.
-                         https://your-domain.example/oauth/authorize
+                         https://your-domain.example/auth/authorize
   SESSION_DIR            where session files live (default: instance/sessions)
   FLASK_ENV              set to "development" to allow the cookie over plain HTTP
   PROXY_FIX_X_FOR        number of reverse proxies in front of the broker; when
-                         set, X-Forwarded-For (that many hops deep) supplies the
-                         client address the rate limits key on (default: unset,
-                         header not trusted)
+                         set, X-Forwarded-For, -Proto and -Host (that many hops
+                         deep) supply the client address the rate limits key on
+                         and the host the CSRF guard compares Origin with
+                         (default: unset, headers not trusted)
   RATELIMIT_STORAGE_URI  flask-limiter counter storage (default: memory://,
                          which keeps counters per worker process)
+  MUSIBOT_URL            the Musibot OMR API the /omr relay forwards to
+                         (default: https://quest.ms.mff.cuni.cz/musibot/api)
+  MUSIBOT_TOKEN          the Musibot API token (secret; only here). Unset,
+                         the /omr relay answers 503.
 
 See README.md for setup, and the repository README §6 for the deployed mount.
 """
 
 import ipaddress
 import json
+import re
 import socket
 import sys
 import time
@@ -103,15 +109,19 @@ app.config["SESSION_PERMANENT"] = False
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
 Session(app)
 
-# Behind a reverse proxy the client address Flask sees is the proxy's own, so
-# the per-client rate limits below would collapse into a single shared bucket.
-# PROXY_FIX_X_FOR names the number of proxies actually in front (1 behind the
-# institution's reverse proxy); X-Forwarded-For is then trusted that many hops deep.
-# Off by default: without a trusted proxy the header is client-supplied and
+# Behind a reverse proxy the client address and Host header Flask sees are the
+# proxy's own, so the per-client rate limits below would collapse into a single
+# shared bucket and the CSRF guard would reject every write (the browser's
+# Origin names the public host). PROXY_FIX_X_FOR names the number of proxies
+# actually in front (1 behind the institution's reverse proxy);
+# X-Forwarded-For, -Proto and -Host are then trusted that many hops deep.
+# Off by default: without a trusted proxy the headers are client-supplied and
 # trivially spoofed.
 proxy_hops = int(getenv("PROXY_FIX_X_FOR") or "0")
 if proxy_hops:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops)
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops
+    )
 
 # Rate-limit counters live in the storage RATELIMIT_STORAGE_URI names. The
 # default memory:// keeps them in-process: with several gunicorn workers the
@@ -142,15 +152,17 @@ def reject_cross_origin_writes():
         return jsonify(error="cross-origin request rejected"), 403
     return None
 
+
 # The campaign name registry (see registry.py): the name → (forge, repo id)
 # mapping and the claim/register lifecycle around it. It lives in the broker
 # because claiming and registering require the GitHub session; the /registry
 # path is passed through unchanged by the production reverse proxy and by the
 # Vite dev proxy.
 try:
-    from .registry import registry
-except ImportError:  # run as a top-level module (flask --app app run, gunicorn app:app)
-    from registry import registry
+    from .registry import GITHUB_API, registry
+except ImportError:
+    # Run as a top-level module (flask --app app run, gunicorn app:app).
+    from registry import GITHUB_API, registry
 app.register_blueprint(registry, url_prefix="/registry")
 
 # The registry's admin routes serve only when ADMIN_TOKEN and
@@ -211,17 +223,51 @@ github = oauth.register(
     },
 )
 
-GITHUB_API = "https://api.github.com"
 # The proxy relays only GitHub REST API calls (the SPA does no git smart-HTTP).
 ALLOWED_DOMAINS = ["api.github.com"]
 
 # /iiif relay limits. Campaign sources come from any institution's IIIF server,
 # so the host cannot be an allowlist; the request is constrained instead — see
-# iiif_fetch. A manifest is JSON and a canvas is one downscaled page image, so
-# both fit well inside the size cap.
-IIIF_MAX_BYTES = 25 * 1024 * 1024
+# iiif_fetch. A canvas is fetched at the largest size the server gives; the
+# cap is GitHub's limit for one file, the most a committed page can be.
+IIIF_MAX_BYTES = 100 * 1024 * 1024
 IIIF_MAX_REDIRECTS = 5
 IIIF_ALLOWED_CONTENT = ("application/json", "application/ld+json", "image/")
+
+# Headers on relayed third-party bodies. The relays answer in the app origin, so
+# a body opened directly in a tab (an SVG or HTML document) would otherwise run
+# script with the session cookie. fetch() ignores all three.
+RELAY_SAFETY_HEADERS = [
+    ("Content-Disposition", "attachment"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Content-Security-Policy", "sandbox"),
+]
+
+# /omr relay: the Musibot OMR service, for the console's OMR preparation. The
+# service sends no CORS headers and its API token is institutional, so the
+# browser reaches it only through here. Only the endpoints the console uses
+# are relayed, matched against these patterns; the page listing is not among
+# them, because every page under the shared token belongs to whoever holds it
+# and one user must not see another's. File bytes travel over presigned URLs
+# on the service's own host, relayed by /omr/blob.
+MUSIBOT_URL = (
+    getenv("MUSIBOT_URL") or "https://quest.ms.mff.cuni.cz/musibot/api"
+).rstrip("/")
+MUSIBOT_TOKEN = getenv("MUSIBOT_TOKEN")
+MUSIBOT_HOST = urlsplit(MUSIBOT_URL).netloc
+# A page image goes to the service at its committed size, so the cap is the
+# same as the IIIF relay's.
+OMR_MAX_BYTES = IIIF_MAX_BYTES
+_PAGE = r"musicorpus-pages/[A-Za-z0-9_-]+"
+OMR_ROUTES = (
+    ("GET", re.compile(r"pipelines")),
+    ("POST", re.compile(r"musicorpus-pages")),
+    ("DELETE", re.compile(_PAGE)),
+    ("GET", re.compile(_PAGE + r"/files")),
+    ("POST", re.compile(_PAGE + r"/file-urls")),
+    ("POST", re.compile(_PAGE + r"/pipeline-executions")),
+    ("GET", re.compile(_PAGE + r"/pipeline-executions/\d+")),
+)
 
 
 def resolves_to_public_address(hostname):
@@ -258,7 +304,7 @@ def resolves_to_public_address(hostname):
 
 
 def oauth_callback_url() -> str:
-    # Behind the /oauth mount the prefix and scheme are invisible to Flask, so
+    # Behind the /auth mount the prefix and scheme are invisible to Flask, so
     # url_for can't reconstruct the externally reachable callback; REDIRECT_URL
     # states it explicitly (it must match the OAuth app's registered callback).
     return getenv("REDIRECT_URL") or request.host_url.rstrip("/") + "/authorize"
@@ -443,6 +489,182 @@ def iiif_fetch():
             ("Content-Type", content_type),
             ("Cache-Control", "no-store"),
             ("X-Lets-Encode-Upstream", "iiif"),
+            *RELAY_SAFETY_HEADERS,
+        ],
+    )
+
+
+@app.route("/omr/api/<path:path>", methods=["GET", "POST", "DELETE"])
+# Transcribing a page is one execution per staff plus the polling for each,
+# so a page is a burst of a few dozen calls.
+@limiter.limit(
+    "100 per second",
+    key_func=lambda: session.get("userLogin") or get_remote_address(),
+)
+def omr_api(path):
+    """
+    Relay one Musibot API call, attaching the institutional token. JSON in,
+    JSON out; the upstream status is passed through.
+    """
+    if "githubToken" not in session:
+        return jsonify(error="Authentication required"), 401
+    if not MUSIBOT_TOKEN:
+        return (
+            jsonify(
+                error="OMR is not configured on this instance", source="musibot"
+            ),
+            503,
+        )
+    if not any(
+        method == request.method and pattern.fullmatch(path)
+        for method, pattern in OMR_ROUTES
+    ):
+        return (
+            jsonify(error="That OMR endpoint is not relayed", source="musibot"),
+            404,
+        )
+    headers = {
+        "Authorization": f"Bearer {MUSIBOT_TOKEN}",
+        "Accept": "application/json",
+    }
+    body = request.get_data()
+    if body:
+        headers["Content-Type"] = "application/json"
+    try:
+        response = requests.request(
+            request.method,
+            f"{MUSIBOT_URL}/{path}",
+            headers=headers,
+            data=body or None,
+            timeout=(10, 60),
+            allow_redirects=False,
+        )
+    except requests.Timeout:
+        return (
+            jsonify(
+                error="The OMR service did not answer in time", source="musibot"
+            ),
+            504,
+        )
+    except requests.RequestException:
+        return (
+            jsonify(
+                error="The OMR service could not be reached", source="musibot"
+            ),
+            502,
+        )
+    return (
+        response.content,
+        response.status_code,
+        [
+            (
+                "Content-Type",
+                response.headers.get("content-type", "application/json"),
+            ),
+            ("Cache-Control", "no-store"),
+            ("X-Lets-Encode-Upstream", "musibot"),
+        ],
+    )
+
+
+@app.route("/omr/blob", methods=["GET", "PUT"])
+@limiter.limit(
+    "100 per second",
+    key_func=lambda: session.get("userLogin") or get_remote_address(),
+)
+def omr_blob():
+    """
+    Transfer file bytes to (PUT) or from (GET) a presigned URL the Musibot API
+    handed out. Only URLs on the service's own host are relayed, and a body
+    in either direction is capped.
+    """
+    if "githubToken" not in session:
+        return jsonify(error="Authentication required"), 401
+    url = request.args.get("url", "")
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc != MUSIBOT_HOST:
+        return (
+            jsonify(
+                error="Only presigned URLs on the OMR service's host are relayed",
+                source="musibot",
+            ),
+            400,
+        )
+    try:
+        if request.method == "PUT":
+            if (request.content_length or 0) > OMR_MAX_BYTES:
+                return (
+                    jsonify(error="That file is too large", source="musibot"),
+                    413,
+                )
+            data = request.get_data()
+            if len(data) > OMR_MAX_BYTES:
+                return (
+                    jsonify(error="That file is too large", source="musibot"),
+                    413,
+                )
+            response = requests.put(
+                url,
+                data=data,
+                headers={
+                    "Content-Type": request.content_type
+                    or "application/octet-stream"
+                },
+                timeout=(10, 60),
+                allow_redirects=False,
+            )
+            response.close()
+            return (
+                jsonify(ok=response.ok),
+                response.status_code if not response.ok else 200,
+                [
+                    ("Cache-Control", "no-store"),
+                    ("X-Lets-Encode-Upstream", "musibot"),
+                ],
+            )
+        response = requests.get(
+            url, timeout=(10, 60), allow_redirects=False, stream=True
+        )
+    except requests.Timeout:
+        return (
+            jsonify(
+                error="The OMR service did not answer in time", source="musibot"
+            ),
+            504,
+        )
+    except requests.RequestException:
+        return (
+            jsonify(
+                error="The OMR service could not be reached", source="musibot"
+            ),
+            502,
+        )
+    # Read with a ceiling rather than trusting Content-Length.
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(64 * 1024):
+        total += len(chunk)
+        if total > OMR_MAX_BYTES:
+            response.close()
+            return (
+                jsonify(error="That file is too large", source="musibot"),
+                413,
+            )
+        chunks.append(chunk)
+    response.close()
+    return (
+        b"".join(chunks),
+        response.status_code,
+        [
+            (
+                "Content-Type",
+                response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
+            ),
+            ("Cache-Control", "no-store"),
+            ("X-Lets-Encode-Upstream", "musibot"),
+            *RELAY_SAFETY_HEADERS,
         ],
     )
 
@@ -468,9 +690,7 @@ def proxy(url):
     url = requests.utils.unquote(url)
     if not url.startswith("http"):
         url = "https://" + url
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
+    parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc not in ALLOWED_DOMAINS:
         return jsonify(error="Domain not allowed"), 400
     if request.query_string:

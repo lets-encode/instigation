@@ -5,6 +5,64 @@ parentheses.
 
 ## Unreleased
 
+- Repo paths, page locators, work stages, the MEI opening and the OCR settings are each defined once.
+- Board cards show the piece colour as a dot before the title instead of a coloured left edge.
+- The console shows lock expiry with the coordinator's 120-minute default when the config sets none.
+- The campaign name `ocr` is reserved.
+- Unused code and stale comments are removed.
+- Code is formatted with Prettier (2 spaces) and the broker with Black (80 columns).
+- A pre-commit hook rejects unformatted files.
+- The mei-friend URL is set only in `services.json`.
+- OMR layout correction has a grand-staff step between the staff boxes and the measures.
+- The coordinator keeps the Musibot models of an OMR page draft in the score header when it splices the page.
+- Instrument labels are read in front of an indented system too, such as a piano introduction.
+- The wizard's OMR option says the staves are transcribed in the score setup.
+- OMR staff assignment runs through the whole piece, following the staves the previous system showed, with the clef only breaking ties.
+- OMR page drafts start in the clefs, key and meter the earlier pages leave in force and apply the clef corrections made in the score setup.
+- Score setup of an OMR piece transcribes every staff into `omr.xml`, and page drafts are made from it.
+- The coordinator commits the `layout.json` and `omr.xml` a pre-task submits beside its score.
+- OMR page drafts keep the recognised clefs and change key or meter only where most staves of a system read the change.
+- OMR page drafts no longer fail the MEI schema check when a clef change follows a tremolo.
+- OMR page drafts keep every staff of the score, so a system that leaves out staves no longer shifts the staves below.
+- OMR page drafts place the staves of a shorter system on their score staves by clef, printed instrument label and staff spacing.
+- Score setup of an OMR piece fills in the instrument labels printed in front of the first system.
+- OMR page drafts keep each staff in its score clef, correcting the pitches of a staff whose clef was misread.
+- Layout correction of an OMR piece can be submitted once every page was shown in both steps and no page has staff boxes without measures.
+- OMR transcription runs at most 16 staves at once and retries requests the broker rate limit refused.
+- The volunteer view lists every submission still being processed, not only when no task is open.
+- Committed page images keep the source's full resolution, so OMR staff crops match a direct Musibot run.
+- OMR page drafts take their systems from the corrected measure rows, so a system without staff boxes no longer shifts the music after it.
+- Score setup of an OMR piece takes its staff count from the largest system of the corrected layout.
+- Coordinator retries GitHub 5xx reads and falls back to the commit's file list when GitHub cannot serve a one-commit PR's diff.
+- A failed automation run reads "Run failed" instead of "Rejected".
+- Retrying a campaign finish no longer recommits the campaign once its config is in the repository.
+- Campaign setup no longer adopts an existing repository that already holds a finished campaign.
+- Campaign pages show an error when the registry cannot be reached instead of reporting the campaign as not found.
+- Coordinator decides each pull request once, so a second run no longer rejects an operation it already accepted.
+- Broker relay responses are sent as sandboxed downloads, so a relayed SVG or HTML file cannot run script in the app origin.
+- Broker trusts X-Forwarded-Host behind the reverse proxy, so writes no longer fail the same-origin check in production.
+- Layout correction keeps the layout model's output per page in the browser, so reopening the task before submitting skips the model run.
+- Score setup of an OMR piece no longer offers to fill from recognition again.
+- Review record: the Pass and Fail buttons of a held slot sit on their own line.
+- Volunteer view: open-task rows show a claim button only when the viewer can claim the task, and review slots read "Claim to review".
+- Score setup of an OMR piece groups staves into systems by the measure boxes that span them, and single-staff systems no longer vote on the staff count.
+- Layout correction of an OMR piece runs in two steps, staff boxes then measures, and commits the model's raw output as `layout.json` beside the score.
+- Zone editor reworked: per-step boxes, two-step control with Next, click-only measure controls, side-by-side two-page view, drag threshold for new boxes.
+- Pre-task editors and the review view submit in the background and return to the campaign page; the run state shows on the board, task panel and volunteer view.
+- Claiming an OMR task runs the layout detection or clef/signature recognition in the claim overlay.
+- Wizard: fit-to-width and fit-to-page zoom, pages-per-row default from the page count, other unfinished setups resumable from the rail.
+
+## 0.34.0 – 2026-09-18
+
+- Encoding tasks of an OMR piece ("Correct the draft · page N" on the board) start from a transcription: when the task is opened, the page's staves are cropped, transcribed with the Musibot staff pipeline, stitched into a page score, converted with verovio, inserted into the page's measures and committed to the task branch before mei-friend opens; mismatches and failed staves are reported.
+- Score setup of an OMR piece: staff count from the layout and editable while the piece holds no notation; clefs pre-filled from the system with the most staves, key and meter from the first system, when the task is opened (redo button). The submission rebuilds the empty measures for the definition, or replaces the definition alone once transcriptions are in.
+- Zone editor: a layout-correction task runs the Musibot layout model when its claim holder opens it, shows staff boxes as a second, editable layer (Measures/Staves tool), and submits staff zones with empty measures (`campaign.submitOmrLayout`).
+- Broker relays the Musibot OMR service at `/omr` (login-gated, a fixed set of endpoints, file transfers restricted to the service's host; `MUSIBOT_URL`, `MUSIBOT_TOKEN`); the console gets a client for it and the models are pinned in `services.json`. Nothing calls it yet.
+- Wizard: a Preparation step after Pieces chooses measure detection or optical music recognition for the facsimile pieces and finishes the setup; measure detection now runs on Finish, not while pieces are marked. OMR pieces get a layout pre-task (`omr-layout`) instead of measure correction; recognition itself is not wired up yet. Steps with nothing to do are left out of the step rail.
+
+## 0.33.0 – 2026-09-15
+
+- Board stacks its lanes instead of scrolling sideways; the task panel floats and the piece rail shrinks to dots before that happens. Piece rail shows per-category counts as cards.
 - SPA config is committed in `instances-config/` and the build mode follows the checked-out branch.
 - Sign-in banner names the unreachable broker instead of showing a JSON parse error.
 - Build output moves to `website/`, the project website to `static/`; `deploy/` removed.
@@ -17,10 +75,12 @@ parentheses.
 - Top bar and campaign filter bar wrap on narrow screens.
 - Palette: lighter surfaces, one deep tone per stage colour for 4.5:1 text contrast.
 - Board lanes are coloured as their stage; the dashed well is gone.
-- Board scrolls sideways before stacking; the piece rail shrinks below 1400px and 1100px.
+- Open-work rows on landing page share one height; their buttons are compact.
 - One SVG icon set replaces the unicode glyphs.
 - Copy says "submission" instead of "PR".
 - Copy: plainer empty-state and Manage-view wording.
+- Status pills are shorter with centred text.
+- UI text: "review" replaces "validation", "measure correction" names the pre-task, "done" is the final state.
 
 ## 0.32.0 – 2026-09-03
 
@@ -226,7 +286,7 @@ parentheses.
 ## 0.9.0 – 2026-07-20
 
 - Node UI improvements: movable nodes, per-page task when adding a facsimile, node-stack centering, better zooming. (`6b47b77`, `f90dcee`, `b5ad8c9`, `4a7bda2`)
-- Moved unit tests to src/lib/__tests__/ and normalized test imports. (`0a4a295`)
+- Moved unit tests to src/lib/**tests**/ and normalized test imports. (`0a4a295`)
 - Comment reformatting and edits. (`eae49d7`)
 
 ## 0.8.0 – 2026-07-17

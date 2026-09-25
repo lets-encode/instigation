@@ -62,7 +62,10 @@
           { tag: [tags.angleBracket, tags.tagName], class: "tok-tag" },
           { tag: tags.attributeName, class: "tok-attr" },
           { tag: [tags.attributeValue, tags.string], class: "tok-value" },
-          { tag: [tags.comment, tags.processingInstruction], class: "tok-comment" },
+          {
+            tag: [tags.comment, tags.processingInstruction],
+            class: "tok-comment",
+          },
         ]);
         wrapCompartment = new Compartment();
         known = value;
@@ -114,14 +117,18 @@
     // The import is already resolved once the view exists.
     void import("@codemirror/view").then(({ EditorView }) => {
       view?.dispatch({
-        effects: wrapCompartment!.reconfigure(wrapping ? EditorView.lineWrapping : []),
+        effects: wrapCompartment!.reconfigure(
+          wrapping ? EditorView.lineWrapping : [],
+        ),
       });
     });
   });
 </script>
 
 {#if loadError}
-  <p class="msg-error-inline" role="alert">Could not load the XML editor: {loadError}</p>
+  <p class="msg-error-inline" role="alert">
+    Could not load the XML editor: {loadError}
+  </p>
 {/if}
 <div class="editor" class:fill bind:this={host}></div>
 

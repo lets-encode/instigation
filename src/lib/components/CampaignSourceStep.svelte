@@ -44,7 +44,10 @@
     }
     const current = xml;
     const timer = setTimeout(() => {
-      const parsed = new DOMParser().parseFromString(current, "application/xml");
+      const parsed = new DOMParser().parseFromString(
+        current,
+        "application/xml",
+      );
       wellFormed = parsed.querySelector("parsererror") === null;
     }, 300);
     return () => clearTimeout(timer);
@@ -70,7 +73,12 @@
           </span>
         {/if}
         <div class="toolbar-gap"></div>
-        <button type="button" class="tbtn" class:on={wrap} onclick={() => (wrap = !wrap)}>
+        <button
+          type="button"
+          class="tbtn"
+          class:on={wrap}
+          onclick={() => (wrap = !wrap)}
+        >
           Wrap lines
         </button>
         {#if wizard.images.length}

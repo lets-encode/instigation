@@ -1,0 +1,8 @@
+# Build output and generated files
+website/
+.svelte-kit/
+package-lock.json
+# Third-party code, kept as published
+scripts/vendor/
+# The project website is copied verbatim from lets-encode.github.io
+static/

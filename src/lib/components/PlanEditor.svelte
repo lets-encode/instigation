@@ -77,9 +77,9 @@
     const lock = locks.find(
       (l) => l.task_id === task && l.subtask_id === "" && l.kind === "encoding",
     );
-    if (row?.status === "completed") return { key: "done", label: "completed" };
+    if (row?.status === "completed") return { key: "done", label: "done" };
     if (row?.status === "validation_required")
-      return { key: "validation", label: "validation" };
+      return { key: "validation", label: "review" };
     if (lock) return { key: "encoding", label: "● encoding" };
     return { key: "open", label: "○ open" };
   };
@@ -98,7 +98,8 @@
       : g.task.task_id;
   const sizeOf = (g: Group): string => {
     if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
-    if (g.task.locator === "measure-zones") return "all pages";
+    if (g.task.locator === "measure-zones" || g.task.locator === "omr-layout")
+      return "all pages";
     if (g.task.locator === "score-setup") return "score definition";
     return "whole file";
   };
@@ -173,7 +174,8 @@
   <div class="phead">
     <span class="plabel">Task plan · {groups.length}</span>
     <span class="pmode">● Editing the plan</span>
-    <span class="pnote">Changes only touch tasks nobody has worked on yet.</span>
+    <span class="pnote">Changes only touch tasks nobody has worked on yet.</span
+    >
     <span class="pspacer"></span>
     <button type="button" class="btn" onclick={addTask} disabled={busy}
       >+ Add task</button
@@ -253,7 +255,8 @@
         </div>
         <span class="ptype">{typeLabel(g.task.locator)}</span>
         <span class="psize"
-          >{sizeOf(g)}{#if !g.editable}<span class="lockmark"> · locked</span
+          >{sizeOf(g)}{#if !g.editable}<span class="lockmark">
+              · locked</span
             >{/if}</span
         >
         <div class="pdep">
@@ -275,13 +278,11 @@
           {:else}
             <span class="muted"
               >{g.task.depends_on
-                ? (groups.find((o) => o.task.task_id === g.task.depends_on)
-                    ? titleOf(
-                        groups.find(
-                          (o) => o.task.task_id === g.task.depends_on,
-                        )!,
-                      )
-                    : g.task.depends_on)
+                ? groups.find((o) => o.task.task_id === g.task.depends_on)
+                  ? titleOf(
+                      groups.find((o) => o.task.task_id === g.task.depends_on)!,
+                    )
+                  : g.task.depends_on
                 : "—"}</span
             >
           {/if}
@@ -343,7 +344,8 @@
     background: var(--info-bg);
     border: 1px solid var(--info-line);
     border-radius: 999px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
   }
   .pnote {
     font-size: 11.5px;
@@ -433,7 +435,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     margin-left: 4px;
   }
   .pchip.blue {
@@ -446,7 +449,8 @@
     font-size: 11.5px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
     white-space: nowrap;
   }
   .pstatus.s-done {

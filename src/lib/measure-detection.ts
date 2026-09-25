@@ -6,9 +6,9 @@
 // DETECTOR_CONCURRENCY requests are in flight at once, however many callers
 // are asking.
 
-import { detectMeasures } from './facsimile-detect.ts';
-import { sortReadingOrder, type MeasureBox } from './mei-facsimile.ts';
-import { downscaleImage, imageSize, type PageImage } from './prepare-images.ts';
+import { detectMeasures } from "./facsimile-detect.ts";
+import { sortReadingOrder, type MeasureBox } from "./mei-facsimile.ts";
+import { downscaleImage, imageSize, type PageImage } from "./prepare-images.ts";
 
 /** How many detector requests may be in flight at once — it is a shared service. */
 const DETECTOR_CONCURRENCY = 2;
@@ -19,27 +19,27 @@ const DETECTOR_IMAGE_EDGE = 1200;
 
 /** One page's detected measures, in pixels at the committed image's size. */
 export interface PageMeasures {
-	width: number;
-	height: number;
-	boxes: MeasureBox[];
-	/**
-	 * How long detecting this page took, from when its request left the queue
-	 * to its result. A cached result keeps the time its detection took.
-	 */
-	tookMs: number;
-	/**
-	 * Whether the detector itself failed on this page (its HTTP 500). The boxes
-	 * are empty and the result is not cached, so awaiting the page again
-	 * re-attempts the detection.
-	 */
-	detectorFailed?: boolean;
+  width: number;
+  height: number;
+  boxes: MeasureBox[];
+  /**
+   * How long detecting this page took, from when its request left the queue
+   * to its result. A cached result keeps the time its detection took.
+   */
+  tookMs: number;
+  /**
+   * Whether the detector itself failed on this page (its HTTP 500). The boxes
+   * are empty and the result is not cached, so awaiting the page again
+   * re-attempts the detection.
+   */
+  detectorFailed?: boolean;
 }
 
 export interface DetectionOptions {
-	/** Browser image decoding; injectable for non-browser tests. */
-	getImageSize?: (blob: Blob) => Promise<{ width: number; height: number }>;
-	/** Browser re-encoding of the detector copy; injectable for non-browser tests. */
-	downscale?: (blob: Blob, maxEdge: number) => Promise<Blob>;
+  /** Browser image decoding; injectable for non-browser tests. */
+  getImageSize?: (blob: Blob) => Promise<{ width: number; height: number }>;
+  /** Browser re-encoding of the detector copy; injectable for non-browser tests. */
+  downscale?: (blob: Blob, maxEdge: number) => Promise<Blob>;
 }
 
 // ---------------------------------------------------------------------------
@@ -49,15 +49,15 @@ let inFlight = 0;
 const turnstile: Array<() => void> = [];
 
 async function acquire(): Promise<void> {
-	while (inFlight >= DETECTOR_CONCURRENCY) {
-		await new Promise<void>((resolve) => turnstile.push(resolve));
-	}
-	inFlight++;
+  while (inFlight >= DETECTOR_CONCURRENCY) {
+    await new Promise<void>((resolve) => turnstile.push(resolve));
+  }
+  inFlight++;
 }
 
 function release(): void {
-	inFlight--;
-	turnstile.shift()?.();
+  inFlight--;
+  turnstile.shift()?.();
 }
 
 // ---------------------------------------------------------------------------
@@ -66,9 +66,14 @@ function release(): void {
 const cache = new Map<string, Promise<PageMeasures>>();
 
 async function contentKey(blob: Blob, detectorUrl: string): Promise<string> {
-	const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
-	const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
-	return `${detectorUrl}|${hex}`;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    await blob.arrayBuffer(),
+  );
+  const hex = Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  return `${detectorUrl}|${hex}`;
 }
 
 /**
@@ -79,59 +84,59 @@ async function contentKey(blob: Blob, detectorUrl: string): Promise<string> {
  * no boxes and `detectorFailed` set), so awaiting the page again retries it.
  */
 async function detectPageMeasures(
-	blob: Blob,
-	name: string,
-	detectorUrl: string,
-	options: DetectionOptions = {}
+  blob: Blob,
+  name: string,
+  detectorUrl: string,
+  options: DetectionOptions = {},
 ): Promise<PageMeasures> {
-	const key = await contentKey(blob, detectorUrl);
-	const cached = cache.get(key);
-	if (cached) return cached;
-	const job = (async (): Promise<PageMeasures> => {
-		const getImageSize = options.getImageSize ?? imageSize;
-		const downscale = options.downscale ?? downscaleImage;
-		await acquire();
-		try {
-			const startedAt = performance.now();
-			const [size, copy] = await Promise.all([
-				getImageSize(blob),
-				downscale(blob, DETECTOR_IMAGE_EDGE)
-			]);
-			const normalized = await detectMeasures(copy, name, detectorUrl);
-			// null is the detector failing on this page, not an empty page: serve
-			// this attempt's empty result, but drop it from the cache so a later
-			// await re-attempts instead of treating the failure as "no measures".
-			if (normalized === null) cache.delete(key);
-			const boxes = sortReadingOrder(normalized ?? []).map((b) => ({
-				ulx: b.ulx * size.width,
-				uly: b.uly * size.height,
-				lrx: b.lrx * size.width,
-				lry: b.lry * size.height
-			}));
-			return {
-				width: size.width,
-				height: size.height,
-				boxes,
-				tookMs: performance.now() - startedAt,
-				...(normalized === null ? { detectorFailed: true } : {})
-			};
-		} finally {
-			release();
-		}
-	})();
-	cache.set(key, job);
-	job.catch(() => cache.delete(key));
-	return job;
+  const key = await contentKey(blob, detectorUrl);
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const job = (async (): Promise<PageMeasures> => {
+    const getImageSize = options.getImageSize ?? imageSize;
+    const downscale = options.downscale ?? downscaleImage;
+    await acquire();
+    try {
+      const startedAt = performance.now();
+      const [size, copy] = await Promise.all([
+        getImageSize(blob),
+        downscale(blob, DETECTOR_IMAGE_EDGE),
+      ]);
+      const normalized = await detectMeasures(copy, name, detectorUrl);
+      // null is the detector failing on this page, not an empty page: serve
+      // this attempt's empty result, but drop it from the cache so a later
+      // await re-attempts instead of treating the failure as "no measures".
+      if (normalized === null) cache.delete(key);
+      const boxes = sortReadingOrder(normalized ?? []).map((b) => ({
+        ulx: b.ulx * size.width,
+        uly: b.uly * size.height,
+        lrx: b.lrx * size.width,
+        lry: b.lry * size.height,
+      }));
+      return {
+        width: size.width,
+        height: size.height,
+        boxes,
+        tookMs: performance.now() - startedAt,
+        ...(normalized === null ? { detectorFailed: true } : {}),
+      };
+    } finally {
+      release();
+    }
+  })();
+  cache.set(key, job);
+  job.catch(() => cache.delete(key));
+  return job;
 }
 
 // ---------------------------------------------------------------------------
 // The background pass over a step's pages.
 
 export interface DetectionSession {
-	/** The page's measures; joins work already under way rather than restarting it. */
-	page(index: number): Promise<PageMeasures>;
-	/** Stop starting new pages. Requests already in flight complete into the cache. */
-	cancel(): void;
+  /** The page's measures; joins work already under way rather than restarting it. */
+  page(index: number): Promise<PageMeasures>;
+  /** Stop starting new pages. Requests already in flight complete into the cache. */
+  cancel(): void;
 }
 
 /**
@@ -141,40 +146,42 @@ export interface DetectionSession {
  * per page rather than a retry loop.
  */
 export function startDetection(
-	images: PageImage[],
-	detectorUrl: string,
-	options: DetectionOptions = {}
+  images: PageImage[],
+  detectorUrl: string,
+  options: DetectionOptions = {},
 ): DetectionSession {
-	let cancelled = false;
-	const started: Array<Promise<PageMeasures> | undefined> = new Array(images.length);
-	const ensure = (index: number): Promise<PageMeasures> => {
-		const existing = started[index];
-		if (existing) return existing;
-		const image = images[index];
-		const name = image.path.split('/').pop() ?? `${index + 1}.jpg`;
-		const job = detectPageMeasures(image.blob, name, detectorUrl, options);
-		started[index] = job;
-		job.then(
-			// A detector failure is served once but not kept, matching the cache.
-			(result) => {
-				if (result.detectorFailed) started[index] = undefined;
-			},
-			() => (started[index] = undefined)
-		);
-		return job;
-	};
-	let next = 0;
-	const worker = async (): Promise<void> => {
-		while (!cancelled && next < images.length) {
-			// A background failure is only noted; it surfaces when the page is awaited.
-			await ensure(next++).catch(() => {});
-		}
-	};
-	for (let i = 0; i < DETECTOR_CONCURRENCY; i++) void worker();
-	return {
-		page: ensure,
-		cancel: () => {
-			cancelled = true;
-		}
-	};
+  let cancelled = false;
+  const started: Array<Promise<PageMeasures> | undefined> = new Array(
+    images.length,
+  );
+  const ensure = (index: number): Promise<PageMeasures> => {
+    const existing = started[index];
+    if (existing) return existing;
+    const image = images[index];
+    const name = image.path.split("/").pop() ?? `${index + 1}.jpg`;
+    const job = detectPageMeasures(image.blob, name, detectorUrl, options);
+    started[index] = job;
+    job.then(
+      // A detector failure is served once but not kept, matching the cache.
+      (result) => {
+        if (result.detectorFailed) started[index] = undefined;
+      },
+      () => (started[index] = undefined),
+    );
+    return job;
+  };
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (!cancelled && next < images.length) {
+      // A background failure is only noted; it surfaces when the page is awaited.
+      await ensure(next++).catch(() => {});
+    }
+  };
+  for (let i = 0; i < DETECTOR_CONCURRENCY; i++) void worker();
+  return {
+    page: ensure,
+    cancel: () => {
+      cancelled = true;
+    },
+  };
 }

@@ -1,5 +1,4 @@
 node_modules/
-/build
 /.svelte-kit
 .DS_Store
 broker/__pycache__/

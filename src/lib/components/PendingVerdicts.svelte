@@ -20,15 +20,25 @@
 {#if rejected.length}
   <div class="overlay" role="alert">
     <div class="overlay-card">
-      <div class="fail-mark" aria-hidden="true"><Icon name="close" size={22} /></div>
-      <p class="overlay-title">Rejected</p>
+      <div class="fail-mark" aria-hidden="true">
+        <Icon name="close" size={22} />
+      </div>
+      <p class="overlay-title">
+        {rejected.every((e) => e.runFailed)
+          ? "Run failed"
+          : rejected.some((e) => e.runFailed)
+            ? "Failed"
+            : "Rejected"}
+      </p>
       {#each rejected as entry (entry.id)}
         <div class="failure">
           <p class="failure-label">{entry.label}</p>
           <p class="failure-message">
             {text(entry.message)}
             {#if entry.prNumber}
-              <a href={entry.prUrl} target="_blank" rel="noreferrer">submission #{entry.prNumber}</a>
+              <a href={entry.prUrl} target="_blank" rel="noreferrer"
+                >submission #{entry.prNumber}</a
+              >
             {/if}
           </p>
         </div>

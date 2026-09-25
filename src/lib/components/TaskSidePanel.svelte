@@ -13,7 +13,7 @@
   import { findRow } from "$lib/campaign-tables.ts";
   import type { CommentRow, LockRow, StateRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { handle, pageOfLocator, preTaskHref } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import {
     buildRecord,
@@ -44,6 +44,7 @@
     runner,
     resultBanner,
     panel = $bindable(),
+    floating,
     onclose,
     onopenscore,
     onshowanchor,
@@ -70,6 +71,9 @@
     runner: CommandRunner;
     resultBanner: Snippet;
     panel: SidePanelState;
+    /** Float over the right edge of the view instead of taking a share of
+     *  the row's width. */
+    floating: boolean;
     onclose: () => void;
     /** Open the score at the task's pages. */
     onopenscore: () => void;
@@ -114,9 +118,7 @@
     claimableSub !== undefined &&
       pendingVerdicts.isProcessing(`validate:${card.task}/${claimableSub}`),
   );
-  const editorRoute = $derived(
-    `/${campaign}/${preTaskRoute(card.locator)}/${card.task}`,
-  );
+  const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
   const editorName = $derived(
     card.locator === "score-setup" ? "setup editor" : "zone editor",
   );
@@ -129,7 +131,7 @@
 
   // The task's page, linking the status line to the score and prefilling a
   // fail's anchor.
-  const taskPage = $derived(/^surface-(\d+)$/.exec(card.locator)?.[1] ?? "");
+  const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
   const scoreLink = $derived(taskPage ? `p. ${taskPage}` : "score");
 
   const threads = $derived(buildThreads(comments, card.task));
@@ -157,7 +159,10 @@
   }
   function moveResize(e: PointerEvent) {
     if (!resizing) return;
-    panel.width = clampPanelWidth(startWidth + (startX - e.clientX), window.innerWidth);
+    panel.width = clampPanelWidth(
+      startWidth + (startX - e.clientX),
+      window.innerWidth,
+    );
   }
   function endResize() {
     if (!resizing) return;
@@ -166,7 +171,7 @@
   }
 </script>
 
-<div class="tspwrap" style="width: {panel.width}px">
+<div class="tspwrap" class:floating style="width: {panel.width}px">
   <div
     class="handle"
     class:active={resizing}
@@ -178,7 +183,11 @@
     onpointerup={endResize}
     onpointercancel={endResize}
   ></div>
-  <aside class="tsp" style="--zone: var(--zone-{zone})" aria-label={`Task ${card.title}`}>
+  <aside
+    class="tsp"
+    style="--zone: var(--zone-{zone})"
+    aria-label={`Task ${card.title}`}
+  >
     {@render resultBanner()}
     <div class="taskcard">
       <div class="tsphead">
@@ -203,7 +212,8 @@
               : undefined}>{cardPill(card, viewer)}</span
         >
         <span class="pieceline"
-          >{pieceName} · <button
+          >{pieceName} ·
+          <button
             type="button"
             class="scorelink"
             onclick={onopenscore}
@@ -286,8 +296,8 @@
               class="btn btn-primary"
               onclick={() => onsubmitencoding(card.task)}
               disabled={runner.busy || encodePending}
-              title="After committing your encoding in mei-friend, submit it for validation."
-              >Submit for validation</button
+              title="After committing your encoding in mei-friend, submit it for review."
+              >Submit for review</button
             >
             <button
               type="button"
@@ -307,8 +317,7 @@
               class="btn btn-primary btn-review"
               onclick={() => onclaim(card.task, claimableSub)}
               disabled={runner.busy || claimPending}
-              title="Reserve this validation slot for review."
-              >Claim to review</button
+              title="Reserve this review slot.">Claim to review</button
             >
             {#if !card.pre}
               <a
@@ -342,42 +351,48 @@
     </div>
 
     <div class="tspscroll">
-    <span class="sechead" class:review={isReview}>
-      <span class="secdot"></span>
-      Discussion
-      <span class="seccount">{discussionCount}</span>
-    </span>
-    {#each threads as t (t.root.comment_id)}
-      <CommentCard
-        comment={t.root}
-        {logins}
-        {viewer}
-        {canPush}
-        {runner}
-        review={isReview}
-        onanchor={onshowanchor}
-        onreply={(c) => (replyTo = c)}
-        {onresolve}
-      />
-      {#each t.replies as reply (reply.comment_id)}
+      <span class="sechead" class:review={isReview}>
+        <span class="secdot"></span>
+        Discussion
+        <span class="seccount">{discussionCount}</span>
+      </span>
+      {#each threads as t (t.root.comment_id)}
         <CommentCard
-          comment={reply}
+          comment={t.root}
           {logins}
           {viewer}
           {canPush}
           {runner}
           review={isReview}
-          reply
           onanchor={onshowanchor}
+          onreply={(c) => (replyTo = c)}
           {onresolve}
         />
+        {#each t.replies as reply (reply.comment_id)}
+          <CommentCard
+            comment={reply}
+            {logins}
+            {viewer}
+            {canPush}
+            {runner}
+            review={isReview}
+            reply
+            onanchor={onshowanchor}
+            {onresolve}
+          />
+        {/each}
       {/each}
-    {/each}
-    {#if threads.length === 0}
-      <span class="cnone">No discussion yet.</span>
-    {/if}
+      {#if threads.length === 0}
+        <span class="cnone">No discussion yet.</span>
+      {/if}
     </div>
-    <CommentComposer task={card.task} {logins} {runner} bind:replyTo {oncomment} />
+    <CommentComposer
+      task={card.task}
+      {logins}
+      {runner}
+      bind:replyTo
+      {oncomment}
+    />
   </aside>
 </div>
 
@@ -439,28 +454,26 @@
     border-radius: 12px;
     padding: 12px;
   }
-  /* Below 1100px the panel floats over the right edge of the board instead
-     of taking a share of its width; the drag handle is not needed there. */
-  @media (max-width: 1100px) {
-    .tspwrap {
-      position: fixed;
-      top: 56px;
-      right: 0;
-      bottom: 0;
-      /* The stored width still applies (inline); the viewport caps it. */
-      max-width: 94vw;
-      padding: 12px 12px 12px 0;
-      box-sizing: border-box;
-      z-index: 30;
-    }
-    .handle {
-      display: none;
-    }
-    .tsp {
-      background: var(--card);
-      border: 1px solid var(--line);
-      box-shadow: var(--shadow);
-    }
+  /* Floating: over the right edge of the view instead of taking a share of
+     the row's width; the drag handle is not needed there. */
+  .tspwrap.floating {
+    position: fixed;
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    /* The stored width still applies (inline); the viewport caps it. */
+    max-width: 94vw;
+    padding: 12px 12px 12px 0;
+    box-sizing: border-box;
+    z-index: 30;
+  }
+  .floating .handle {
+    display: none;
+  }
+  .floating .tsp {
+    background: var(--card);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
   }
   .tspscroll {
     flex: 1;
@@ -511,7 +524,10 @@
     white-space: nowrap;
   }
   .tspid {
-    font: 400 10px ui-monospace, Menlo, monospace;
+    font:
+      400 10px ui-monospace,
+      Menlo,
+      monospace;
     color: var(--ink-faint);
     flex: none;
   }
@@ -630,7 +646,8 @@
     letter-spacing: 0;
     text-transform: none;
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     color: var(--ink-soft);
     background: var(--card);
     border: 1px solid var(--line);
@@ -648,7 +665,8 @@
     gap: 4px;
     font-weight: 600;
     font-size: 11px;
-    padding: 3px 10px;
+    line-height: 1;
+    padding: 4px 10px;
     border-radius: 999px;
     white-space: nowrap;
     background: var(--bg-alt);

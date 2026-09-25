@@ -107,7 +107,11 @@
 
   const isReview = (card: BoardCard) => card.column === "validation";
   const sectionPill = (card: BoardCard) =>
-    isReview(card) ? "review" : card.pre ? card.typeLine.toLowerCase() : "encoding";
+    isReview(card)
+      ? "review"
+      : card.pre
+        ? card.typeLine.toLowerCase()
+        : "encoding";
   const sectionLabel = (card: BoardCard) => {
     const prefix = `${piece.title || piece.id} · `;
     const stripped = card.title.startsWith(prefix)
@@ -141,14 +145,16 @@
   }
   function moveResize(e: PointerEvent) {
     if (!resizing) return;
-    panel.width = clampPanelWidth(startWidth + (startX - e.clientX), window.innerWidth);
+    panel.width = clampPanelWidth(
+      startWidth + (startX - e.clientX),
+      window.innerWidth,
+    );
   }
   function endResize() {
     if (!resizing) return;
     resizing = false;
     writeSidePanel("comments", { ...panel });
   }
-
 </script>
 
 {#if panel.open}
@@ -341,7 +347,8 @@
     font-weight: 600;
     background: var(--card);
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     color: var(--ink-soft);
   }
   /* The pinned header keeps its controls in reach while the list scrolls;
@@ -390,7 +397,8 @@
     letter-spacing: 0;
     text-transform: none;
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     color: var(--info);
     background: var(--info-bg);
     border: 1px solid var(--info-line);

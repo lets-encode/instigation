@@ -12,8 +12,11 @@
   import { findRow } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
   import { cardPill } from "$lib/campaign-board.ts";
+  import { pageOfLocator } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
+  import TaskRunState from "$lib/components/TaskRunState.svelte";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { PagePreview, PiecePreview } from "$lib/piece-previews.ts";
 
   let {
@@ -76,6 +79,14 @@
     ),
   );
 
+  /** Tasks other than the next-task card (which shows its own) with a
+      submission still being processed. */
+  const running = $derived(
+    cards.filter(
+      (c) => c.task !== nextCard?.task && pendingVerdicts.forTask(c.task),
+    ),
+  );
+
   // The kind filters over the open-task list; a card's kind is the stage its
   // claim starts.
   type Kind = "enc" | "review" | "pre";
@@ -84,9 +95,13 @@
   const KINDS: { key: Kind; label: string }[] = [
     { key: "enc", label: "Encoding" },
     { key: "review", label: "Review" },
-    { key: "pre", label: "Preparation" },
+    { key: "pre", label: "Setup" },
   ];
-  let kinds = $state<Record<Kind, boolean>>({ enc: true, review: true, pre: true });
+  let kinds = $state<Record<Kind, boolean>>({
+    enc: true,
+    review: true,
+    pre: true,
+  });
   const listed = $derived(openCards.filter((c) => kinds[kindOf(c)]));
   /** Kinds present among the open tasks; the filters show only for those. */
   const presentKinds = $derived(new Set(openCards.map(kindOf)));
@@ -118,8 +133,13 @@
     if (viewer === "") return "Log in with GitHub to claim this task.";
     if (c.column === "validation") return "Takes a review slot on this task.";
     if (c.pre) return "Claims this task for you and opens its editor.";
-    return "Claims this section for you and opens mei-friend in a new tab.";
+    return "Claims this task for you and opens mei-friend in a new tab.";
   };
+
+  /** The viewer may claim this card now: an open task, or a review slot that
+      is free and not on their own submission. */
+  const claimable = (c: BoardCard) =>
+    c.column === "validation" ? c.slots.some((s) => s.claimable) : c.claimable;
 
   // The stage a claim starts, as the button's colour class.
   const stageClass = (c: BoardCard) =>
@@ -128,10 +148,7 @@
   const typeOf = (c: BoardCard) =>
     c.column === "validation" ? "validation" : c.typeLine.toLowerCase();
 
-  const startPage = (c: BoardCard): number | null => {
-    const m = /^surface-(\d+)$/.exec(c.locator);
-    return m ? Number(m[1]) : null;
-  };
+  const startPage = (c: BoardCard): number | null => pageOfLocator(c.locator);
 
   // First-page thumbnails, page crops and measure counts, loaded per piece.
   let previews = $state<Record<string, PiecePreview>>({});
@@ -149,7 +166,9 @@
   const nextPiece = $derived(
     nextCard ? pieces[pieceIndex.get(nextCard.task) ?? 0] : undefined,
   );
-  const nextPreview = $derived(nextPiece ? previews[nextPiece.path] : undefined);
+  const nextPreview = $derived(
+    nextPiece ? previews[nextPiece.path] : undefined,
+  );
   const nextPage = $derived(nextCard ? startPage(nextCard) : null);
   /** The next task's own page, when the piece has facsimile pages. */
   const nextPagePreview = $derived<PagePreview | undefined>(
@@ -162,7 +181,9 @@
   const nextContext = $derived.by(() => {
     if (!nextCard) return "";
     const parts = [typeOf(nextCard)];
-    const measures = nextPage ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0) : 0;
+    const measures = nextPage
+      ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0)
+      : 0;
     if (measures) {
       const staves = nextPreview?.staves ?? 0;
       parts.push(
@@ -177,7 +198,7 @@
       depCard?.column === "done" &&
       !depCard.pre
     )
-      parts.push("continues where the previous section ended");
+      parts.push("continues where the previous task ended");
     return parts.join(" · ");
   });
 
@@ -213,7 +234,11 @@
     const counts = { pre: 0, enc: 0, review: 0 };
     for (const c of pieceTasks(index)) {
       if (c.column === "ready") counts[c.pre ? "pre" : "enc"]++;
-      else if (c.column === "validation" && c.slots.some((s) => s.key === "open")) counts.review++;
+      else if (
+        c.column === "validation" &&
+        c.slots.some((s) => s.key === "open")
+      )
+        counts.review++;
     }
     return counts;
   };
@@ -237,13 +262,23 @@
 
 {#snippet chips(card: BoardCard)}
   {#if card.counts.fails > 0}
-    <span class="chip chip-fail">{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span>
+    <span class="chip chip-fail"
+      >{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span
+    >
   {/if}
   {#if card.counts.comments > 0}
-    <span class="chip chip-note">{card.counts.comments} comment{card.counts.comments === 1 ? "" : "s"}</span>
+    <span class="chip chip-note"
+      >{card.counts.comments} comment{card.counts.comments === 1
+        ? ""
+        : "s"}</span
+    >
   {/if}
   {#if card.counts.questions > 0}
-    <span class="chip chip-question">{card.counts.questions} question{card.counts.questions === 1 ? "" : "s"}</span>
+    <span class="chip chip-question"
+      >{card.counts.questions} question{card.counts.questions === 1
+        ? ""
+        : "s"}</span
+    >
   {/if}
 {/snippet}
 
@@ -281,6 +316,7 @@
               title="Open this task">{nextCard.title}</button
             >
             <span class="nextcontext">{nextContext}</span>
+            <TaskRunState task={nextCard.task} large />
           </div>
           <div class="nextacts">
             <button
@@ -289,7 +325,12 @@
               class:btn-primary={!panelOpen}
               onclick={() => (viewer === "" ? login() : onact(nextCard))}
               disabled={busy}
-              title={actTitle(nextCard)}>{actLabel(nextCard)}{#if actLabel(nextCard) === "Claim & open editor"}<Icon name="external" />{/if}</button
+              title={actTitle(nextCard)}
+              >{actLabel(
+                nextCard,
+              )}{#if actLabel(nextCard) === "Claim & open editor"}<Icon
+                  name="external"
+                />{/if}</button
             >
             <button
               type="button"
@@ -314,7 +355,7 @@
           </h2>
           {#if presentKinds.size > 1}
             <span class="vspacer"></span>
-            {#each KINDS.filter((k) => presentKinds.has(k.key)) as kind (kind.key)}
+            {#each KINDS.filter( (k) => presentKinds.has(k.key), ) as kind (kind.key)}
               <button
                 type="button"
                 class="chip-switch"
@@ -341,12 +382,16 @@
               <span class="stype">{typeOf(card)}</span>
               <span class="vspacer"></span>
               {@render chips(card)}
-              {#if viewer !== ""}
+              {#if claimable(card)}
                 <button
                   type="button"
                   class="btn {stageClass(card)}"
                   onclick={() => onact(card)}
-                  disabled={busy}>Claim</button
+                  disabled={busy}
+                  title={actTitle(card)}
+                  >{card.column === "validation"
+                    ? "Claim to review"
+                    : "Claim to encode"}</button
                 >
               {/if}
             </div>
@@ -354,6 +399,18 @@
             <span class="none">No open tasks of these kinds.</span>
           {/each}
         </div>
+      </div>
+    {/if}
+
+    {#if running.length > 0}
+      <div class="vsec">
+        <h2 class="seclabel c-next">Being processed</h2>
+        {#each running as card (card.task)}
+          <div class="runcard">
+            <span class="runtitle">{card.title}</span>
+            <TaskRunState task={card.task} large />
+          </div>
+        {/each}
       </div>
     {/if}
 
@@ -384,8 +441,9 @@
                     class="piecename"
                     aria-expanded={open}
                     onclick={() => toggle(piece.path)}
-                    title={open ? "Collapse this piece" : "Show this piece's tasks"}
-                    >{pieceName(piece)}</button
+                    title={open
+                      ? "Collapse this piece"
+                      : "Show this piece's tasks"}>{pieceName(piece)}</button
                   >
                 {/if}
                 <!-- Done, in review and the rest, in the stage colours. -->
@@ -397,22 +455,33 @@
                     <div class="seg review" style="flex: {review}"></div>
                   {/if}
                   {#if p && p.total - p.done - review > 0}
-                    <div class="seg" style="flex: {p.total - p.done - review}"></div>
+                    <div
+                      class="seg"
+                      style="flex: {p.total - p.done - review}"
+                    ></div>
                   {/if}
                 </div>
                 {#if p && p.total > 0 && p.done === p.total}
-                  <span class="piecedone complete"><Icon name="check" size={12} /> complete</span>
+                  <span class="piecedone complete"
+                    ><Icon name="check" size={12} /> done</span
+                  >
                 {:else}
-                  <span class="piecedone">{p?.done ?? 0} of {p?.total ?? 0} done</span>
+                  <span class="piecedone"
+                    >{p?.done ?? 0} of {p?.total ?? 0} done</span
+                  >
                 {/if}
                 {#if counts.enc > 0}
                   <span class="scount enc">{counts.enc} open</span>
                 {/if}
                 {#if counts.review > 0}
-                  <span class="scount review">{counts.review} review{counts.review === 1 ? "" : "s"}</span>
+                  <span class="scount review"
+                    >{counts.review} review{counts.review === 1
+                      ? ""
+                      : "s"}</span
+                  >
                 {/if}
                 {#if counts.pre > 0}
-                  <span class="scount pre">{counts.pre} preparation</span>
+                  <span class="scount pre">{counts.pre} setup</span>
                 {/if}
                 <span class="vspacer"></span>
                 <button
@@ -423,7 +492,11 @@
                   >View score</button
                 >
                 {#if !lone}
-                  <span class="pchev"><Icon name={open ? "chevron-down" : "chevron-right"} /></span>
+                  <span class="pchev"
+                    ><Icon
+                      name={open ? "chevron-down" : "chevron-right"}
+                    /></span
+                  >
                 {/if}
               </div>
               {#if open}
@@ -431,13 +504,20 @@
                   {#each pieceTasks(index) as card (card.task)}
                     {#if card.column === "blocked" || card.column === "done"}
                       <div class="taskrow still">
-                        <span class="tasktitle">{partTitle(card.title, piece)}</span>
+                        <span class="tasktitle"
+                          >{partTitle(card.title, piece)}</span
+                        >
                         <span class="ttype">{typeOf(card)}</span>
+                        <TaskRunState task={card.task} />
                         <span class="vspacer"></span>
                         {#if card.column === "done"}
-                          <span class="merged"><Icon name="check" size={12} /> done</span>
+                          <span class="merged"
+                            ><Icon name="check" size={12} /> done</span
+                          >
                         {:else}
-                          <span class="waits">waits for {partTitle(card.waitsFor, piece)}</span>
+                          <span class="waits"
+                            >waits for {partTitle(card.waitsFor, piece)}</span
+                          >
                         {/if}
                       </div>
                     {:else}
@@ -446,9 +526,11 @@
                           type="button"
                           class="tasktitle"
                           onclick={() => onopen(card.task)}
-                          title="Open this task">{partTitle(card.title, piece)}</button
+                          title="Open this task"
+                          >{partTitle(card.title, piece)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
+                        <TaskRunState task={card.task} />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         {#if card.nextUp}
@@ -531,7 +613,8 @@
     font-weight: 600;
     background: var(--bg-tint);
     border-radius: 999px;
-    padding: 1px 7px;
+    line-height: 1;
+    padding: 3px 7px;
     letter-spacing: 0;
   }
 
@@ -592,6 +675,24 @@
   .nextcard:hover {
     border-color: var(--accent);
   }
+  .runcard {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 14px 22px;
+    background: var(--card);
+    border: 1.5px solid var(--info-line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
+  }
+  .runcard + .runcard {
+    margin-top: 8px;
+  }
+  .runtitle {
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
   .crop {
     position: relative;
     flex: none;
@@ -642,7 +743,8 @@
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid var(--line);
     border-radius: 999px;
-    padding: 2px 8px;
+    line-height: 1;
+    padding: 3px 8px;
   }
   .nextbody {
     display: flex;
@@ -806,7 +908,8 @@
     font-size: 11px;
     font-weight: 600;
     border-radius: 999px;
-    padding: 1px 8px;
+    line-height: 1;
+    padding: 3px 8px;
     border: 1px solid transparent;
     white-space: nowrap;
   }
@@ -871,7 +974,8 @@
   .taskpill {
     font-weight: 600;
     font-size: 11px;
-    padding: 2px 9px;
+    line-height: 1;
+    padding: 3px 9px;
     border-radius: 999px;
     white-space: nowrap;
     background: var(--bg-alt);
