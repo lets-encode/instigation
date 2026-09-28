@@ -18,6 +18,16 @@ export const viewerId = (): string =>
 /** The session's authenticated forge client, or an anonymous one. */
 export const readForge = (): ForgeClient => forge() ?? createForge("");
 
+/**
+ * Open mei-friend in a new tab for a command that finished cleanly with a
+ * hand-off URL. The result banner keeps the link for when the browser blocks
+ * the tab.
+ */
+export function openMeiFriend(result: Result | null): void {
+  if (result?.ok && !result.warn && result.meiFriendUrl)
+    window.open(result.meiFriendUrl, "_blank", "noopener");
+}
+
 /** One campaign repo as a command target. */
 export interface CommandTarget {
   repoId: number;

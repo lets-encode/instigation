@@ -15,6 +15,7 @@
     CommandRunner,
     readForge,
     viewerId,
+    openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -37,6 +38,7 @@
   import CampaignRow from "$lib/components/CampaignRow.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
   const PER_PAGE = 12;
@@ -161,7 +163,7 @@
         owner: s.owner,
         name: s.repo,
         full_name: `${s.owner}/${s.repo}`,
-        html_url: `https://github.com/${s.owner}/${s.repo}`,
+        html_url: readForge().repoWebUrl(s.owner, s.repo),
         private: s.isPrivate,
         description: null,
         updated_at: "",
@@ -203,13 +205,7 @@
 
   const openEditor = async (t: MyTask) => {
     await run(t, (c) => invoke(commands.openEditor, { task_id: t.task }, c));
-    if (
-      runner.result?.ok &&
-      !runner.result.warn &&
-      runner.result.meiFriendUrl
-    ) {
-      window.open(runner.result.meiFriendUrl, "_blank", "noopener");
-    }
+    openMeiFriend(runner.result);
   };
   const submit = (t: MyTask) =>
     run(t, (c) => invoke(commands.submitEncoding, { task_id: t.task }, c));
@@ -232,13 +228,7 @@
         () => invoke(commands.openEditor, { task_id: next.task }, c),
         refresh,
       );
-      if (
-        runner.result?.ok &&
-        !runner.result.warn &&
-        runner.result.meiFriendUrl
-      ) {
-        window.open(runner.result.meiFriendUrl, "_blank", "noopener");
-      }
+      openMeiFriend(runner.result);
     } else if (next.action === "review") {
       await runner.run(
         () =>
@@ -335,28 +325,7 @@
 
 <div class="screen">
   <h1 class="vh">Campaigns</h1>
-  {#if runner.result}
-    <div
-      class="banner"
-      class:ok={runner.result.ok && !runner.result.warn && !runner.result.error}
-      class:warn={runner.result.warn}
-      class:err={!!runner.result.error}
-    >
-      <span>
-        {runner.result.error ?? runner.result.message}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {/if}
+  <RunnerBanner {runner} />
 
   {#if auth.user && (fix.length > 0 || openComments.length > 0)}
     <section class="block">

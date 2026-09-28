@@ -7,6 +7,7 @@
     CommandRunner,
     readForge,
     viewerId,
+    openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import {
@@ -19,6 +20,10 @@
     findRow,
     pieceNamesOf,
     piecePreparationsOf,
+    commentAnchor,
+    type MeasureAnchor,
+    pieceLabel,
+    pieceZone,
   } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
@@ -28,7 +33,7 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import { commands, invoke } from "$lib/commands.ts";
+  import { commands, invoke, commentInput } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
   import {
     pageOfLocator,
@@ -50,6 +55,7 @@
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import CommentsPanel from "$lib/components/CommentsPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PieceRail from "$lib/components/PieceRail.svelte";
@@ -405,12 +411,12 @@
   );
   // The measure range the score view opens highlighted (from a comment
   // anchor); within the view, anchors work without navigation.
-  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  let anchor = $state<MeasureAnchor | null>(null);
   // The open task's ?task= survives entering and leaving the score view.
   function openScoreView(
     path: string,
     startPage?: number,
-    a: { page: number; m1: number; m2: number } | null = null,
+    a: MeasureAnchor | null = null,
   ) {
     anchor = a;
     const query = new URLSearchParams();
@@ -445,17 +451,12 @@
     const index = pieceIndexByTask.get(c.task_id);
     const path = previewPieces[index ?? -1]?.path;
     if (!path) return;
-    const m1 = Number(c.measure_start);
-    const m2 = Number(c.measure_end || c.measure_start);
-    openScoreView(path, c.page ? Number(c.page) - 1 : undefined, {
-      page: Number(c.page),
-      m1: Number.isFinite(m1) ? m1 : 0,
-      m2: Number.isFinite(m2) ? m2 : 0,
-    });
+    openScoreView(
+      path,
+      c.page ? Number(c.page) - 1 : undefined,
+      commentAnchor(c),
+    );
   }
-
-  const copy = (text: string) =>
-    navigator.clipboard?.writeText(text).catch(() => {});
 
   // The context every command runs against; progress updates feed the busy
   // overlay's step log.
@@ -639,13 +640,7 @@
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
     await run((c) => invoke(commands.openEditor, { task_id }, c));
-    if (
-      runner.result?.ok &&
-      !runner.result.warn &&
-      runner.result.meiFriendUrl
-    ) {
-      window.open(runner.result.meiFriendUrl, "_blank", "noopener");
-    }
+    openMeiFriend(runner.result);
   };
 
   const submitpr = (task_id: string) =>
@@ -678,16 +673,7 @@
     run((c) =>
       invoke(
         commands.submitComment,
-        {
-          task_id,
-          subtask_id: "",
-          kind,
-          body,
-          page: at?.page ?? "",
-          measure_start: at?.measure_start ?? "",
-          measure_end: at?.measure_end ?? "",
-          parent_id,
-        },
+        commentInput(task_id, kind, body, parent_id, at),
         c,
       ),
     );
@@ -749,9 +735,9 @@
   // The task panel names its piece and carries its colour.
   const pieceNameOf = (task: string) => {
     const p = previewPieces[pieceIndexByTask.get(task) ?? 0];
-    return p ? p.title || p.id : "";
+    return p ? pieceLabel(p) : "";
   };
-  const zoneOf = (task: string) => ((pieceIndexByTask.get(task) ?? 0) % 8) + 1;
+  const zoneOf = (task: string) => pieceZone(pieceIndexByTask.get(task) ?? 0);
 
   // The board rendered as four columns: queued-but-blocked tasks share the
   // Open column (dimmed, with what they wait for) instead of a fifth column.
@@ -840,67 +826,7 @@
 {/if}
 
 {#snippet resultBanner()}
-  {#if runner.result && runner.result.error}
-    <div class="banner bar err">
-      <span>
-        {runner.result.error}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {:else if runner.result && runner.result.ok && !runner.result.background}
-    <div class="banner bar {runner.result.warn ? 'warn' : 'ok'}">
-      <div class="banner-body">
-        {runner.result.message}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-        {#if runner.result.meiFriendUrl}
-          <div class="rawlink">
-            <input
-              readonly
-              value={runner.result.meiFriendUrl}
-              onfocus={(e) => (e.target as HTMLInputElement).select()}
-            />
-            <button
-              type="button"
-              onclick={() => copy(runner.result!.meiFriendUrl!)}>Copy</button
-            >
-          </div>
-          <span class="muted">
-            <a
-              href={runner.result.meiFriendUrl}
-              target="_blank"
-              rel="noreferrer"
-              >Open in mei-friend <Icon name="external" size={12} /></a
-            >
-            (if the tab didn't open automatically)
-          </span>
-          {#if isPrivate}
-            <span class="muted">
-              Opening mei-friend shares a short-lived, read-capable GitHub URL
-              with that external service.
-            </span>
-          {/if}
-        {/if}
-      </div>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {/if}
+  <RunnerBanner {runner} bar {isPrivate} />
 {/snippet}
 
 {#snippet slotDot(key: string)}
@@ -1021,7 +947,7 @@
           {#key scoreView.piece.path}
             <ScoreView
               piece={scoreView.piece}
-              zone={(scoreView.index % 8) + 1}
+              zone={pieceZone(scoreView.index)}
               campaignTitle={title || repo}
               {owner}
               {repo}
@@ -1140,7 +1066,7 @@
                   <div class="cpholder">
                     <CommentsPanel
                       piece={volunteerScope.piece}
-                      zone={(volunteerScope.index % 8) + 1}
+                      zone={pieceZone(volunteerScope.index)}
                       cards={scopeCards}
                       {comments}
                       {logins}
@@ -1164,7 +1090,7 @@
               <h1>{title || repo}</h1>
               <a
                 class="mono slug"
-                href={`https://github.com/${owner}/${repo}`}
+                href={readForge().repoWebUrl(owner, repo)}
                 target="_blank"
                 rel="noreferrer"
                 >{owner}/{repo} <Icon name="external" size={12} /></a
@@ -1242,7 +1168,7 @@
                       {#if workedOn.length}
                         {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
                             class="mono"
-                            href={`https://github.com/${logins[u] || u}`}
+                            href={readForge().userWebUrl(logins[u] || u)}
                             target="_blank"
                             rel="noreferrer">@{logins[u] || u}</a
                           >{/each}
@@ -1391,7 +1317,7 @@
                 {@const p = pieceProgress.get(railPiece.piece.path)}
                 <div
                   class="ctxstrip"
-                  style="--zone: var(--zone-{(railPiece.index % 8) + 1})"
+                  style="--zone: var(--zone-{pieceZone(railPiece.index)})"
                 >
                   <span class="ctxpaper">
                     {#if stripPreview?.thumb}
@@ -1399,9 +1325,7 @@
                     {/if}
                   </span>
                   <div class="ctxinfo">
-                    <span class="ctxname"
-                      >{railPiece.piece.title || railPiece.piece.id}</span
-                    >
+                    <span class="ctxname">{pieceLabel(railPiece.piece)}</span>
                     <span class="ctxmeta"
                       >{stripPreview?.pageMeasures.length
                         ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
@@ -1608,29 +1532,6 @@
   }
 
   /* Banner styles are shared app-wide in ui.css. */
-  .rawlink {
-    display: flex;
-    gap: 0.4rem;
-  }
-  .rawlink input {
-    flex: 1;
-    min-width: 0;
-    font-size: 0.75rem;
-    font-family: ui-monospace, monospace;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-  }
-  .rawlink button {
-    font: inherit;
-    font-size: 0.75rem;
-    padding: 0.2rem 0.6rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-    cursor: pointer;
-  }
   .linkish {
     font: inherit;
     font-size: 12px;

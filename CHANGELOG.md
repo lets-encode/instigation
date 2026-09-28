@@ -5,6 +5,13 @@ parentheses.
 
 ## Unreleased
 
+- Claim buttons read Claim task, or Claim & open in mei-friend for an encoding.
+- The OMR task that corrects staff and measure boxes is called measure correction, like the one without OMR.
+- Result banners no longer have a coloured left edge.
+- The score setup and zone editors share one implementation of their claim, review and comment handling.
+- The campaigns page shows the mei-friend link when the browser blocks the new tab.
+- The score setup and zone editor result banners have a Dismiss button.
+- Box editing, panel resizing, result banners, comment anchors and piece labels each have one shared implementation.
 - Repo paths, page locators, work stages, the MEI opening and the OCR settings are each defined once.
 - Board cards show the piece colour as a dot before the title instead of a coloured left edge.
 - The console shows lock expiry with the coordinator's 120-minute default when the config sets none.

@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import { type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { untrack } from "svelte";
   import type { Snippet } from "svelte";
@@ -52,7 +53,7 @@
     /** The page the preview opens at, 0-based. */
     startPage?: number;
     /** A measure range to highlight in both panes. */
-    anchor?: { page: number; m1: number; m2: number } | null;
+    anchor?: MeasureAnchor | null;
     /** The pane the preview opens with; null uses the stored per-browser choice. */
     initialPane?: PreviewPane | null;
     /** The spread view the preview opens with; null picks it from the page count. */

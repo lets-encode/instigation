@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { commentAnchor, type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
-  import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -9,10 +9,8 @@
     CommandContext,
     Result,
     FacsimileTaskData,
-    CampaignTables,
   } from "$lib/commands.ts";
-  import { handle } from "$lib/campaign-graph.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { workStage } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
@@ -43,37 +41,19 @@
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import {
-    CommandRunner,
-    readForge,
-    viewerId,
-  } from "$lib/command-runner.svelte.ts";
-  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import {
-    resolveCampaign,
-    resolveFailureMessage,
-  } from "$lib/campaign-resolve.ts";
-  import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
+  import PreTaskReview from "$lib/components/PreTaskReview.svelte";
+  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
+  import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
-  let resolved = $state<ResolvedCampaign | null>(null);
-  let resolving = $state(false);
-  let notFound = $state(false);
-  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
-  // campaign exists but could not be loaded, which is not a "not found".
-  let resolveError = $state<string | null>(null);
-  const owner = $derived(resolved?.owner ?? "");
-  const repo = $derived(resolved?.repo ?? "");
-  const repoId = $derived(resolved?.repoId ?? 0);
-  // The acting user's stable numeric id; login is display-only.
-  const viewer = $derived(viewerId());
 
   // The clefs and staff kinds the form offers. Each option carries the staff
   // values it sets: clef shape, octave displacement and notation type as MEI
@@ -197,15 +177,6 @@
   const METER_UNITS = [1, 2, 4, 8, 16];
   const MAX_STAVES = 24;
 
-  let loading = $state(false);
-  // Whether a load has been attempted for the current params; a failed load
-  // stays on its error banner instead of retrying.
-  let loaded = $state(false);
-  let loadError = $state<string | null>(null);
-  let data = $state<FacsimileTaskData | null>(null);
-  // The campaign tables behind the comments panel; refreshed on their own so
-  // a posted comment never reloads the form.
-  let tables = $state<CampaignTables | null>(null);
   // The form's working copy of the score definition.
   let staves = $state<StaffModel[]>([]);
   let groups = $state<StaffGroupModel[]>([]);
@@ -216,19 +187,55 @@
   let meterCount = $state("4");
   let meterUnit = $state("4");
 
-  const runner = new CommandRunner();
-
-  const holds = $derived(
-    Boolean(data?.holdsLock) && data?.status === "encoding_required",
+  const session = new PreTaskSession(
+    () => campaign,
+    () => taskId,
+    {
+      loaded(d) {
+        staves = d.model.scoreDef.staves.map((s) => ({ ...s }));
+        groups = d.model.scoreDef.groups.map((g) => ({ ...g }));
+        keysig = d.model.scoreDef.keysig;
+        meterType =
+          d.model.scoreDef.meterSym === ""
+            ? "numeric"
+            : (d.model.scoreDef.meterSym as "common" | "cut");
+        meterCount = d.model.scoreDef.meterCount;
+        meterUnit = d.model.scoreDef.meterUnit;
+        // An OMR-prepared piece still at the default definition opens with the
+        // staff count its layout has; the clefs, key and meter follow from the
+        // recognition once the task is held.
+        unset =
+          JSON.stringify(d.model.scoreDef) ===
+          JSON.stringify(DEFAULT_SCORE_DEF);
+        if (d.preparation === "omr" && unset) {
+          staves = Array.from(
+            { length: staffCountOf(d.model.pages) },
+            plainStaff,
+          );
+        }
+      },
+      reset() {
+        staves = [];
+      },
+      // A claim of an OMR piece's setup task continues into the piece's
+      // recognition in the same overlay.
+      afterClaim(f, d) {
+        if (!(d.preparation === "omr" && session.canEdit)) return null;
+        recognisedFor = taskId;
+        return recognitionSteps(f, d);
+      },
+    },
   );
-  // The submission runs in the background; the form holds until its verdict
-  // lands, since a repeat would only be rejected.
-  const submitting = $derived(pendingVerdicts.isProcessing(`encode:${taskId}`));
-  const canEdit = $derived(holds && !submitting);
-  const busy = $derived(runner.busy || submitting);
-
-  const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo });
+  const runner = session.runner;
+  const data = $derived(session.data);
+  const holds = $derived(session.holds);
+  const canEdit = $derived(session.canEdit);
+  const busy = $derived(session.busy);
+  const owner = $derived(session.campaign.owner);
+  const repo = $derived(session.campaign.repo);
+  const repoId = $derived(session.campaign.repoId);
+  const tables = $derived(session.tables);
+  const viewer = $derived(session.viewer);
 
   // A count of 0, a blank, or anything non-numeric would emit a meter no
   // renderer can read, so the submission waits for a whole number above zero.
@@ -266,389 +273,24 @@
     meterSym: meterType === "numeric" ? "" : meterType,
   });
 
-  async function load() {
-    const f = forge();
-    if (!f) return;
-    // Results for a task the page has since navigated away from are dropped.
-    const task = taskId;
-    const name = campaign;
-    const stale = () => task !== taskId || name !== campaign;
-    loading = true;
-    loadError = null;
-    try {
-      const [d, t] = await Promise.all([
-        invoke(commands.readFacsimile, { task_id: task }, ctx(f)),
-        invoke(commands.readTables, {}, ctx(f)),
-      ]);
-      if (stale()) return;
-      data = d;
-      tables = t;
-      staves = d.model.scoreDef.staves.map((s) => ({ ...s }));
-      groups = d.model.scoreDef.groups.map((g) => ({ ...g }));
-      keysig = d.model.scoreDef.keysig;
-      meterType =
-        d.model.scoreDef.meterSym === ""
-          ? "numeric"
-          : (d.model.scoreDef.meterSym as "common" | "cut");
-      meterCount = d.model.scoreDef.meterCount;
-      meterUnit = d.model.scoreDef.meterUnit;
-      // An OMR-prepared piece still at the default definition opens with the
-      // staff count its layout has; the clefs, key and meter follow from the
-      // recognition once the task is held.
-      unset =
-        JSON.stringify(d.model.scoreDef) === JSON.stringify(DEFAULT_SCORE_DEF);
-      if (d.preparation === "omr" && unset) {
-        staves = Array.from(
-          { length: staffCountOf(d.model.pages) },
-          plainStaff,
-        );
-      }
-    } catch (e) {
-      if (!stale())
-        loadError = `Could not load ${task}: ${(e as Error).message}`;
-    } finally {
-      if (!stale()) loading = false;
-    }
-  }
-
-  // A same-route navigation to another campaign or task starts over: the
-  // resolved repo and the loaded task belong to the previous params.
-  $effect(() => {
-    void campaign;
-    resolved = null;
-    notFound = false;
-    resolveError = null;
-  });
-  $effect(() => {
-    void campaign;
-    void taskId;
-    data = null;
-    staves = [];
-    loadError = null;
-    loaded = false;
-  });
-
-  // Resolve the campaign name to its repo first; the load effect is gated on
-  // `owner`/`repo` so it waits for this.
-  $effect(() => {
-    if (
-      auth.status === "loading" ||
-      resolved ||
-      notFound ||
-      resolveError ||
-      resolving
-    )
-      return;
-    resolving = true;
-    // A result for a name the page has since navigated away from is dropped.
-    const name = campaign;
-    resolveCampaign(readForge(), name)
-      .then((r) => {
-        if (name !== campaign) return;
-        if (r) resolved = r;
-        else notFound = true;
-      })
-      .catch((e) => {
-        if (name === campaign) resolveError = resolveFailureMessage(e);
-      })
-      .finally(() => (resolving = false));
-  });
-
-  // One load per param set: a failed attempt renders the error banner (with
-  // its manual retry) instead of looping.
-  $effect(() => {
-    if (auth.status === "authenticated" && owner && repo && taskId && !loaded) {
-      loaded = true;
-      load();
-    }
-  });
-
-  async function run(
+  const run = (
     command: (c: CommandContext) => Promise<Result>,
-    opts: { overviewOnSuccess?: boolean } = {},
-  ) {
-    const f = forge();
-    if (!f) return;
-    await runner.run(
-      () => command(ctx(f)),
-      async (result) => {
-        // A rejected command changed nothing worth reloading for — and a
-        // reload would discard the values the volunteer may retry from.
-        if (result.error) return;
-        if (opts.overviewOnSuccess) {
-          if (result.ok && !result.warn) await goto(`/${campaign}`);
-          // Still processing (warn): keep the editor and its values as they are.
-          return;
-        }
-        // A background command changed nothing yet — the settle listener
-        // reloads when its verdict lands.
-        if (result.background) return;
-        runner.log.step("Reloading…");
-        data = null;
-        await load();
-      },
-    );
-  }
-
-  // A claim of an OMR piece's setup task continues into the piece's
-  // recognition in the same overlay: one step list, one Continue.
-  async function claim() {
-    const f = forge();
-    if (!f) return;
-    await runner.run(async () => {
-      const result = await invoke(
-        commands.claimTask,
-        { task_id: taskId },
-        ctx(f),
-      );
-      if (result.error) return result;
-      runner.log.step("Reloading…");
-      await load();
-      if (!data || !(omr && canEdit)) return result;
-      recognisedFor = taskId;
-      return recognitionSteps(f, data);
-    });
-  }
-
-  // Opening the editor claims the task, the same way opening a score in
-  // mei-friend does — a read-only look is served by the console's score
-  // preview, so reaching the editor means intent to edit. Fire once per task,
-  // and only when the claim can actually be granted: never while someone else
-  // holds the task or a dependency still blocks it — that PR would only come
-  // back rejected.
-  let autoClaimedFor = $state<string | null>(null);
-  $effect(() => {
-    if (
-      data &&
-      !runner.busy &&
-      autoClaimedFor !== taskId &&
-      data.status === "encoding_required" &&
-      !data.holdsLock &&
-      !data.encodingLockUser &&
-      !data.blockedBy
-    ) {
-      autoClaimedFor = taskId;
-      claim();
-    }
-  });
-
-  // The review happens here too: the same claim/pass/fail the console offers,
-  // against the task's validation subtask.
-  const validation = $derived(data?.validation ?? null);
-  // A verdict already submitted here and still being processed: the verdict
-  // controls hold until it lands — a repeat would only be rejected.
-  const verdictPending = $derived(
-    !!validation &&
-      pendingVerdicts.isProcessing(
-        `validate:${taskId}/${validation.subtask_id}`,
-      ),
-  );
-  // A settled background verdict changed the tables; reload the read-only
-  // view so it shows the recorded state. An edit session only refreshes the
-  // tables — a reload would discard the volunteer's unsubmitted work.
-  $effect(() =>
-    pendingVerdicts.onSettled(() => {
-      if (runner.busy) return;
-      if (!canEdit) {
-        data = null;
-        loaded = false;
-      } else {
-        refreshTables();
-      }
-    }),
-  );
-  const submitted = $derived(
-    data?.status === "validation_required" || data?.status === "completed",
-  );
-  const holdsValidation = $derived(
-    viewer !== "" && validation?.lockUser === viewer,
-  );
-  const selfValidation = $derived(
-    !!data &&
-      data.encoder !== "" &&
-      data.encoder === viewer &&
-      !data.allowSelfValidation,
-  );
-  // One verdict per person: a validator who already recorded pass/fail here
-  // cannot claim another slot (matching the campaign automation's rule).
-  const alreadyValidated = $derived(
-    !!data &&
-      !data.allowSelfValidation &&
-      (validation?.verdicts ?? []).some((v) => v.user === viewer),
-  );
-  const canClaimValidation = $derived(
-    !!validation &&
-      validation.status === "validation_required" &&
-      validation.openSlots > 0 &&
-      !validation.lockUser &&
-      !selfValidation &&
-      !alreadyValidated &&
-      !verdictPending,
-  );
-  const failComments = $derived(data?.failComments ?? []);
-  const failedVerdicts = $derived(
-    (validation?.verdicts ?? []).filter((v) => v.verdict === "fail"),
-  );
-  // Sending a failed task back is open to a failing validator or push access —
-  // the same rule the automation enforces.
-  const canSendBack = $derived(
-    viewer !== "" &&
-      data?.status === "validation_required" &&
-      failedVerdicts.length > 0 &&
-      (data.canPush || failedVerdicts.some((v) => v.user === viewer)),
-  );
-  const sendBack = () =>
-    run((c) => invoke(commands.sendBack, { task_id: taskId }, c));
-  // Same hold for a send-back already on its way.
-  const sendBackPending = $derived(
-    pendingVerdicts.isProcessing(`sendback:${taskId}`),
-  );
+    opts?: { overviewOnSuccess?: boolean },
+  ) => session.run(command, opts);
 
   // ------------------------------------------------------------- comments
   // The piece's comments panel beside the tool. Posting and resolving refresh
   // the tables only: a full reload would discard unsubmitted form values.
   let commentsPanel = $state(readSidePanel("comments"));
-  async function refreshTables() {
-    const f = forge();
-    if (!f) return;
-    try {
-      tables = await invoke(commands.readTables, {}, ctx(f));
-    } catch {
-      /* the next full load refreshes the tables */
-    }
-  }
-  const afterComment = async (result: Result) => {
-    if (result.error || result.background) return;
-    runner.log.step("Refreshing comments…");
-    await refreshTables();
-  };
-  async function postComment(
-    task_id: string,
-    kind: string,
-    body: string,
-    parent_id: string,
-  ) {
-    const f = forge();
-    if (!f) return;
-    await runner.run(
-      () =>
-        invoke(
-          commands.submitComment,
-          {
-            task_id,
-            subtask_id: "",
-            kind,
-            body,
-            page: "",
-            measure_start: "",
-            measure_end: "",
-            parent_id,
-          },
-          ctx(f),
-        ),
-      afterComment,
-    );
-  }
-  async function resolveCommentRow(comment_id: string) {
-    const f = forge();
-    if (!f) return;
-    await runner.run(
-      () => invoke(commands.resolveComment, { comment_id }, ctx(f)),
-      afterComment,
-    );
-  }
   // A comment anchor turns the reference score to its page and highlights the
   // range; the measure zones show so the range is visible.
   let refPreview = $state<ReturnType<typeof ScorePreview>>();
-  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  let anchor = $state<MeasureAnchor | null>(null);
   function showAnchorFor(c: CommentRow) {
-    const m1 = Number(c.measure_start);
-    const m2 = Number(c.measure_end || c.measure_start);
-    anchor = {
-      page: Number(c.page),
-      m1: Number.isFinite(m1) ? m1 : 0,
-      m2: Number.isFinite(m2) ? m2 : 0,
-    };
+    anchor = commentAnchor(c);
     refPreview?.setZones(true);
     if (anchor.page) refPreview?.showPage(anchor.page - 1);
   }
-
-  // Logins for verdict authors, fail-comment authors and the encoding lock
-  // holder (id → login, display).
-  let logins = $state<Record<string, string>>({});
-  $effect(() => {
-    const ids = new Set<string>();
-    for (const v of data?.validation?.verdicts ?? [])
-      if (v.user) ids.add(v.user);
-    for (const c of data?.failComments ?? [])
-      if (c.author_id) ids.add(c.author_id);
-    if (data?.encodingLockUser) ids.add(data.encodingLockUser);
-    for (const id of ids) {
-      if (logins[id]) continue;
-      const n = Number(id);
-      if (!Number.isInteger(n) || n <= 0) continue;
-      readForge()
-        .getUserLogin(n)
-        .then((login) => {
-          if (login) logins[id] = login;
-        })
-        .catch(() => {});
-    }
-  });
-  // Login for the reviewer holding the validation lock (id → login, display).
-  let lockUserLogin = $state("");
-  $effect(() => {
-    const id = Number(data?.validation?.lockUser);
-    if (!Number.isInteger(id) || id <= 0) {
-      lockUserLogin = data?.validation?.lockUser ?? "";
-      return;
-    }
-    readForge()
-      .getUserLogin(id)
-      .then((login) => (lockUserLogin = login ?? String(id)))
-      .catch(() => (lockUserLogin = String(id)));
-  });
-  const claimValidation = () =>
-    run((c) =>
-      invoke(
-        commands.claimValidation,
-        { task_id: taskId, subtask_id: validation!.subtask_id },
-        c,
-      ),
-    );
-  // A fail carries a mandatory comment row; pass submits bare.
-  let failOpen = $state(false);
-  let failText = $state("");
-  const validate = (verdict: string) =>
-    run(
-      (c) =>
-        invoke(
-          commands.submitValidation,
-          {
-            task_id: taskId,
-            subtask_id: validation!.subtask_id,
-            verdict,
-            ...(verdict === "fail"
-              ? {
-                  comment: {
-                    body: failText,
-                    page: "",
-                    measure_start: "",
-                    measure_end: "",
-                  },
-                }
-              : {}),
-          },
-          c,
-        ),
-      { overviewOnSuccess: true },
-    ).then(() => {
-      // A failed submission keeps the typed comment for the retry.
-      if (runner.result?.ok) {
-        failOpen = false;
-        failText = "";
-      }
-    });
 
   const submit = () =>
     run(
@@ -1000,20 +642,20 @@
 {/if}
 
 <div class="corrector">
-  {#if resolveError}
+  {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
         <span>
-          {resolveError}
+          {session.campaign.error}
           <button
             type="button"
             class="linkish"
-            onclick={() => (resolveError = null)}>Try again</button
+            onclick={() => session.campaign.retry()}>Try again</button
           >
         </span>
       </div>
     </div>
-  {:else if notFound}
+  {:else if session.campaign.notFound}
     <div class="deskwrap">
       <div class="banner err">
         <span>
@@ -1022,7 +664,7 @@
         </span>
       </div>
     </div>
-  {:else if auth.status === "loading" || (!resolved && !notFound)}
+  {:else if auth.status === "loading" || !session.campaign.resolved}
     <div class="deskwrap"><p class="muted">Loading…</p></div>
   {:else if !auth.user}
     <div class="deskwrap">
@@ -1035,14 +677,14 @@
         </span>
       </div>
     </div>
-  {:else if loading}
+  {:else if session.loading}
     <div class="deskwrap"><p class="muted">Loading the score…</p></div>
-  {:else if loadError}
+  {:else if session.loadError}
     <div class="deskwrap">
       <div class="banner err">
         <span>
-          {loadError}
-          <button type="button" class="linkish" onclick={() => load()}
+          {session.loadError}
+          <button type="button" class="linkish" onclick={() => session.load()}
             >Try again</button
           >
         </span>
@@ -1050,31 +692,7 @@
     </div>
   {:else if data}
     <div class="main">
-      {#if runner.result && runner.result.error}
-        <div class="banner err bar">
-          <span>
-            {runner.result.error}
-            {#if runner.result.prUrl}<a
-                href={runner.result.prUrl}
-                target="_blank"
-                rel="noreferrer"
-                >View submission <Icon name="external" size={12} /></a
-              >{/if}
-          </span>
-        </div>
-      {:else if runner.result && runner.result.ok && !runner.result.background}
-        <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
-          <span>
-            {runner.result.message}
-            {#if runner.result.prUrl}<a
-                href={runner.result.prUrl}
-                target="_blank"
-                rel="noreferrer"
-                >View submission <Icon name="external" size={12} /></a
-              >{/if}
-          </span>
-        </div>
-      {/if}
+      <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
       <div class="desk">
@@ -1400,35 +1018,7 @@
                 ? "common time"
                 : "cut time"}
           </span>
-          {#if holds}
-            <span class="lockpill ok">you hold this task</span>
-          {:else if d.status === "completed"}
-            <span class="lockpill grey">done — read-only</span>
-          {:else if d.status !== "encoding_required"}
-            {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
-              <span class="lockpill red">review failed — read-only</span>
-            {:else}
-              <span class="lockpill amber"
-                >submitted — awaiting review, read-only</span
-              >
-            {/if}
-          {:else if d.blockedBy}
-            <span class="lockpill grey"
-              >waits for {d.blockedBy} — read-only</span
-            >
-          {:else if d.encodingLockUser}
-            <span class="lockpill amber"
-              >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
-            >
-          {:else}
-            <span class="lockpill amber">unclaimed — read-only</span>
-            <button
-              type="button"
-              class="btn btn-pre"
-              onclick={() => claim()}
-              disabled={busy}>Claim task</button
-            >
-          {/if}
+          <PreTaskStatus {session} />
           {#if omr && canEdit && recognition && recognition.failed.length > 0}
             <button
               type="button"
@@ -1468,118 +1058,7 @@
           </button>
         </div>
 
-        {#if failComments.length > 0}
-          <div class="tbsection">
-            <span class="sb-label">Fail comments</span>
-            {#each failComments as c (c.comment_id)}
-              <div class="failnote" class:resolved={c.resolved === "true"}>
-                <span class="failwho"
-                  >@{handle(logins, c.author_id)} · {elapsed(
-                    c.timestamp,
-                  )}{c.resolved === "true" ? " · resolved" : ""}</span
-                >
-                <div class="failtext">“{c.body}”</div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-
-        {#if validation && submitted}
-          <div class="tbsection sb-validation">
-            <span class="sb-label">Review</span>
-            <span class="vstatus">
-              {#if validation.status === "completed"}
-                Review done
-              {:else if verdictPending}
-                Your verdict is being processed…
-              {:else if validation.lockUser}
-                {holdsValidation
-                  ? "You are reviewing"
-                  : `@${lockUserLogin || validation.lockUser} reviewing`}
-              {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
-                Failed — send it back to redo the setup
-              {:else if selfValidation}
-                Your own submission
-              {:else if alreadyValidated}
-                You reviewed this — another volunteer is needed
-              {:else}
-                Awaiting review
-              {/if}
-            </span>
-            {#each validation.verdicts as v, i (i)}
-              <span class="vrow {v.verdict}"
-                >{#if v.verdict === "pass"}<img
-                    class="hand-pass"
-                    src="/green-hand.svg"
-                    alt=""
-                  /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(
-                  logins,
-                  v.user,
-                )} · {elapsed(v.ts)}</span
-              >
-            {/each}
-            {#if canClaimValidation}
-              <div class="sb-row one">
-                <button
-                  type="button"
-                  class="btn btn-review"
-                  onclick={() => claimValidation()}
-                  disabled={runner.busy}
-                  title="Reserve this review slot.">Claim to review</button
-                >
-              </div>
-            {:else if holdsValidation && !verdictPending}
-              <div class="sb-row two">
-                <button
-                  type="button"
-                  class="btn btn-primary btn-finish"
-                  onclick={() => validate("pass")}
-                  disabled={runner.busy}
-                  title="Record a passing verdict.">Pass</button
-                >
-                <button
-                  type="button"
-                  class="btn btn-danger vfail"
-                  class:on={failOpen}
-                  onclick={() => (failOpen = !failOpen)}
-                  disabled={runner.busy}
-                  title="Record a failing verdict — a fail carries a comment saying why."
-                  >Fail</button
-                >
-              </div>
-            {/if}
-            {#if failOpen && holdsValidation}
-              <input
-                class="fail-note"
-                bind:value={failText}
-                placeholder="Why does this fail?"
-                onkeydown={(e) => {
-                  if (e.key === "Enter" && failText.trim()) validate("fail");
-                }}
-              />
-              <div class="sb-row one">
-                <button
-                  type="button"
-                  class="btn btn-danger"
-                  onclick={() => validate("fail")}
-                  disabled={runner.busy || !failText.trim() || verdictPending}
-                  title="Submit the failing verdict with this comment."
-                  >Submit fail</button
-                >
-              </div>
-            {/if}
-            {#if canSendBack}
-              <button
-                type="button"
-                class="btn btn-danger sendbackbtn"
-                onclick={() => sendBack()}
-                disabled={runner.busy || sendBackPending}
-                title="Return the task to score setup: attribution and reviews reset."
-                >Send back to score setup</button
-              >
-            {/if}
-          </div>
-        {/if}
+        <PreTaskReview {session} stage={workStage("score-setup")} />
       </div>
     {/snippet}
 
@@ -1592,8 +1071,8 @@
         bind:panel={commentsPanel}
         header={taskBox}
         onanchor={showAnchorFor}
-        oncomment={postComment}
-        onresolve={resolveCommentRow}
+        oncomment={(...args) => session.postComment(...args)}
+        onresolve={(id) => session.resolveComment(id)}
       />
     {/if}
   {/if}
@@ -1852,9 +1331,6 @@
     gap: 8px;
     padding: 10px 12px;
   }
-  .tbsection + .tbsection {
-    border-top: 1px solid var(--line);
-  }
   .sb-label {
     font-size: 10.5px;
     font-weight: 600;
@@ -1881,119 +1357,7 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .lockpill {
-    flex: none;
-    font-size: 11.5px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 10px;
-  }
-  .lockpill.ok {
-    color: var(--ok);
-    background: var(--ok-bg);
-    border: 1px solid var(--ok-line);
-  }
-  .lockpill.amber {
-    color: var(--owner);
-    background: var(--owner-bg);
-    border: 1px solid var(--owner-line);
-  }
-  .lockpill.grey {
-    color: var(--ink-faint);
-    background: var(--bg-tint);
-    border: 1px solid var(--line);
-  }
-  .lockpill.red {
-    color: var(--danger);
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
-  }
   .submitbtn {
-    align-self: stretch;
-  }
-
-  /* A control row filling the sidebar's width; .one/.two divide it into
-     that many equal cells. */
-  .sb-row {
-    align-self: stretch;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .sb-row.one,
-  .sb-row.two {
-    display: grid;
-    grid-template-columns: repeat(var(--cells), 1fr);
-  }
-  .sb-row.one {
-    --cells: 1;
-  }
-  .sb-row.two {
-    --cells: 2;
-  }
-  .failnote {
-    align-self: stretch;
-    border: 1px solid var(--danger-line);
-    border-radius: 8px;
-    background: var(--danger-wash);
-    padding: 8px 10px;
-  }
-  .failnote.resolved {
-    opacity: 0.55;
-  }
-  .failwho {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--danger);
-  }
-  .failtext {
-    font-size: 12.5px;
-    color: var(--ink);
-    margin-top: 4px;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-  }
-  .sb-validation .vstatus {
-    font-size: 12.5px;
-    color: var(--ink-soft);
-  }
-  /* The armed Fail button: still an outline, tinted while its comment box
-     is open. */
-  .sb-validation .vfail.on {
-    background: var(--danger-bg);
-  }
-  .sb-validation .vrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-  /* The green thumbs-up hand marks a passed verdict. */
-  .sb-validation .hand-pass {
-    height: 14px;
-    flex: none;
-  }
-  .sb-validation .vrow.pass {
-    color: var(--ok);
-  }
-  .sb-validation .vrow.fail {
-    color: var(--danger);
-  }
-  .sb-validation .fail-note {
-    font: inherit;
-    font-size: 12.5px;
-    width: 100%;
-    box-sizing: border-box;
-    padding: 5px 10px;
-    border: 1px solid var(--danger-line);
-    border-radius: 999px;
-    background: var(--card);
-    color: var(--ink);
-  }
-  .sendbackbtn {
     align-self: stretch;
   }
 </style>

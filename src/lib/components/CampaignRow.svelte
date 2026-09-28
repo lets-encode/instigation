@@ -5,6 +5,7 @@
   claim button acts. The viewer's own campaigns render in amber.
 -->
 <script lang="ts">
+  import { claimLabel } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { elapsed } from "$lib/campaign-board.ts";
   import { attentionCount, nextTask } from "$lib/campaign-stats.ts";
@@ -73,11 +74,7 @@
 
   const actLabel = (n: NextTask): string => {
     if (n.action === "review") return "Claim to review";
-    return n.locator === "score-setup"
-      ? "Claim & open setup editor"
-      : n.pre
-        ? "Claim & open zone editor"
-        : "Claim & open editor";
+    return claimLabel(n.locator);
   };
 </script>
 
@@ -145,7 +142,7 @@
               : 'btn-enc'}"
           disabled={busy}
           onclick={() => onact(stats, next)}
-          >{actLabel(next)}{#if actLabel(next) === "Claim & open editor"}<Icon
+          >{actLabel(next)}{#if next.action !== "review" && !next.pre}<Icon
               name="external"
             />{/if}</button
         >

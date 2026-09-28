@@ -1124,6 +1124,24 @@ const submitValidation: CommandDef<
 
 // Open a PR that appends one discussion comment (question / addition / reply)
 // to comment.csv. The Action re-authors id, author and timestamp.
+/** The submitComment input for a task-level comment, anchored at `at` when given. */
+export const commentInput = (
+  task_id: string,
+  kind: string,
+  body: string,
+  parent_id: string,
+  at?: { page: string; measure_start: string; measure_end: string },
+) => ({
+  task_id,
+  subtask_id: "",
+  kind,
+  body,
+  page: at?.page ?? "",
+  measure_start: at?.measure_start ?? "",
+  measure_end: at?.measure_end ?? "",
+  parent_id,
+});
+
 const submitComment: CommandDef<
   {
     task_id: string;

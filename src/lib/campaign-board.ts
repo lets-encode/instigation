@@ -70,8 +70,6 @@ export function cardTitle(
   if (page) return `${pieceLabel(fragment, names)} · p. ${page}`;
   if (locator === "score-setup")
     return `${pieceLabel(fragment, names)} · setup`;
-  if (locator === "omr-layout")
-    return `${pieceLabel(fragment, names)} · layout correction`;
   if (isPreTask(locator))
     return `${pieceLabel(fragment, names)} · measure correction`;
   return pieceLabel(fragment, names);
@@ -260,11 +258,9 @@ export function cardPill(card: BoardCard, viewer = ""): string {
   const kind =
     card.locator === "score-setup"
       ? "setup"
-      : card.locator === "omr-layout"
-        ? "layout correction"
-        : card.pre
-          ? "measure correction"
-          : "";
+      : card.pre
+        ? "measure correction"
+        : "";
   const prefix = kind ? `${kind} · ` : "";
   switch (card.column) {
     case "blocked":

@@ -9,10 +9,10 @@
   import Icon from "$lib/components/Icon.svelte";
   import { login } from "$lib/auth.svelte.ts";
   import { readForge } from "$lib/command-runner.svelte.ts";
-  import { findRow } from "$lib/campaign-tables.ts";
+  import { findRow, pieceLabel, pieceZone } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
   import { cardPill } from "$lib/campaign-board.ts";
-  import { pageOfLocator } from "$lib/campaign-graph.ts";
+  import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
@@ -106,11 +106,10 @@
   /** Kinds present among the open tasks; the filters show only for those. */
   const presentKinds = $derived(new Set(openCards.map(kindOf)));
 
-  const tintOf = (i: number) => `--piece-tint: var(--zone-${(i % 8) + 1})`;
-  const pieceName = (p: PieceRef) => p.title || p.id;
+  const tintOf = (i: number) => `--piece-tint: var(--zone-${pieceZone(i)})`;
   // A card title without its leading piece name, for rows under the piece.
   const partTitle = (title: string, piece: PieceRef) => {
-    const prefix = `${pieceName(piece)} · `;
+    const prefix = `${pieceLabel(piece)} · `;
     return title.startsWith(prefix) ? title.slice(prefix.length) : title;
   };
   // A single-piece campaign keeps its one piece expanded.
@@ -118,12 +117,7 @@
 
   const actLabel = (c: BoardCard): string => {
     if (viewer === "") return "Log in to claim";
-    if (c.column === "ready")
-      return c.locator === "score-setup"
-        ? "Claim & open setup editor"
-        : c.pre
-          ? "Claim & open zone editor"
-          : "Claim & open editor";
+    if (c.column === "ready") return claimLabel(c.locator);
     if (c.column === "validation" && c.slots.some((s) => s.claimable))
       return "Claim to review";
     return "Open task";
@@ -132,7 +126,8 @@
   const actTitle = (c: BoardCard): string => {
     if (viewer === "") return "Log in with GitHub to claim this task.";
     if (c.column === "validation") return "Takes a review slot on this task.";
-    if (c.pre) return "Claims this task for you and opens its editor.";
+    if (c.pre)
+      return `Claims this task for you and opens the ${workPlace(c.locator)}.`;
     return "Claims this task for you and opens mei-friend in a new tab.";
   };
 
@@ -328,7 +323,7 @@
               title={actTitle(nextCard)}
               >{actLabel(
                 nextCard,
-              )}{#if actLabel(nextCard) === "Claim & open editor"}<Icon
+              )}{#if viewer !== "" && nextCard.column === "ready" && !nextCard.pre}<Icon
                   name="external"
                 />{/if}</button
             >
@@ -391,7 +386,7 @@
                   title={actTitle(card)}
                   >{card.column === "validation"
                     ? "Claim to review"
-                    : "Claim to encode"}</button
+                    : claimLabel(card.locator)}</button
                 >
               {/if}
             </div>
@@ -434,7 +429,7 @@
               <div class="prow">
                 {@render thumb(piece.path)}
                 {#if lone}
-                  <span class="piecename">{pieceName(piece)}</span>
+                  <span class="piecename">{pieceLabel(piece)}</span>
                 {:else}
                   <button
                     type="button"
@@ -443,7 +438,7 @@
                     onclick={() => toggle(piece.path)}
                     title={open
                       ? "Collapse this piece"
-                      : "Show this piece's tasks"}>{pieceName(piece)}</button
+                      : "Show this piece's tasks"}>{pieceLabel(piece)}</button
                   >
                 {/if}
                 <!-- Done, in review and the rest, in the stage colours. -->

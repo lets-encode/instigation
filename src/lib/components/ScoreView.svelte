@@ -7,6 +7,11 @@
   link returns to the campaign.
 -->
 <script lang="ts">
+  import {
+    commentAnchor,
+    type MeasureAnchor,
+    pieceLabel,
+  } from "$lib/campaign-tables.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
   import { buildThreads } from "$lib/campaign-board.ts";
@@ -44,7 +49,7 @@
     /** The page the score opens at, 0-based. */
     startPage?: number;
     /** A measure range to open highlighted (from a comment anchor). */
-    anchor?: { page: number; m1: number; m2: number } | null;
+    anchor?: MeasureAnchor | null;
     /** The piece's task cards, for the comments panel's sections. */
     cards: BoardCard[];
     comments: CommentRow[];
@@ -104,13 +109,7 @@
   );
 
   function showAnchor(c: CommentRow) {
-    const m1 = Number(c.measure_start);
-    const m2 = Number(c.measure_end || c.measure_start);
-    shownAnchor = {
-      page: Number(c.page),
-      m1: Number.isFinite(m1) ? m1 : 0,
-      m2: Number.isFinite(m2) ? m2 : 0,
-    };
+    shownAnchor = commentAnchor(c);
     preview?.setZones(true);
     if (shownAnchor.page) preview?.showPage(shownAnchor.page - 1);
   }
@@ -118,7 +117,7 @@
 
 <div class="scoreview">
   <div class="shead">
-    <span class="sname">{piece.title || piece.id}</span>
+    <span class="sname">{pieceLabel(piece)}</span>
     <span class="scamp">{campaignTitle}</span>
     <span class="sspacer"></span>
     <button

@@ -6,6 +6,8 @@ import type { ForgeClient } from "./types.ts";
 
 export function createGitHubForge(token: string): ForgeClient {
   return {
+    repoWebUrl: (owner, repo) => `${gh.WEB}/${owner}/${repo}`,
+    userWebUrl: (login) => `${gh.WEB}/${login}`,
     getAuthenticatedUser: () => gh.getAuthenticatedUser(token),
     getUserLogin: (id) => gh.getUserLogin(token, id),
     getRepoById: (id) => gh.getRepoById(token, id),

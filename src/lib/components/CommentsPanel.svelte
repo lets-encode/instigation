@@ -11,12 +11,13 @@
 </script>
 
 <script lang="ts">
+  import { pieceLabel } from "$lib/campaign-tables.ts";
   import type { Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
   import { buildThreads } from "$lib/campaign-board.ts";
   import type { BoardCard, Thread } from "$lib/campaign-board.ts";
-  import { clampPanelWidth, writeSidePanel } from "$lib/side-panels.ts";
+  import PanelResizeHandle from "$lib/components/PanelResizeHandle.svelte";
   import type { SidePanelState } from "$lib/side-panels.ts";
   import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
@@ -113,7 +114,7 @@
         ? card.typeLine.toLowerCase()
         : "encoding";
   const sectionLabel = (card: BoardCard) => {
-    const prefix = `${piece.title || piece.id} · `;
+    const prefix = `${pieceLabel(piece)} · `;
     const stripped = card.title.startsWith(prefix)
       ? card.title.slice(prefix.length)
       : card.title;
@@ -129,32 +130,6 @@
       targetTask ??
       (cards.find((c) => c.column !== "done") ?? cards[0])?.task,
   );
-
-  // Left-edge drag: the panel is right-docked, so dragging left widens it.
-  let resizing = $state(false);
-  let startX = 0;
-  let startWidth = 0;
-
-  function beginResize(e: PointerEvent) {
-    // Keeps the drag from starting a text selection in the panel.
-    e.preventDefault();
-    resizing = true;
-    startX = e.clientX;
-    startWidth = panel.width;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function moveResize(e: PointerEvent) {
-    if (!resizing) return;
-    panel.width = clampPanelWidth(
-      startWidth + (startX - e.clientX),
-      window.innerWidth,
-    );
-  }
-  function endResize() {
-    if (!resizing) return;
-    resizing = false;
-    writeSidePanel("comments", { ...panel });
-  }
 </script>
 
 {#if panel.open}
@@ -163,21 +138,15 @@
     class:fit={fitEmpty && sections.length === 0}
     style="width: {panel.width}px"
   >
-    <div
-      class="handle"
-      class:active={resizing}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize the comments panel"
-      onpointerdown={beginResize}
-      onpointermove={moveResize}
-      onpointerup={endResize}
-      onpointercancel={endResize}
-    ></div>
+    <PanelResizeHandle
+      id="comments"
+      label="Resize the comments panel"
+      bind:panel
+    />
     <div class="cpanel" style="--zone: var(--zone-{zone})">
       <div class="scope">
         <span class="dot"></span>
-        <span class="scopename">Comments · {piece.title || piece.id}</span>
+        <span class="scopename">Comments · {pieceLabel(piece)}</span>
         <span class="countpill">{count}</span>
       </div>
       {#if header}
@@ -246,7 +215,7 @@
           {runner}
           bind:replyTo
           placeholder={composerHint ||
-            `Ask a question about ${piece.title || piece.id}…`}
+            `Ask a question about ${pieceLabel(piece)}…`}
           oncomment={(kind, body, parent_id) =>
             oncomment(composerTask, kind, body, parent_id)}
         />
@@ -266,43 +235,6 @@
   }
   .cpwrap.fit {
     align-self: flex-start;
-  }
-  /* The host row's gap spaces the bar from the content; the right margin
-     mirrors it towards the panel. */
-  .handle {
-    flex: none;
-    align-self: stretch;
-    margin: 12px 14px 12px 0;
-    width: 6px;
-    border-radius: 3px;
-    background: var(--line-input);
-    opacity: 0.65;
-    cursor: col-resize;
-    touch-action: none;
-    position: relative;
-  }
-  .handle:hover,
-  .handle.active {
-    background: var(--accent);
-    opacity: 0.8;
-  }
-  /* The embossed double line marking the bar as draggable. */
-  .handle::before,
-  .handle::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    width: 1px;
-    height: 26px;
-    transform: translateY(-50%);
-    border-radius: 1px;
-    background: var(--card);
-  }
-  .handle::before {
-    left: 1.5px;
-  }
-  .handle::after {
-    right: 1.5px;
   }
   .cpanel {
     flex: 1;

@@ -5,12 +5,11 @@
 <script lang="ts">
   let {
     value = $bindable(),
-    most = 5,
   }: {
-    /** Pages per row, between 1 and `most`. */
+    /** Pages per row, between 1 and MOST. */
     value: number;
-    most?: number;
   } = $props();
+  const MOST = 5;
 </script>
 
 <span class="stepper">
@@ -28,7 +27,7 @@
     type="button"
     class="btn btn-icon"
     aria-label="More pages per row"
-    disabled={value >= most}
+    disabled={value >= MOST}
     onclick={() => value++}
   >
     +

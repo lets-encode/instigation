@@ -7,7 +7,6 @@
   fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
-  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -17,14 +16,15 @@
     readForge,
     viewerId,
   } from "$lib/command-runner.svelte.ts";
-  import { commands, invoke } from "$lib/commands.ts";
+  import { commands, invoke, commentInput } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
+  import { CampaignResolution } from "$lib/campaign-resolution.svelte.ts";
   import {
-    resolveCampaign,
-    resolveFailureMessage,
-  } from "$lib/campaign-resolve.ts";
-  import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
-  import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
+    findRow,
+    pieceNamesOf,
+    commentAnchor,
+    type MeasureAnchor,
+  } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
     StateRow,
@@ -42,6 +42,7 @@
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
@@ -52,15 +53,10 @@
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
-  let resolved = $state<ResolvedCampaign | null>(null);
-  let resolving = $state(false);
-  let notFound = $state(false);
-  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
-  // campaign exists but could not be loaded, which is not a "not found".
-  let resolveError = $state<string | null>(null);
-  const owner = $derived(resolved?.owner ?? "");
-  const repo = $derived(resolved?.repo ?? "");
-  const repoId = $derived(resolved?.repoId ?? 0);
+  const place = new CampaignResolution(() => campaign);
+  const owner = $derived(place.owner);
+  const repo = $derived(place.repo);
+  const repoId = $derived(place.repoId);
   // The acting user's stable numeric id; login is display-only.
   const viewer = $derived(viewerId());
 
@@ -117,15 +113,9 @@
   // The measure selected in the viewer, reported back for the fail form.
   let selectedMeasure = $state<string | null>(null);
   // The measure range a fail comment refers to, highlighted in both panes.
-  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  let anchor = $state<MeasureAnchor | null>(null);
   function showAnchorFor(c: CommentRow) {
-    const m1 = Number(c.measure_start);
-    const m2 = Number(c.measure_end || c.measure_start);
-    anchor = {
-      page: Number(c.page),
-      m1: Number.isFinite(m1) ? m1 : 0,
-      m2: Number.isFinite(m2) ? m2 : 0,
-    };
+    anchor = commentAnchor(c);
     preview?.setZones(true);
     preview?.showPage(anchor.page - 1);
   }
@@ -191,36 +181,10 @@
   $effect(() => {
     void campaign;
     void taskId;
-    resolved = null;
-    notFound = false;
-    resolveError = null;
     loaded = false;
     loadError = null;
     anchor = null;
     selectedMeasure = null;
-  });
-
-  $effect(() => {
-    if (
-      auth.status === "loading" ||
-      resolved ||
-      notFound ||
-      resolveError ||
-      resolving
-    )
-      return;
-    resolving = true;
-    const name = campaign;
-    resolveCampaign(readForge(), name)
-      .then((r) => {
-        if (name !== campaign) return;
-        if (r) resolved = r;
-        else notFound = true;
-      })
-      .catch((e) => {
-        if (name === campaign) resolveError = resolveFailureMessage(e);
-      })
-      .finally(() => (resolving = false));
   });
 
   $effect(() => {
@@ -294,16 +258,7 @@
     run((c) =>
       invoke(
         commands.submitComment,
-        {
-          task_id,
-          subtask_id: "",
-          kind,
-          body,
-          page: "",
-          measure_start: "",
-          measure_end: "",
-          parent_id,
-        },
+        commentInput(task_id, kind, body, parent_id),
         c,
       ),
     );
@@ -326,63 +281,29 @@
 {/if}
 
 {#snippet resultBanner()}
-  {#if runner.result && runner.result.error}
-    <div class="banner err">
-      <span>
-        {runner.result.error}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {:else if runner.result && runner.result.ok && !runner.result.background}
-    <div class="banner {runner.result.warn ? 'warn' : 'ok'}">
-      <span>
-        {runner.result.message}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {/if}
+  <RunnerBanner {runner} />
 {/snippet}
 
 <div class="review">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
-  {:else if resolveError}
+  {:else if place.error}
     <div class="msg banner err">
       <span>
-        {resolveError}
-        <button
-          type="button"
-          class="linkish"
-          onclick={() => (resolveError = null)}>Try again</button
+        {place.error}
+        <button type="button" class="linkish" onclick={() => place.retry()}
+          >Try again</button
         >
       </span>
     </div>
-  {:else if notFound}
+  {:else if place.notFound}
     <div class="msg banner err">
       <span>
         No campaign called <code>{campaign}</code> was found.
         <a href="/campaigns">Back to all campaigns</a>.
       </span>
     </div>
-  {:else if !resolved || loading}
+  {:else if !place.resolved || loading}
     <p class="msg muted">Loading the task…</p>
   {:else if loadError}
     <div class="msg banner err"><span>{loadError}</span></div>

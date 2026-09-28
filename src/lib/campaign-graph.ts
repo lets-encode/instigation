@@ -94,8 +94,9 @@ export interface TaskNode {
 
 /**
  * Whether a task is a pre-task: score setup (the score's staves, clefs, key
- * signature and meter, filled in the setup editor), measure correction or
- * layout correction (both in the zone editor). Encoding tasks — whole-file
+ * signature and meter, filled in the setup editor) or measure correction
+ * (`measure-zones`, or `omr-layout` for an OMR-prepared piece, which also
+ * corrects the staff boxes; both in the zone editor). Encoding tasks — whole-file
  * (empty locator) and per-page (`surface-N`) — are not pre-tasks and use
  * mei-friend.
  */
@@ -130,21 +131,26 @@ export const reviewHref = (
     : `/${campaign}/review/${task}`;
 
 /** A task's work stage. */
-export type WorkStage =
-  | "score setup"
-  | "measure correction"
-  | "layout correction"
-  | "encoding";
+export type WorkStage = "score setup" | "measure correction" | "encoding";
 
 /** A task's work stage from its locator; a send-back returns the task to it. */
 export const workStage = (locator: string): WorkStage =>
   locator === "score-setup"
     ? "score setup"
-    : locator === "measure-zones"
+    : locator === "measure-zones" || locator === "omr-layout"
       ? "measure correction"
-      : locator === "omr-layout"
-        ? "layout correction"
-        : "encoding";
+      : "encoding";
+
+/** Where a task's work happens: mei-friend for an encoding, the pre-task's own page otherwise. */
+export const workPlace = (locator: string): string =>
+  isPreTask(locator) ? workStage(locator) : "mei-friend";
+
+/**
+ * The button label that claims a task: an encoding also opens mei-friend, a
+ * different site, so its label says so.
+ */
+export const claimLabel = (locator: string): string =>
+  isPreTask(locator) ? "Claim task" : "Claim & open in mei-friend";
 
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
@@ -165,8 +171,8 @@ export function pageOfLocator(locator: string): number | null {
 /** The task's human type from its locator. */
 export function typeLabel(locator: string): string {
   if (locator === "score-setup") return "Score setup";
-  if (locator === "measure-zones") return "Measure correction";
-  if (locator === "omr-layout") return "Layout correction";
+  if (locator === "measure-zones" || locator === "omr-layout")
+    return "Measure correction";
   const page = pageOfLocator(locator);
   return page ? `Encoding · page ${page}` : "Encoding";
 }
