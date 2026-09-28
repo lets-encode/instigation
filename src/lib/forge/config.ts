@@ -64,7 +64,7 @@ export const omr: { layoutModel: OmrPipeline; staffPipeline: OmrPipeline } =
  * `main` is for iteration.
  */
 export const automation = {
-  central_repository: env.PUBLIC_AUTOMATION_REPO || "lets-encode/instigation",
+  central_repository: env.PUBLIC_AUTOMATION_REPO || "lets-encode/lets-encode",
   ref: env.PUBLIC_AUTOMATION_REF || "main",
   path: env.PUBLIC_AUTOMATION_PATH || "scripts/coordinator.ts",
 };

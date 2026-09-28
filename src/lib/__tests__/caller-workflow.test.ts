@@ -16,7 +16,7 @@ const workflow = readFileSync(
   "utf8",
 );
 const callerUrl =
-  "https://raw.githubusercontent.com/lets-encode/user-repo-template/main/.github/workflows/caller.yml";
+  "https://raw.githubusercontent.com/lets-encode/campaign-template/main/.github/workflows/caller.yml";
 const response = await fetch(callerUrl);
 assert.ok(response.ok, `fetching ${callerUrl}: ${response.status}`);
 const caller = await response.text();
