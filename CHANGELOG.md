@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- The npm package is renamed to lets-encode.
 - References follow the repository renames to lets-encode and campaign-template.
 - A new campaign gets its own README and no longer keeps the template's own files.
 - The campaign workflow's job lives in `.github/workflows/campaign.yml`, which each campaign's caller.yml calls.
