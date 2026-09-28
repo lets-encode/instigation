@@ -5,6 +5,32 @@ parentheses.
 
 ## Unreleased
 
+- The npm package is renamed to lets-encode.
+- References follow the repository renames to lets-encode and campaign-template.
+- A new campaign gets its own README and no longer keeps the template's own files.
+- The campaign workflow's job lives in `.github/workflows/campaign.yml`, which each campaign's caller.yml calls.
+- Completing a task in mei-friend submits it for review; the Submit buttons are removed.
+- mei-friend opens in the same tab and returns to the task's campaign page.
+- The task panel shows the error mei-friend reports when a task could not be completed.
+- A task just completed in mei-friend is highlighted in place of the next task for five minutes.
+- Claimed tasks and review slots can be given back, also from mei-friend.
+- The coordinator accepts a pull request that removes the author's own lock row.
+- A new encoding claim starts the task branch from the current score.
+- The campaigns page shows Open editor instead of Continue for encoding work you hold.
+- An encoding claim still being processed holds the claim and editor buttons until its verdict lands.
+- Setup tasks in your open work open their own editor instead of mei-friend.
+- An OMR page draft's note no longer stops the editor from opening.
+- Claim & open in mei-friend goes to mei-friend as soon as the claim is accepted, without Continue.
+- An encoding completed without changes can be submitted.
+- The coordinator finds an encoding submission's task from its command envelope or task branch, not from the changed file.
+- Claim buttons read Claim task, or Claim & open in mei-friend for an encoding.
+- The buttons that reopen a held encoding read Open in mei-friend.
+- The OMR task that corrects staff and measure boxes is called measure correction, like the one without OMR.
+- Result banners no longer have a coloured left edge.
+- The score setup and zone editors share one implementation of their claim, review and comment handling.
+- The campaigns page shows the mei-friend link when the browser blocks the new tab.
+- The score setup and zone editor result banners have a Dismiss button.
+- Box editing, panel resizing, result banners, comment anchors and piece labels each have one shared implementation.
 - Repo paths, page locators, work stages, the MEI opening and the OCR settings are each defined once.
 - Board cards show the piece colour as a dot before the title instead of a coloured left edge.
 - The console shows lock expiry with the coordinator's 120-minute default when the config sets none.

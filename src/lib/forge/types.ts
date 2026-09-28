@@ -48,6 +48,10 @@ export interface OpenedChangeRequest extends ChangeRequest {
 
 /** The forge operations the instigation GUI needs, independent of provider. */
 export interface ForgeClient {
+  /** The repo's page on the forge's website. */
+  repoWebUrl(owner: string, repo: string): string;
+  /** An account's page on the forge's website. */
+  userWebUrl(login: string): string;
   /** The authenticated user + the scopes their token actually holds, or null. */
   getAuthenticatedUser(): Promise<{ user: GitHubUser; scopes: string } | null>;
   /** Resolve a numeric account id to its current login, or null. Memoised. */

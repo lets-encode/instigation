@@ -15,12 +15,19 @@
     CommandRunner,
     readForge,
     viewerId,
+    openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { elapsed } from "$lib/campaign-board.ts";
-  import { handle, preTaskHref, reviewHref } from "$lib/campaign-graph.ts";
+  import {
+    handle,
+    isPreTask,
+    preTaskHref,
+    reviewHref,
+    workPlace,
+  } from "$lib/campaign-graph.ts";
   import {
     commentsOnMyWork,
     invalidateStats,
@@ -36,7 +43,9 @@
   } from "$lib/campaign-stats.ts";
   import CampaignRow from "$lib/components/CampaignRow.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
+  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
   const PER_PAGE = 12;
@@ -161,7 +170,7 @@
         owner: s.owner,
         name: s.repo,
         full_name: `${s.owner}/${s.repo}`,
-        html_url: `https://github.com/${s.owner}/${s.repo}`,
+        html_url: readForge().repoWebUrl(s.owner, s.repo),
         private: s.isPrivate,
         description: null,
         updated_at: "",
@@ -201,18 +210,24 @@
     }),
   );
 
+  // mei-friend returns the volunteer to the task's campaign page.
+  const editorInput = (campaign: string, task_id: string) => ({
+    task_id,
+    campaign,
+    base: location.origin,
+  });
   const openEditor = async (t: MyTask) => {
-    await run(t, (c) => invoke(commands.openEditor, { task_id: t.task }, c));
-    if (
-      runner.result?.ok &&
-      !runner.result.warn &&
-      runner.result.meiFriendUrl
-    ) {
-      window.open(runner.result.meiFriendUrl, "_blank", "noopener");
-    }
+    const s = stats.find((x) => x.name === t.campaignSlug);
+    if (s && pendingVerdicts.isProcessing(`claim:${t.task}`, s.repoId)) return;
+    await run(t, (c) =>
+      invoke(commands.openEditor, editorInput(t.campaignSlug, t.task), c),
+    );
+    openMeiFriend(runner.result);
   };
-  const submit = (t: MyTask) =>
-    run(t, (c) => invoke(commands.submitEncoding, { task_id: t.task }, c));
+  const giveBack = (t: MyTask) =>
+    run(t, (c) =>
+      invoke(commands.giveBack, { task_id: t.task, subtask_id: t.subtask }, c),
+    );
 
   // Claim a campaign row's suggested next task. Encoding claims open
   // mei-friend (a pre-task claims in its own editor instead); a clean review
@@ -227,18 +242,15 @@
       runner.log.step("Refreshing…");
       await refreshStats(s);
     };
-    if (next.action === "encode") {
+    if (
+      next.action === "encode" ||
+      (next.action === "continue" && next.kind !== "review" && !next.pre)
+    ) {
       await runner.run(
-        () => invoke(commands.openEditor, { task_id: next.task }, c),
+        () => invoke(commands.openEditor, editorInput(s.name, next.task), c),
         refresh,
       );
-      if (
-        runner.result?.ok &&
-        !runner.result.warn &&
-        runner.result.meiFriendUrl
-      ) {
-        window.open(runner.result.meiFriendUrl, "_blank", "noopener");
-      }
+      openMeiFriend(runner.result);
     } else if (next.action === "review") {
       await runner.run(
         () =>
@@ -335,28 +347,7 @@
 
 <div class="screen">
   <h1 class="vh">Campaigns</h1>
-  {#if runner.result}
-    <div
-      class="banner"
-      class:ok={runner.result.ok && !runner.result.warn && !runner.result.error}
-      class:warn={runner.result.warn}
-      class:err={!!runner.result.error}
-    >
-      <span>
-        {runner.result.error ?? runner.result.message}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {/if}
+  <RunnerBanner {runner} />
 
   {#if auth.user && (fix.length > 0 || openComments.length > 0)}
     <section class="block">
@@ -437,19 +428,25 @@
                 : ""}</span
             >
             <span class="spacer"></span>
-            <button
-              type="button"
-              class="btn"
+            {#if isPreTask(t.locator)}
+              <a
+                class="btn"
+                href={preTaskHref(t.campaignSlug, t.locator, t.task)}
+                >Open {workPlace(t.locator)}</a
+              >
+            {:else}
+              <button
+                type="button"
+                class="btn"
+                disabled={runner.busy}
+                onclick={() => openEditor(t)}
+                >Open in mei-friend <Icon name="external" /></button
+              >
+            {/if}
+            <GiveBackButton
               disabled={runner.busy}
-              onclick={() => openEditor(t)}
-              >Open editor <Icon name="external" /></button
-            >
-            <button
-              type="button"
-              class="btn btn-soft"
-              disabled={runner.busy}
-              onclick={() => submit(t)}>Submit</button
-            >
+              ongiveback={() => giveBack(t)}
+            />
           </div>
         {/each}
         {#each validating as t (t.campaignSlug + t.task)}
@@ -462,6 +459,10 @@
                 : ""}</span
             >
             <span class="spacer"></span>
+            <GiveBackButton
+              disabled={runner.busy}
+              ongiveback={() => giveBack(t)}
+            />
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
               >Details <Icon name="arrow-right" size={12} /></a
             >

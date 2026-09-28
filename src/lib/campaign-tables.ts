@@ -431,10 +431,34 @@ export type PieceNames = Record<string, string>;
 export function pieceNamesOf(pieces: PieceRef[]): PieceNames {
   const names: PieceNames = {};
   for (const p of pieces) {
-    const name = p.title || p.id;
+    const name = pieceLabel(p);
     if (name) names[p.path] = name;
   }
   return names;
+}
+
+/** A piece's display name: its title, or its id when it has none. */
+export const pieceLabel = (p: { title: string; id: string }): string =>
+  p.title || p.id;
+
+/** The colour zone (1–8) of the piece at `index` in config order. */
+export const pieceZone = (index: number): number => (index % 8) + 1;
+
+/** A measure range on a score page, as a comment anchors it. */
+export interface MeasureAnchor {
+  page: number;
+  m1: number;
+  m2: number;
+}
+
+/** A comment's anchor; an unreadable measure number reads as 0. */
+export function commentAnchor(c: CommentRow): MeasureAnchor {
+  const measure = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  return {
+    page: Number(c.page),
+    m1: measure(c.measure_start),
+    m2: measure(c.measure_end || c.measure_start),
+  };
 }
 
 /** locking.stale_after_minutes when config.yaml does not set it. */

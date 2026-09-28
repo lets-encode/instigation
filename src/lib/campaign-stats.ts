@@ -415,6 +415,10 @@ export interface MyTask {
   campaignSlug: string;
   repoPath: string;
   task: string;
+  /** The held review slot's subtask id (validating group); '' otherwise. */
+  subtask: string;
+  /** The task's locator, which says whether it is a pre-task. */
+  locator: string;
   title: string;
   /** The claim's ISO timestamp (encoding group). */
   claimedAt: string;
@@ -481,6 +485,8 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       campaignSlug: stats.name,
       repoPath: `${stats.owner}/${stats.repo}`,
       task,
+      subtask: "",
+      locator: def?.locator ?? "",
       title: def
         ? cardTitle(def.fragment, def.locator, stats.pieceNames)
         : task,
@@ -514,6 +520,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
     } else if (lock.kind === "validation") {
       out.push({
         ...base(lock.task_id),
+        subtask: lock.subtask_id,
         group: "validating",
         claimedAt: lock.timestamp,
         expiresAt: lockExpiry(lock),

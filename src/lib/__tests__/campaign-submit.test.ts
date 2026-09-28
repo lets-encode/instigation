@@ -195,6 +195,20 @@ test("encoding: a score setup may also commit omr.xml beside the score, alone or
   );
 });
 
+test("encoding: an encoding completed without changes, changing no file, is accepted", () => {
+  const v = enc({
+    tasks: TASKS,
+    state: encodingState(),
+    locks: encodingLock,
+    intent: { task_id: "T0001" },
+    author: "bob",
+    changedPaths: [],
+    meiValid: true,
+    now: NOW,
+  });
+  assert.equal(v.ok, true);
+});
+
 test("encoding: rejects a PR that touches anything but the fragment", () => {
   const v = enc({
     tasks: TASKS,

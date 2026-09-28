@@ -58,29 +58,6 @@
 </div>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--scrim);
-    backdrop-filter: blur(2px);
-  }
-  .overlay-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    width: min(30rem, 92vw);
-    padding: 26px 34px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: 0 12px 44px var(--shade);
-    text-align: center;
-  }
   /* The step log fills the card's width and keeps its list left-aligned. */
   .overlay-card > :global(.log) {
     align-self: stretch;
@@ -112,18 +89,6 @@
   }
   .overlay-title.failed {
     color: var(--danger);
-  }
-  /* Sits where the spinner was: a ring of the same size around a cross. */
-  .fail-mark {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    border: 3px solid var(--danger);
-    border-radius: 50%;
-    color: var(--danger);
-    font-weight: 600;
   }
   .overlay-error {
     margin: 0;

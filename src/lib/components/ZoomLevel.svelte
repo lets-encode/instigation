@@ -36,15 +36,11 @@
 
   let {
     value = $bindable(),
-    least = 50,
-    most = 400,
     fitPage,
     fit = $bindable(null),
   }: {
-    /** Percent, between `least` and `most`. */
+    /** Percent, between LEAST and MOST. */
     value: number;
-    least?: number;
-    most?: number;
     /** The page-fit zoom in percent. Without it there is no page fit. */
     fitPage?: number;
     /** The fit in force, if any. */
@@ -54,17 +50,19 @@
   $effect(() => {
     if (fit === "width") value = 100;
     else if (fit === "page" && fitPage !== undefined)
-      value = Math.max(least, fitPage);
+      value = Math.max(LEAST, fitPage);
   });
 
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
+  const LEAST = 50;
+  const MOST = 400;
   const STOPS = 100;
   const pos = $derived(
-    Math.round((Math.log(value / least) / Math.log(most / least)) * STOPS),
+    Math.round((Math.log(value / LEAST) / Math.log(MOST / LEAST)) * STOPS),
   );
   const setPos = (p: number) =>
-    (value = Math.round(least * (most / least) ** (p / STOPS)));
+    (value = Math.round(LEAST * (MOST / LEAST) ** (p / STOPS)));
 </script>
 
 <span class="zoomctl">

@@ -7,6 +7,7 @@
     CommandRunner,
     readForge,
     viewerId,
+    openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import {
@@ -19,6 +20,10 @@
     findRow,
     pieceNamesOf,
     piecePreparationsOf,
+    commentAnchor,
+    type MeasureAnchor,
+    pieceLabel,
+    pieceZone,
   } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
@@ -28,7 +33,7 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import { commands, invoke } from "$lib/commands.ts";
+  import { commands, invoke, commentInput } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
   import {
     pageOfLocator,
@@ -50,6 +55,7 @@
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import CommentsPanel from "$lib/components/CommentsPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PieceRail from "$lib/components/PieceRail.svelte";
@@ -405,12 +411,12 @@
   );
   // The measure range the score view opens highlighted (from a comment
   // anchor); within the view, anchors work without navigation.
-  let anchor = $state<{ page: number; m1: number; m2: number } | null>(null);
+  let anchor = $state<MeasureAnchor | null>(null);
   // The open task's ?task= survives entering and leaving the score view.
   function openScoreView(
     path: string,
     startPage?: number,
-    a: { page: number; m1: number; m2: number } | null = null,
+    a: MeasureAnchor | null = null,
   ) {
     anchor = a;
     const query = new URLSearchParams();
@@ -445,17 +451,12 @@
     const index = pieceIndexByTask.get(c.task_id);
     const path = previewPieces[index ?? -1]?.path;
     if (!path) return;
-    const m1 = Number(c.measure_start);
-    const m2 = Number(c.measure_end || c.measure_start);
-    openScoreView(path, c.page ? Number(c.page) - 1 : undefined, {
-      page: Number(c.page),
-      m1: Number.isFinite(m1) ? m1 : 0,
-      m2: Number.isFinite(m2) ? m2 : 0,
-    });
+    openScoreView(
+      path,
+      c.page ? Number(c.page) - 1 : undefined,
+      commentAnchor(c),
+    );
   }
-
-  const copy = (text: string) =>
-    navigator.clipboard?.writeText(text).catch(() => {});
 
   // The context every command runs against; progress updates feed the busy
   // overlay's step log.
@@ -624,6 +625,7 @@
   // pre-task's own editor, or the review view for encoding tasks — but only
   // on a clean claim, so a rejected claim leaves you on the console.
   const claimValidate = async (task_id: string, subtask_id: string) => {
+    actedOn(task_id);
     await run((c) =>
       invoke(commands.claimValidation, { task_id, subtask_id }, c),
     );
@@ -634,39 +636,122 @@
     await goto(reviewHref(campaign, locator ?? "", task_id));
   };
 
-  // Open the task's score in mei-friend (claiming it if needed). The tab opens
-  // only after the claim has gone through — never on a rejected or
+  // Open the task's score in mei-friend (claiming it if needed). The page
+  // navigates only after the claim has gone through — never on a rejected or
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
-    await run((c) => invoke(commands.openEditor, { task_id }, c));
-    if (
-      runner.result?.ok &&
-      !runner.result.warn &&
-      runner.result.meiFriendUrl
-    ) {
-      window.open(runner.result.meiFriendUrl, "_blank", "noopener");
-    }
+    // A claim still being processed holds the editor until its verdict lands.
+    if (pendingVerdicts.isProcessing(`claim:${task_id}`, repoId)) return;
+    actedOn(task_id);
+    await run((c) =>
+      invoke(
+        commands.openEditor,
+        { task_id, campaign, base: location.origin },
+        c,
+      ),
+    );
+    openMeiFriend(runner.result);
   };
 
   const submitpr = (task_id: string) =>
     run((c) => invoke(commands.submitEncoding, { task_id }, c));
+
+  const giveBack = (task_id: string, subtask_id: string) => {
+    actedOn(task_id);
+    return run((c) => invoke(commands.giveBack, { task_id, subtask_id }, c));
+  };
+
+  // ------------------------------------------------ the return from mei-friend
+  // mei-friend returns the volunteer to /<campaign>?task=<id>&mf_status=
+  // complete|failed|abandoned (with an optional mf_msg). `complete` submits the
+  // encoding, `abandoned` gives the claim back, `failed` shows mei-friend's
+  // message in the task panel.
+  /** An error from the return from mei-friend, shown in the task's panel;
+      `label` names mei-friend when the text is its own message. */
+  let editorError = $state<{
+    task: string;
+    label: string;
+    text: string;
+  } | null>(null);
+  /** The task mei-friend just reported complete, highlighted until `until`. */
+  let completed = $state<{ task: string; until: number } | null>(null);
+  const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
+  const completedTask = $derived(completed?.task ?? null);
+  $effect(() => {
+    if (!completed) return;
+    const timer = setTimeout(
+      () => (completed = null),
+      completed.until - Date.now(),
+    );
+    return () => clearTimeout(timer);
+  });
+  // Acting on another task ends the highlight and the reported error.
+  function actedOn(task: string) {
+    if (completed && completed.task !== task) completed = null;
+    if (editorError && editorError.task !== task) editorError = null;
+  }
+  const holdsEncoding = (task: string) =>
+    viewer !== "" &&
+    locks.some(
+      (l) =>
+        l.task_id === task &&
+        l.subtask_id === "" &&
+        l.kind === "encoding" &&
+        l.user_id === viewer,
+    );
+  function handleEditorReturn(task: string, status: string, msg: string) {
+    console.log("[editor-return]", task, status, {
+      holds: holdsEncoding(task),
+      msg,
+    });
+    if (status === "failed") {
+      editorError = msg
+        ? { task, label: "Message from mei-friend", text: msg }
+        : {
+            task,
+            label: "",
+            text: "mei-friend reported that the task could not be completed.",
+          };
+      return;
+    }
+    if (status !== "complete" && status !== "abandoned") return;
+    if (!holdsEncoding(task)) {
+      editorError = {
+        task,
+        label: "",
+        text:
+          status === "complete"
+            ? "mei-friend reported the task complete, but you do not hold its claim, so nothing was submitted."
+            : "mei-friend reported the task given back, but you do not hold its claim.",
+      };
+      return;
+    }
+    if (status === "complete") {
+      completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
+      submitpr(task);
+    } else giveBack(task, "");
+  }
 
   const validate = (
     task_id: string,
     subtask_id: string,
     verdict: string,
     comment?: FailComment,
-  ) =>
-    run((c) =>
+  ) => {
+    actedOn(task_id);
+    return run((c) =>
       invoke(
         commands.submitValidation,
         { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
         c,
       ),
     );
+  };
 
-  const sendBackTask = (task_id: string) =>
-    run((c) => invoke(commands.sendBack, { task_id }, c));
+  const sendBackTask = (task_id: string) => {
+    actedOn(task_id);
+    return run((c) => invoke(commands.sendBack, { task_id }, c));
+  };
 
   const postComment = (
     task_id: string,
@@ -678,16 +763,7 @@
     run((c) =>
       invoke(
         commands.submitComment,
-        {
-          task_id,
-          subtask_id: "",
-          kind,
-          body,
-          page: at?.page ?? "",
-          measure_start: at?.measure_start ?? "",
-          measure_end: at?.measure_end ?? "",
-          parent_id,
-        },
+        commentInput(task_id, kind, body, parent_id, at),
         c,
       ),
     );
@@ -714,6 +790,27 @@
     const task = page.url.searchParams.get("task");
     if (task && findRow(taskDefs, task, "")) {
       detailTask = task;
+      const status = page.url.searchParams.get("mf_status");
+      if (status) {
+        // Logged out, the outcome waits in the URL; logging in returns here
+        // with it.
+        if (!auth.user) {
+          editorError = {
+            task,
+            label: "",
+            text: "Log in to record the outcome from mei-friend.",
+          };
+          return;
+        }
+        const msg = page.url.searchParams.get("mf_msg") ?? "";
+        // The outcome is handled once; a reload must not repeat it.
+        goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+          replaceState: true,
+          noScroll: true,
+          keepFocus: true,
+        });
+        handleEditorReturn(task, status, msg);
+      }
       return;
     }
     if (!canPush) return;
@@ -726,6 +823,7 @@
   });
 
   function claimCard(card: BoardCard) {
+    actedOn(card.task);
     if (card.pre) goto(preTaskHref(campaign, card.locator, card.task));
     else editor(card.task);
   }
@@ -738,9 +836,10 @@
       return;
     }
     const sub = card.slots.find((s) => s.claimable)?.sub;
-    if (card.column === "validation" && sub !== undefined)
+    if (card.column === "validation" && sub !== undefined) {
+      actedOn(card.task);
       claimValidate(card.task, sub);
-    else openTask(card.task);
+    } else openTask(card.task);
   }
   function actOnNext() {
     if (nextCard) actOnCard(nextCard);
@@ -749,9 +848,9 @@
   // The task panel names its piece and carries its colour.
   const pieceNameOf = (task: string) => {
     const p = previewPieces[pieceIndexByTask.get(task) ?? 0];
-    return p ? p.title || p.id : "";
+    return p ? pieceLabel(p) : "";
   };
-  const zoneOf = (task: string) => ((pieceIndexByTask.get(task) ?? 0) % 8) + 1;
+  const zoneOf = (task: string) => pieceZone(pieceIndexByTask.get(task) ?? 0);
 
   // The board rendered as four columns: queued-but-blocked tasks share the
   // Open column (dimmed, with what they wait for) instead of a fifth column.
@@ -840,67 +939,7 @@
 {/if}
 
 {#snippet resultBanner()}
-  {#if runner.result && runner.result.error}
-    <div class="banner bar err">
-      <span>
-        {runner.result.error}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {:else if runner.result && runner.result.ok && !runner.result.background}
-    <div class="banner bar {runner.result.warn ? 'warn' : 'ok'}">
-      <div class="banner-body">
-        {runner.result.message}
-        {#if runner.result.prUrl}
-          <a href={runner.result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-        {#if runner.result.meiFriendUrl}
-          <div class="rawlink">
-            <input
-              readonly
-              value={runner.result.meiFriendUrl}
-              onfocus={(e) => (e.target as HTMLInputElement).select()}
-            />
-            <button
-              type="button"
-              onclick={() => copy(runner.result!.meiFriendUrl!)}>Copy</button
-            >
-          </div>
-          <span class="muted">
-            <a
-              href={runner.result.meiFriendUrl}
-              target="_blank"
-              rel="noreferrer"
-              >Open in mei-friend <Icon name="external" size={12} /></a
-            >
-            (if the tab didn't open automatically)
-          </span>
-          {#if isPrivate}
-            <span class="muted">
-              Opening mei-friend shares a short-lived, read-capable GitHub URL
-              with that external service.
-            </span>
-          {/if}
-        {/if}
-      </div>
-      <button
-        type="button"
-        class="dismiss"
-        onclick={() => (runner.result = null)}>Dismiss</button
-      >
-    </div>
-  {/if}
+  <RunnerBanner {runner} bar {isPrivate} />
 {/snippet}
 
 {#snippet slotDot(key: string)}
@@ -927,8 +966,9 @@
     onopenscore={() => viewCardScore(card)}
     onshowanchor={showCommentInScore}
     onclaim={claimValidate}
+    editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
-    onsubmitencoding={submitpr}
+    ongiveback={giveBack}
     onvalidate={validate}
     oncomment={(kind, body, parent_id) =>
       postComment(card.task, kind, body, parent_id)}
@@ -1021,7 +1061,7 @@
           {#key scoreView.piece.path}
             <ScoreView
               piece={scoreView.piece}
-              zone={(scoreView.index % 8) + 1}
+              zone={pieceZone(scoreView.index)}
               campaignTitle={title || repo}
               {owner}
               {repo}
@@ -1121,6 +1161,7 @@
                   {repo}
                   cards={allCards}
                   {nextCard}
+                  {completedTask}
                   {taskDefs}
                   {locks}
                   {viewer}
@@ -1140,7 +1181,7 @@
                   <div class="cpholder">
                     <CommentsPanel
                       piece={volunteerScope.piece}
-                      zone={(volunteerScope.index % 8) + 1}
+                      zone={pieceZone(volunteerScope.index)}
                       cards={scopeCards}
                       {comments}
                       {logins}
@@ -1164,7 +1205,7 @@
               <h1>{title || repo}</h1>
               <a
                 class="mono slug"
-                href={`https://github.com/${owner}/${repo}`}
+                href={readForge().repoWebUrl(owner, repo)}
                 target="_blank"
                 rel="noreferrer"
                 >{owner}/{repo} <Icon name="external" size={12} /></a
@@ -1242,7 +1283,7 @@
                       {#if workedOn.length}
                         {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
                             class="mono"
-                            href={`https://github.com/${logins[u] || u}`}
+                            href={readForge().userWebUrl(logins[u] || u)}
                             target="_blank"
                             rel="noreferrer">@{logins[u] || u}</a
                           >{/each}
@@ -1391,7 +1432,7 @@
                 {@const p = pieceProgress.get(railPiece.piece.path)}
                 <div
                   class="ctxstrip"
-                  style="--zone: var(--zone-{(railPiece.index % 8) + 1})"
+                  style="--zone: var(--zone-{pieceZone(railPiece.index)})"
                 >
                   <span class="ctxpaper">
                     {#if stripPreview?.thumb}
@@ -1399,9 +1440,7 @@
                     {/if}
                   </span>
                   <div class="ctxinfo">
-                    <span class="ctxname"
-                      >{railPiece.piece.title || railPiece.piece.id}</span
-                    >
+                    <span class="ctxname">{pieceLabel(railPiece.piece)}</span>
                     <span class="ctxmeta"
                       >{stripPreview?.pageMeasures.length
                         ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
@@ -1440,8 +1479,9 @@
                          nested in a button. -->
                         <div
                           class="card col-{card.column}"
-                          class:nextup={card.nextUp}
-                          class:justmoved={recentlyFinished.has(card.task)}
+                          class:nextup={card.nextUp && !completedTask}
+                          class:justmoved={recentlyFinished.has(card.task) ||
+                            card.task === completedTask}
                           class:paneled={detailTask === card.task}
                           class:failtint={card.counts.fails > 0 &&
                             card.column !== "done"}
@@ -1457,10 +1497,12 @@
                           }}
                           title="Open this task"
                         >
-                          {#if card.nextUp}
+                          {#if card.nextUp && !completedTask}
                             <span class="nextup-badge">next task</span>
                           {/if}
-                          {#if recentlyFinished.has(card.task)}
+                          {#if card.task === completedTask}
+                            <span class="justmoved-badge">just completed</span>
+                          {:else if recentlyFinished.has(card.task)}
                             <span class="justmoved-badge">just submitted</span>
                           {/if}
                           <div class="card-title">
@@ -1608,29 +1650,6 @@
   }
 
   /* Banner styles are shared app-wide in ui.css. */
-  .rawlink {
-    display: flex;
-    gap: 0.4rem;
-  }
-  .rawlink input {
-    flex: 1;
-    min-width: 0;
-    font-size: 0.75rem;
-    font-family: ui-monospace, monospace;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-  }
-  .rawlink button {
-    font: inherit;
-    font-size: 0.75rem;
-    padding: 0.2rem 0.6rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-    cursor: pointer;
-  }
   .linkish {
     font: inherit;
     font-size: 12px;

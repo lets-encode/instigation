@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGraph, blockedBy } from "../campaign-graph.ts";
+import { buildGraph, blockedBy, claimLabel } from "../campaign-graph.ts";
 import type { GraphData } from "../campaign-graph.ts";
 import type { StateRow, TaskRow } from "../campaign-tables.ts";
 
@@ -277,4 +277,12 @@ test("buildGraph: numeric user ids render as logins via the map", () => {
   // No map entry → the id stands in for the login, never a blank.
   const withoutLogin = buildGraph(data, "").find((n) => n.task === "T0001");
   assert.equal(withoutLogin?.slots[0].who, "@12345 · pass");
+});
+
+test("claimLabel names mei-friend for an encoding only", () => {
+  assert.equal(claimLabel("surface-3"), "Claim & open in mei-friend");
+  assert.equal(claimLabel(""), "Claim & open in mei-friend");
+  assert.equal(claimLabel("score-setup"), "Claim task");
+  assert.equal(claimLabel("omr-layout"), "Claim task");
+  assert.equal(claimLabel("measure-zones"), "Claim task");
 });

@@ -13,7 +13,13 @@
   import { findRow } from "$lib/campaign-tables.ts";
   import type { CommentRow, LockRow, StateRow } from "$lib/campaign-tables.ts";
   import type { FailComment } from "$lib/commands.ts";
-  import { handle, pageOfLocator, preTaskHref } from "$lib/campaign-graph.ts";
+  import {
+    handle,
+    pageOfLocator,
+    preTaskHref,
+    claimLabel,
+    workPlace,
+  } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import {
     buildRecord,
@@ -23,10 +29,11 @@
     initialOf,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
-  import { clampPanelWidth, writeSidePanel } from "$lib/side-panels.ts";
+  import PanelResizeHandle from "$lib/components/PanelResizeHandle.svelte";
   import type { SidePanelState } from "$lib/side-panels.ts";
   import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
+  import GiveBackButton from "./GiveBackButton.svelte";
   import TaskRunState from "./TaskRunState.svelte";
   import ValidationRecord from "./ValidationRecord.svelte";
 
@@ -43,6 +50,7 @@
     canPush,
     runner,
     resultBanner,
+    editorError = null,
     panel = $bindable(),
     floating,
     onclose,
@@ -50,7 +58,7 @@
     onshowanchor,
     onclaim,
     oneditor,
-    onsubmitencoding,
+    ongiveback,
     onvalidate,
     oncomment,
     onresolve,
@@ -70,6 +78,9 @@
     canPush: boolean;
     runner: CommandRunner;
     resultBanner: Snippet;
+    /** An error from the return from mei-friend; `label` names mei-friend
+        when the text is its own message. */
+    editorError?: { label: string; text: string } | null;
     panel: SidePanelState;
     /** Float over the right edge of the view instead of taking a share of
      *  the row's width. */
@@ -81,7 +92,8 @@
     onshowanchor: (c: CommentRow) => void;
     onclaim: (task_id: string, subtask_id: string) => Promise<void>;
     oneditor: (task_id: string) => Promise<void>;
-    onsubmitencoding: (task_id: string) => Promise<void>;
+    /** Give back the viewer's claim: the task's encoding ('' subtask) or a review slot. */
+    ongiveback: (task_id: string, subtask_id: string) => Promise<void>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
@@ -96,6 +108,10 @@
   // The task's own one-shot submission, held while it is still processing.
   const encodePending = $derived(
     pendingVerdicts.isProcessing(`encode:${card.task}`),
+  );
+  // An encoding claim still being processed in the background.
+  const claimingEncoding = $derived(
+    pendingVerdicts.isProcessing(`claim:${card.task}`),
   );
   const mineEncoding = $derived(
     viewer !== "" &&
@@ -112,16 +128,15 @@
   const claimableSub = $derived(
     record.find((r) => r.key === "open" && r.claimable)?.sub,
   );
-  /** The viewer holds a review lock on this task. */
-  const myReview = $derived(record.some((r) => r.mine));
+  /** The review slot the viewer holds a lock on, if any. */
+  const myReviewSub = $derived(record.find((r) => r.mine)?.sub);
+  const myReview = $derived(myReviewSub !== undefined);
   const claimPending = $derived(
     claimableSub !== undefined &&
       pendingVerdicts.isProcessing(`validate:${card.task}/${claimableSub}`),
   );
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
-  const editorName = $derived(
-    card.locator === "score-setup" ? "setup editor" : "zone editor",
-  );
+  const editorName = $derived(workPlace(card.locator));
 
   // The submitted encoding behind the card, for the Submission section.
   const taskState = $derived(findRow(rows, card.task, ""));
@@ -143,46 +158,15 @@
   // The comment a discussion reply targets, shared by the thread list and the
   // composer.
   let replyTo = $state<CommentRow | null>(null);
-
-  // Left-edge drag: the panel is right-docked, so dragging left widens it.
-  let resizing = $state(false);
-  let startX = 0;
-  let startWidth = 0;
-
-  function beginResize(e: PointerEvent) {
-    // Keeps the drag from starting a text selection in the panel.
-    e.preventDefault();
-    resizing = true;
-    startX = e.clientX;
-    startWidth = panel.width;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function moveResize(e: PointerEvent) {
-    if (!resizing) return;
-    panel.width = clampPanelWidth(
-      startWidth + (startX - e.clientX),
-      window.innerWidth,
-    );
-  }
-  function endResize() {
-    if (!resizing) return;
-    resizing = false;
-    writeSidePanel("task", { ...panel });
-  }
 </script>
 
 <div class="tspwrap" class:floating style="width: {panel.width}px">
-  <div
-    class="handle"
-    class:active={resizing}
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Resize the task panel"
-    onpointerdown={beginResize}
-    onpointermove={moveResize}
-    onpointerup={endResize}
-    onpointercancel={endResize}
-  ></div>
+  <PanelResizeHandle
+    id="task"
+    label="Resize the task panel"
+    bind:panel
+    hidden={floating}
+  />
   <aside
     class="tsp"
     style="--zone: var(--zone-{zone})"
@@ -202,6 +186,14 @@
         >
       </div>
       <TaskRunState task={card.task} bar />
+      {#if editorError}
+        <div class="banner err bar">
+          <span
+            >{#if editorError.label}<b>{editorError.label}:</b
+              >{" "}{/if}{editorError.text}</span
+          >
+        </div>
+      {/if}
       <div class="statusrow">
         <span
           class="pill c-{card.column}"
@@ -264,18 +256,18 @@
               class="btn btn-primary btn-pre"
               href={editorRoute}
               title={`Claims the task for you and opens the ${editorName}.`}
-              >Claim &amp; open {editorName}</a
+              >{claimLabel(card.locator)}</a
             >
           {:else}
             <button
               type="button"
               class="btn btn-primary"
               onclick={() => oneditor(card.task)}
-              disabled={runner.busy || !auth.user}
+              disabled={runner.busy || !auth.user || claimingEncoding}
               title={auth.user
                 ? "Claims the task for you, then opens the score in mei-friend."
                 : "Log in to claim a task."}
-              >Claim &amp; open editor <Icon name="external" /></button
+              >{claimLabel(card.locator)} <Icon name="external" /></button
             >
           {/if}
         </div>
@@ -288,25 +280,25 @@
               title={`Continue your work in the ${editorName}.`}
               >Continue in {editorName}</a
             >
+            <GiveBackButton
+              disabled={runner.busy}
+              ongiveback={() => ongiveback(card.task, "")}
+            />
           </div>
         {:else if mineEncoding}
           <div class="tspfoot">
             <button
               type="button"
               class="btn btn-primary"
-              onclick={() => onsubmitencoding(card.task)}
-              disabled={runner.busy || encodePending}
-              title="After committing your encoding in mei-friend, submit it for review."
-              >Submit for review</button
-            >
-            <button
-              type="button"
-              class="btn btn-soft"
               onclick={() => oneditor(card.task)}
-              disabled={runner.busy}
-              title="Opens the score in mei-friend."
-              >Open editor <Icon name="external" /></button
+              disabled={runner.busy || encodePending}
+              title="Opens the score in mei-friend. Completing the task there submits it for review."
+              >Open in mei-friend <Icon name="external" /></button
             >
+            <GiveBackButton
+              disabled={runner.busy || encodePending}
+              ongiveback={() => ongiveback(card.task, "")}
+            />
           </div>
         {/if}
       {:else if card.column === "validation"}
@@ -345,6 +337,10 @@
                 >Open review view</a
               >
             {/if}
+            <GiveBackButton
+              disabled={runner.busy}
+              ongiveback={() => ongiveback(card.task, myReviewSub ?? "")}
+            />
           </div>
         {/if}
       {/if}
@@ -405,43 +401,6 @@
     min-height: 0;
     align-self: stretch;
   }
-  /* The host row's gap spaces the bar from the board; the right margin
-     mirrors it towards the panel. */
-  .handle {
-    flex: none;
-    align-self: stretch;
-    margin: 12px 14px 12px 0;
-    width: 6px;
-    border-radius: 3px;
-    background: var(--line-input);
-    opacity: 0.65;
-    cursor: col-resize;
-    touch-action: none;
-    position: relative;
-  }
-  .handle:hover,
-  .handle.active {
-    background: var(--accent);
-    opacity: 0.8;
-  }
-  /* The embossed double line marking the bar as draggable. */
-  .handle::before,
-  .handle::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    width: 1px;
-    height: 26px;
-    transform: translateY(-50%);
-    border-radius: 1px;
-    background: var(--card);
-  }
-  .handle::before {
-    left: 1.5px;
-  }
-  .handle::after {
-    right: 1.5px;
-  }
   .tsp {
     flex: 1;
     min-width: 0;
@@ -466,9 +425,6 @@
     padding: 12px 12px 12px 0;
     box-sizing: border-box;
     z-index: 30;
-  }
-  .floating .handle {
-    display: none;
   }
   .floating .tsp {
     background: var(--card);
@@ -614,8 +570,10 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+  /* At the panel's narrowest a long label wraps rather than widening it. */
   .tspfoot .btn {
     flex: 1;
+    white-space: normal;
   }
 
   .sechead {

@@ -5,11 +5,13 @@
   claim button acts. The viewer's own campaigns render in amber.
 -->
 <script lang="ts">
+  import { claimLabel } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { elapsed } from "$lib/campaign-board.ts";
   import { attentionCount, nextTask } from "$lib/campaign-stats.ts";
   import type { CampaignStats, NextTask } from "$lib/campaign-stats.ts";
   import { readForge } from "$lib/command-runner.svelte.ts";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
 
@@ -24,7 +26,8 @@
     owned?: boolean;
     viewer: string;
     busy: boolean;
-    /** Claim the row's next task (action 'encode' or 'review'). */
+    /** Act on the row's next task: claim it (action 'encode' or 'review'),
+        or open held encoding work in the editor (action 'continue'). */
     onact: (stats: CampaignStats, next: NextTask) => void;
   } = $props();
 
@@ -73,11 +76,8 @@
 
   const actLabel = (n: NextTask): string => {
     if (n.action === "review") return "Claim to review";
-    return n.locator === "score-setup"
-      ? "Claim & open setup editor"
-      : n.pre
-        ? "Claim & open zone editor"
-        : "Claim & open editor";
+    if (n.action === "continue") return "Open in mei-friend";
+    return claimLabel(n.locator);
   };
 </script>
 
@@ -135,7 +135,7 @@
         class:k-pre={next.pre}>Next task · {next.kind}</span
       >
       <span class="nexttitle">{next.title}</span>
-      {#if next.action === "encode" || next.action === "review"}
+      {#if next.action === "encode" || next.action === "review" || (next.action === "continue" && next.kind !== "review" && !next.pre)}
         <button
           type="button"
           class="btn btn-primary {next.action === 'review'
@@ -143,9 +143,10 @@
             : next.pre
               ? 'btn-pre'
               : 'btn-enc'}"
-          disabled={busy}
+          disabled={busy ||
+            pendingVerdicts.isProcessing(`claim:${next.task}`, stats.repoId)}
           onclick={() => onact(stats, next)}
-          >{actLabel(next)}{#if actLabel(next) === "Claim & open editor"}<Icon
+          >{actLabel(next)}{#if next.action !== "review" && !next.pre}<Icon
               name="external"
             />{/if}</button
         >

@@ -15,6 +15,14 @@
 -->
 <script lang="ts">
   import {
+    arrowShift,
+    drawnBox,
+    drawStarted,
+    movedBox,
+    pagePoint,
+    resizedBox,
+  } from "$lib/box-geometry.ts";
+  import {
     overlappingPiece,
     pieceColour,
     type Piece,
@@ -76,8 +84,9 @@
     started?: boolean;
   };
   let drag: Drag | null = null;
-  // Screen pixels the pointer must travel before a draw creates its region.
-  const DRAW_THRESHOLD_PX = 12;
+  // Arrow keys move a region NUDGE page pixels, NUDGE_FAR with Shift.
+  const NUDGE = 4;
+  const NUDGE_FAR = 20;
   let selectedZone = $state<{ piece: number; zone: number } | null>(null);
   // What the last edit did or refused to do, shown until the next one.
   let notice = $state<string | null>(null);
@@ -99,23 +108,7 @@
     const svg = svgEls[surface];
     const page = pages[surface];
     if (!svg || !page) return { x: 0, y: 0 };
-    const rect = svg.getBoundingClientRect();
-    return {
-      x: Math.max(
-        0,
-        Math.min(
-          page.width,
-          ((e.clientX - rect.left) * page.width) / rect.width,
-        ),
-      ),
-      y: Math.max(
-        0,
-        Math.min(
-          page.height,
-          ((e.clientY - rect.top) * page.height) / rect.height,
-        ),
-      ),
-    };
+    return pagePoint(e, svg.getBoundingClientRect(), page);
   }
 
   function backgroundPointerDown(e: PointerEvent, surface: number) {
@@ -222,10 +215,16 @@
     if (!page) return;
     const { x, y } = svgXY(e, drag.page);
     if (drag.kind === "draw" && !drag.started) {
-      // No zone until the pointer has dragged a few millimetres (12 screen pixels).
-      const threshold =
-        DRAW_THRESHOLD_PX * (page.width / (svgWidths[drag.page] || 400));
-      if (Math.hypot(x - drag.sx, y - drag.sy) < threshold) return;
+      // No region until the pointer has dragged a few millimetres.
+      if (
+        !drawStarted(
+          x - drag.sx,
+          y - drag.sy,
+          page,
+          svgWidths[drag.page] || 400,
+        )
+      )
+        return;
       const piece = pieces[drag.piece];
       piece.zones.push({ ...drag.origin });
       drag.zone = piece.zones.length - 1;
@@ -235,18 +234,10 @@
     const zone = pieces[drag.piece].zones[drag.zone];
     const minSize = minSizeOn(drag.page);
     if (drag.kind === "move") {
-      const w = drag.origin.lrx - drag.origin.ulx;
-      const h = drag.origin.lry - drag.origin.uly;
-      zone.ulx = Math.max(
-        0,
-        Math.min(page.width - w, drag.origin.ulx + (x - drag.sx)),
+      Object.assign(
+        zone,
+        movedBox(drag.origin, x - drag.sx, y - drag.sy, page),
       );
-      zone.uly = Math.max(
-        0,
-        Math.min(page.height - h, drag.origin.uly + (y - drag.sy)),
-      );
-      zone.lrx = zone.ulx + w;
-      zone.lry = zone.uly + h;
       // Snapping shifts the whole region, keeping its size: whichever edge
       // snaps decides the shift.
       const snapped = { ...zone };
@@ -267,20 +258,14 @@
       zone.uly += dy;
       zone.lry += dy;
     } else if (drag.kind === "draw") {
-      // Drawing spans the start point and the pointer, in any direction.
-      zone.ulx = Math.min(drag.sx, x);
-      zone.lrx = Math.max(drag.sx, x, zone.ulx + minSize);
-      zone.uly = Math.min(drag.sy, y);
-      zone.lry = Math.max(drag.sy, y, zone.uly + minSize);
+      Object.assign(zone, drawnBox(drag.sx, drag.sy, x, y, minSize));
       snapToNeighbours(zone, drag.page, { piece: drag.piece, zone: drag.zone });
     } else {
-      // Resizing moves the grabbed corner's two edges, never past the
-      // opposite ones.
-      const c = drag.corner ?? "se";
-      if (c.includes("w")) zone.ulx = Math.min(drag.origin.lrx - minSize, x);
-      else zone.lrx = Math.max(drag.origin.ulx + minSize, x);
-      if (c.includes("n")) zone.uly = Math.min(drag.origin.lry - minSize, y);
-      else zone.lry = Math.max(drag.origin.uly + minSize, y);
+      // Resizing moves the grabbed corner's two edges.
+      Object.assign(
+        zone,
+        resizedBox(drag.origin, drag.corner ?? "se", x, y, minSize),
+      );
       snapToNeighbours(zone, drag.page, { piece: drag.piece, zone: drag.zone });
     }
   }
@@ -334,19 +319,15 @@
       return;
     }
     const page = pages[surface];
-    if (!e.key.startsWith("Arrow") || !page) return;
+    const shift = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE);
+    if (!shift || !page) return;
     e.preventDefault();
     selectedZone = { piece: p, zone: z };
     const zone = pieces[p].zones[z];
-    const step = e.shiftKey ? 20 : 4;
-    const dx =
-      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
-    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-    const w = zone.lrx - zone.ulx;
-    const h = zone.lry - zone.uly;
-    const ulx = Math.max(0, Math.min(page.width - w, zone.ulx + dx));
-    const uly = Math.max(0, Math.min(page.height - h, zone.uly + dy));
-    const moved = { surface, ulx, uly, lrx: ulx + w, lry: uly + h };
+    const moved = {
+      surface,
+      ...movedBox(zone, shift.dx, shift.dy, page),
+    };
     const clash = overlappingPiece(pieces, p, moved);
     notice = clash === -1 ? null : overlapNotice(clash, surface);
     if (clash === -1) Object.assign(zone, moved);

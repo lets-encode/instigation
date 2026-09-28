@@ -143,3 +143,35 @@ export function checkClaim({
     },
   };
 }
+
+export interface CheckReleaseArgs {
+  locks: LockRow[];
+  intent: ClaimIntent;
+  /** PR author's GitHub numeric account id. */
+  author: string;
+  /** Paths the PR changes. */
+  changedPaths: string[];
+}
+
+/**
+ * Decide a release: the author gives back a claim they hold. The lock to
+ * remove is the author's own active lock on the intent's row and kind; the
+ * task's state is unchanged.
+ */
+export function checkRelease({
+  locks,
+  intent,
+  author,
+  changedPaths,
+}: CheckReleaseArgs): ClaimResult {
+  if (!boundaryCheck(changedPaths, [LOCK_PATH])) return reject("out_of_bounds");
+  if (!CLAIM_KINDS.includes(intent.kind)) return reject("invalid_kind");
+  const lock = locks.find(
+    (l) =>
+      l.task_id === intent.task_id &&
+      l.subtask_id === intent.subtask_id &&
+      l.kind === intent.kind &&
+      l.user_id === author,
+  );
+  return lock ? { ok: true, lock } : reject("not_lock_holder");
+}

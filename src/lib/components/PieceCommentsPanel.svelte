@@ -10,7 +10,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CampaignTables } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { findRow, pieceNamesOf } from "$lib/campaign-tables.ts";
+  import { findRow, pieceNamesOf, pieceZone } from "$lib/campaign-tables.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
   import type { SidePanelState } from "$lib/side-panels.ts";
   import CommentsPanel from "./CommentsPanel.svelte";
@@ -117,7 +117,7 @@
 
 <CommentsPanel
   {piece}
-  zone={(index % 8) + 1}
+  zone={pieceZone(index)}
   {cards}
   comments={tables.comments}
   logins={tables.logins}

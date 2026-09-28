@@ -55,41 +55,6 @@
 {/if}
 
 <style>
-  /* The rejection modal mirrors the busy overlay's failed state. */
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--scrim);
-    backdrop-filter: blur(2px);
-  }
-  .overlay-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    width: min(30rem, 92vw);
-    padding: 26px 34px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: 0 12px 44px var(--shade);
-    text-align: center;
-  }
-  .fail-mark {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    border: 3px solid var(--danger);
-    border-radius: 50%;
-    color: var(--danger);
-    font-weight: 600;
-  }
   .overlay-title {
     margin: 0;
     color: var(--danger);

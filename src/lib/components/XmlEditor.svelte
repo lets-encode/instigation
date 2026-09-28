@@ -17,12 +17,10 @@
 
   let {
     value = $bindable(),
-    readonly = false,
     wrap = true,
     fill = false,
   }: {
     value: string;
-    readonly?: boolean;
     /** Whether long lines wrap; reconfigurable while the editor is open. */
     wrap?: boolean;
     /** Take the height of the surface instead of capping at a form height. */
@@ -81,7 +79,6 @@
               keymap.of([...defaultKeymap, ...historyKeymap]),
               xml(),
               wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
-              EditorState.readOnly.of(readonly),
               EditorView.updateListener.of((update) => {
                 if (!update.docChanged) return;
                 known = update.state.doc.toString();

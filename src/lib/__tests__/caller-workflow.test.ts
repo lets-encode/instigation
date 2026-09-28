@@ -1,19 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { RUN_REQUIREMENTS } from "../commands.ts";
 
 // The campaign repos' workflow runs on pull_request_target with a write token,
 // so its safety rests on never executing anything from the fork: the PR head
 // may be passed to the coordinator as data (env), but no step may check it out
 // or expand it into a command. These checks pin that invariant, which the
-// workflow otherwise states only in comments. The workflow is read from the
-// template repository on GitHub, so the test does not depend on a local
-// checkout of the template.
-const workflowUrl =
-  "https://raw.githubusercontent.com/lets-encode/user-repo-template/main/.github/workflows/caller.yml";
-const response = await fetch(workflowUrl);
-assert.ok(response.ok, `fetching ${workflowUrl}: ${response.status}`);
-const workflow = await response.text();
+// workflow otherwise states only in comments. The steps live in this repo's
+// campaign.yml; each campaign's caller.yml carries only the triggers and is
+// read from the template repository on GitHub, so the test does not depend on
+// a local checkout of the template.
+const workflow = readFileSync(
+  new URL("../../../.github/workflows/campaign.yml", import.meta.url),
+  "utf8",
+);
+const callerUrl =
+  "https://raw.githubusercontent.com/lets-encode/campaign-template/main/.github/workflows/caller.yml";
+const response = await fetch(callerUrl);
+assert.ok(response.ok, `fetching ${callerUrl}: ${response.status}`);
+const caller = await response.text();
 const lines = workflow.split("\n");
 const indentOf = (line: string) => line.length - line.trimStart().length;
 
@@ -42,7 +48,7 @@ function steps(): string[][] {
 }
 
 test("caller.yml runs on pull_request_target, so the invariant applies", () => {
-  assert.match(workflow, /^\s*pull_request_target:/m);
+  assert.match(caller, /^\s*pull_request_target:/m);
 });
 
 test("the PR head is passed to the coordinator only as env data", () => {
@@ -116,7 +122,7 @@ test("the cfg step validates the pointer fields before exporting them", () => {
 // Each pull request queues its own runs; runs for different pull requests
 // never wait on or cancel each other.
 test("pull request runs get a concurrency group of their own", () => {
-  const concurrency = /^concurrency:\n((?:[ ]+.*\n)+)/m.exec(workflow);
+  const concurrency = /^\s*concurrency:\n((?:[ ]+.*\n)+)/m.exec(workflow);
   assert.ok(concurrency, "no concurrency block");
   assert.match(concurrency![1], /github\.event\.pull_request\.number/);
 });
@@ -124,7 +130,7 @@ test("pull request runs get a concurrency group of their own", () => {
 test("pull request runs are gated on the event payload before a runner is assigned", () => {
   const job = /^  run:\n((?:[ ]{4}.*\n)+?)[ ]{4}steps:/m.exec(workflow);
   assert.ok(job, "no run job");
-  const guard = job![1].split("\n").find((l) => /^\s*if:/.test(l)) ?? "";
+  const guard = job![1].split("\n").find((l) => /^[ ]{4}if:/.test(l)) ?? "";
   assert.match(guard, /pull_request\.changed_files <= 2/);
   assert.match(guard, /pull_request\.draft == false/);
   assert.match(guard, /pull_request\.user\.type == 'User'/);

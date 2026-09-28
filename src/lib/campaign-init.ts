@@ -21,6 +21,7 @@
 //   - tracking/state.csv     (buildStateCsv: tasks encoding_required, subtasks pending)
 //   - tracking/lock.csv      (buildLockCsv: header only)
 //   - tracking/history.csv   (buildHistoryCsv: header only)
+//   - README.md              (buildCampaignReadme: title and a link to the campaign page)
 
 import {
   COMMENT_COLUMNS,
@@ -33,7 +34,7 @@ import {
 } from "./campaign-tables.ts";
 import { DEFAULT_LICENSE } from "./licenses.ts";
 
-/** The central automation pointer the campaign's caller workflow reads (DESIGN.md §4). */
+/** The central automation pointer the campaign workflow reads (DESIGN.md §4). */
 export interface AutomationPointer {
   central_repository: string;
   ref: string;
@@ -252,6 +253,28 @@ export function buildCampaignConfig(
         fields.stale_after_minutes ?? DEFAULTS.stale_after_minutes,
     },
   };
+}
+
+/**
+ * The campaign repository's README: its title, what the repository is, and a
+ * request to contribute through the campaign page at `campaignUrl` on the
+ * Let's Encode site at `siteUrl`.
+ */
+export function buildCampaignReadme(
+  config: CampaignConfig,
+  siteUrl: string,
+  campaignUrl: string,
+): string {
+  const title = config.campaign.title || config.campaign.name;
+  return (
+    `# ${title}\n\n` +
+    `This repository holds the scores and task records of a campaign on ` +
+    `[Let's Encode](${siteUrl}), where volunteers encode music together.\n\n` +
+    `To take part, please use the [campaign page](${campaignUrl}). ` +
+    `Please don't edit files or open pull requests here directly: ` +
+    `the campaign's automation keeps the scores and task records consistent, ` +
+    `and it can only do that for work done through the campaign page.\n`
+  );
 }
 
 /**

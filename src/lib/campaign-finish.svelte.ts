@@ -20,6 +20,7 @@ import {
   buildLockCsv,
   buildHistoryCsv,
   buildCommentCsv,
+  buildCampaignReadme,
   piecePath,
   type PieceSurfaces,
 } from "./campaign-init.ts";
@@ -47,6 +48,9 @@ import {
   STATE_PATH,
   TASK_PATH,
 } from "./campaign-tables.ts";
+
+/** Files the campaign template carries for its own repository, removed from a campaign at init. */
+const TEMPLATE_ONLY_PATHS = ["CHANGELOG.md", "config.example.yaml"];
 
 export class CampaignFinisher {
   busy = $state(false);
@@ -305,6 +309,14 @@ export class CampaignFinisher {
           { path: LOCK_PATH, content: buildLockCsv() },
           { path: HISTORY_PATH, content: buildHistoryCsv() },
           { path: COMMENT_PATH, content: buildCommentCsv() },
+          {
+            path: "README.md",
+            content: buildCampaignReadme(
+              config,
+              `${location.origin}/`,
+              `${location.origin}/${claim.name}`,
+            ),
+          },
         ];
         this.log.step(`Committing the campaign (${files.length} file(s))`);
         await f.commitFiles(
@@ -312,6 +324,7 @@ export class CampaignFinisher {
           repo.name,
           files,
           "Initialise campaign",
+          { deletePaths: TEMPLATE_ONLY_PATHS },
         );
       }
 

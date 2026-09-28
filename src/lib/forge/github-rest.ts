@@ -7,6 +7,8 @@
 // straight to the API. Browser- and Node-safe (fetch / atob / TextDecoder).
 
 const API = "https://api.github.com";
+/** The website the repos and accounts are shown on. */
+export const WEB = "https://github.com";
 
 /**
  * Token sentinel: authenticate via the broker session instead of a bearer

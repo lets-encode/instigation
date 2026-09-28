@@ -6,6 +6,7 @@
   Selecting a card or dot scopes the board to that piece.
 -->
 <script lang="ts">
+  import { pieceLabel, pieceZone } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import type { PieceRef } from "$lib/campaign-tables.ts";
 
@@ -35,7 +36,6 @@
     onselect: (selected: "all" | string) => void;
   } = $props();
 
-  const pieceName = (p: PieceRef) => p.title || p.id;
   const complete = (path: string) => {
     const p = progress.get(path);
     return !!p && p.total > 0 && p.done === p.total;
@@ -54,7 +54,7 @@
     const parts = cells(piece.path).map((c) => `${c.n} ${c.label}`);
     const a = attention.get(piece.path) ?? 0;
     if (a > 0) parts.push(`${a} unresolved`);
-    return `${pieceName(piece)} · ${parts.join(" · ")}`;
+    return `${pieceLabel(piece)} · ${parts.join(" · ")}`;
   };
 </script>
 
@@ -76,13 +76,13 @@
       type="button"
       class="railrow"
       class:selected={selected === piece.path}
-      style="--zone: var(--zone-{(index % 8) + 1})"
+      style="--zone: var(--zone-{pieceZone(index)})"
       onclick={() => onselect(piece.path)}
       title={tooltip(piece)}
     >
       <span class="railtop">
         <span class="dot"></span>
-        <span class="railname">{pieceName(piece)}</span>
+        <span class="railname">{pieceLabel(piece)}</span>
         {#if count > 0}
           <span class="attn">
             <svg

@@ -52,7 +52,7 @@ import {
   envelopeColumns,
 } from "../src/lib/command-envelope.ts";
 import type { CommandEnvelope } from "../src/lib/command-envelope.ts";
-import { checkClaim } from "../src/lib/campaign-claim.ts";
+import { checkClaim, checkRelease } from "../src/lib/campaign-claim.ts";
 import {
   checkComment,
   checkEncoding,
@@ -74,6 +74,7 @@ import {
   classifyPullRequest,
   pieceKindForPath,
   priorDecision,
+  removedRowFromPatch,
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
@@ -168,7 +169,8 @@ type Verdict = { ok: boolean; reason?: string; detail?: string };
 // (which the console shows verbatim). The code itself stays in the comment
 // and in the history row.
 const REASON_TEXT: Record<string, string> = {
-  malformed_claim: "the submission does not add exactly one lock row",
+  malformed_claim:
+    "the submission does not add exactly one lock row or remove exactly one",
   malformed_validation:
     "the submission is neither a single verdict nor a clean send-back reset",
   malformed_comment:
@@ -422,6 +424,11 @@ async function runClaim(
 ): Promise<void> {
   const changedPaths = files.map((f) => f.filename);
   const lockFile = files.find((f) => f.filename === LOCK_PATH);
+  const removedRow = lockFile && removedRowFromPatch(lockFile.patch);
+  if (removedRow) {
+    await runRelease(changedPaths, removedRow, envelope);
+    return;
+  }
   const addedRow = lockFile && addedRowFromPatch(lockFile.patch);
   const cells = addedRow ? addedRow.split(",") : null;
   const intent = cells
@@ -452,6 +459,85 @@ async function runClaim(
 }
 
 // ---------------------------------------------------------------------------
+// Release (a PR removing one row from lock.csv: the author gives a claim back)
+
+async function attemptRelease(
+  changedPaths: string[],
+  intent: { task_id: string; subtask_id: string; kind: string },
+  envelope: CommandEnvelope | null,
+): Promise<Verdict & { lock?: LockRow }> {
+  const readStart = Date.now();
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
+  const [lockCsv, historyCsv] = await Promise.all([
+    getRepoFile(token, owner, repo, LOCK_PATH, sha),
+    getRepoFile(token, owner, repo, HISTORY_PATH, sha),
+  ]);
+  logPhase("read_tables", readStart);
+  const prior = priorVerdict(historyCsv);
+  if (prior) return prior;
+  const now = new Date().toISOString();
+  const locks = parseLockCsv(lockCsv ?? "");
+  const verdict = checkRelease({ locks, intent, author, changedPaths });
+  if (isAuditFree(verdict)) return verdict;
+  const history: HistoryRow = {
+    timestamp: now,
+    task_id: intent.task_id,
+    subtask_id: intent.subtask_id,
+    user_id: author,
+    action: `release_${intent.kind}`,
+    outcome: verdict.ok ? "accepted" : "rejected",
+    detail: verdict.ok ? "" : verdict.reason!,
+    ...envelopeColumns(envelope),
+    pr: String(prNumber),
+  };
+  const files: FileChange[] = [
+    { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", [history]) },
+  ];
+  if (verdict.ok) {
+    files.push({
+      path: LOCK_PATH,
+      content: serializeLockCsv(locks.filter((l) => l !== verdict.lock)),
+    });
+  }
+  const target = `${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}`;
+  const message = verdict.ok
+    ? `Release ${target} by ${authorLabel} (${intent.kind})`
+    : `Reject release by ${authorLabel} (${verdict.reason})`;
+  const commitStart = Date.now();
+  await commitFiles(token, owner, repo, files, message, {
+    baseSha: sha,
+    baseTreeSha: treeSha,
+    branch,
+  });
+  logPhase("commit", commitStart);
+  return verdict;
+}
+
+async function runRelease(
+  changedPaths: string[],
+  removedRow: string,
+  envelope: CommandEnvelope | null,
+): Promise<void> {
+  const cells = removedRow.split(",");
+  const intent = {
+    task_id: cells[0]?.trim() ?? "",
+    subtask_id: cells[1]?.trim() ?? "",
+    kind: cells[4]?.trim() ?? "",
+  };
+  const verdict = await withRetry(() =>
+    attemptRelease(changedPaths, intent, envelope),
+  );
+  const target = `\`${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}\``;
+  const body = verdict.ok
+    ? `✅ Release accepted — ${authorLabel} gave back ${target}.`
+    : `❌ Release rejected: ${explainReason(verdict.reason)}. No changes were made.`;
+  const closeStart = Date.now();
+  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await cleanupHeadBranch();
+  logPhase("comment_and_close", closeStart);
+}
+
+// ---------------------------------------------------------------------------
 // Submission (encoding: the PR edits the task's fragment; validation: the PR
 // records a pass/fail in state.csv)
 
@@ -472,14 +558,7 @@ async function decideEncoding(
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
-  const task = resolveEncodingTask({
-    tasks,
-    locks,
-    changedPaths,
-    envelope,
-    headRef,
-    author,
-  });
+  const task = resolveEncodingTask({ tasks, envelope, headRef });
   if (!task) return { ok: false, reason: "unknown_task" };
 
   // A page task (locator `surface-N`) contributes only its page: we splice the
@@ -1029,7 +1108,7 @@ async function runReap(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Entry: route by event, then (for PRs) by the operation the changed paths imply
-// — lock.csv → claim, state.csv → validation (or send-back), comment.csv alone
+// — lock.csv → claim (or release), state.csv → validation (or send-back), comment.csv alone
 // → comment, anything else → encoding. The boundary check inside each decision
 // rejects mixed or out-of-bounds PRs.
 
@@ -1057,12 +1136,20 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
   }
   submittedAt = createdAt || new Date().toISOString();
   const changedPaths = files.map((f) => f.filename);
-  // The caller's paths filter admits only campaign operations; the catch-up
-  // pass applies the same rule.
-  if (!touchesCampaignPaths(changedPaths)) {
-    console.log(
-      `PR #${prNumber} changes no tracking or source file; left as is.`,
-    );
+  // The PR body may carry the console command's envelope; treated as data,
+  // it names the task and feeds the command columns of the history row this
+  // run authors.
+  const envelope = envelopeFromPrBody(body);
+  // A campaign operation changes a tracking or source file, or — an encoding
+  // completed without changes — carries a command envelope or comes from a
+  // task branch. Any other pull request is left alone, by the catch-up pass
+  // as well.
+  if (
+    !touchesCampaignPaths(changedPaths) &&
+    !envelope &&
+    !headRef.startsWith("encode-")
+  ) {
+    console.log(`PR #${prNumber} is no campaign operation; left as is.`);
     return false;
   }
   const openByAuthor = openPrs.filter(
@@ -1078,9 +1165,6 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
     );
     return true;
   }
-  // The PR body may carry the console command's envelope; treated as data,
-  // it feeds the command columns of the history row this run authors.
-  const envelope = envelopeFromPrBody(body);
   const kind = classifyPullRequest(changedPaths);
   if (kind === "claim") await runClaim(files, envelope);
   else if (kind === "comment") await runComment(files, envelope);

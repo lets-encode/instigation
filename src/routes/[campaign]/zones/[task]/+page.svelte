@@ -2,38 +2,28 @@
   import Icon from "$lib/components/Icon.svelte";
   import { untrack } from "svelte";
   import { page } from "$app/state";
-  import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type {
     CommandContext,
-    Result,
     FacsimileTaskData,
-    CampaignTables,
+    Result,
   } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
-  import { handle, workStage, typeLabel } from "$lib/campaign-graph.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { workStage, typeLabel } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
   import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import {
-    CommandRunner,
-    readForge,
-    viewerId,
-  } from "$lib/command-runner.svelte.ts";
-  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import {
-    resolveCampaign,
-    resolveFailureMessage,
-  } from "$lib/campaign-resolve.ts";
-  import type { ResolvedCampaign } from "$lib/campaign-resolve.ts";
+  import PreTaskReview from "$lib/components/PreTaskReview.svelte";
+  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
+  import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
   import { createOmrClient } from "$lib/omr-client.ts";
   import {
@@ -49,22 +39,20 @@
     writeCachedLayout,
   } from "$lib/omr-layout-cache.ts";
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
+  import {
+    arrowShift,
+    drawnBox,
+    drawStarted,
+    movedBox,
+    nudgedEdges,
+    pagePoint,
+    resizedBox,
+  } from "$lib/box-geometry.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
-  let resolved = $state<ResolvedCampaign | null>(null);
-  let resolving = $state(false);
-  let notFound = $state(false);
-  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
-  // campaign exists but could not be loaded, which is not a "not found".
-  let resolveError = $state<string | null>(null);
-  const owner = $derived(resolved?.owner ?? "");
-  const repo = $derived(resolved?.repo ?? "");
-  const repoId = $derived(resolved?.repoId ?? 0);
-  // The acting user's stable numeric id; login is display-only.
-  const viewer = $derived(viewerId());
 
   // Editor-side zone: the box, the label override (null = automatic), the
   // computed label, and the break flags. The page break is derived from
@@ -95,14 +83,72 @@
   // the grand-staff boxes, then the measures, one layer at a time.
   type Layer = "measures" | "staves" | "grandstaves";
 
-  let loading = $state(false);
-  // Whether a load has been attempted for the current params; a failed load
-  // stays on its error banner instead of retrying.
-  let loaded = $state(false);
-  let loadError = $state<string | null>(null);
-  let data = $state<FacsimileTaskData | null>(null);
-  // The task's kind: measure correction, or layout correction for an
-  // OMR-prepared piece. Both are edited here.
+  const session = new PreTaskSession(
+    () => campaign,
+    () => taskId,
+    {
+      loaded(d) {
+        selected = null;
+        firstVisible = 0;
+        rawLayouts = {};
+        seen = { staves: [], grandstaves: [], measures: [] };
+        pages = d.model.pages.map((pg, i) => ({
+          image: pg.image,
+          width: pg.width,
+          height: pg.height,
+          url: d.imageUrls[i],
+          failed: !d.imageUrls[i],
+          zones: pg.zones.map((z) => ({
+            box: { ...z.box },
+            override: null,
+            label: z.label,
+            sb: z.sb,
+            mdiv: z.mdiv,
+          })),
+          staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
+          grandstaves: (pg.grandstaves ?? []).map((box) => ({
+            box: { ...box },
+          })),
+        }));
+        // A score of one or two pages is shown whole: one page, or both side
+        // by side. Longer scores keep the two-up view with page 1 as a recto.
+        if (pages.length <= 2)
+          ({ view, firstOnRight } = defaultSpreadView(pages.length));
+        // A label that differs from what automatic numbering would produce is
+        // an override (e.g. 10a/10b) — keep it through renumbering.
+        let prev: string | undefined;
+        for (const pg of pages) {
+          for (const zone of pg.zones) {
+            if (zone.label !== nextLabel(prev)) zone.override = zone.label;
+            prev = zone.label;
+          }
+        }
+        resetHistory();
+      },
+      reset() {
+        pages = [];
+      },
+      // A claim of an OMR layout task whose score carries no zones yet
+      // continues into layout detection in the same overlay.
+      afterClaim(f, d) {
+        if (!needsDetection()) return null;
+        detectedFor = taskId;
+        return detectSteps(f, d.fragment);
+      },
+    },
+  );
+  const runner = session.runner;
+  const data = $derived(session.data);
+  const tables = $derived(session.tables);
+  const holds = $derived(session.holds);
+  const canEdit = $derived(session.canEdit);
+  const busy = $derived(session.busy);
+  const owner = $derived(session.campaign.owner);
+  const repo = $derived(session.campaign.repo);
+  const repoId = $derived(session.campaign.repoId);
+  const viewer = $derived(session.viewer);
+  // The task's kind: measure correction, which for an OMR-prepared piece
+  // (omr-layout) also corrects the staff and grand-staff boxes.
   const taskTitle = $derived(typeLabel(data?.locator ?? "measure-zones"));
   const stage = $derived(workStage(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
@@ -122,9 +168,6 @@
       : layer === "grandstaves"
         ? pages[p].grandstaves
         : pages[p].zones;
-  // The campaign tables behind the comments panel; refreshed on their own so
-  // a posted comment never reloads the editor.
-  let tables = $state<CampaignTables | null>(null);
   let pages = $state<EditPage[]>([]);
   // The layout model's raw output per page index, kept from a detection run
   // in this session for the submission; outside the edit history.
@@ -132,8 +175,6 @@
   let selected = $state<{ p: number; z: number } | null>(null);
   // The zone whose controls show: the selected one.
   const active = $derived(selected);
-
-  const runner = new CommandRunner();
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the page overflows and its container scrolls horizontally.
@@ -258,32 +299,6 @@
     selected = null;
   }
 
-  const holds = $derived(
-    Boolean(data?.holdsLock) && data?.status === "encoding_required",
-  );
-  // The submission runs in the background; the editor holds until its
-  // verdict lands, since a repeat would only be rejected.
-  const submitting = $derived(pendingVerdicts.isProcessing(`encode:${taskId}`));
-  const canEdit = $derived(holds && !submitting);
-  const busy = $derived(runner.busy || submitting);
-
-  const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo });
-
-  // Login for the reviewer holding the validation lock (id → login, for display).
-  let lockUserLogin = $state("");
-  $effect(() => {
-    const id = Number(data?.validation?.lockUser);
-    if (!Number.isInteger(id) || id <= 0) {
-      lockUserLogin = data?.validation?.lockUser ?? "";
-      return;
-    }
-    readForge()
-      .getUserLogin(id)
-      .then((login) => (lockUserLogin = login ?? String(id)))
-      .catch(() => (lockUserLogin = String(id)));
-  });
-
   // Recompute every label from reading order + overrides ("10a" continues as 11).
   function renumber() {
     let prev: string | undefined;
@@ -313,311 +328,15 @@
     );
   }
 
-  async function load() {
-    const f = forge();
-    if (!f) return;
-    // Results for a task the page has since navigated away from are dropped.
-    const task = taskId;
-    const name = campaign;
-    const stale = () => task !== taskId || name !== campaign;
-    loading = true;
-    loadError = null;
-    selected = null;
-    firstVisible = 0;
-    try {
-      const [d, t] = await Promise.all([
-        invoke(commands.readFacsimile, { task_id: task }, ctx(f)),
-        invoke(commands.readTables, {}, ctx(f)),
-      ]);
-      if (stale()) return;
-      data = d;
-      tables = t;
-      rawLayouts = {};
-      seen = { staves: [], grandstaves: [], measures: [] };
-      pages = d.model.pages.map((pg, i) => ({
-        image: pg.image,
-        width: pg.width,
-        height: pg.height,
-        url: d.imageUrls[i],
-        failed: !d.imageUrls[i],
-        zones: pg.zones.map((z) => ({
-          box: { ...z.box },
-          override: null,
-          label: z.label,
-          sb: z.sb,
-          mdiv: z.mdiv,
-        })),
-        staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
-        grandstaves: (pg.grandstaves ?? []).map((box) => ({ box: { ...box } })),
-      }));
-      // A score of one or two pages is shown whole: one page, or both side by
-      // side. Longer scores keep the two-up view with page 1 as a recto.
-      if (pages.length <= 2)
-        ({ view, firstOnRight } = defaultSpreadView(pages.length));
-      // A label that differs from what automatic numbering would produce is an
-      // override (e.g. 10a/10b) — keep it through renumbering.
-      let prev: string | undefined;
-      for (const pg of pages) {
-        for (const zone of pg.zones) {
-          if (zone.label !== nextLabel(prev)) zone.override = zone.label;
-          prev = zone.label;
-        }
-      }
-      resetHistory();
-    } catch (e) {
-      if (!stale())
-        loadError = `Could not load ${task}: ${(e as Error).message}`;
-    } finally {
-      if (!stale()) loading = false;
-    }
-  }
-
-  // A same-route navigation to another campaign or task starts over: the
-  // resolved repo and the loaded task belong to the previous params.
-  $effect(() => {
-    void campaign;
-    resolved = null;
-    notFound = false;
-    resolveError = null;
-  });
-  $effect(() => {
-    void campaign;
-    void taskId;
-    data = null;
-    pages = [];
-    loadError = null;
-    loaded = false;
-  });
-
-  // Resolve the campaign name to its repo first; the load effect is gated on
-  // `owner`/`repo` so it waits for this.
-  $effect(() => {
-    if (
-      auth.status === "loading" ||
-      resolved ||
-      notFound ||
-      resolveError ||
-      resolving
-    )
-      return;
-    resolving = true;
-    // A result for a name the page has since navigated away from is dropped.
-    const name = campaign;
-    resolveCampaign(readForge(), name)
-      .then((r) => {
-        if (name !== campaign) return;
-        if (r) resolved = r;
-        else notFound = true;
-      })
-      .catch((e) => {
-        if (name === campaign) resolveError = resolveFailureMessage(e);
-      })
-      .finally(() => (resolving = false));
-  });
-
-  // One load per param set: a failed attempt renders the error banner (with
-  // its manual retry) instead of looping.
-  $effect(() => {
-    if (auth.status === "authenticated" && owner && repo && taskId && !loaded) {
-      loaded = true;
-      load();
-    }
-  });
-
-  async function run(
+  const run = (
     command: (c: CommandContext) => Promise<Result>,
-    opts: { overviewOnSuccess?: boolean } = {},
-  ) {
-    const f = forge();
-    if (!f) return;
-    await runner.run(
-      () => command(ctx(f)),
-      async (result) => {
-        // A rejected command changed nothing worth reloading for — and a
-        // reload would discard the zone edits the volunteer may retry from.
-        if (result.error) return;
-        if (opts.overviewOnSuccess) {
-          if (result.ok && !result.warn) await goto(`/${campaign}`);
-          // Still processing (warn): keep the editor and its edits as they are.
-          return;
-        }
-        // A background command changed nothing yet — the settle listener
-        // reloads when its verdict lands.
-        if (result.background) return;
-        runner.log.step("Reloading…");
-        data = null;
-        await load();
-      },
-    );
-  }
-
-  // A claim of an OMR layout task whose score carries no zones yet continues
-  // into layout detection in the same overlay: one step list, one Continue.
-  async function claim() {
-    const f = forge();
-    if (!f) return;
-    await runner.run(async () => {
-      const result = await invoke(
-        commands.claimTask,
-        { task_id: taskId },
-        ctx(f),
-      );
-      if (result.error) return result;
-      runner.log.step("Reloading…");
-      await load();
-      if (!data || !needsDetection()) return result;
-      detectedFor = taskId;
-      return detectSteps(f, data.fragment);
-    });
-  }
-
-  // Opening the editor claims the task, the same way opening a score in
-  // mei-friend does — a read-only look is served by the console's score
-  // preview, so reaching the editor means intent to edit. Fire once per task,
-  // and only when the claim can actually be granted: never while someone else
-  // holds the task or a dependency still blocks it — that PR would only come
-  // back rejected.
-  let autoClaimedFor = $state<string | null>(null);
-  $effect(() => {
-    if (
-      data &&
-      !runner.busy &&
-      autoClaimedFor !== taskId &&
-      data.status === "encoding_required" &&
-      !data.holdsLock &&
-      !data.encodingLockUser &&
-      !data.blockedBy
-    ) {
-      autoClaimedFor = taskId;
-      claim();
-    }
-  });
-
-  // The review happens here too: the same claim/pass/fail the console offers,
-  // against the task's validation subtask.
-  const validation = $derived(data?.validation ?? null);
-  // A verdict already submitted here and still being processed: the verdict
-  // controls hold until it lands — a repeat would only be rejected.
-  const verdictPending = $derived(
-    !!validation &&
-      pendingVerdicts.isProcessing(
-        `validate:${taskId}/${validation.subtask_id}`,
-      ),
-  );
-  // A settled background verdict changed the tables; reload the read-only
-  // view so it shows the recorded state. An edit session only refreshes the
-  // tables — a reload would discard the volunteer's unsubmitted work.
-  $effect(() =>
-    pendingVerdicts.onSettled(() => {
-      if (runner.busy) return;
-      if (!canEdit) {
-        data = null;
-        loaded = false;
-      } else {
-        refreshTables();
-      }
-    }),
-  );
-  const submitted = $derived(
-    data?.status === "validation_required" || data?.status === "completed",
-  );
-  const holdsValidation = $derived(
-    viewer !== "" && validation?.lockUser === viewer,
-  );
-  const selfValidation = $derived(
-    !!data &&
-      data.encoder !== "" &&
-      data.encoder === viewer &&
-      !data.allowSelfValidation,
-  );
-  // One verdict per person: a validator who already recorded pass/fail here
-  // cannot claim another slot (matching the campaign automation's rule).
-  const alreadyValidated = $derived(
-    !!data &&
-      !data.allowSelfValidation &&
-      (validation?.verdicts ?? []).some((v) => v.user === viewer),
-  );
-  const canClaimValidation = $derived(
-    !!validation &&
-      validation.status === "validation_required" &&
-      validation.openSlots > 0 &&
-      !validation.lockUser &&
-      !selfValidation &&
-      !alreadyValidated &&
-      !verdictPending,
-  );
-  const failComments = $derived(data?.failComments ?? []);
-  const failedVerdicts = $derived(
-    (validation?.verdicts ?? []).filter((v) => v.verdict === "fail"),
-  );
-  // Sending a failed task back is open to a failing validator or push access —
-  // the same rule the automation enforces.
-  const canSendBack = $derived(
-    viewer !== "" &&
-      data?.status === "validation_required" &&
-      failedVerdicts.length > 0 &&
-      (data.canPush || failedVerdicts.some((v) => v.user === viewer)),
-  );
-  const sendBack = () =>
-    run((c) => invoke(commands.sendBack, { task_id: taskId }, c));
-  // Same hold for a send-back already on its way.
-  const sendBackPending = $derived(
-    pendingVerdicts.isProcessing(`sendback:${taskId}`),
-  );
+    opts?: { overviewOnSuccess?: boolean },
+  ) => session.run(command, opts);
 
   // ------------------------------------------------------------- comments
   // The piece's comments panel beside the tool. Posting and resolving refresh
   // the tables only: a full reload would discard unsubmitted zone edits.
   let commentsPanel = $state(readSidePanel("comments"));
-  async function refreshTables() {
-    const f = forge();
-    if (!f) return;
-    try {
-      tables = await invoke(commands.readTables, {}, ctx(f));
-    } catch {
-      /* the next full load refreshes the tables */
-    }
-  }
-  const afterComment = async (result: Result) => {
-    if (result.error || result.background) return;
-    runner.log.step("Refreshing comments…");
-    await refreshTables();
-  };
-  async function postComment(
-    task_id: string,
-    kind: string,
-    body: string,
-    parent_id: string,
-  ) {
-    const f = forge();
-    if (!f) return;
-    await runner.run(
-      () =>
-        invoke(
-          commands.submitComment,
-          {
-            task_id,
-            subtask_id: "",
-            kind,
-            body,
-            page: "",
-            measure_start: "",
-            measure_end: "",
-            parent_id,
-          },
-          ctx(f),
-        ),
-      afterComment,
-    );
-  }
-  async function resolveCommentRow(comment_id: string) {
-    const f = forge();
-    if (!f) return;
-    await runner.run(
-      () => invoke(commands.resolveComment, { comment_id }, ctx(f)),
-      afterComment,
-    );
-  }
   // A comment anchor turns the desk to its page and selects the measure with
   // the anchored number where the page has one.
   function showAnchorFor(c: CommentRow) {
@@ -629,70 +348,6 @@
     );
     selected = z >= 0 ? { p, z } : null;
   }
-
-  // Logins for verdict authors, fail-comment authors and the encoding lock
-  // holder (id → login, display).
-  let logins = $state<Record<string, string>>({});
-  $effect(() => {
-    const ids = new Set<string>();
-    for (const v of data?.validation?.verdicts ?? [])
-      if (v.user) ids.add(v.user);
-    for (const c of data?.failComments ?? [])
-      if (c.author_id) ids.add(c.author_id);
-    if (data?.encodingLockUser) ids.add(data.encodingLockUser);
-    for (const id of ids) {
-      if (logins[id]) continue;
-      const n = Number(id);
-      if (!Number.isInteger(n) || n <= 0) continue;
-      readForge()
-        .getUserLogin(n)
-        .then((login) => {
-          if (login) logins[id] = login;
-        })
-        .catch(() => {});
-    }
-  });
-  const claimValidation = () =>
-    run((c) =>
-      invoke(
-        commands.claimValidation,
-        { task_id: taskId, subtask_id: validation!.subtask_id },
-        c,
-      ),
-    );
-  // A fail carries a mandatory comment row; pass submits bare.
-  let failOpen = $state(false);
-  let failText = $state("");
-  const validate = (verdict: string) =>
-    run(
-      (c) =>
-        invoke(
-          commands.submitValidation,
-          {
-            task_id: taskId,
-            subtask_id: validation!.subtask_id,
-            verdict,
-            ...(verdict === "fail"
-              ? {
-                  comment: {
-                    body: failText,
-                    page: "",
-                    measure_start: "",
-                    measure_end: "",
-                  },
-                }
-              : {}),
-          },
-          c,
-        ),
-      { overviewOnSuccess: true },
-    ).then(() => {
-      // A failed submission keeps the typed comment for the retry.
-      if (runner.result?.ok) {
-        failOpen = false;
-        failText = "";
-      }
-    });
 
   function toPageModels(): PageModel[] {
     return pages.map((pg) => ({
@@ -1022,8 +677,13 @@
     started: boolean;
   };
   let drag: Drag | null = null;
-  // Screen pixels the pointer must travel before a draw creates its box.
-  const DRAW_THRESHOLD_PX = 12;
+  // In page pixels: a box is at least MIN_BOX each way, a drawn box under
+  // DROP_BELOW was a background click, and an arrow key moves NUDGE
+  // (NUDGE_FAR with Shift).
+  const MIN_BOX = 5;
+  const DROP_BELOW = 8;
+  const NUDGE = 2;
+  const NUDGE_FAR = 10;
 
   // The cursor class for a resize handle: a corner gets the diagonal arrows,
   // a side the axis arrows.
@@ -1036,21 +696,8 @@
           ? "h-nwse"
           : "h-nesw";
 
-  function svgXY(e: PointerEvent, p: number): { x: number; y: number } {
-    const svg = svgEls[p];
-    const r = svg.getBoundingClientRect();
-    const pg = pages[p];
-    return {
-      x: Math.max(
-        0,
-        Math.min(pg.width, ((e.clientX - r.left) * pg.width) / r.width),
-      ),
-      y: Math.max(
-        0,
-        Math.min(pg.height, ((e.clientY - r.top) * pg.height) / r.height),
-      ),
-    };
-  }
+  const svgXY = (e: PointerEvent, p: number) =>
+    pagePoint(e, svgEls[p].getBoundingClientRect(), pages[p]);
 
   // Start a move (from the zone body) or resize (from an edge or corner
   // handle) drag. A click on the zone body selects it even read-only; the
@@ -1093,17 +740,8 @@
     e.stopPropagation();
     selected = { p, z };
     const box = items(p)[z].box;
-    const pg = pages[p];
-    const step = e.shiftKey ? 10 : 2;
-    const dx =
-      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
-    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-    const w = box.lrx - box.ulx;
-    const h = box.lry - box.uly;
-    box.ulx = Math.max(0, Math.min(pg.width - w, box.ulx + dx));
-    box.uly = Math.max(0, Math.min(pg.height - h, box.uly + dy));
-    box.lrx = box.ulx + w;
-    box.lry = box.uly + h;
+    const { dx, dy } = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE)!;
+    Object.assign(box, movedBox(box, dx, dy, pages[p]));
     commitGeometry(p, z);
   }
 
@@ -1118,19 +756,8 @@
     e.preventDefault();
     e.stopPropagation();
     const box = items(p)[z].box;
-    const pg = pages[p];
-    const step = e.shiftKey ? 10 : 2;
-    const dx =
-      e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
-    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-    if (edges.includes("w"))
-      box.ulx = Math.max(0, Math.min(box.lrx - 5, box.ulx + dx));
-    if (edges.includes("e"))
-      box.lrx = Math.min(pg.width, Math.max(box.ulx + 5, box.lrx + dx));
-    if (edges.includes("n"))
-      box.uly = Math.max(0, Math.min(box.lry - 5, box.uly + dy));
-    if (edges.includes("s"))
-      box.lry = Math.min(pg.height, Math.max(box.uly + 5, box.lry + dy));
+    const { dx, dy } = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE)!;
+    Object.assign(box, nudgedEdges(box, edges, dx, dy, MIN_BOX, pages[p]));
     commitGeometry(p, z);
   }
 
@@ -1160,9 +787,7 @@
     const dy = y - drag.sy;
     const pg = pages[drag.p];
     if (!drag.started) {
-      const threshold =
-        DRAW_THRESHOLD_PX * (pg.width / (canvasW[drag.p] || pg.width));
-      if (Math.hypot(dx, dy) < threshold) return;
+      if (!drawStarted(dx, dy, pg, canvasW[drag.p] || pg.width)) return;
       const box = { ...drag.orig };
       if (drag.layer !== "measures") pages[drag.p][drag.layer].push({ box });
       else
@@ -1179,26 +804,14 @@
     }
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
     const box = items(drag.p, drag.layer)[drag.z].box;
-    if (drag.kind === "move") {
-      const w = drag.orig.lrx - drag.orig.ulx;
-      const h = drag.orig.lry - drag.orig.uly;
-      box.ulx = Math.max(0, Math.min(pg.width - w, drag.orig.ulx + dx));
-      box.uly = Math.max(0, Math.min(pg.height - h, drag.orig.uly + dy));
-      box.lrx = box.ulx + w;
-      box.lry = box.uly + h;
-    } else if (drag.kind === "draw") {
-      // Drawing spans the start point and the pointer, in any direction.
-      box.ulx = Math.min(drag.sx, x);
-      box.lrx = Math.max(drag.sx, x, box.ulx + 5);
-      box.uly = Math.min(drag.sy, y);
-      box.lry = Math.max(drag.sy, y, box.uly + 5);
-    } else {
-      // The grabbed edges follow the pointer; the opposite ones stay put.
-      if (drag.edges.includes("w")) box.ulx = Math.min(drag.orig.lrx - 5, x);
-      if (drag.edges.includes("e")) box.lrx = Math.max(drag.orig.ulx + 5, x);
-      if (drag.edges.includes("n")) box.uly = Math.min(drag.orig.lry - 5, y);
-      if (drag.edges.includes("s")) box.lry = Math.max(drag.orig.uly + 5, y);
-    }
+    Object.assign(
+      box,
+      drag.kind === "move"
+        ? movedBox(drag.orig, dx, dy, pg)
+        : drag.kind === "draw"
+          ? drawnBox(drag.sx, drag.sy, x, y, MIN_BOX)
+          : resizedBox(drag.orig, drag.edges, x, y, MIN_BOX),
+    );
   }
 
   function pointerUp() {
@@ -1210,7 +823,7 @@
     if (kind === "draw") {
       const box = items(p, layer)[z].box;
       // A tiny drawn box was just a background click — drop it.
-      if (box.lrx - box.ulx < 8 || box.lry - box.uly < 8) {
+      if (box.lrx - box.ulx < DROP_BELOW || box.lry - box.uly < DROP_BELOW) {
         items(p, layer).splice(z, 1);
         selected = null;
         return;
@@ -1370,20 +983,20 @@
 {/if}
 
 <div class="corrector">
-  {#if resolveError}
+  {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
         <span>
-          {resolveError}
+          {session.campaign.error}
           <button
             type="button"
             class="linkish"
-            onclick={() => (resolveError = null)}>Try again</button
+            onclick={() => session.campaign.retry()}>Try again</button
           >
         </span>
       </div>
     </div>
-  {:else if notFound}
+  {:else if session.campaign.notFound}
     <div class="deskwrap">
       <div class="banner err">
         <span>
@@ -1392,7 +1005,7 @@
         </span>
       </div>
     </div>
-  {:else if auth.status === "loading" || (!resolved && !notFound)}
+  {:else if auth.status === "loading" || !session.campaign.resolved}
     <div class="deskwrap"><p class="muted">Loading…</p></div>
   {:else if !auth.user}
     <div class="deskwrap">
@@ -1405,14 +1018,14 @@
         </span>
       </div>
     </div>
-  {:else if loading}
+  {:else if session.loading}
     <div class="deskwrap"><p class="muted">Loading the facsimile…</p></div>
-  {:else if loadError}
+  {:else if session.loadError}
     <div class="deskwrap">
       <div class="banner err">
         <span>
-          {loadError}
-          <button type="button" class="linkish" onclick={() => load()}
+          {session.loadError}
+          <button type="button" class="linkish" onclick={() => session.load()}
             >Try again</button
           >
         </span>
@@ -1534,31 +1147,7 @@
           Comments
         </button>
       </div>
-      {#if runner.result && runner.result.error}
-        <div class="banner err bar">
-          <span>
-            {runner.result.error}
-            {#if runner.result.prUrl}<a
-                href={runner.result.prUrl}
-                target="_blank"
-                rel="noreferrer"
-                >View submission <Icon name="external" size={12} /></a
-              >{/if}
-          </span>
-        </div>
-      {:else if runner.result && runner.result.ok && !runner.result.background}
-        <div class="banner {runner.result.warn ? 'warn' : 'ok'} bar">
-          <span>
-            {runner.result.message}
-            {#if runner.result.prUrl}<a
-                href={runner.result.prUrl}
-                target="_blank"
-                rel="noreferrer"
-                >View submission <Icon name="external" size={12} /></a
-              >{/if}
-          </span>
-        </div>
-      {/if}
+      <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
       <div class="desk" bind:clientWidth={deskW} bind:clientHeight={deskH}>
@@ -1840,39 +1429,11 @@
               : "s"}
             · {movementCount} movement{movementCount === 1 ? "" : "s"}
           </span>
-          {#if holds}
-            <span class="lockpill ok">you hold this task</span>
-          {:else if d.status === "completed"}
-            <span class="lockpill grey">done — read-only</span>
-          {:else if d.status !== "encoding_required"}
-            {#if failedVerdicts.length > 0 && validation?.openSlots === 0}
-              <span class="lockpill red">review failed — read-only</span>
-            {:else}
-              <span class="lockpill amber"
-                >submitted — awaiting review, read-only</span
-              >
-            {/if}
-          {:else if d.blockedBy}
-            <span class="lockpill grey"
-              >waits for {d.blockedBy} — read-only</span
-            >
-          {:else if d.encodingLockUser}
-            <span class="lockpill amber"
-              >claimed by @{handle(logins, d.encodingLockUser)} — read-only</span
-            >
-          {:else}
-            <span class="lockpill amber">unclaimed — read-only</span>
-            <button
-              type="button"
-              class="btn btn-pre"
-              onclick={() => claim()}
-              disabled={busy}>Claim task</button
-            >
-          {/if}
+          <PreTaskStatus {session} />
           {#if omr}
             <div
               class="seg steps"
-              title="The three steps of the layout correction. Each step shows only its own boxes."
+              title="The three steps of the measure correction. Each step shows only its own boxes."
             >
               <button
                 type="button"
@@ -1925,118 +1486,7 @@
           {/if}
         </div>
 
-        {#if failComments.length > 0}
-          <div class="tbsection">
-            <span class="sb-label">Fail comments</span>
-            {#each failComments as c (c.comment_id)}
-              <div class="failnote" class:resolved={c.resolved === "true"}>
-                <span class="failwho"
-                  >@{handle(logins, c.author_id)} · {elapsed(
-                    c.timestamp,
-                  )}{c.resolved === "true" ? " · resolved" : ""}</span
-                >
-                <div class="failtext">“{c.body}”</div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-
-        {#if validation && submitted}
-          <div class="tbsection sb-validation">
-            <span class="sb-label">Review</span>
-            <span class="vstatus">
-              {#if validation.status === "completed"}
-                Review done
-              {:else if verdictPending}
-                Your verdict is being processed…
-              {:else if validation.lockUser}
-                {holdsValidation
-                  ? "You are reviewing"
-                  : `@${lockUserLogin || validation.lockUser} reviewing`}
-              {:else if failedVerdicts.length > 0 && validation.openSlots === 0}
-                Failed — send it back to redo the correction
-              {:else if selfValidation}
-                Your own submission
-              {:else if alreadyValidated}
-                You reviewed this — another volunteer is needed
-              {:else}
-                Awaiting review
-              {/if}
-            </span>
-            {#each validation.verdicts as v, i (i)}
-              <span class="vrow {v.verdict}"
-                >{#if v.verdict === "pass"}<img
-                    class="hand-pass"
-                    src="/green-hand.svg"
-                    alt=""
-                  /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(
-                  logins,
-                  v.user,
-                )} · {elapsed(v.ts)}</span
-              >
-            {/each}
-            {#if canClaimValidation}
-              <div class="sb-row one">
-                <button
-                  type="button"
-                  class="btn btn-review"
-                  onclick={() => claimValidation()}
-                  disabled={runner.busy}
-                  title="Reserve this review slot.">Claim to review</button
-                >
-              </div>
-            {:else if holdsValidation && !verdictPending}
-              <div class="sb-row two">
-                <button
-                  type="button"
-                  class="btn btn-primary btn-finish"
-                  onclick={() => validate("pass")}
-                  disabled={runner.busy}
-                  title="Record a passing verdict.">Pass</button
-                >
-                <button
-                  type="button"
-                  class="btn btn-danger vfail"
-                  class:on={failOpen}
-                  onclick={() => (failOpen = !failOpen)}
-                  disabled={runner.busy}
-                  title="Record a failing verdict — a fail carries a comment saying why."
-                  >Fail</button
-                >
-              </div>
-            {/if}
-            {#if failOpen && holdsValidation}
-              <input
-                class="fail-note"
-                bind:value={failText}
-                placeholder="Why does this fail?"
-                onkeydown={(e) => {
-                  if (e.key === "Enter" && failText.trim()) validate("fail");
-                }}
-              />
-              <div class="sb-row one">
-                <button
-                  type="button"
-                  class="btn btn-danger"
-                  onclick={() => validate("fail")}
-                  disabled={runner.busy || !failText.trim() || verdictPending}
-                  title="Submit the failing verdict with this comment."
-                  >Submit fail</button
-                >
-              </div>
-            {/if}
-            {#if canSendBack}
-              <button
-                type="button"
-                class="btn btn-danger sendbackbtn"
-                onclick={() => sendBack()}
-                disabled={runner.busy || sendBackPending}
-                title="Return the task to {stage}: attribution and reviews reset."
-                >Send back to {stage}</button
-              >
-            {/if}
-          </div>
-        {/if}
+        <PreTaskReview {session} {stage} />
       </div>
     {/snippet}
 
@@ -2049,8 +1499,8 @@
         bind:panel={commentsPanel}
         header={taskBox}
         onanchor={showAnchorFor}
-        oncomment={postComment}
-        onresolve={resolveCommentRow}
+        oncomment={(...args) => session.postComment(...args)}
+        onresolve={(id) => session.resolveComment(id)}
       />
     {/if}
   {/if}
@@ -2117,16 +1567,6 @@
     gap: 8px;
     padding: 10px 12px;
   }
-  .tbsection + .tbsection {
-    border-top: 1px solid var(--line);
-  }
-  .sb-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-  }
   .abtitle {
     margin: 0;
     font-size: 12px;
@@ -2150,25 +1590,6 @@
     align-self: stretch;
   }
 
-  /* A control row filling the sidebar's width; .one/.two divide it
-     into that many equal cells. */
-  .sb-row {
-    align-self: stretch;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .sb-row.one,
-  .sb-row.two {
-    display: grid;
-    grid-template-columns: repeat(var(--cells), 1fr);
-  }
-  .sb-row.one {
-    --cells: 1;
-  }
-  .sb-row.two {
-    --cells: 2;
-  }
   .checkline {
     display: flex;
     align-items: center;
@@ -2183,70 +1604,6 @@
     color: var(--ink-soft);
     white-space: nowrap;
     cursor: pointer;
-  }
-  .sb-validation .vstatus {
-    font-size: 12.5px;
-    color: var(--ink-soft);
-  }
-  /* The armed Fail button: still an outline, tinted while its comment box
-     is open. */
-  .sb-validation .vfail.on {
-    background: var(--danger-bg);
-  }
-  .sb-validation .vrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-  /* The green thumbs-up hand marks a passed verdict. */
-  .sb-validation .hand-pass {
-    height: 14px;
-    flex: none;
-  }
-  .sb-validation .vrow.pass {
-    color: var(--ok);
-  }
-  .sb-validation .vrow.fail {
-    color: var(--danger);
-  }
-  .sendbackbtn {
-    align-self: stretch;
-  }
-  .failnote {
-    align-self: stretch;
-    border: 1px solid var(--danger-line);
-    border-radius: 8px;
-    background: var(--danger-wash);
-    padding: 8px 10px;
-  }
-  .failnote.resolved {
-    opacity: 0.55;
-  }
-  .failwho {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--danger);
-  }
-  .failtext {
-    font-size: 12.5px;
-    color: var(--ink);
-    margin-top: 4px;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-  }
-  .sb-validation .fail-note {
-    font: inherit;
-    font-size: 12.5px;
-    width: 100%;
-    box-sizing: border-box;
-    padding: 5px 10px;
-    border: 1px solid var(--danger-line);
-    border-radius: 999px;
-    background: var(--card);
-    color: var(--ink);
   }
   /* The toolbar's help icon; its title carries the hints and colour legend. */
   .helpico {
@@ -2534,34 +1891,5 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     pointer-events: none;
-  }
-
-  .lockpill {
-    flex: none;
-    font-size: 11.5px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 10px;
-  }
-  .lockpill.ok {
-    color: var(--ok);
-    background: var(--ok-bg);
-    border: 1px solid var(--ok-line);
-  }
-  .lockpill.amber {
-    color: var(--owner);
-    background: var(--owner-bg);
-    border: 1px solid var(--owner-line);
-  }
-  .lockpill.grey {
-    color: var(--ink-faint);
-    background: var(--bg-tint);
-    border: 1px solid var(--line);
-  }
-  .lockpill.red {
-    color: var(--danger);
-    background: var(--danger-bg);
-    border: 1px solid var(--danger-line);
   }
 </style>

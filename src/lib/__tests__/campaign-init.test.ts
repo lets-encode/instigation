@@ -8,6 +8,7 @@ import {
   buildStateCsv,
   buildLockCsv,
   buildHistoryCsv,
+  buildCampaignReadme,
   assertSupported,
   planTasks,
   piecePath,
@@ -66,7 +67,7 @@ const WORKED_EXAMPLE_FIELDS = {
 
 // The central automation pointer, as the deployment config would supply it.
 const AUTOMATION = {
-  central_repository: "lets-encode/instigation",
+  central_repository: "lets-encode/lets-encode",
   ref: "main",
   path: "scripts/coordinator.ts",
 };
@@ -83,11 +84,26 @@ test("buildCampaignConfig: instigator + repo_id come from args; defaults fill th
   assert.equal(config.campaign.instigator, "test-instigator");
   assert.equal(config.campaign.repo_id, REPO_ID);
   assert.equal(config.campaign.license, "CC-BY-4.0");
-  assert.equal(config.automation.central_repository, "lets-encode/instigation");
+  assert.equal(config.automation.central_repository, "lets-encode/lets-encode");
   assert.equal(config.fragmentation.strategy, "by-piece");
   assert.equal(config.validation.required_validations, 1);
   assert.equal(config.locking.stale_after_minutes, 120);
   assert.doesNotThrow(() => assertSupported(config));
+});
+
+test("buildCampaignReadme: titles the README and links the site and the campaign page", () => {
+  const readme = buildCampaignReadme(
+    build({ name: "songs", title: "Songbook" }),
+    "https://example.org/",
+    "https://example.org/songs",
+  );
+  assert.match(readme, /^# Songbook\n/);
+  assert.match(readme, /\[Let's Encode\]\(https:\/\/example\.org\/\)/);
+  assert.match(readme, /\[campaign page\]\(https:\/\/example\.org\/songs\)/);
+  assert.match(
+    buildCampaignReadme(build({ name: "songs" }), "", ""),
+    /^# songs\n/,
+  );
 });
 
 test("buildCampaignConfig: a piece with no explicit path gets the conventional one", () => {
@@ -118,7 +134,7 @@ test("configToYaml: matches the worked example", () => {
       '  language: "en"\n' +
       '  license: "CC-BY-4.0"\n' +
       "automation:\n" +
-      '  central_repository: "lets-encode/instigation"\n' +
+      '  central_repository: "lets-encode/lets-encode"\n' +
       '  ref: "main"\n' +
       '  path: "scripts/coordinator.ts"\n' +
       "source:\n" +
