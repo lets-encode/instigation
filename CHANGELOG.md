@@ -13,6 +13,7 @@ parentheses.
 - Code is formatted with Prettier (2 spaces) and the broker with Black (80 columns).
 - A pre-commit hook rejects unformatted files.
 - The mei-friend URL is set only in `services.json`.
+- The SPA fallback moves from `static/.htaccess` to the virtual host.
 - OMR layout correction has a grand-staff step between the staff boxes and the measures.
 - The coordinator keeps the Musibot models of an OMR page draft in the score header when it splices the page.
 - Instrument labels are read in front of an indented system too, such as a piano introduction.
