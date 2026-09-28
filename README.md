@@ -179,15 +179,12 @@ broker (section 4), with its own OAuth App whose callback is
 
 - **Web server requirements (institution-managed):** the SPA and its broker
   must share one origin, because the broker's session cookie is first-party.
-  Each instance's virtual host therefore needs, behind **HTTPS**. The SPA
-  fallback ships in `static/.htaccess`, which the mdw server honours; the
-  `Header` directive in an `.htaccess` there made Apache answer 500 for the
-  whole site, so everything else below is virtual-host configuration:
+  Each instance's virtual host therefore needs, behind **HTTPS**:
   - document root `<checkout>/website`, with `index.html` as the directory
     index so the project website answers `/`;
   - a fallback to `/spa.html` for every path that is not an existing file
-    (Apache: `FallbackResource /spa.html`, provided by `static/.htaccess`),
-    so `/campaigns`, `/new` and `/<campaign>` load the SPA shell;
+    (Apache: `FallbackResource /spa.html`), so `/campaigns`, `/new` and
+    `/<campaign>` load the SPA shell;
   - `/auth/` reverse-proxied to `http://127.0.0.1:<broker port>/` with the
     `/auth` prefix stripped (`/auth/login` → `/login`), and `/registry/`
     reverse-proxied to `http://127.0.0.1:<broker port>/registry/` with the
