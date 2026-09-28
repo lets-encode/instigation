@@ -7,7 +7,7 @@ import {
   parseLockCsv,
 } from "../campaign-tables.ts";
 import type { LockRow } from "../campaign-tables.ts";
-import { boundaryCheck, checkClaim } from "../campaign-claim.ts";
+import { boundaryCheck, checkClaim, checkRelease } from "../campaign-claim.ts";
 import type { CheckClaimArgs } from "../campaign-claim.ts";
 
 // A relaxed view of the claim result for assertions, where the branch-specific
@@ -323,4 +323,40 @@ test("locks on other subtasks do not block a claim", () => {
   // row, and vice versa — the composite key separates them.
   const locks = parseLockCsv(LOCK_HEADER + "T0001,S0001,carol,t,validation\n");
   assert.equal(claim({ locks }).ok, true);
+});
+
+test("release: the holder gives back their own lock", () => {
+  const locks = parseLockCsv(
+    LOCK_HEADER +
+      "T0001,,carol,2026-06-25T09:00:00Z,encoding\n" +
+      "T0001,S0001,dave,2026-06-25T09:00:00Z,validation\n",
+  );
+  const release = (over: Partial<Parameters<typeof checkRelease>[0]> = {}) =>
+    checkRelease({
+      locks,
+      intent: { task_id: "T0001", subtask_id: "", kind: "encoding" },
+      author: "carol",
+      changedPaths: ["tracking/lock.csv"],
+      ...over,
+    }) as ClaimView;
+  const ok = release();
+  assert.equal(ok.ok, true);
+  assert.equal(ok.lock, locks[0]);
+  assert.equal(
+    release({
+      intent: { task_id: "T0001", subtask_id: "S0001", kind: "validation" },
+      author: "dave",
+    }).lock,
+    locks[1],
+  );
+  assert.equal(release({ author: "dave" }).reason, "not_lock_holder");
+  assert.equal(
+    release({ changedPaths: ["tracking/lock.csv", "tracking/state.csv"] })
+      .reason,
+    "out_of_bounds",
+  );
+  assert.equal(
+    release({ intent: { task_id: "T0001", subtask_id: "", kind: "x" } }).reason,
+    "invalid_kind",
+  );
 });

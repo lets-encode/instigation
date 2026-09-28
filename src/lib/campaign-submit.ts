@@ -137,7 +137,7 @@ export function sideFilesOf(task: {
 
 /**
  * Encoding submission. The PR may change only the task's fragment (plus its
- * side files, see sideFilesOf), the author
+ * side files, see sideFilesOf), or nothing at all, the author
  * must hold the active encoding lock, and the MEI must pass the machine-check
  * (`meiValid`, computed by the coordinator). On accept: the task row advances
  * to validation_required with encoder/encoded_at set, its pending subtasks
@@ -157,7 +157,11 @@ export function checkEncoding({
   const task = findRow(tasks, intent.task_id, "");
   const row = findRow(state.rows, intent.task_id, "");
   if (!task || !row) return reject("unknown_task");
-  if (!boundaryCheck(changedPaths, [task.fragment, ...sideFilesOf(task)]))
+  // An encoding completed without changes changes no file at all.
+  if (
+    changedPaths.length > 0 &&
+    !boundaryCheck(changedPaths, [task.fragment, ...sideFilesOf(task)])
+  )
     return reject("out_of_bounds");
   if (row.status !== "encoding_required") return reject("wrong_state");
 

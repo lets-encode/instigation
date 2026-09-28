@@ -33,6 +33,7 @@
   import type { SidePanelState } from "$lib/side-panels.ts";
   import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
+  import GiveBackButton from "./GiveBackButton.svelte";
   import TaskRunState from "./TaskRunState.svelte";
   import ValidationRecord from "./ValidationRecord.svelte";
 
@@ -49,6 +50,7 @@
     canPush,
     runner,
     resultBanner,
+    editorError = null,
     panel = $bindable(),
     floating,
     onclose,
@@ -56,7 +58,7 @@
     onshowanchor,
     onclaim,
     oneditor,
-    onsubmitencoding,
+    ongiveback,
     onvalidate,
     oncomment,
     onresolve,
@@ -76,6 +78,9 @@
     canPush: boolean;
     runner: CommandRunner;
     resultBanner: Snippet;
+    /** An error from the return from mei-friend; `label` names mei-friend
+        when the text is its own message. */
+    editorError?: { label: string; text: string } | null;
     panel: SidePanelState;
     /** Float over the right edge of the view instead of taking a share of
      *  the row's width. */
@@ -87,7 +92,8 @@
     onshowanchor: (c: CommentRow) => void;
     onclaim: (task_id: string, subtask_id: string) => Promise<void>;
     oneditor: (task_id: string) => Promise<void>;
-    onsubmitencoding: (task_id: string) => Promise<void>;
+    /** Give back the viewer's claim: the task's encoding ('' subtask) or a review slot. */
+    ongiveback: (task_id: string, subtask_id: string) => Promise<void>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
@@ -102,6 +108,10 @@
   // The task's own one-shot submission, held while it is still processing.
   const encodePending = $derived(
     pendingVerdicts.isProcessing(`encode:${card.task}`),
+  );
+  // An encoding claim still being processed in the background.
+  const claimingEncoding = $derived(
+    pendingVerdicts.isProcessing(`claim:${card.task}`),
   );
   const mineEncoding = $derived(
     viewer !== "" &&
@@ -118,8 +128,9 @@
   const claimableSub = $derived(
     record.find((r) => r.key === "open" && r.claimable)?.sub,
   );
-  /** The viewer holds a review lock on this task. */
-  const myReview = $derived(record.some((r) => r.mine));
+  /** The review slot the viewer holds a lock on, if any. */
+  const myReviewSub = $derived(record.find((r) => r.mine)?.sub);
+  const myReview = $derived(myReviewSub !== undefined);
   const claimPending = $derived(
     claimableSub !== undefined &&
       pendingVerdicts.isProcessing(`validate:${card.task}/${claimableSub}`),
@@ -175,6 +186,14 @@
         >
       </div>
       <TaskRunState task={card.task} bar />
+      {#if editorError}
+        <div class="banner err bar">
+          <span
+            >{#if editorError.label}<b>{editorError.label}:</b
+              >{" "}{/if}{editorError.text}</span
+          >
+        </div>
+      {/if}
       <div class="statusrow">
         <span
           class="pill c-{card.column}"
@@ -244,7 +263,7 @@
               type="button"
               class="btn btn-primary"
               onclick={() => oneditor(card.task)}
-              disabled={runner.busy || !auth.user}
+              disabled={runner.busy || !auth.user || claimingEncoding}
               title={auth.user
                 ? "Claims the task for you, then opens the score in mei-friend."
                 : "Log in to claim a task."}
@@ -261,25 +280,25 @@
               title={`Continue your work in the ${editorName}.`}
               >Continue in {editorName}</a
             >
+            <GiveBackButton
+              disabled={runner.busy}
+              ongiveback={() => ongiveback(card.task, "")}
+            />
           </div>
         {:else if mineEncoding}
           <div class="tspfoot">
             <button
               type="button"
               class="btn btn-primary"
-              onclick={() => onsubmitencoding(card.task)}
-              disabled={runner.busy || encodePending}
-              title="After committing your encoding in mei-friend, submit it for review."
-              >Submit for review</button
-            >
-            <button
-              type="button"
-              class="btn btn-soft"
               onclick={() => oneditor(card.task)}
-              disabled={runner.busy}
-              title="Opens the score in mei-friend."
-              >Open editor <Icon name="external" /></button
+              disabled={runner.busy || encodePending}
+              title="Opens the score in mei-friend. Completing the task there submits it for review."
+              >Open in mei-friend <Icon name="external" /></button
             >
+            <GiveBackButton
+              disabled={runner.busy || encodePending}
+              ongiveback={() => ongiveback(card.task, "")}
+            />
           </div>
         {/if}
       {:else if card.column === "validation"}
@@ -318,6 +337,10 @@
                 >Open review view</a
               >
             {/if}
+            <GiveBackButton
+              disabled={runner.busy}
+              ongiveback={() => ongiveback(card.task, myReviewSub ?? "")}
+            />
           </div>
         {/if}
       {/if}

@@ -625,6 +625,7 @@
   // pre-task's own editor, or the review view for encoding tasks — but only
   // on a clean claim, so a rejected claim leaves you on the console.
   const claimValidate = async (task_id: string, subtask_id: string) => {
+    actedOn(task_id);
     await run((c) =>
       invoke(commands.claimValidation, { task_id, subtask_id }, c),
     );
@@ -635,33 +636,122 @@
     await goto(reviewHref(campaign, locator ?? "", task_id));
   };
 
-  // Open the task's score in mei-friend (claiming it if needed). The tab opens
-  // only after the claim has gone through — never on a rejected or
+  // Open the task's score in mei-friend (claiming it if needed). The page
+  // navigates only after the claim has gone through — never on a rejected or
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
-    await run((c) => invoke(commands.openEditor, { task_id }, c));
+    // A claim still being processed holds the editor until its verdict lands.
+    if (pendingVerdicts.isProcessing(`claim:${task_id}`, repoId)) return;
+    actedOn(task_id);
+    await run((c) =>
+      invoke(
+        commands.openEditor,
+        { task_id, campaign, base: location.origin },
+        c,
+      ),
+    );
     openMeiFriend(runner.result);
   };
 
   const submitpr = (task_id: string) =>
     run((c) => invoke(commands.submitEncoding, { task_id }, c));
 
+  const giveBack = (task_id: string, subtask_id: string) => {
+    actedOn(task_id);
+    return run((c) => invoke(commands.giveBack, { task_id, subtask_id }, c));
+  };
+
+  // ------------------------------------------------ the return from mei-friend
+  // mei-friend returns the volunteer to /<campaign>?task=<id>&mf_status=
+  // complete|failed|abandoned (with an optional mf_msg). `complete` submits the
+  // encoding, `abandoned` gives the claim back, `failed` shows mei-friend's
+  // message in the task panel.
+  /** An error from the return from mei-friend, shown in the task's panel;
+      `label` names mei-friend when the text is its own message. */
+  let editorError = $state<{
+    task: string;
+    label: string;
+    text: string;
+  } | null>(null);
+  /** The task mei-friend just reported complete, highlighted until `until`. */
+  let completed = $state<{ task: string; until: number } | null>(null);
+  const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
+  const completedTask = $derived(completed?.task ?? null);
+  $effect(() => {
+    if (!completed) return;
+    const timer = setTimeout(
+      () => (completed = null),
+      completed.until - Date.now(),
+    );
+    return () => clearTimeout(timer);
+  });
+  // Acting on another task ends the highlight and the reported error.
+  function actedOn(task: string) {
+    if (completed && completed.task !== task) completed = null;
+    if (editorError && editorError.task !== task) editorError = null;
+  }
+  const holdsEncoding = (task: string) =>
+    viewer !== "" &&
+    locks.some(
+      (l) =>
+        l.task_id === task &&
+        l.subtask_id === "" &&
+        l.kind === "encoding" &&
+        l.user_id === viewer,
+    );
+  function handleEditorReturn(task: string, status: string, msg: string) {
+    console.log("[editor-return]", task, status, {
+      holds: holdsEncoding(task),
+      msg,
+    });
+    if (status === "failed") {
+      editorError = msg
+        ? { task, label: "Message from mei-friend", text: msg }
+        : {
+            task,
+            label: "",
+            text: "mei-friend reported that the task could not be completed.",
+          };
+      return;
+    }
+    if (status !== "complete" && status !== "abandoned") return;
+    if (!holdsEncoding(task)) {
+      editorError = {
+        task,
+        label: "",
+        text:
+          status === "complete"
+            ? "mei-friend reported the task complete, but you do not hold its claim, so nothing was submitted."
+            : "mei-friend reported the task given back, but you do not hold its claim.",
+      };
+      return;
+    }
+    if (status === "complete") {
+      completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
+      submitpr(task);
+    } else giveBack(task, "");
+  }
+
   const validate = (
     task_id: string,
     subtask_id: string,
     verdict: string,
     comment?: FailComment,
-  ) =>
-    run((c) =>
+  ) => {
+    actedOn(task_id);
+    return run((c) =>
       invoke(
         commands.submitValidation,
         { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
         c,
       ),
     );
+  };
 
-  const sendBackTask = (task_id: string) =>
-    run((c) => invoke(commands.sendBack, { task_id }, c));
+  const sendBackTask = (task_id: string) => {
+    actedOn(task_id);
+    return run((c) => invoke(commands.sendBack, { task_id }, c));
+  };
 
   const postComment = (
     task_id: string,
@@ -700,6 +790,27 @@
     const task = page.url.searchParams.get("task");
     if (task && findRow(taskDefs, task, "")) {
       detailTask = task;
+      const status = page.url.searchParams.get("mf_status");
+      if (status) {
+        // Logged out, the outcome waits in the URL; logging in returns here
+        // with it.
+        if (!auth.user) {
+          editorError = {
+            task,
+            label: "",
+            text: "Log in to record the outcome from mei-friend.",
+          };
+          return;
+        }
+        const msg = page.url.searchParams.get("mf_msg") ?? "";
+        // The outcome is handled once; a reload must not repeat it.
+        goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+          replaceState: true,
+          noScroll: true,
+          keepFocus: true,
+        });
+        handleEditorReturn(task, status, msg);
+      }
       return;
     }
     if (!canPush) return;
@@ -712,6 +823,7 @@
   });
 
   function claimCard(card: BoardCard) {
+    actedOn(card.task);
     if (card.pre) goto(preTaskHref(campaign, card.locator, card.task));
     else editor(card.task);
   }
@@ -724,9 +836,10 @@
       return;
     }
     const sub = card.slots.find((s) => s.claimable)?.sub;
-    if (card.column === "validation" && sub !== undefined)
+    if (card.column === "validation" && sub !== undefined) {
+      actedOn(card.task);
       claimValidate(card.task, sub);
-    else openTask(card.task);
+    } else openTask(card.task);
   }
   function actOnNext() {
     if (nextCard) actOnCard(nextCard);
@@ -853,8 +966,9 @@
     onopenscore={() => viewCardScore(card)}
     onshowanchor={showCommentInScore}
     onclaim={claimValidate}
+    editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
-    onsubmitencoding={submitpr}
+    ongiveback={giveBack}
     onvalidate={validate}
     oncomment={(kind, body, parent_id) =>
       postComment(card.task, kind, body, parent_id)}
@@ -1047,6 +1161,7 @@
                   {repo}
                   cards={allCards}
                   {nextCard}
+                  {completedTask}
                   {taskDefs}
                   {locks}
                   {viewer}
@@ -1364,8 +1479,9 @@
                          nested in a button. -->
                         <div
                           class="card col-{card.column}"
-                          class:nextup={card.nextUp}
-                          class:justmoved={recentlyFinished.has(card.task)}
+                          class:nextup={card.nextUp && !completedTask}
+                          class:justmoved={recentlyFinished.has(card.task) ||
+                            card.task === completedTask}
                           class:paneled={detailTask === card.task}
                           class:failtint={card.counts.fails > 0 &&
                             card.column !== "done"}
@@ -1381,10 +1497,12 @@
                           }}
                           title="Open this task"
                         >
-                          {#if card.nextUp}
+                          {#if card.nextUp && !completedTask}
                             <span class="nextup-badge">next task</span>
                           {/if}
-                          {#if recentlyFinished.has(card.task)}
+                          {#if card.task === completedTask}
+                            <span class="justmoved-badge">just completed</span>
+                          {:else if recentlyFinished.has(card.task)}
                             <span class="justmoved-badge">just submitted</span>
                           {/if}
                           <div class="card-title">

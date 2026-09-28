@@ -59,7 +59,7 @@ export const omr: { layoutModel: OmrPipeline; staffPipeline: OmrPipeline } =
 
 /**
  * The central automation pointer written into each new campaign's config.yaml
- * (DESIGN.md §4). The campaign's caller workflow checks out `central_repository`
+ * (DESIGN.md §4). The campaign workflow checks out `central_repository`
  * at `ref` and runs `path`. `ref` should be an immutable tag/SHA in production;
  * `main` is for iteration.
  */

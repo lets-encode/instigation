@@ -18,14 +18,17 @@ export const viewerId = (): string =>
 /** The session's authenticated forge client, or an anonymous one. */
 export const readForge = (): ForgeClient => forge() ?? createForge("");
 
+/** A command that finished cleanly with a mei-friend hand-off URL. */
+const handsOff = (result: Result | null): boolean =>
+  Boolean(result?.ok && !result.warn && result.meiFriendUrl);
+
 /**
- * Open mei-friend in a new tab for a command that finished cleanly with a
- * hand-off URL. The result banner keeps the link for when the browser blocks
- * the tab.
+ * Navigate this tab to mei-friend for a command that finished cleanly with a
+ * hand-off URL. mei-friend returns the volunteer to the campaign in the same
+ * tab. A result with a warning keeps the link in the result banner instead.
  */
 export function openMeiFriend(result: Result | null): void {
-  if (result?.ok && !result.warn && result.meiFriendUrl)
-    window.open(result.meiFriendUrl, "_blank", "noopener");
+  if (handsOff(result)) window.location.assign(result!.meiFriendUrl!);
 }
 
 /** One campaign repo as a command target. */
@@ -77,7 +80,8 @@ export class CommandRunner {
    * banner. Once the command has finished, the overlay is held open with its
    * step times until dismiss() — the overlay's Continue button. `after` runs
    * after that press, while still busy — the page's refresh (or navigation)
-   * after a command lands.
+   * after a command lands. A clean mei-friend hand-off neither holds nor
+   * runs `after`: the page is left for mei-friend right away.
    */
   async run(
     command: () => Promise<Result>,
@@ -98,6 +102,7 @@ export class CommandRunner {
       // A background command holds nobody: no overlay stop, no banner —
       // the task's run state carries on from here. Without an overlay there
       // is no Continue button, so nothing to hold for either.
+      if (handsOff(result)) return;
       if (!result?.background && this.overlay) {
         this.held = true;
         await new Promise<void>((resolve) => (this.release = resolve));

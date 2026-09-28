@@ -452,3 +452,169 @@ test("a rejected volunteer encoding keeps its fork branch for correction", async
   assert.match(verdict.message, /invalid_mei/);
   assert.equal(deleted, false);
 });
+
+// What opening the editor reads: the task and its state, and the lock table.
+function editorFiles(lockCsv: string): Record<string, string> {
+  return {
+    "tracking/task.csv":
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\nT0001,,sources/score.mei,,,,\n",
+    "tracking/state.csv":
+      "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\nT0001,,encoding_required,,,\n",
+    "tracking/lock.csv": lockCsv,
+  };
+}
+
+test("openEditor claims first, then starts the task branch from the current score", async () => {
+  const files = editorFiles(lockHeader);
+  const calls: string[] = [];
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    openChangePr: async () => {
+      calls.push("claim");
+      return {
+        number: 3,
+        html_url: "https://example.test/pr/3",
+        head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
+      };
+    },
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    deleteBranch: async (_owner, _repo, branch) => {
+      calls.push(`delete ${branch}`);
+    },
+    createBranch: async (owner, _repo, branch, sha) => {
+      calls.push(`create ${owner}/${branch}@${sha}`);
+    },
+    getRepoFileDownloadUrl: async () => "https://raw.example/score.mei",
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.openEditor,
+      { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
+      context(forge),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [
+    "claim",
+    "delete encode-T0001",
+    "delete claim-x",
+    "create volunteer/encode-T0001@head1",
+  ]);
+  const url = new URL(result.meiFriendUrl!);
+  assert.equal(url.origin, "https://mei-friend.example");
+  assert.equal(url.searchParams.get("file"), "https://raw.example/score.mei");
+  assert.equal(url.searchParams.get("le_campaignname"), "my-campaign");
+  assert.equal(url.searchParams.get("le_taskid"), "T0001");
+  assert.equal(url.searchParams.get("le_base"), "https://le.test");
+});
+
+test("openEditor keeps the holder's work on an existing task branch", async () => {
+  const files = editorFiles(
+    lockHeader + "T0001,,9001,2026-09-01T00:00:00Z,encoding\n",
+  );
+  const calls: string[] = [];
+  const forge = fakeForge({
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: true,
+    }),
+    createBranch: async () => {
+      throw new Error("Reference already exists");
+    },
+    fastForwardBranch: async () => {
+      calls.push("fast-forward");
+      return false;
+    },
+    getRepoFileDownloadUrl: async () => "https://raw.example/score.mei",
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.openEditor,
+      { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
+      context(forge),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["fast-forward"]);
+});
+
+test("openEditor leaves the task branch alone while someone else holds the claim", async () => {
+  const files = editorFiles(
+    lockHeader + `T0001,,4242,${new Date().toISOString()},encoding\n`,
+  );
+  const forge = fakeForge({
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+  });
+
+  const result = await invoke(
+    commands.openEditor,
+    { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
+    context(forge),
+  );
+
+  assert.equal(result.error, "Someone else holds the claim on T0001.");
+});
+
+test("an encoding completed without changes gets a commit so its PR can open", async (t) => {
+  offline(t);
+  const verdict = captureVerdict();
+  const calls: string[] = [];
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: true,
+    }),
+    getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
+    createPullRequest: async () => {
+      calls.push("pr");
+      if (calls.length === 1)
+        throw new Error(
+          "Validation Failed: No commits between main and encode-T0001 (422 POST /pulls)",
+        );
+      return {
+        number: 9,
+        html_url: "https://example.test/pr/9",
+        headSha: "c2",
+      };
+    },
+    commitFiles: async (_owner, _repo, files, _message, opts) => {
+      calls.push(`commit ${files[0].path} on ${opts?.branch}`);
+      return "c2";
+    },
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+    listWorkflowRuns: async () => [],
+    deleteBranch: async () => {},
+  });
+
+  await withImmediateTimeouts(() =>
+    invoke(commands.submitEncoding, { task_id: "T0001" }, context(forge)),
+  );
+  const settled = await verdict;
+
+  assert.deepEqual(calls, [
+    "pr",
+    "commit sources/score.mei on encode-T0001",
+    "pr",
+  ]);
+  assert.equal(settled.state, "accepted");
+});

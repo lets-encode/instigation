@@ -305,6 +305,10 @@ function tickerText(h: HistoryRow, title: string, locator = ""): string | null {
       return `commented on ${title}`;
     case "resolve_comment":
       return `resolved a comment on ${title}`;
+    case "release_encoding":
+      return `gave back ${title}`;
+    case "release_validation":
+      return `gave back a review on ${title}`;
     case "reap":
       return `lost a stale claim on ${title}`;
     default:

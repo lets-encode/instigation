@@ -24,6 +24,7 @@
     repo,
     cards,
     nextCard,
+    completedTask,
     taskDefs,
     locks,
     viewer,
@@ -43,6 +44,9 @@
     cards: BoardCard[];
     /** The first card the viewer can act on, or null. */
     nextCard: BoardCard | null;
+    /** The task mei-friend just reported complete, shown in the next task's
+        place while set; null otherwise. */
+    completedTask: string | null;
     taskDefs: TaskRow[];
     locks: LockRow[];
     viewer: string;
@@ -65,6 +69,14 @@
     onviewscore: (index: number, page?: number) => void;
   } = $props();
 
+  const completedCard = $derived(
+    completedTask
+      ? (cards.find((c) => c.task === completedTask) ?? null)
+      : null,
+  );
+  /** The card at the top: the task just completed, else the next task. */
+  const featured = $derived(completedCard ?? nextCard);
+
   const mine = (c: BoardCard) =>
     viewer !== "" &&
     locks.some((l) => l.task_id === c.task && l.user_id === viewer);
@@ -72,7 +84,7 @@
   const openCards = $derived(
     cards.filter(
       (c) =>
-        c.task !== nextCard?.task &&
+        c.task !== featured?.task &&
         !mine(c) &&
         (c.column === "ready" ||
           (c.column === "validation" && c.slots.some((s) => s.key === "open"))),
@@ -83,7 +95,7 @@
       submission still being processed. */
   const running = $derived(
     cards.filter(
-      (c) => c.task !== nextCard?.task && pendingVerdicts.forTask(c.task),
+      (c) => c.task !== featured?.task && pendingVerdicts.forTask(c.task),
     ),
   );
 
@@ -128,7 +140,7 @@
     if (c.column === "validation") return "Takes a review slot on this task.";
     if (c.pre)
       return `Claims this task for you and opens the ${workPlace(c.locator)}.`;
-    return "Claims this task for you and opens mei-friend in a new tab.";
+    return "Claims this task for you and opens the score in mei-friend.";
   };
 
   /** The viewer may claim this card now: an open task, or a review slot that
@@ -159,12 +171,12 @@
   });
 
   const nextPiece = $derived(
-    nextCard ? pieces[pieceIndex.get(nextCard.task) ?? 0] : undefined,
+    featured ? pieces[pieceIndex.get(featured.task) ?? 0] : undefined,
   );
   const nextPreview = $derived(
     nextPiece ? previews[nextPiece.path] : undefined,
   );
-  const nextPage = $derived(nextCard ? startPage(nextCard) : null);
+  const nextPage = $derived(featured ? startPage(featured) : null);
   /** The next task's own page, when the piece has facsimile pages. */
   const nextPagePreview = $derived<PagePreview | undefined>(
     nextPreview?.pages[(nextPage ?? 1) - 1],
@@ -174,8 +186,8 @@
   // piece and page), the page's size, and for an encoding section whose
   // preceding section is done, where it picks up.
   const nextContext = $derived.by(() => {
-    if (!nextCard) return "";
-    const parts = [typeOf(nextCard)];
+    if (!featured) return "";
+    const parts = [typeOf(featured)];
     const measures = nextPage
       ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0)
       : 0;
@@ -185,11 +197,11 @@
         `≈ ${measures} measures${staves ? `, ${staves} ${staves === 1 ? "staff" : "staves"}` : ""}`,
       );
     }
-    const dep = findRow(taskDefs, nextCard.task, "")?.depends_on;
+    const dep = findRow(taskDefs, featured.task, "")?.depends_on;
     const depCard = dep ? cards.find((c) => c.task === dep) : undefined;
     if (
-      nextCard.column === "ready" &&
-      !nextCard.pre &&
+      featured.column === "ready" &&
+      !featured.pre &&
       depCard?.column === "done" &&
       !depCard.pre
     )
@@ -279,9 +291,11 @@
 
 <div class="volunteer">
   <div class="vcol">
-    {#if nextCard}
+    {#if featured}
       <div class="vsec">
-        <h2 class="seclabel c-next">Your next task</h2>
+        <h2 class="seclabel c-next">
+          {completedCard ? "Just completed" : "Your next task"}
+        </h2>
         <!-- The title button's hit area covers the card; the action buttons
              sit above it. -->
         <div class="nextcard">
@@ -307,37 +321,40 @@
             <button
               type="button"
               class="nexttitle"
-              onclick={() => onopen(nextCard.task)}
-              title="Open this task">{nextCard.title}</button
+              onclick={() => onopen(featured.task)}
+              title="Open this task">{featured.title}</button
             >
             <span class="nextcontext">{nextContext}</span>
-            <TaskRunState task={nextCard.task} large />
+            <TaskRunState task={featured.task} large />
           </div>
-          <div class="nextacts">
-            <button
-              type="button"
-              class="btn btn-lg {stageClass(nextCard)}"
-              class:btn-primary={!panelOpen}
-              onclick={() => (viewer === "" ? login() : onact(nextCard))}
-              disabled={busy}
-              title={actTitle(nextCard)}
-              >{actLabel(
-                nextCard,
-              )}{#if viewer !== "" && nextCard.column === "ready" && !nextCard.pre}<Icon
-                  name="external"
-                />{/if}</button
-            >
-            <button
-              type="button"
-              class="previewlink"
-              onclick={() => {
-                onviewscore(
-                  pieceIndex.get(nextCard.task) ?? 0,
-                  nextPage ? nextPage - 1 : undefined,
-                );
-              }}>Preview these pages first</button
-            >
-          </div>
+          {#if !completedCard}
+            <div class="nextacts">
+              <button
+                type="button"
+                class="btn btn-lg {stageClass(featured)}"
+                class:btn-primary={!panelOpen}
+                onclick={() => (viewer === "" ? login() : onact(featured))}
+                disabled={busy ||
+                  pendingVerdicts.isProcessing(`claim:${featured.task}`)}
+                title={actTitle(featured)}
+                >{actLabel(
+                  featured,
+                )}{#if viewer !== "" && featured.column === "ready" && !featured.pre}<Icon
+                    name="external"
+                  />{/if}</button
+              >
+              <button
+                type="button"
+                class="previewlink"
+                onclick={() => {
+                  onviewscore(
+                    pieceIndex.get(featured.task) ?? 0,
+                    nextPage ? nextPage - 1 : undefined,
+                  );
+                }}>Preview these pages first</button
+              >
+            </div>
+          {/if}
         </div>
       </div>
     {/if}
@@ -409,7 +426,7 @@
       </div>
     {/if}
 
-    {#if !nextCard && openCards.length === 0}
+    {#if !featured && openCards.length === 0}
       <span class="none"
         >No tasks are open right now: every task is claimed, in review, waiting
         for an earlier task, or done.</span
@@ -528,7 +545,9 @@
                         <TaskRunState task={card.task} />
                         <span class="vspacer"></span>
                         {@render chips(card)}
-                        {#if card.nextUp}
+                        {#if card.task === completedCard?.task}
+                          <span class="taskpill next">just completed</span>
+                        {:else if card.nextUp && !completedCard}
                           <span class="taskpill next">your next task</span>
                         {:else if card.column === "validation"}
                           <span class="taskpill review">review</span>

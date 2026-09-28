@@ -1,10 +1,12 @@
 <!--
   A pre-task editor's review sections below its toolbar: the fail comments,
   and for a submitted task its review — status, verdicts, the claim and
-  pass/fail controls, the fail comment box and the send-back action.
+  pass/fail controls, the fail comment box, giving the review back and the
+  send-back action.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
   import { handle } from "$lib/campaign-graph.ts";
   import { elapsed } from "$lib/campaign-board.ts";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
@@ -121,6 +123,14 @@
           title="Submit the failing verdict with this comment."
           >Submit fail</button
         >
+      </div>
+    {/if}
+    {#if session.holdsValidation && !session.verdictPending}
+      <div class="sb-row one">
+        <GiveBackButton
+          disabled={session.runner.busy}
+          ongiveback={() => session.giveBack(validation.subtask_id)}
+        />
       </div>
     {/if}
     {#if session.canSendBack}

@@ -48,6 +48,7 @@
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import ValidationRecord from "$lib/components/ValidationRecord.svelte";
+  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -244,6 +245,18 @@
       { overviewOnSuccess: true },
     );
 
+  // The review slot the viewer holds on this task, if any.
+  const mySlot = $derived(
+    locks.find(
+      (l) =>
+        l.task_id === taskId && l.kind === "validation" && l.user_id === viewer,
+    )?.subtask_id,
+  );
+  const giveBack = (subtask_id: string) =>
+    run((c) => invoke(commands.giveBack, { task_id: taskId, subtask_id }, c), {
+      overviewOnSuccess: true,
+    });
+
   const sendBackTask = (task_id: string) =>
     run((c) => invoke(commands.sendBack, { task_id }, c), {
       overviewOnSuccess: true,
@@ -381,6 +394,14 @@
             onsendback={sendBackTask}
           />
         </div>
+        {#if mySlot}
+          <div class="tbgiveback">
+            <GiveBackButton
+              disabled={runner.busy}
+              ongiveback={() => giveBack(mySlot)}
+            />
+          </div>
+        {/if}
       </div>
     {/snippet}
     <div class="scorecol">
@@ -523,6 +544,9 @@
     padding: 10px 12px;
   }
   .tbrecord {
+    padding: 0 12px 10px;
+  }
+  .tbgiveback {
     padding: 0 12px 10px;
   }
 

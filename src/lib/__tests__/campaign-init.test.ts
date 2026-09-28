@@ -8,6 +8,7 @@ import {
   buildStateCsv,
   buildLockCsv,
   buildHistoryCsv,
+  buildCampaignReadme,
   assertSupported,
   planTasks,
   piecePath,
@@ -88,6 +89,21 @@ test("buildCampaignConfig: instigator + repo_id come from args; defaults fill th
   assert.equal(config.validation.required_validations, 1);
   assert.equal(config.locking.stale_after_minutes, 120);
   assert.doesNotThrow(() => assertSupported(config));
+});
+
+test("buildCampaignReadme: titles the README and links the site and the campaign page", () => {
+  const readme = buildCampaignReadme(
+    build({ name: "songs", title: "Songbook" }),
+    "https://example.org/",
+    "https://example.org/songs",
+  );
+  assert.match(readme, /^# Songbook\n/);
+  assert.match(readme, /\[Let's Encode\]\(https:\/\/example\.org\/\)/);
+  assert.match(readme, /\[campaign page\]\(https:\/\/example\.org\/songs\)/);
+  assert.match(
+    buildCampaignReadme(build({ name: "songs" }), "", ""),
+    /^# songs\n/,
+  );
 });
 
 test("buildCampaignConfig: a piece with no explicit path gets the conventional one", () => {

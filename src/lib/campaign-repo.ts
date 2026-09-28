@@ -18,7 +18,7 @@ import type { ProgressUpdate } from "./run-watch.ts";
 import { CONFIG_PATH } from "./campaign-tables.ts";
 
 /** The template file whose presence marks a repository generated for a campaign. */
-const TEMPLATE_MARKER = "templates/score.template.mei";
+const TEMPLATE_MARKER = ".github/workflows/caller.yml";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

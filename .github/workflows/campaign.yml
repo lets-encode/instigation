@@ -1,0 +1,130 @@
+name: Campaign automation
+
+# The campaign repos' task-agnostic workflow, called by each campaign's
+# .github/workflows/caller.yml. It reads the `automation:` block of the
+# campaign's config.yaml (from the campaign's base tree, never from a fork),
+# checks out that central automation code and runs it. Claims, submissions and
+# the stale-lock reaper are all routed there.
+#
+# Trust boundary: a called workflow runs in the calling repo's context. For
+# pull_request_target that is the campaign's base branch with a write token.
+# Only the pinned central code is checked out; the automation pointer is read
+# from the campaign's base tree via the API, and the fork's PR is only ever
+# read as data, never executed. The github context (event, repository, token)
+# is the calling workflow's.
+on:
+  workflow_call: {}
+
+jobs:
+  run:
+    # One concurrency group per pull request. Within a group GitHub runs one
+    # job at a time and keeps one pending: a push to a PR whose run is under way
+    # waits for it to finish; a further push replaces the pending one. Runs for
+    # different PRs never wait on each other — ordering between them is the
+    # coordinator's optimistic concurrency (read the branch head, commit on that
+    # parent, retry when it moved). Scheduled and dispatched runs share a group
+    # of their own.
+    concurrency:
+      group: ${{ github.event_name == 'pull_request_target' && format('campaign-{0}-pr-{1}', github.repository, github.event.pull_request.number) || format('campaign-{0}-maintenance', github.repository) }}
+      cancel-in-progress: false
+    # Decided from the event alone, before a runner is assigned: a pull request
+    # the console or mei-friend opens changes at most one file (two for a
+    # validation fail, which carries its comment), is not a draft, and comes
+    # from a user account. Any other pull request gets a skipped job, which the
+    # console reports with these requirements; the coordinator's scheduled
+    # catch-up pass processes oversize ones (closing them with a rejection) and
+    # leaves drafts and non-user pull requests alone.
+    if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 2 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
+    runs-on: ubuntu-24.04
+    steps:
+      # The central pointer comes from config.yaml on the base ref — a fork PR
+      # cannot redirect where central lives (GITHUB_SHA is the base branch head
+      # for pull_request_target). One API read; nothing else in the campaign
+      # repo is needed on disk, so there is no base checkout. `path:` also
+      # appears under `sources:`, so the reads are scoped to the `automation:`
+      # block. config.yaml is committed by campaign initialisation; before that
+      # it is missing (404): a scheduled or dispatched run (e.g. on a freshly
+      # generated repo) no-ops with empty outputs, while a pull_request_target
+      # run fails loudly — the PR cannot be processed, and a failed run is what
+      # the console's watch surfaces instead of timing out. Any other API
+      # failure fails the run rather than silently doing nothing.
+      #
+      # The three pointer fields are validated against strict patterns before
+      # any step uses them: `central_repository` must be owner/repo, `ref` a
+      # branch, tag or commit name (empty selects the repository's default
+      # branch), and `path` the entry point central ships. A mistyped or
+      # tampered base config.yaml therefore fails the run instead of reaching
+      # a checkout or a command line.
+      - name: Read the central automation pointer from config.yaml
+        id: cfg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/contents/config.yaml?ref=$GITHUB_SHA" \
+               -H "Accept: application/vnd.github.raw" > config.yaml 2> gh-error.txt; then
+            cat gh-error.txt >&2
+            grep -q 'HTTP 404' gh-error.txt || exit 1
+            if [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
+              echo "config.yaml is missing from the base branch — the campaign is not initialised, so this pull request cannot be processed." >&2
+              exit 1
+            fi
+            : > config.yaml
+          fi
+          read_automation() {
+            awk -v key="$1" '
+              /^automation:/ { in_block = 1; next }
+              /^[^[:space:]]/ { in_block = 0 }
+              in_block && $1 == key ":" { gsub(/"/, "", $2); print $2; exit }
+            ' config.yaml 2>/dev/null || true
+          }
+          repo=$(read_automation central_repository)
+          ref=$(read_automation ref)
+          path=$(read_automation path)
+          if [ -n "$repo$ref$path" ]; then
+            if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+              echo "config.yaml: automation.central_repository must be owner/repo, got '$repo'." >&2
+              exit 1
+            fi
+            if [ -n "$ref" ] && { ! [[ "$ref" =~ ^[A-Za-z0-9_./-]+$ ]] || [[ "$ref" == *..* ]]; }; then
+              echo "config.yaml: automation.ref must be a branch, tag or commit name, got '$ref'." >&2
+              exit 1
+            fi
+            if [ "$path" != "scripts/coordinator.ts" ]; then
+              echo "config.yaml: automation.path must be scripts/coordinator.ts, got '$path'." >&2
+              exit 1
+            fi
+          fi
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          # The runner image's own Node runs the coordinator's TypeScript
+          # directly (type stripping, Node 22.18 or later); an older Node fails
+          # the run step with an unknown-extension error.
+          echo "runner node: $(node --version)"
+
+      - name: Check out the central automation code
+        if: steps.cfg.outputs.repo != ''
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: ${{ steps.cfg.outputs.repo }}
+          ref: ${{ steps.cfg.outputs.ref }}
+          path: central
+
+      # The entry point reaches the shell as an environment variable, quoted,
+      # never expanded into the command line.
+      - name: Run the central coordinator
+        if: steps.cfg.outputs.repo != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CENTRAL_PATH: ${{ steps.cfg.outputs.path }}
+          BASE_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Numeric account id is the identity written to the tracking tables;
+          # the login rides alongside for human-readable commit messages only.
+          PR_AUTHOR: ${{ github.event.pull_request.user.id }}
+          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: node "central/$CENTRAL_PATH"

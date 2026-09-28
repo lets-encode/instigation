@@ -1,7 +1,7 @@
 <!--
   The result banner of a page's last command: its error, or its message when
   it finished in the foreground, with the submission link and a Dismiss.
-  A mei-friend hand-off also shows the link to open the editor by hand, for
+  A mei-friend hand-off also shows the link to open mei-friend by hand, for
   when the browser blocked the new tab.
 -->
 <script lang="ts">
@@ -51,10 +51,9 @@
           >
         </div>
         <span class="muted">
-          <a href={result.meiFriendUrl} target="_blank" rel="noreferrer"
+          <a href={result.meiFriendUrl}
             >Open in mei-friend <Icon name="external" size={12} /></a
           >
-          (if the tab didn't open automatically)
         </span>
         {#if isPrivate}
           <span class="muted">

@@ -1,9 +1,11 @@
 <!--
-  A pre-task editor's lock state as a pill: held, done, awaiting or failing
-  review, blocked, claimed by someone else, or unclaimed with a claim button.
+  A pre-task editor's lock state as a pill: held (with a give-back button),
+  done, awaiting or failing review, blocked, claimed by someone else, or
+  unclaimed with a claim button.
 -->
 <script lang="ts">
   import { handle } from "$lib/campaign-graph.ts";
+  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
   let { session }: { session: PreTaskSession } = $props();
@@ -12,6 +14,10 @@
 
 {#if session.holds}
   <span class="lockpill ok">you hold this task</span>
+  <GiveBackButton
+    disabled={session.busy}
+    ongiveback={() => session.giveBack("")}
+  />
 {:else if d.status === "completed"}
   <span class="lockpill grey">done — read-only</span>
 {:else if d.status !== "encoding_required"}

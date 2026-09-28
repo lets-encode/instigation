@@ -287,6 +287,18 @@ export class PreTaskSession {
     );
   }
 
+  /**
+   * Give back the viewer's claim: the task's encoding ('' subtask), which
+   * returns to the campaign, or its review slot, which reloads in place.
+   */
+  giveBack(subtask_id: string) {
+    return this.run(
+      (c) =>
+        invoke(commands.giveBack, { task_id: this.#taskId(), subtask_id }, c),
+      { overviewOnSuccess: subtask_id === "" },
+    );
+  }
+
   claimValidation() {
     return this.run((c) =>
       invoke(

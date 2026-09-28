@@ -31,8 +31,10 @@ import {
   configString,
   passThresholdOf,
   configFlag,
+  configNumber,
   configPieces,
   resolveLogins,
+  DEFAULT_STALE_MINUTES,
   COMMENT_PATH,
   CONFIG_PATH,
   HISTORY_PATH,
@@ -41,6 +43,7 @@ import {
   TASK_PATH,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
+import { reapLocks } from "./campaign-reaper.ts";
 import { resetTaskRows, resolveCommentThread } from "./campaign-submit.ts";
 import { pageOfLocator, workStage } from "./campaign-graph.ts";
 import type {
@@ -240,7 +243,7 @@ type PrProcessingResult =
   | { state: "timeout" };
 
 // What the campaign workflow requires of a pull request before it runs at all
-// (the job-level guard in caller.yml); a pull request outside these gets a
+// (the job-level guard in campaign.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
   "a submission must change at most two files, must not be a draft, and must come from a user account";
@@ -315,16 +318,24 @@ async function waitForPrProcessed(
     // the PR is closed here so its branch can be corrected and resubmitted
     // at once, instead of waiting for the scheduled catch-up to close it. A
     // cancelled run was replaced by one for a newer push to the same PR,
-    // which the PR-state poll goes on waiting for.
-    if (
-      watch?.state.phase === "completed" &&
-      watch.state.run.conclusion !== "success"
-    ) {
-      const { conclusion, html_url } = watch.state.run;
+    // which the PR-state poll goes on waiting for. The guard sits in a called
+    // workflow, so a refused PR can also show as a successful run whose jobs
+    // were all skipped.
+    if (watch?.state.phase === "completed") {
+      const { conclusion, html_url, id } = watch.state.run;
+      const jobs =
+        conclusion === "success"
+          ? await f.getWorkflowRunJobs(owner, repo, id).catch(() => [])
+          : [];
+      const skipped =
+        conclusion === "skipped" ||
+        (jobs.length > 0 && jobs.every((j) => j.conclusion === "skipped"));
       console.log("[pr] Actions run for PR", pr.number, conclusion);
-      if (conclusion === "cancelled") {
+      if (conclusion === "success" && !skipped) {
         watch = null;
-      } else if (conclusion === "skipped") {
+      } else if (conclusion === "cancelled") {
+        watch = null;
+      } else if (skipped) {
         await f.closePullRequest(owner, repo, pr.number);
         return { state: "run_skipped" };
       } else {
@@ -496,45 +507,58 @@ function openAndFinishInBackground(
       return;
     }
     verdictSink.attachPr(id, pr.number, pr.html_url);
-    let res: Result;
-    let runFailed = false;
-    try {
-      const outcome = await waitForPrProcessed(background, pr);
-      runFailed = outcome.state === "run_failed";
-      res = verdictResult(
-        outcome,
-        pr.number,
-        pr.html_url,
-        `${label} processed.`,
-      );
-    } catch (e) {
-      // The poll failed, not necessarily the submission — an indeterminate
-      // outcome settles as "still being processed", never as a rejection.
-      console.warn(
-        "[pending-verdict]",
-        label,
-        "poll failed:",
-        (e as Error).message,
-      );
-      res = verdictResult(
-        { state: "timeout" },
-        pr.number,
-        pr.html_url,
-        `${label} processed.`,
-      );
-    }
-    const state = res.error ? "rejected" : res.warn ? "timeout" : "accepted";
-    console.log("[pending-verdict]", label, "PR", pr.number, state);
-    verdictSink.settle(
-      id,
-      state,
-      res.error ?? res.message ?? `${label} processed.`,
-      runFailed,
-    );
+    await settleWhenProcessed(background, label, id, pr);
   })();
   // No banner: the task's run state (TaskRunState.svelte) is the visible
   // signal from here on.
   return { ok: true, background: true };
+}
+
+// Wait for the automation's verdict on an opened PR and settle the verdict
+// sink entry `id` with it. `ctx` reports no progress: this runs in the
+// background.
+async function settleWhenProcessed(
+  ctx: CommandContext,
+  label: string,
+  id: string,
+  pr: {
+    number: number;
+    html_url: string;
+    headSha?: string;
+    head?: { owner: string; repo: string; branch: string };
+    cleanup?: "always" | "accepted";
+  },
+): Promise<void> {
+  let res: Result;
+  let runFailed = false;
+  try {
+    const outcome = await waitForPrProcessed(ctx, pr);
+    runFailed = outcome.state === "run_failed";
+    res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
+  } catch (e) {
+    // The poll failed, not necessarily the submission — an indeterminate
+    // outcome settles as "still being processed", never as a rejection.
+    console.warn(
+      "[pending-verdict]",
+      label,
+      "poll failed:",
+      (e as Error).message,
+    );
+    res = verdictResult(
+      { state: "timeout" },
+      pr.number,
+      pr.html_url,
+      `${label} processed.`,
+    );
+  }
+  const state = res.error ? "rejected" : res.warn ? "timeout" : "accepted";
+  console.log("[pending-verdict]", label, "PR", pr.number, state);
+  verdictSink.settle(
+    id,
+    state,
+    res.error ?? res.message ?? `${label} processed.`,
+    runFailed,
+  );
 }
 
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
@@ -731,21 +755,86 @@ const claimValidation: CommandDef<
     claimAndWait(ctx, task_id, subtask_id, "validation", envelope),
 };
 
+// Give a held claim back: a PR that removes the viewer's lock row (an encoding
+// claim on the task row, a review claim on a subtask row). The task's state is
+// unchanged, so the task is open to claim again once the release is accepted.
+const giveBack: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
+  id: "campaign.giveBack",
+  version: 1,
+  log: "pr",
+  async run({ task_id, subtask_id }, ctx, envelope) {
+    const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
+    const kind = subtask_id ? "validation" : "encoding";
+    const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
+    try {
+      ctx.progress({ step: "Giving back the task…" });
+      await muteOnce(ctx);
+      const locks = parseLockCsv(
+        (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
+      );
+      const kept = locks.filter(
+        (l) =>
+          !(
+            l.task_id === task_id &&
+            l.subtask_id === subtask_id &&
+            l.kind === kind &&
+            l.user_id === viewer
+          ),
+      );
+      if (kept.length === locks.length)
+        return { error: `You hold no claim on ${target}.` };
+      const body = `Gives back ${target} (${kind === "validation" ? "review" : kind}) by ${viewerLogin}. Opened from the campaign console.`;
+      const pr = await f.openChangePr(owner, repo, {
+        branch: `release-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
+        files: [{ path: LOCK_PATH, content: serializeLockCsv(kept) }],
+        message: `Give back ${target} (${kind})`,
+        title: `Give back ${target} (${kind})`,
+        body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+      });
+      console.log("[giveback] release PR opened", pr.number, pr.html_url);
+      let verdict: PrProcessingResult;
+      try {
+        verdict = await waitForPrProcessed(ctx, pr);
+      } catch (e) {
+        console.warn("[giveback] verdict poll failed:", (e as Error).message);
+        verdict = { state: "timeout" };
+      }
+      const res = verdictResult(
+        verdict,
+        pr.number,
+        pr.html_url,
+        `Release #${pr.number} opened for ${target}.`,
+      );
+      return res.ok && !res.warn
+        ? { ...res, message: `You gave back ${target}.` }
+        : res;
+    } catch (e) {
+      return { error: `Giving back the task failed: ${(e as Error).message}` };
+    }
+  },
+};
+
 // Prepare the task's score for mei-friend and return the hand-off URL; opening
-// for editing also opens an encoding claim PR (unless the user already holds
-// the lock). The caller decides when to open the tab — never on a rejected or
-// still-pending claim.
-const openEditor: CommandDef<{ task_id: string }, Result> = {
+// for editing first claims the task (unless the user already holds the lock).
+// The caller decides when to navigate — never on a rejected or still-pending
+// claim. `campaign` and `base` tell mei-friend where to return the volunteer:
+// <base>/<campaign>?task=<task_id>&mf_status=….
+const openEditor: CommandDef<
+  { task_id: string; campaign: string; base: string },
+  Result
+> = {
   id: "campaign.openEditor",
   version: 1,
   log: "pr",
-  async run({ task_id }, ctx, envelope) {
+  envelopeInput: ({ task_id }) => ({ task_id }),
+  async run({ task_id, campaign, base }, ctx, envelope) {
     const { forge: f, owner, repo, viewer } = ctx;
     try {
-      const [taskCsv, stateCsv, configYaml] = await Promise.all([
+      const [taskCsv, stateCsv, configYaml, lockCsv] = await Promise.all([
         f.getRepoFile(owner, repo, TASK_PATH),
         f.getRepoFile(owner, repo, STATE_PATH),
         f.getRepoFile(owner, repo, CONFIG_PATH),
+        f.getRepoFile(owner, repo, LOCK_PATH),
       ]);
       const taskDef = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
       const fragment = taskDef?.fragment;
@@ -753,7 +842,38 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
       if (!taskDef || !fragment || !task)
         return { error: `Unknown task ${task_id}.` };
 
-      ctx.progress({ step: "Preparing the score for mei-friend…" });
+      const locks = parseLockCsv(lockCsv ?? "");
+      const mine = locks.some(
+        (l) =>
+          l.task_id === task_id &&
+          l.subtask_id === "" &&
+          l.kind === "encoding" &&
+          l.user_id === viewer,
+      );
+      const claiming = task.status === "encoding_required" && !mine;
+      if (claiming) {
+        // Someone else's active claim would reject this one; stop before the
+        // task branch, which may hold their work, is touched.
+        const { kept } = reapLocks({
+          locks,
+          staleAfterMinutes: configNumber(
+            configYaml,
+            "stale_after_minutes",
+            DEFAULT_STALE_MINUTES,
+          ),
+          now: new Date().toISOString(),
+        });
+        if (
+          kept.some(
+            (l) =>
+              l.task_id === task_id &&
+              l.subtask_id === "" &&
+              l.kind === "encoding",
+          )
+        )
+          return { error: `Someone else holds the claim on ${task_id}.` };
+      }
+
       const { sha, canPush } = await f.getRepoHead(owner, repo);
       console.log(
         "[editor] task",
@@ -765,17 +885,71 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
         "canPush",
         canPush,
       );
-
-      // Both roles commit to a per-task branch `encode-<task_id>`, bound in
-      // mei-friend via connect=true: owners/collaborators get it in the
-      // campaign repo itself (you can't fork your own repo), volunteers in
-      // their fork — which they can push to, so no fork=true handoff is
-      // needed. The submission PR later names the same branch, so the two
-      // sides always agree without guessing.
+      // Both roles commit to a per-task branch `encode-<task_id>`: owners and
+      // collaborators in the campaign repo itself (a repo cannot be forked by
+      // its owner), volunteers in their fork, which they can push to. The
+      // submission PR later names the same branch.
       const ref = `encode-${task_id}`;
       const workRepo = canPush
         ? { owner, repo }
         : await f.ensureFork(owner, repo);
+
+      let prUrl: string | undefined;
+      let claimMessage = "";
+      if (claiming) {
+        ctx.progress({ step: "Opening the encoding claim…" });
+        const pr = await openClaimPr(ctx, task_id, "", "encoding", envelope);
+        console.log(
+          "[editor] encoding claim PR opened",
+          pr.number,
+          pr.html_url,
+        );
+        prUrl = pr.html_url;
+        // A new claim starts from the current score: the branch is deleted
+        // now, so a claim accepted after a timeout finds it fresh as well.
+        await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
+        const verdict = await waitForPrProcessed(ctx, pr);
+        if (verdict.state === "timeout") {
+          // The claim is followed in the background; its controls hold on
+          // the task until the verdict lands.
+          const label = `Encoding claim of ${task_id}`;
+          const id = verdictSink.begin({
+            label,
+            prNumber: pr.number,
+            prUrl: pr.html_url,
+            key: `claim:${task_id}`,
+            repoId: ctx.repoId,
+            state: "processing",
+          });
+          void settleWhenProcessed(
+            { ...ctx, progress: () => {} },
+            label,
+            id,
+            pr,
+          );
+          return {
+            ok: true,
+            warn: true,
+            prUrl,
+            message: `Encoding claim #${pr.number} is still being processed. Open it in mei-friend once it is accepted.`,
+          };
+        }
+        const res = verdictResult(
+          verdict,
+          pr.number,
+          pr.html_url,
+          `Encoding claim #${pr.number} opened.`,
+        );
+        if (res.error) {
+          return {
+            error: `The encoding claim was rejected — ${res.error}`,
+            prUrl,
+          };
+        }
+        claimMessage = `${res.message} `;
+      }
+
+      ctx.progress({ step: "Preparing the score for mei-friend…" });
       // Whether the branch now sits at the head with nothing of its own on it.
       let fresh = true;
       try {
@@ -790,10 +964,9 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
         );
       } catch (e) {
         if (!/already exists/i.test((e as Error).message)) throw e;
-        // The branch exists from an earlier open. If it's merely stale
-        // (e.g. created before the init commit), fast-forward it to the
-        // current head; a branch with its own commits — work in progress —
-        // is left untouched.
+        // The branch exists from an earlier open by the current holder. If it
+        // is merely stale, fast-forward it to the current head; a branch with
+        // its own commits — work in progress — is left untouched.
         fresh = await f.fastForwardBranch(
           workRepo.owner,
           workRepo.repo,
@@ -809,12 +982,11 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
           fresh,
         );
       }
-      const meiParam = "&le_taskid=" + task_id;
 
       // A page task of an OMR-prepared piece starts from a draft of its page
       // made from the piece's recognition record, committed to the fresh
       // branch before mei-friend opens. A branch with work in progress keeps it.
-      let draft: { note: string; warn: boolean } | null = null;
+      let draft: { note: string } | null = null;
       const pageNo = pageOfLocator(taskDef.locator);
       if (
         fresh &&
@@ -839,8 +1011,12 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
         } catch (e) {
           return {
             error: `Could not prepare the transcription draft: ${(e as Error).message}`,
+            prUrl,
           };
         }
+        // The note is shown as a step of the overlay, which stays up until
+        // Continue; the hand-off itself goes ahead.
+        ctx.progress({ step: draft.note });
       }
 
       // The branch ref was created or moved a moment ago, and GitHub's
@@ -863,69 +1039,32 @@ const openEditor: CommandDef<{ task_id: string }, Result> = {
         });
       }
       if (!downloadUrl) {
-        return { error: `Could not get a download URL for ${fragment}.` };
+        return {
+          error: `Could not get a download URL for ${fragment}.`,
+          prUrl,
+        };
       }
-      const url = `${ctx.meiFriendUrl}/?file=${encodeURIComponent(downloadUrl)}${meiParam}`;
-
-      const mine = parseLockCsv(
-        (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
-      ).some(
-        (l) =>
-          l.task_id === task_id &&
-          l.subtask_id === "" &&
-          l.kind === "encoding" &&
-          l.user_id === viewer,
-      );
-      let prUrl: string | undefined;
-      let message =
-        "Opening the score in mei-friend. After committing there, use “Submit encoding”.";
-      if (draft) message = `${draft.note} ${message}`;
-      const warn = draft?.warn || undefined;
-      if (task.status === "encoding_required" && !mine) {
-        ctx.progress({ step: "Opening the encoding claim…" });
-        const pr = await openClaimPr(ctx, task_id, "", "encoding", envelope);
-        console.log(
-          "[editor] encoding claim PR opened",
-          pr.number,
-          pr.html_url,
-        );
-        prUrl = pr.html_url;
-        const verdict = await waitForPrProcessed(ctx, pr);
-        const res = verdictResult(
-          verdict,
-          pr.number,
-          pr.html_url,
-          `Encoding claim #${pr.number} opened.`,
-        );
-        if (res?.error) {
-          return {
-            error: `The encoding claim was rejected — ${res.error}`,
-            prUrl,
-          };
-        }
-        if (res?.warn) {
-          // Claim not confirmed yet — surface the warning with the link
-          // instead of opening a tab for a task that may not be theirs.
-          return {
-            ok: true,
-            warn: true,
-            meiFriendUrl: url,
-            prUrl,
-            message: `${res.message}`,
-          };
-        }
-        message = `${res?.message} ${draft ? `${draft.note} ` : ""}Opening the score in mei-friend — after committing there, use “Submit encoding”.`;
-        return { ok: true, warn, meiFriendUrl: url, prUrl, message };
-      }
-      return { ok: true, warn, meiFriendUrl: url, prUrl, message };
+      const params = new URLSearchParams({
+        file: downloadUrl,
+        le_campaignname: campaign,
+        le_taskid: task_id,
+        le_base: base,
+      });
+      const url = `${ctx.meiFriendUrl}/?${params}`;
+      return {
+        ok: true,
+        meiFriendUrl: url,
+        prUrl,
+        message: `${claimMessage}${draft ? `${draft.note} ` : ""}Opening the score in mei-friend.`,
+      };
     } catch (e) {
       return { error: `Open in mei-friend failed: ${(e as Error).message}` };
     }
   },
 };
 
-// After committing an encoding in mei-friend (which only pushes to a branch),
-// open the submission PR that advances the task to validation.
+// After mei-friend reports the task complete (it only pushes to the task
+// branch), open the submission PR that advances the task to validation.
 const submitEncoding: CommandDef<{ task_id: string }, Result> = {
   id: "campaign.submitEncoding",
   version: 1,
@@ -1001,17 +1140,34 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
         const meiError = await checkMei(mei);
         if (meiError) {
           throw new Error(
-            `the encoding fails the MEI schema check (${meiError}). Fix it in mei-friend and submit again.`,
+            `the encoding fails the MEI schema check (${meiError}). Fix it in mei-friend and complete the task again.`,
           );
         }
         const body = `Submits the encoding of ${task_id} by ${viewerLogin}, edited in mei-friend. Opened from the campaign console.`;
         console.log("[submitpr] opening PR", { head, base });
-        const pr = await f.createPullRequest(owner, repo, {
+        const request = {
           title: `Encoding of ${task_id}`,
           head,
           base,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-        });
+        };
+        let pr;
+        try {
+          pr = await f.createPullRequest(owner, repo, request);
+        } catch (e) {
+          if (!/No commits between/i.test((e as Error).message)) throw e;
+          // A task completed without changes can leave the branch at the
+          // campaign's head, and GitHub opens no pull request without a
+          // commit. A commit of the unchanged score gives it one.
+          await f.commitFiles(
+            workRepo.owner,
+            workRepo.repo,
+            [{ path: task.fragment, content: forkMei }],
+            `Let's Encode: ${task_id} completed without changes`,
+            { branch },
+          );
+          pr = await f.createPullRequest(owner, repo, request);
+        }
         console.log("[submitpr] submission PR opened", pr.number, pr.html_url);
         return { ...pr, head: forkHead, cleanup: "accepted" };
       },
@@ -1830,6 +1986,7 @@ const submitScoreSetup: CommandDef<
 export const commands = {
   readTables,
   claimValidation,
+  giveBack,
   openEditor,
   submitEncoding,
   submitValidation,

@@ -8,11 +8,10 @@ import {
 import type {
   CommentRow,
   HistoryRow,
-  LockRow,
   StateRow,
   TaskRow,
 } from "./campaign-tables.ts";
-import { resetTaskRows, sideFilesOf } from "./campaign-submit.ts";
+import { resetTaskRows } from "./campaign-submit.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
 
 export type PullRequestKind = "claim" | "validation" | "comment" | "encoding";
@@ -63,6 +62,20 @@ export function addedRowFromPatch(patch: string | undefined): string | null {
     else if (line.startsWith("-")) removed++;
   }
   return removed === 0 && added.length === 1 ? added[0] : null;
+}
+
+// The single row a release patch removes — the shape of a PR giving a claim
+// back — or null for any other diff (additions, several removals, no patch).
+export function removedRowFromPatch(patch: string | undefined): string | null {
+  if (!patch) return null;
+  const removed: string[] = [];
+  let added = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("-")) removed.push(line.slice(1));
+    else if (line.startsWith("+")) added++;
+  }
+  return added === 0 && removed.length === 1 ? removed[0] : null;
 }
 
 // The CSV records a unified-diff patch removes and adds, parsed with full CSV
@@ -233,44 +246,24 @@ export function resolvedCommentFromPatch(
   return root === null ? null : { comment_id: root };
 }
 
+/**
+ * The task an encoding submission is for: the task its command envelope
+ * names, else the one its head branch names (`encode-<task_id>`). The changed
+ * files are not consulted — an encoding completed without changes has none;
+ * the boundary check confines them to the resolved task's files.
+ */
 export function resolveEncodingTask(options: {
   tasks: TaskRow[];
-  locks: LockRow[];
-  changedPaths: string[];
   envelope: CommandEnvelope | null;
   headRef: string;
-  author: string;
 }): TaskRow | undefined {
-  const { tasks, locks, changedPaths, envelope, headRef, author } = options;
-  // A pre-task's submission may change only a side file (see sideFilesOf).
-  const candidates = tasks.filter(
-    (task) =>
-      task.subtask_id === "" &&
-      [task.fragment, ...sideFilesOf(task)].some((path) =>
-        changedPaths.includes(path),
-      ),
-  );
-  if (candidates.length <= 1) return candidates[0];
-
-  const claimed = String(envelope?.input?.task_id ?? "");
-  const byEnvelope = candidates.find((task) => task.task_id === claimed);
-  if (byEnvelope) return byEnvelope;
-
-  const byBranch = candidates.find(
-    (task) => headRef === `encode-${task.task_id}`,
-  );
-  if (byBranch) return byBranch;
-
-  const held = candidates.filter((task) =>
-    locks.some(
-      (lock) =>
-        lock.task_id === task.task_id &&
-        lock.subtask_id === "" &&
-        lock.kind === "encoding" &&
-        lock.user_id === author,
-    ),
-  );
-  return held.length === 1 ? held[0] : undefined;
+  const { tasks, envelope, headRef } = options;
+  const named =
+    String(envelope?.input?.task_id ?? "") ||
+    (headRef.startsWith("encode-") ? headRef.slice("encode-".length) : "");
+  return named
+    ? tasks.find((task) => task.subtask_id === "" && task.task_id === named)
+    : undefined;
 }
 
 /**

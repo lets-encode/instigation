@@ -120,11 +120,14 @@ class PendingVerdictStore {
   }
 
   /** Whether a submission for `key` is still being processed — its controls
-   * should hold until the verdict lands (a repeat would only be rejected). */
-  isProcessing(key: string): boolean {
+   * should hold until the verdict lands (a repeat would only be rejected).
+   * `repoId` limits the check to one campaign. */
+  isProcessing(key: string, repoId?: number): boolean {
     return this.entries.some(
       (e) =>
-        e.key === key && (e.state === "processing" || e.state === "opening"),
+        e.key === key &&
+        (repoId === undefined || e.repoId === repoId) &&
+        (e.state === "processing" || e.state === "opening"),
     );
   }
 

@@ -17,6 +17,7 @@ import {
   pieceFieldForPath,
   pieceKindForPath,
   priorDecision,
+  removedRowFromPatch,
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
@@ -44,6 +45,19 @@ test("claim intent accepts exactly one added row and no removals", () => {
   assert.equal(addedRowFromPatch("@@\n+one\n+two"), null);
   assert.equal(addedRowFromPatch("@@\n-old\n+new"), null);
   assert.equal(addedRowFromPatch(undefined), null);
+});
+
+test("release intent is exactly one removed row and no additions", () => {
+  assert.equal(
+    removedRowFromPatch(
+      "--- a/tracking/lock.csv\n+++ b/tracking/lock.csv\n@@ -1,2 +1 @@\n context\n-T0001,,user,time,encoding",
+    ),
+    "T0001,,user,time,encoding",
+  );
+  assert.equal(removedRowFromPatch("@@\n-one\n-two"), null);
+  assert.equal(removedRowFromPatch("@@\n-old\n+new"), null);
+  assert.equal(removedRowFromPatch("@@\n+new"), null);
+  assert.equal(removedRowFromPatch(undefined), null);
 });
 
 test("validation intent is one changed cell in the PR patch (merge-base relative)", () => {
@@ -283,122 +297,49 @@ test("rejected encoding branches are retained for correction", () => {
   assert.equal(shouldCleanupSubmission("validation", false), true);
 });
 
-test("shared-fragment encoding tasks resolve by envelope, branch, or one active lock", () => {
-  const tasks: TaskRow[] = [
-    {
-      task_id: "P0001",
-      subtask_id: "",
-      fragment: "sources/score.mei",
-      locator: "",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "",
-    },
-    {
-      task_id: "T0001",
-      subtask_id: "",
-      fragment: "sources/score.mei",
-      locator: "",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "P0001",
-    },
-  ];
-  const base = {
-    tasks,
-    locks: [] as LockRow[],
-    changedPaths: ["sources/score.mei"],
-    author: "alice",
-  };
+test("an encoding submission resolves by its envelope, else its task branch", () => {
+  const task = (task_id: string, locator = ""): TaskRow => ({
+    task_id,
+    subtask_id: "",
+    fragment: "sources/score.mei",
+    locator,
+    allowlist: "",
+    blocklist: "",
+    depends_on: "",
+  });
+  const tasks = [task("P0001", "omr-layout"), task("T0001", "surface-1")];
+  const envelope = (task_id: string) => ({
+    command: "campaign.submitZones",
+    version: 2,
+    user_id: "alice",
+    timestamp: "2026-01-01T00:00:00.000Z",
+    input: { task_id },
+  });
 
   assert.equal(
     resolveEncodingTask({
-      ...base,
-      envelope: {
-        command: "campaign.submitZones",
-        version: 2,
-        user_id: "alice",
-        timestamp: "2026-01-01T00:00:00.000Z",
-        input: { task_id: "P0001" },
-      },
-      headRef: "unrelated",
+      tasks,
+      envelope: envelope("P0001"),
+      headRef: "encode-T0001",
     })?.task_id,
     "P0001",
   );
   assert.equal(
-    resolveEncodingTask({ ...base, envelope: null, headRef: "encode-T0001" })
+    resolveEncodingTask({ tasks, envelope: null, headRef: "encode-T0001" })
       ?.task_id,
     "T0001",
   );
   assert.equal(
-    resolveEncodingTask({
-      ...base,
-      locks: [
-        {
-          task_id: "P0001",
-          subtask_id: "",
-          user_id: "alice",
-          timestamp: "now",
-          kind: "encoding",
-        },
-      ],
-      envelope: null,
-      headRef: "unrelated",
-    })?.task_id,
-    "P0001",
-  );
-  assert.equal(
-    resolveEncodingTask({ ...base, envelope: null, headRef: "unrelated" }),
+    resolveEncodingTask({ tasks, envelope: null, headRef: "unrelated" }),
     undefined,
   );
-});
-
-test("a pre-task submission that changes only a side file resolves to its task", () => {
-  const tasks: TaskRow[] = [
-    {
-      task_id: "P0001",
-      subtask_id: "",
-      fragment: "sources/a/score.mei",
-      locator: "omr-layout",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "",
-    },
-    {
-      task_id: "P0002",
-      subtask_id: "",
-      fragment: "sources/a/score.mei",
-      locator: "score-setup",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "P0001",
-    },
-    {
-      task_id: "T0001",
-      subtask_id: "",
-      fragment: "sources/a/score.mei",
-      locator: "surface-1",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "P0002",
-    },
-  ];
-  const base = {
-    tasks,
-    locks: [] as LockRow[],
-    envelope: null,
-    headRef: "unrelated",
-    author: "alice",
-  };
   assert.equal(
-    resolveEncodingTask({ ...base, changedPaths: ["sources/a/omr.xml"] })
-      ?.task_id,
-    "P0002",
-  );
-  assert.equal(
-    resolveEncodingTask({ ...base, changedPaths: ["sources/a/layout.json"] })
-      ?.task_id,
-    "P0001",
+    resolveEncodingTask({
+      tasks,
+      envelope: envelope("T9999"),
+      headRef: "encode-T0001",
+    }),
+    undefined,
   );
 });
 
