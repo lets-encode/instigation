@@ -106,21 +106,6 @@ test("buildCampaignReadme: titles the README and links the site and the campaign
   );
 });
 
-test("buildCampaignConfig: a piece with no explicit path gets the conventional one", () => {
-  const config = build({
-    pieces: [
-      {
-        id: "piece-07",
-        kind: "facsimile",
-        path: "",
-        zones: [],
-        header: { title: "", composer: "" },
-      },
-    ],
-  });
-  assert.equal(config.pieces[0].path, "sources/piece-07/score.mei");
-});
-
 test("configToYaml: matches the worked example", () => {
   assert.equal(
     configToYaml(build(WORKED_EXAMPLE_FIELDS)),
@@ -207,34 +192,32 @@ test("one facsimile piece: the measure pre-task, then setup, then its page task"
   );
 });
 
+/** A planned task as a one-line row: id, fragment, locator, depends_on. */
+const brief = (task: ReturnType<typeof planTasks>[number]) => [
+  task.id,
+  task.fragment,
+  task.locator,
+  task.dependsOn,
+];
+
 test("an OMR-prepared facsimile piece opens with the layout pre-task instead", () => {
   const piece = { ...facsimile("piece-01", [1, 2]), preparation: "omr" };
-  assert.deepEqual(planTasks(build({ pieces: [piece] })), [
-    {
-      id: "P0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "omr-layout",
-      dependsOn: "",
-    },
-    {
-      id: "P0002",
-      fragment: "sources/piece-01/score.mei",
-      locator: "score-setup",
-      dependsOn: "P0001",
-    },
-    {
-      id: "T0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-1",
-      dependsOn: "P0002",
-    },
-    {
-      id: "T0002",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-2",
-      dependsOn: "P0002",
-    },
+  assert.deepEqual(planTasks(build({ pieces: [piece] })).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "omr-layout", ""],
+    ["P0002", "sources/piece-01/score.mei", "score-setup", "P0001"],
+    ["T0001", "sources/piece-01/score.mei", "surface-1", "P0002"],
+    ["T0002", "sources/piece-01/score.mei", "surface-2", "P0002"],
   ]);
+});
+
+test("an OMR piece starting after the source's first page numbers its page tasks from 1", () => {
+  const piece = { ...facsimile("piece-01", [2, 3, 4]), preparation: "omr" };
+  assert.deepEqual(
+    planTasks(build({ pieces: [piece] }))
+      .filter((task) => task.id.startsWith("T"))
+      .map((task) => task.locator),
+    ["surface-1", "surface-2", "surface-3"],
+  );
 });
 
 test("configToYaml: a facsimile piece records its preparation", () => {
@@ -250,41 +233,21 @@ test("configToYaml: a facsimile piece records its preparation", () => {
 test("measured pages, not covered pages, decide the page tasks", () => {
   const config = build({ pieces: [facsimile("piece-01", [1, 2, 3])] });
   // The detector found measures only on pages 1 and 3.
-  assert.equal(
-    buildTaskCsv(config, { "piece-01": [1, 3] }),
-    "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
-      "P0001,,sources/piece-01/score.mei,measure-zones,,,\n" +
-      "P0001,S0001,sources/piece-01/score.mei,measure-zones,,,\n" +
-      "P0002,,sources/piece-01/score.mei,score-setup,,,P0001\n" +
-      "P0002,S0001,sources/piece-01/score.mei,score-setup,,,\n" +
-      "T0001,,sources/piece-01/score.mei,surface-1,,,P0002\n" +
-      "T0001,S0001,sources/piece-01/score.mei,surface-1,,,\n" +
-      "T0002,,sources/piece-01/score.mei,surface-3,,,P0002\n" +
-      "T0002,S0001,sources/piece-01/score.mei,surface-3,,,\n",
+  assert.deepEqual(
+    buildTaskCsv(config, { "piece-01": [1, 3] })
+      .split("\n")
+      .filter((line) => /^T\d+,,/.test(line))
+      .map((line) => line.split(",")[3]),
+    ["surface-1", "surface-3"],
   );
 });
 
 test("a facsimile piece with no measured page falls back to one whole-file task", () => {
   const config = build({ pieces: [facsimile("piece-01", [])] });
-  assert.deepEqual(planTasks(config), [
-    {
-      id: "P0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "measure-zones",
-      dependsOn: "",
-    },
-    {
-      id: "P0002",
-      fragment: "sources/piece-01/score.mei",
-      locator: "score-setup",
-      dependsOn: "P0001",
-    },
-    {
-      id: "T0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "",
-      dependsOn: "P0002",
-    },
+  assert.deepEqual(planTasks(config).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "measure-zones", ""],
+    ["P0002", "sources/piece-01/score.mei", "score-setup", "P0001"],
+    ["T0001", "sources/piece-01/score.mei", "", "P0002"],
   ]);
 });
 
@@ -296,62 +259,17 @@ test("several pieces: ids stay unique and every task addresses its own piece", (
       facsimile("piece-03", [2, 3]),
     ],
   });
-  assert.deepEqual(planTasks(config), [
-    {
-      id: "P0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "measure-zones",
-      dependsOn: "",
-    },
-    {
-      id: "P0002",
-      fragment: "sources/piece-01/score.mei",
-      locator: "score-setup",
-      dependsOn: "P0001",
-    },
-    {
-      id: "T0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-1",
-      dependsOn: "P0002",
-    },
-    {
-      id: "T0002",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-2",
-      dependsOn: "P0002",
-    },
+  assert.deepEqual(planTasks(config).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "measure-zones", ""],
+    ["P0002", "sources/piece-01/score.mei", "score-setup", "P0001"],
+    ["T0001", "sources/piece-01/score.mei", "surface-1", "P0002"],
+    ["T0002", "sources/piece-01/score.mei", "surface-2", "P0002"],
     // An encoded piece is already notated: one whole-file task, no pre-tasks.
-    {
-      id: "T0003",
-      fragment: "sources/piece-02/score.mei",
-      locator: "",
-      dependsOn: "",
-    },
-    {
-      id: "P0003",
-      fragment: "sources/piece-03/score.mei",
-      locator: "measure-zones",
-      dependsOn: "",
-    },
-    {
-      id: "P0004",
-      fragment: "sources/piece-03/score.mei",
-      locator: "score-setup",
-      dependsOn: "P0003",
-    },
-    {
-      id: "T0004",
-      fragment: "sources/piece-03/score.mei",
-      locator: "surface-2",
-      dependsOn: "P0004",
-    },
-    {
-      id: "T0005",
-      fragment: "sources/piece-03/score.mei",
-      locator: "surface-3",
-      dependsOn: "P0004",
-    },
+    ["T0003", "sources/piece-02/score.mei", "", ""],
+    ["P0003", "sources/piece-03/score.mei", "measure-zones", ""],
+    ["P0004", "sources/piece-03/score.mei", "score-setup", "P0003"],
+    ["T0004", "sources/piece-03/score.mei", "surface-1", "P0004"],
+    ["T0005", "sources/piece-03/score.mei", "surface-2", "P0004"],
   ]);
 });
 
@@ -376,51 +294,20 @@ test("pre-task ids stay unique across mixed facsimile and physical pieces", () =
 
 test("a physical piece with a page count: a setup pre-task, then one task per page", () => {
   const config = build({ pieces: [physical("piece-01", 3)] });
-  assert.deepEqual(planTasks(config), [
-    {
-      id: "P0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "score-setup",
-      dependsOn: "",
-    },
-    {
-      id: "T0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-1",
-      dependsOn: "P0001",
-    },
-    {
-      id: "T0002",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-2",
-      dependsOn: "P0001",
-    },
-    {
-      id: "T0003",
-      fragment: "sources/piece-01/score.mei",
-      locator: "surface-3",
-      dependsOn: "P0001",
-    },
+  assert.deepEqual(planTasks(config).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "score-setup", ""],
+    ["T0001", "sources/piece-01/score.mei", "surface-1", "P0001"],
+    ["T0002", "sources/piece-01/score.mei", "surface-2", "P0001"],
+    ["T0003", "sources/piece-01/score.mei", "surface-3", "P0001"],
   ]);
 });
 
 test("a physical piece without a page count: a setup pre-task, then one whole-file task", () => {
   const config = build({ pieces: [physical("piece-01")] });
-  assert.deepEqual(planTasks(config), [
-    {
-      id: "P0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "score-setup",
-      dependsOn: "",
-    },
-    {
-      id: "T0001",
-      fragment: "sources/piece-01/score.mei",
-      locator: "",
-      dependsOn: "P0001",
-    },
+  assert.deepEqual(planTasks(config).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "score-setup", ""],
+    ["T0001", "sources/piece-01/score.mei", "", "P0001"],
   ]);
-  assert.equal(assertSupported(config), undefined);
 });
 
 test("configToYaml: a physical piece records its page count", () => {
@@ -438,7 +325,8 @@ test("two pieces may share a page without sharing a task", () => {
     pieces: [facsimile("piece-01", [2]), facsimile("piece-02", [2])],
   });
   const planned = planTasks(config);
-  const onPageTwo = planned.filter((task) => task.locator === "surface-2");
+  // Source page 2 is each piece's own first page.
+  const onPageTwo = planned.filter((task) => task.locator === "surface-1");
   assert.equal(onPageTwo.length, 2);
   assert.deepEqual(
     onPageTwo.map((task) => task.fragment),
@@ -496,27 +384,10 @@ test("configToYaml: YAML-sensitive characters are escaped", () => {
   );
 });
 
-test("configToYaml: an unsupported config is rejected rather than serialised", () => {
+test("assertSupported: rejects unsupported piece shapes", () => {
+  // configToYaml runs the same check before serialising.
   assert.throws(
     () => configToYaml(build({ pieces: [] })),
-    /at least one piece/,
-  );
-});
-
-test("assertSupported: rejects unsupported schema, strategy and piece shapes", () => {
-  const unsupportedSchema = build({ pieces: [encoded("piece-01")] });
-  unsupportedSchema.schema_version = 2;
-  assert.throws(() => assertSupported(unsupportedSchema), /schema_version/);
-
-  const unsupportedStrategy = build({ pieces: [encoded("piece-01")] });
-  unsupportedStrategy.fragmentation.strategy = "whole";
-  assert.throws(
-    () => assertSupported(unsupportedStrategy),
-    /fragmentation\.strategy/,
-  );
-
-  assert.throws(
-    () => assertSupported(build({ pieces: [] })),
     /at least one piece/,
   );
 

@@ -5,6 +5,12 @@ parentheses.
 
 ## Unreleased
 
+- Duplicate tests and code fallbacks nothing produces are removed.
+- Repeated test cases are condensed into tables and shared fixtures.
+- The unbuilt staff-placement correction is removed from the OMR record.
+- Schema tests fail instead of skipping when the MEI schema cannot be downloaded.
+- Page tasks of a piece that starts after the source's first page address the right pages.
+- An accepted measure or layout correction rebuilds the piece's page tasks so pages without measures get no task.
 - The npm package is renamed to lets-encode.
 - References follow the repository renames to lets-encode and campaign-template.
 - A new campaign gets its own README and no longer keeps the template's own files.

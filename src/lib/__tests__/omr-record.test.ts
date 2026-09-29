@@ -52,7 +52,6 @@ const record = (): OmrRecord => ({
     },
     { n: 4, image: "../pages/p004.jpg", staves: [] },
   ],
-  assignments: [{ zone: "staff-zone-4-7", staff: 3 }],
   clefs: [{ staff: 3, read: "G2", corrected: "F4" }],
 });
 

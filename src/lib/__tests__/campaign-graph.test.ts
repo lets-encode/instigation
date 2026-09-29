@@ -135,6 +135,13 @@ test("buildGraph assigns concurrent validation locks to separate slots", () => {
   );
   assert.equal(available.slots[1].claimable, true);
   assert.equal(available.nextUp, true);
+  // carol, holding the first slot, is not offered the second.
+  assert.equal(
+    buildGraph(d, "carol")
+      .find((n) => n.task === "T0001")!
+      .slots.some((slot) => slot.claimable),
+    false,
+  );
 });
 
 test("buildGraph: a blocked task is marked as such", () => {
@@ -217,25 +224,6 @@ test("buildGraph: a validator with a recorded verdict is not offered the next sl
   d.allowSelfValidation = true;
   const allowed = buildGraph(d, "carol").find((n) => n.task === "T0001")!.slots;
   assert.equal(allowed[1].claimable, true);
-});
-
-test("buildGraph: a reviewer already holding a slot is not offered the next one", () => {
-  const d = facsimileData();
-  d.rows[4] = state("T0001", "S0001", "validation_required");
-  d.locks = [
-    {
-      task_id: "T0001",
-      subtask_id: "S0001",
-      user_id: "carol",
-      timestamp: "t1",
-      kind: "validation",
-    },
-  ];
-  const slots = buildGraph(d, "carol").find((n) => n.task === "T0001")!.slots;
-  assert.equal(
-    slots.some((slot) => slot.claimable),
-    false,
-  );
 });
 
 test("buildGraph: the encoder sees an open slot needs another volunteer, not a claim", () => {

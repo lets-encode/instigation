@@ -158,20 +158,9 @@ function yamlStr(value: unknown): string {
   return JSON.stringify(String(value ?? ""));
 }
 
-// One fragmentation strategy, three piece kinds and one schema version are
-// implemented. Fail loudly rather than silently mis-initialising.
+// Three piece kinds and two preparations are implemented. Fail loudly rather
+// than silently mis-initialising.
 export function assertSupported(config: CampaignConfig): void {
-  if (config?.schema_version !== 3) {
-    throw new Error(
-      `Unsupported schema_version: ${config?.schema_version} (expected 3).`,
-    );
-  }
-  const strategy = config.fragmentation?.strategy;
-  if (strategy !== "by-piece") {
-    throw new Error(
-      `Unsupported fragmentation.strategy: ${strategy} (only 'by-piece' is implemented).`,
-    );
-  }
   if (!config.pieces?.length)
     throw new Error("config.pieces must contain at least one piece.");
   for (const piece of config.pieces) {
@@ -237,11 +226,7 @@ export function buildCampaignConfig(
       },
       rights_acknowledged: fields.rightsAcknowledged ?? "",
     },
-    pieces: (fields.pieces ?? []).map((piece) => ({
-      ...piece,
-      path: piece.path || piecePath(piece.id),
-      zones: piece.zones ?? [],
-    })),
+    pieces: fields.pieces ?? [],
     fragmentation: { strategy: "by-piece" },
     validation: {
       required_validations:
@@ -337,7 +322,7 @@ export function configToYaml(config: CampaignConfig): string {
     `    publisher: ${yamlStr(s.header.publisher)}\n` +
     `    date: ${yamlStr(s.header.date)}\n` +
     `  rights_acknowledged: ${yamlStr(s.rights_acknowledged)}\n` +
-    `pieces:${config.pieces.length ? `\n${pieces}` : " []\n"}` +
+    `pieces:\n${pieces}` +
     `fragmentation:\n` +
     `  strategy: ${yamlStr(config.fragmentation.strategy)}\n` +
     `validation:\n` +
@@ -357,13 +342,16 @@ const preTaskId = (n: number): string => `P${String(n).padStart(4, "0")}`;
  */
 export type PieceSurfaces = Record<string, number[]>;
 
-/** The pages a facsimile piece is split by: measured pages, else the pages it covers. */
+/**
+ * The pages a facsimile piece is split by: measured pages, else every page it
+ * covers. Both are the piece's own surface numbers, counted from 1 at its first
+ * covered page, since config zones carry the source's page numbers.
+ */
 function surfacesFor(piece: ConfigPiece, surfaces?: PieceSurfaces): number[] {
   const measured = surfaces?.[piece.id];
   if (measured) return [...measured].sort((a, b) => a - b);
-  return [...new Set(piece.zones.map((zone) => zone.surface))].sort(
-    (a, b) => a - b,
-  );
+  const covered = new Set(piece.zones.map((zone) => zone.surface));
+  return [...covered].map((_, i) => i + 1);
 }
 
 /** One planned task: the row pair the task and state tables each emit for it. */

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, before, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -22,37 +22,88 @@ import {
   resetGitHubRequestTelemetry,
 } from "../forge/github-rest.ts";
 
+before(() => routeSessionVia("/auth/proxy/api.github.com"));
+
 const file = (index: number) => ({
   filename: `sources/${index}.mei`,
   status: "modified",
 });
 
+type RecordedCall = {
+  url: string;
+  method: string;
+  body: unknown;
+  headers: Headers;
+};
+
+// Mock fetch with the Git Data API routes a commit goes through: the base
+// commit lookup, blob, tree and commit creation, and the ref update. `extra`
+// answers a request before those routes; every request is pushed to `record`.
+function gitDataMock(
+  t: TestContext,
+  {
+    record,
+    extra,
+  }: {
+    record?: RecordedCall[];
+    extra?: (url: string, method: string) => Response | undefined;
+  } = {},
+): void {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      record?.push({
+        url,
+        method,
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+        headers: new Headers(init?.headers),
+      });
+      const answered = extra?.(url, method);
+      if (answered) return answered;
+      if (url.endsWith("/git/commits/base-sha"))
+        return Response.json({ tree: { sha: "base-tree" } });
+      if (url.endsWith("/git/blobs"))
+        return Response.json({ sha: "binary-blob" });
+      if (url.endsWith("/git/trees")) return Response.json({ sha: "new-tree" });
+      if (url.endsWith("/git/commits"))
+        return Response.json({ sha: "new-commit" });
+      if (url.includes("/git/refs/heads/") && method === "PATCH")
+        return Response.json({});
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    },
+  );
+}
+
 test("getPullRequestFiles reads every page before returning the PR boundary", async (t) => {
   const urls: string[] = [];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
-    const url = String(input);
-    urls.push(url);
-    const page = new URL(url).searchParams.get("page");
-    return Response.json(
-      page === "1"
-        ? Array.from({ length: 100 }, (_, i) => file(i))
-        : [file(100)],
-    );
+    urls.push(String(input));
+    return Response.json([file(100)]);
   });
 
-  const files = await getPullRequestFiles("token", "owner", "repo", 7, 101);
+  const files = await getPullRequestFiles(
+    "token",
+    "owner",
+    "repo",
+    7,
+    101,
+    Array.from({ length: 100 }, (_, i) => file(i)),
+  );
   assert.equal(files.length, 101);
   assert.deepEqual(
     urls.map((url) => new URL(url).searchParams.get("page")),
-    ["1", "2"],
+    ["2"],
   );
 });
 
 test("getPullRequestFiles fails closed when GitHub returns a partial list", async (t) => {
-  t.mock.method(globalThis, "fetch", async () => Response.json([file(0)]));
+  t.mock.method(globalThis, "fetch", async () => Response.json([]));
   await assert.rejects(
-    getPullRequestFiles("token", "owner", "repo", 7, 2),
-    /Incomplete pull-request file list: expected 2, received 1/,
+    getPullRequestFiles("token", "owner", "repo", 7, 101, [file(0)]),
+    /Incomplete pull-request file list: expected 101, received 1/,
   );
 });
 
@@ -61,15 +112,15 @@ test("getPullRequestFiles rejects PRs beyond GitHub’s inspection limit without
     Response.json([]),
   );
   await assert.rejects(
-    getPullRequestFiles("token", "owner", "repo", 7, -1),
+    getPullRequestFiles("token", "owner", "repo", 7, -1, []),
     /invalid changed-file count/,
   );
   await assert.rejects(
-    getPullRequestFiles("token", "owner", "repo", 7, 1.5),
+    getPullRequestFiles("token", "owner", "repo", 7, 1.5, []),
     /invalid changed-file count/,
   );
   await assert.rejects(
-    getPullRequestFiles("token", "owner", "repo", 7, 3001),
+    getPullRequestFiles("token", "owner", "repo", 7, 3001, []),
     /3,000-file inspection limit/,
   );
   assert.equal(fetch.mock.callCount(), 0);
@@ -179,7 +230,6 @@ test("searchReposByTopic reads every search page", async (t) => {
 });
 
 test("SESSION routes through the broker without exposing an Authorization header", async (t) => {
-  routeSessionVia("/auth/proxy/api.github.com");
   t.mock.method(
     globalThis,
     "fetch",
@@ -222,31 +272,8 @@ test("JSON reads reuse a cached ETag body after a 304 response", async (t) => {
 });
 
 test("commitFiles builds one tree and advances the requested branch from the supplied base", async (t) => {
-  const calls: Array<{
-    url: string;
-    method: string;
-    body: unknown;
-    headers: Headers;
-  }> = [];
-  t.mock.method(
-    globalThis,
-    "fetch",
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      const body = init?.body ? JSON.parse(String(init.body)) : null;
-      calls.push({ url, method, body, headers: new Headers(init?.headers) });
-      if (url.endsWith("/git/commits/base-sha"))
-        return Response.json({ tree: { sha: "base-tree" } });
-      if (url.endsWith("/git/blobs"))
-        return Response.json({ sha: "binary-blob" });
-      if (url.endsWith("/git/trees")) return Response.json({ sha: "new-tree" });
-      if (url.endsWith("/git/commits"))
-        return Response.json({ sha: "new-commit" });
-      if (url.endsWith("/git/refs/heads/work")) return Response.json({});
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    },
-  );
+  const calls: RecordedCall[] = [];
+  gitDataMock(t, { record: calls });
 
   const sha = await commitFiles(
     "token",
@@ -293,25 +320,8 @@ test("commitFiles builds one tree and advances the requested branch from the sup
 });
 
 test("commitFiles removes the paths it is told to delete in the same commit", async (t) => {
-  const calls: Array<{ url: string; body: unknown }> = [];
-  t.mock.method(
-    globalThis,
-    "fetch",
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      calls.push({
-        url,
-        body: init?.body ? JSON.parse(String(init.body)) : null,
-      });
-      if (url.endsWith("/git/commits/base-sha"))
-        return Response.json({ tree: { sha: "base-tree" } });
-      if (url.endsWith("/git/trees")) return Response.json({ sha: "new-tree" });
-      if (url.endsWith("/git/commits"))
-        return Response.json({ sha: "new-commit" });
-      if (url.endsWith("/git/refs/heads/main")) return Response.json({});
-      throw new Error(`Unexpected request: ${url}`);
-    },
-  );
+  const calls: RecordedCall[] = [];
+  gitDataMock(t, { record: calls });
 
   await commitFiles(
     "token",
@@ -343,18 +353,7 @@ test("commitFiles removes the paths it is told to delete in the same commit", as
 });
 
 test("commitFiles reports each binary upload against the number of them", async (t) => {
-  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.endsWith("/git/commits/base-sha"))
-      return Response.json({ tree: { sha: "base-tree" } });
-    if (url.endsWith("/git/blobs"))
-      return Response.json({ sha: "binary-blob" });
-    if (url.endsWith("/git/trees")) return Response.json({ sha: "new-tree" });
-    if (url.endsWith("/git/commits"))
-      return Response.json({ sha: "new-commit" });
-    if (url.endsWith("/git/refs/heads/main")) return Response.json({});
-    throw new Error(`Unexpected request: ${url}`);
-  });
+  gitDataMock(t);
 
   const progress: Array<[number, number]> = [];
   await commitFiles(
@@ -489,12 +488,8 @@ test("deleteBranch does not hide arbitrary 422 responses", async (t) => {
 
 test("openChangePr removes its prepared branch when PR creation fails", async (t) => {
   let deleted = false;
-  t.mock.method(
-    globalThis,
-    "fetch",
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
+  gitDataMock(t, {
+    extra: (url, method) => {
       if (url.endsWith("/repos/lifecycle-owner/score") && method === "GET") {
         return Response.json({
           default_branch: "main",
@@ -508,13 +503,6 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
       }
       if (url.endsWith("/git/refs") && method === "POST")
         return Response.json({}, { status: 201 });
-      if (url.endsWith("/git/commits/base-sha"))
-        return Response.json({ tree: { sha: "base-tree" } });
-      if (url.endsWith("/git/trees")) return Response.json({ sha: "new-tree" });
-      if (url.endsWith("/git/commits") && method === "POST")
-        return Response.json({ sha: "new-commit" });
-      if (url.endsWith("/git/refs/heads/work") && method === "PATCH")
-        return Response.json({});
       if (url.endsWith("/pulls") && method === "POST") {
         return Response.json(
           {
@@ -528,9 +516,9 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
         deleted = true;
         return new Response(null, { status: 204 });
       }
-      throw new Error(`Unexpected request: ${method} ${url}`);
+      return undefined;
     },
-  );
+  });
 
   await assert.rejects(
     openChangePr("token", "lifecycle-owner", "score", {
@@ -545,24 +533,79 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
   assert.equal(deleted, true);
 });
 
-test("secondary rate limits are surfaced even when primary quota remains", async (t) => {
-  t.mock.method(globalThis, "fetch", async () =>
-    Response.json(
-      { message: "You have exceeded a secondary rate limit." },
-      {
-        status: 403,
-        headers: { "X-RateLimit-Remaining": "42", "Retry-After": "30" },
+test("403 and 429 responses are rate limits only when GitHub or the broker reports one", async (t) => {
+  t.mock.method(console, "info", () => {});
+  const cases: Array<{
+    label: string;
+    status: number;
+    headers?: Record<string, string>;
+    body: unknown;
+    request: () => Promise<unknown>;
+    expect: (error: unknown) => boolean;
+    rateLimited?: number;
+  }> = [
+    {
+      label: "secondary rate limit with primary quota remaining",
+      status: 403,
+      headers: { "X-RateLimit-Remaining": "42", "Retry-After": "30" },
+      body: { message: "You have exceeded a secondary rate limit." },
+      request: () => getPullRequestDetails("token", "owner", "repo", 7),
+      expect: (error) =>
+        error instanceof RateLimitError &&
+        error.source === "github" &&
+        error.remaining === 42 &&
+        error.retryAfterSeconds === 30,
+    },
+    {
+      label: "broker throttling",
+      status: 429,
+      headers: { "X-Lets-Encode-Upstream": "broker" },
+      body: {
+        error: "OAuth broker request rate limit exceeded",
+        source: "broker",
       },
-    ),
-  );
-  await assert.rejects(
-    getPullRequestDetails("token", "owner", "repo", 7),
-    (error: unknown) =>
-      error instanceof RateLimitError &&
-      error.source === "github" &&
-      error.remaining === 42 &&
-      error.retryAfterSeconds === 30,
-  );
+      request: () => getPullRequestDetails(SESSION, "owner", "repo", 7),
+      expect: (error) =>
+        error instanceof RateLimitError &&
+        error.source === "broker" &&
+        /OAuth broker request rate limit exceeded/.test(error.message),
+      rateLimited: 1,
+    },
+    {
+      label: "broker origin rejection",
+      status: 403,
+      headers: { "X-Lets-Encode-Upstream": "broker" },
+      body: { error: "cross-origin request rejected" },
+      request: () => commentAndClosePr(SESSION, "owner", "repo", 7, "verdict"),
+      expect: (error) =>
+        error instanceof Error &&
+        !(error instanceof RateLimitError) &&
+        /cross-origin request rejected/.test(error.message),
+    },
+    {
+      label: "ordinary permission failure",
+      status: 403,
+      body: { message: "Resource not accessible by integration" },
+      request: () => getPullRequestDetails("token", "owner", "repo", 7),
+      expect: (error) =>
+        error instanceof Error &&
+        !(error instanceof RateLimitError) &&
+        /Resource not accessible/.test(error.message),
+    },
+  ];
+  for (const row of cases) {
+    resetGitHubRequestTelemetry();
+    t.mock.method(globalThis, "fetch", async () =>
+      Response.json(row.body, { status: row.status, headers: row.headers }),
+    );
+    await assert.rejects(row.request, row.expect, row.label);
+    if (row.rateLimited !== undefined)
+      assert.equal(
+        getGitHubRequestTelemetry().rateLimited,
+        row.rateLimited,
+        row.label,
+      );
+  }
 });
 
 test("request telemetry records rate headers without query strings", async (t) => {
@@ -597,60 +640,6 @@ test("request telemetry records rate headers without query strings", async (t) =
   assert.equal(telemetry.last?.used, 2);
 });
 
-test("broker throttling is distinguished from a GitHub rate limit", async (t) => {
-  resetGitHubRequestTelemetry();
-  t.mock.method(console, "info", () => {});
-  t.mock.method(globalThis, "fetch", async () =>
-    Response.json(
-      { error: "OAuth broker request rate limit exceeded", source: "broker" },
-      { status: 429, headers: { "X-Lets-Encode-Upstream": "broker" } },
-    ),
-  );
-
-  await assert.rejects(
-    getPullRequestDetails(SESSION, "owner", "repo", 7),
-    (error: unknown) =>
-      error instanceof RateLimitError &&
-      error.source === "broker" &&
-      /OAuth broker request rate limit exceeded/.test(error.message),
-  );
-  assert.equal(getGitHubRequestTelemetry().rateLimited, 1);
-});
-
-test("a broker origin rejection surfaces its own message, not a rate limit", async (t) => {
-  routeSessionVia("/auth/proxy/api.github.com");
-  t.mock.method(console, "info", () => {});
-  t.mock.method(globalThis, "fetch", async () =>
-    Response.json(
-      { error: "cross-origin request rejected" },
-      { status: 403, headers: { "X-Lets-Encode-Upstream": "broker" } },
-    ),
-  );
-  await assert.rejects(
-    commentAndClosePr(SESSION, "owner", "repo", 7, "verdict"),
-    (error: unknown) =>
-      error instanceof Error &&
-      !(error instanceof RateLimitError) &&
-      /cross-origin request rejected/.test(error.message),
-  );
-});
-
-test("ordinary permission failures are not mislabeled as rate limits", async (t) => {
-  t.mock.method(globalThis, "fetch", async () =>
-    Response.json(
-      { message: "Resource not accessible by integration" },
-      { status: 403 },
-    ),
-  );
-  await assert.rejects(
-    getPullRequestDetails("token", "owner", "repo", 7),
-    (error: unknown) =>
-      error instanceof Error &&
-      !(error instanceof RateLimitError) &&
-      /Resource not accessible/.test(error.message),
-  );
-});
-
 test("a GET failing with a 5xx is retried", async (t) => {
   let calls = 0;
   t.mock.method(globalThis, "fetch", async () =>
@@ -676,6 +665,13 @@ const unavailableDiff = () =>
     },
     { status: 500 },
   );
+const oneCommitPr = {
+  changed_files: 1,
+  commits: 1,
+  state: "open",
+  head: { sha: "head" },
+  base: { sha: "base" },
+};
 
 test("getPullRequest takes a one-commit PR’s files from its commit when the diff is unavailable", async (t) => {
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
@@ -686,13 +682,7 @@ test("getPullRequest takes a one-commit PR’s files from its commit when the di
         parents: [{ sha: "base" }],
         files: [{ ...file(1), patch: "@@" }],
       });
-    return Response.json({
-      changed_files: 1,
-      commits: 1,
-      state: "open",
-      head: { sha: "head" },
-      base: { sha: "base" },
-    });
+    return Response.json(oneCommitPr);
   });
   const pr = await getPullRequest("token", "owner", "repo", 7);
   assert.deepEqual(pr.files, [
@@ -706,13 +696,7 @@ test("getPullRequest keeps the diff error when the commit does not sit on the ba
     if (path.endsWith("/pulls/7/files")) return unavailableDiff();
     if (path.endsWith("/commits/head"))
       return Response.json({ parents: [{ sha: "older" }], files: [file(1)] });
-    return Response.json({
-      changed_files: 1,
-      commits: 1,
-      state: "open",
-      head: { sha: "head" },
-      base: { sha: "base" },
-    });
+    return Response.json(oneCommitPr);
   });
   await assert.rejects(
     getPullRequest("token", "owner", "repo", 7),

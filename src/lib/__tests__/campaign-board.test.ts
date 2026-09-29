@@ -54,24 +54,17 @@ test("orphanedFails returns unresolved fail comments without a matching fail cel
       "c4,T0001,S0001,fail,1,1,1,111,2026-08-12T09:00:00.000Z,,,other task\n",
   );
   // After a send-back the slot is open again — no fail cell matches c1.
-  const card = { task: "T0002", slots: [slot({})] };
-  const orphans = orphanedFails(card, comments);
+  const open = { task: "T0002", slots: [slot({})] };
   assert.deepEqual(
-    orphans.map((c) => c.comment_id),
+    orphanedFails(open, comments).map((c) => c.comment_id),
     ["c1"],
   );
-});
-
-test("orphanedFails skips a fail comment its fail cell still matches", () => {
-  const comments = parseCommentCsv(
-    COMMENT_HEADER +
-      "c1,T0002,S0001,fail,1,1,2,111,2026-08-12T10:21:03.348Z,,,Not the correct notes\n",
-  );
-  const card = {
+  // A fail cell with c1's author and timestamp still matches it.
+  const matched = {
     task: "T0002",
     slots: [slot({ key: "fail", user: "111", ts: "2026-08-12T10:21:03.348Z" })],
   };
-  assert.deepEqual(orphanedFails(card, comments), []);
+  assert.deepEqual(orphanedFails(matched, comments), []);
 });
 
 test("the done column lists the tasks finished last first", () => {

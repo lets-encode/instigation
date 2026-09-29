@@ -88,33 +88,28 @@ test("a non-JSON response is rejected", async (t) => {
 });
 
 test("malformed or non-normalized detector boxes are rejected", async (t) => {
-  const responses: unknown[] = [
-    { measures: "nope" },
-    { measures: [{}] },
-    { measures: [{ bbox: { x1: -0.1, y1: 0, x2: 0.5, y2: 0.5 } }] },
-    { measures: [{ bbox: { x1: 0.8, y1: 0.1, x2: 0.2, y2: 0.5 } }] },
+  const cases: Array<[string, unknown, RegExp]> = [
+    ["measures not a list", { measures: "nope" }, /unexpected response shape/],
+    ["measure without bbox", { measures: [{}] }, /unexpected response shape/],
+    [
+      "coordinate below 0",
+      { measures: [{ bbox: { x1: -0.1, y1: 0, x2: 0.5, y2: 0.5 } }] },
+      /malformed coordinates/,
+    ],
+    [
+      "x1 past x2",
+      { measures: [{ bbox: { x1: 0.8, y1: 0.1, x2: 0.2, y2: 0.5 } }] },
+      /malformed coordinates/,
+    ],
   ];
-  let call = 0;
-  t.mock.method(globalThis, "fetch", async () =>
-    Response.json(responses[call++]),
-  );
-
-  await assert.rejects(
-    detectMeasures(blob, "page.jpg", "https://detector.example"),
-    /unexpected response shape/,
-  );
-  await assert.rejects(
-    detectMeasures(blob, "page.jpg", "https://detector.example"),
-    /unexpected response shape/,
-  );
-  await assert.rejects(
-    detectMeasures(blob, "page.jpg", "https://detector.example"),
-    /malformed coordinates/,
-  );
-  await assert.rejects(
-    detectMeasures(blob, "page.jpg", "https://detector.example"),
-    /malformed coordinates/,
-  );
+  for (const [label, response, pattern] of cases) {
+    t.mock.method(globalThis, "fetch", async () => Response.json(response));
+    await assert.rejects(
+      detectMeasures(blob, "page.jpg", "https://detector.example"),
+      pattern,
+      label,
+    );
+  }
 });
 
 test("an unreachable detector is reported as such", async (t) => {

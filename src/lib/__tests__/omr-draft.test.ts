@@ -141,18 +141,28 @@ test("mismatched systems are filled as far as they go and reported", () => {
   );
 });
 
-test("a differing system count is refused", () => {
-  assert.throws(
-    () =>
-      insertPageDraft(
+test("a differing system count or a page the skeleton does not have is refused", () => {
+  const cases: [string, Parameters<typeof insertPageDraft>, RegExp][] = [
+    [
+      "system count",
+      [
         skeleton([2], 1),
         "surface-1",
         converted(2, 2),
         [1, 1],
         allPrinted(2, 1),
-      ),
-    /Page 1: 1 system\(s\) of measure boxes, 2 transcribed\./,
-  );
+      ],
+      /Page 1: 1 system\(s\) of measure boxes, 2 transcribed\./,
+    ],
+    [
+      "missing page",
+      [skeleton([1]), "surface-9", converted(1), [1], allPrinted(1)],
+      /No page break found for surface-9/,
+    ],
+  ];
+  for (const [label, args, error] of cases) {
+    assert.throws(() => insertPageDraft(...args), error, label);
+  }
 });
 
 test("staves beyond the score definition are dropped", () => {
@@ -171,20 +181,6 @@ test("staves beyond the score definition are dropped", () => {
   );
   // The converted second staves were dropped; the skeleton itself has one staff per measure.
   assert.equal((result.mei.match(/<staff n="2"/g) ?? []).length, 0);
-});
-
-test("a page the skeleton does not have is an error", () => {
-  assert.throws(
-    () =>
-      insertPageDraft(
-        skeleton([1]),
-        "surface-9",
-        converted(1),
-        [1],
-        allPrinted(1),
-      ),
-    /No page break found for surface-9/,
-  );
 });
 
 test("a staff the system does not print rests; a printed staff links its zone", () => {

@@ -97,14 +97,6 @@ test("staffCrops grows each staff by its height times the margin, clamped to the
       { ulx: 46, uly: 446, lrx: 954, lry: 600 },
     ],
   );
-  assert.deepEqual(
-    staffCrops(
-      [{ ulx: 10, uly: 10, lrx: 90, lry: 20 }],
-      { width: 100, height: 100 },
-      0,
-    ),
-    [{ ulx: 10, uly: 10, lrx: 90, lry: 20 }],
-  );
 });
 
 // A measure zone; `start` marks the first measure of a system.
@@ -145,7 +137,6 @@ test("pageSystems groups staves by the systems of measure zones, whatever their 
     ],
   );
   assert.equal(unplaced, 1);
-  assert.equal(staffCountOf([page]), 3);
 });
 
 test("pageSystems keeps a system without staves in its place", () => {

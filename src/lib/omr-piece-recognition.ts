@@ -199,7 +199,6 @@ export async function recognisePiece(
       staffPipeline: o.pipeline,
       ocr: OCR_ENGINE,
       pages,
-      assignments: o.existing?.assignments ?? [],
       clefs: o.existing?.clefs ?? [],
     },
     failed: pages.flatMap((page) =>

@@ -9,7 +9,10 @@ import {
 } from "../mei-xml.ts";
 
 test("xmlEscape covers text and double-quoted attribute contexts", () => {
-  assert.equal(xmlEscape('a & <b> "c"'), "a &amp; &lt;b&gt; &quot;c&quot;");
+  assert.equal(
+    xmlEscape(`a & <b> "c" d'un`),
+    "a &amp; &lt;b&gt; &quot;c&quot; d'un",
+  );
   assert.equal(xmlEscape(null), "");
   assert.equal(xmlEscape(42), "42");
 });
@@ -19,12 +22,6 @@ test("xmlUnescape covers all five predefined entities", () => {
     xmlUnescape("&lt;a&gt; &amp; &quot;b&quot; &apos;c&apos;"),
     `<a> & "b" 'c'`,
   );
-});
-
-test("&apos; round-trips: unescape then escape emits a plain apostrophe, not &amp;apos;", () => {
-  const unescaped = xmlUnescape("d&apos;un");
-  assert.equal(unescaped, "d'un");
-  assert.equal(xmlEscape(unescaped), "d'un");
 });
 
 test("escape and unescape are inverse over markup-significant text", () => {

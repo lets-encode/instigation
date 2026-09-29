@@ -425,10 +425,7 @@ export function parseSourceHead(xml: string): SourceMetadata {
     tagInner(head, "manifestationList"),
     "manifestation",
   );
-  // Publication details of the source live in the manifestation's <pubStmt>;
-  // a header carrying them in <fileDesc> instead is still read.
-  const pubStmt =
-    tagInner(manifestation, "pubStmt") || tagInner(fileDesc, "pubStmt");
+  const pubStmt = tagInner(manifestation, "pubStmt");
   meta.publisher = tagText(pubStmt, "publisher");
   meta.pubPlace = tagText(pubStmt, "pubPlace");
   meta.date = tagText(pubStmt, "date");

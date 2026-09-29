@@ -984,8 +984,7 @@ async function pullRequestFilesPage(
  * List every changed file in a pull request, including each file's unified-diff
  * patch. GitHub paginates this endpoint at 100 files and exposes at most 3,000;
  * a mismatch is rejected so the coordinator never validates a partial view.
- * `firstPage` is the already-read first page, when the caller fetched it
- * alongside the pull request itself.
+ * `firstPage` is the first page, read alongside the pull request itself.
  */
 export async function getPullRequestFiles(
   token: string,
@@ -993,7 +992,7 @@ export async function getPullRequestFiles(
   repo: string,
   number: number,
   expectedChangedFiles: number,
-  firstPage?: PullRequestFile[],
+  firstPage: PullRequestFile[],
 ): Promise<PullRequestFile[]> {
   if (!Number.isInteger(expectedChangedFiles) || expectedChangedFiles < 0) {
     throw new Error("Pull request reported an invalid changed-file count.");
@@ -1008,9 +1007,7 @@ export async function getPullRequestFiles(
     1,
     Math.ceil(expectedChangedFiles / PR_FILES_PER_PAGE),
   );
-  const files = firstPage
-    ? [...firstPage]
-    : await pullRequestFilesPage(token, owner, repo, number, 1);
+  const files = [...firstPage];
   for (let page = 2; page <= pages; page++) {
     files.push(
       ...(await pullRequestFilesPage(token, owner, repo, number, page)),

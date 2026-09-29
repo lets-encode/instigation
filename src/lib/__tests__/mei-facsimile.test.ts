@@ -5,6 +5,7 @@ import {
   buildBlankScoreMei,
   buildFacsimileMei,
   initialFacsimileModel,
+  measuredSurfaceIds,
   parseFacsimileMei,
   parseScoreDef,
   relinkFacsimileImages,
@@ -56,7 +57,7 @@ test("stage A: surfaces, graphics and labelled zones — no measures, no breaks"
   assert.ok(mei.includes('<zone xml:id="zone-2-1" type="measure" n="3"'));
 });
 
-test("stage C: a pb per page, an sb per flagged measure (except page starts)", () => {
+test("stage C: a pb per page, an sb per flagged measure (except page starts); breaks carry @n", () => {
   const m = model();
   // Page 1's two boxes are two systems (stacked), so its second measure is a
   // system start — expect one <sb/> for it; page firsts are covered by <pb/>.
@@ -66,6 +67,10 @@ test("stage C: a pb per page, an sb per flagged measure (except page starts)", (
   assert.equal((mei.match(/<sb /g) ?? []).length, 1);
   assert.equal((mei.match(/<measure /g) ?? []).length, 3);
   assert.ok(/<pb[^>]*facs="#surface-1"/.test(mei));
+  // A page break carries its page number, a system break its order.
+  assert.ok(/<pb xml:id="pb-1" n="1"/.test(mei));
+  assert.ok(/<pb xml:id="pb-2" n="2"/.test(mei));
+  assert.ok(/<sb xml:id="sb-1-2" n="1"/.test(mei));
 });
 
 test("volta labels: alphanumeric labels are emitted and nextLabel advances their leading number", () => {
@@ -113,33 +118,7 @@ test("parseFacsimileMei round-trips the model through both active stages", () =>
   assert.equal(rebuilt, buildFacsimileMei(m, { withBreaks: true }));
 });
 
-test('staff zones are written as type="staff", round-trip, and reference nothing', () => {
-  const m = model();
-  m.pages[0].staves = [
-    { ulx: 100, uly: 300, lrx: 1000, lry: 360 },
-    { ulx: 100, uly: 420, lrx: 1000, lry: 480 },
-  ];
-  const mei = buildFacsimileMei(m);
-  assert.equal(SyntaxValidator.validate(mei), true);
-  assert.ok(
-    mei.includes(
-      '<zone xml:id="staff-zone-1-1" type="staff" ulx="100" uly="300" lrx="1000" lry="360"/>',
-    ),
-  );
-  assert.equal((mei.match(/<zone /g) ?? []).length, 5);
-  assert.equal((mei.match(/#staff-zone/g) ?? []).length, 0);
-
-  const parsed = parseFacsimileMei(mei);
-  assert.deepEqual(parsed.pages[0].staves, m.pages[0].staves);
-  // A page without staff zones parses without the field, as before.
-  assert.equal(parsed.pages[1].staves, undefined);
-  assert.equal(
-    buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }),
-    mei,
-  );
-});
-
-test('grand-staff zones are written as type="grandstaff" beside the staff zones and round-trip', () => {
+test('staff and grand-staff zones are written as type="staff" and type="grandstaff", round-trip, and reference nothing', () => {
   const m = model();
   m.pages[0].staves = [
     { ulx: 100, uly: 300, lrx: 1000, lry: 360 },
@@ -150,12 +129,22 @@ test('grand-staff zones are written as type="grandstaff" beside the staff zones 
   assert.equal(SyntaxValidator.validate(mei), true);
   assert.ok(
     mei.includes(
+      '<zone xml:id="staff-zone-1-1" type="staff" ulx="100" uly="300" lrx="1000" lry="360"/>',
+    ),
+  );
+  assert.ok(
+    mei.includes(
       '<zone xml:id="grandstaff-zone-1-1" type="grandstaff" ulx="80" uly="290" lrx="1000" lry="490"/>',
     ),
   );
+  assert.equal((mei.match(/<zone /g) ?? []).length, 6);
+  assert.equal((mei.match(/#staff-zone/g) ?? []).length, 0);
+
   const parsed = parseFacsimileMei(mei);
-  assert.deepEqual(parsed.pages[0].grandstaves, m.pages[0].grandstaves);
   assert.deepEqual(parsed.pages[0].staves, m.pages[0].staves);
+  assert.deepEqual(parsed.pages[0].grandstaves, m.pages[0].grandstaves);
+  // A page without staff zones parses without the fields.
+  assert.equal(parsed.pages[1].staves, undefined);
   assert.equal(parsed.pages[1].grandstaves, undefined);
   assert.equal(
     buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }),
@@ -202,37 +191,19 @@ test("replaceScoreDef swaps every <scoreDef> and leaves the measures alone", () 
   );
 });
 
-test("movements: a flagged zone opens a new <mdiv>; flags round-trip", () => {
-  const m = model();
-  // Page 2's measure starts a new movement.
-  m.pages[1].zones[0].mdiv = true;
-  const mei = buildFacsimileMei(m, { withBreaks: true });
-  assert.equal((mei.match(/<mdiv /g) ?? []).length, 2);
-  assert.equal((mei.match(/<scoreDef\b/g) ?? []).length, 2);
-  // The second movement holds page 2's break and measure.
-  const second = mei.slice(mei.indexOf('<mdiv xml:id="mdiv-2"'));
-  assert.ok(/<pb[^>]*facs="#surface-2"/.test(second));
-  assert.ok(second.includes('facs="#zone-2-1"'));
-
-  const parsed = parseFacsimileMei(mei);
-  assert.equal(parsed.pages[1].zones[0].mdiv, true);
-  assert.equal(parsed.pages[0].zones[0].mdiv, false);
-  const rebuilt = buildFacsimileMei(
-    { headXml: parsed.headXml, pages: parsed.pages },
-    { withBreaks: true },
-  );
-  assert.equal(rebuilt, mei);
-});
-
-test("a page break implies the system break: a pb measure emits <pb> only, and can still open a movement", () => {
+test("movements: a flagged zone opens a new <mdiv> with <pb> only, flags round-trip; the first zone never opens a second <mdiv>", () => {
   const m = model();
   // Page 2's first measure carries the page break (default) and starts a new
   // movement; its system break is implied by the pb, so no <sb/> is written.
   m.pages[1].zones[0].mdiv = true;
   const mei = buildFacsimileMei(m, { withBreaks: true });
   assert.equal(SyntaxValidator.validate(mei), true);
-  // Nothing between page 2's <pb> and its measure — no redundant <sb>.
+  assert.equal((mei.match(/<mdiv /g) ?? []).length, 2);
+  assert.equal((mei.match(/<scoreDef\b/g) ?? []).length, 2);
+  // The second movement holds page 2's break and measure, with nothing
+  // between them.
   const second = mei.slice(mei.indexOf('<mdiv xml:id="mdiv-2"'));
+  assert.ok(second.includes('facs="#zone-2-1"'));
   const beforeMeasure = second.slice(0, second.indexOf('facs="#zone-2-1"'));
   assert.ok(/<pb[^>]*facs="#surface-2"/.test(beforeMeasure));
   assert.ok(!/<sb\b/.test(beforeMeasure));
@@ -242,28 +213,20 @@ test("a page break implies the system break: a pb measure emits <pb> only, and c
   assert.equal(z.pb, true);
   assert.equal(z.sb, false);
   assert.equal(z.mdiv, true);
+  assert.equal(parsed.pages[0].zones[0].mdiv, false);
   const rebuilt = buildFacsimileMei(
     { headXml: parsed.headXml, pages: parsed.pages },
     { withBreaks: true },
   );
   assert.equal(rebuilt, mei);
-});
 
-test("breaks carry @n: a page break its page number, a system break its order", () => {
-  const m = model();
-  // Page 1 measure 1 opens page 1, page 2 measure 1 opens page 2; page 1's
-  // second measure is the only explicit system break (sb #1).
-  const mei = buildFacsimileMei(m, { withBreaks: true });
-  assert.ok(/<pb xml:id="pb-1" n="1"/.test(mei));
-  assert.ok(/<pb xml:id="pb-2" n="2"/.test(mei));
-  assert.ok(/<sb xml:id="sb-1-2" n="1"/.test(mei));
-});
-
-test("movements: the first zone never opens a second <mdiv>", () => {
-  const m = model();
-  m.pages[0].zones[0].mdiv = true;
-  const mei = buildFacsimileMei(m, { withBreaks: true });
-  assert.equal((mei.match(/<mdiv /g) ?? []).length, 1);
+  const first = model();
+  first.pages[0].zones[0].mdiv = true;
+  assert.equal(
+    (buildFacsimileMei(first, { withBreaks: true }).match(/<mdiv /g) ?? [])
+      .length,
+    1,
+  );
 });
 
 test("escapes markup-significant characters in labels and targets", () => {
@@ -477,6 +440,7 @@ test("the score definition round-trips through both builders", () => {
     assert.equal(SyntaxValidator.validate(mei), true);
     assert.deepEqual(parseScoreDef(mei), THREE_STAVES);
   }
+  assert.deepEqual(parseFacsimileMei(facsimile).scoreDef, THREE_STAVES);
   // The label with markup-significant characters is escaped in the emission.
   assert.ok(facsimile.includes(">Violoncello &amp; Basso</label>"));
 });
@@ -515,20 +479,6 @@ test("a symbol signature emits meter.sym instead of the numeric meter", () => {
   assert.equal(common.meterSym, "common");
   assert.equal(common.meterCount, "4");
   assert.equal(common.meterUnit, "4");
-});
-
-test("parseScoreDef falls back to the first staffDef for the meter", () => {
-  // Older generated files carried the meter on the staffDef, not the scoreDef.
-  const legacy =
-    "<scoreDef><staffGrp>" +
-    '<staffDef n="1" lines="5" clef.shape="G" clef.line="2" meter.count="6" meter.unit="8"/>' +
-    "</staffGrp></scoreDef>";
-  const parsed = parseScoreDef(legacy);
-  assert.equal(parsed.meterCount, "6");
-  assert.equal(parsed.meterUnit, "8");
-  assert.deepEqual(parsed.staves, [
-    { clefShape: "G", clefLine: 2, ...PLAIN, label: "" },
-  ]);
 });
 
 test("parseScoreDef yields the default without a scoreDef or without staffDefs", () => {
@@ -622,14 +572,6 @@ test("percussion, tablature and octave-displaced staves round-trip", () => {
   assert.deepEqual(parseScoreDef(mei), mixed);
 });
 
-test("parseFacsimileMei carries the scoreDef alongside the header", () => {
-  const mei = buildFacsimileMei(
-    { ...model(), scoreDef: THREE_STAVES },
-    { withBreaks: true },
-  );
-  assert.deepEqual(parseFacsimileMei(mei).scoreDef, THREE_STAVES);
-});
-
 test("seed measures hold one resting staff per staffDef in both builders", () => {
   const facsimile = buildFacsimileMei(
     { ...model(), scoreDef: THREE_STAVES },
@@ -684,4 +626,14 @@ test("a system with fewer staff boxes than the definition has staves optimizes t
     replaceScoreDef(reduced, DEFAULT_SCORE_DEF),
     /<scoreDef[^>]* optimize="true"/,
   );
+});
+
+test("measuredSurfaceIds: only pages holding measure zones", () => {
+  const blank = { ...twoPages[0], measures: [] };
+  const m = {
+    ...initialFacsimileModel([blank, ...twoPages]),
+    headXml: HEAD,
+  };
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.deepEqual(measuredSurfaceIds(mei), ["surface-2", "surface-3"]);
 });

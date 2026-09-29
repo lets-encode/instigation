@@ -41,8 +41,8 @@ export interface DraftEntries {
   encodings: EncodingSource[];
   source: SourceMetadata;
   pieces: Piece[];
-  /** How facsimile pieces are prepared; absent in records stored before it existed. */
-  preparation?: Preparation;
+  /** How facsimile pieces are prepared. */
+  preparation: Preparation;
 }
 
 export interface WizardDraft {

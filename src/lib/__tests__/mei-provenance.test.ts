@@ -15,6 +15,18 @@ const CONTRIBUTION = {
   application: "mei-friend",
 };
 
+/** A header with a title statement and nothing else. */
+const BARE =
+  "<mei>\n" +
+  "   <meiHead>\n" +
+  "      <fileDesc>\n" +
+  "         <titleStmt>\n            <title>Bare</title>\n         </titleStmt>\n" +
+  "         <pubStmt>\n         </pubStmt>\n" +
+  "      </fileDesc>\n" +
+  "   </meiHead>\n" +
+  "   <music/>\n" +
+  "</mei>";
+
 /** A score carrying a freshly generated piece header. */
 function pieceScore(): string {
   const head = buildPieceHead(
@@ -73,17 +85,7 @@ test("a contributor already named in the title statement is not repeated", () =>
 });
 
 test("creates respStmt, encodingDesc and revisionDesc when the header lacks them", () => {
-  const bare =
-    "<mei>\n" +
-    "   <meiHead>\n" +
-    "      <fileDesc>\n" +
-    "         <titleStmt>\n            <title>Bare</title>\n         </titleStmt>\n" +
-    "         <pubStmt>\n         </pubStmt>\n" +
-    "      </fileDesc>\n" +
-    "   </meiHead>\n" +
-    "   <music/>\n" +
-    "</mei>";
-  const out = recordContribution(bare, CONTRIBUTION);
+  const out = recordContribution(BARE, CONTRIBUTION);
   assert.equal(SyntaxValidator.validate(out), true);
   assert.match(
     out,
@@ -134,10 +136,7 @@ test("a name carrying replacement-string patterns is inserted literally", () => 
 
 test("an application name carrying replacement-string patterns is inserted literally", () => {
   // A header without <encodingDesc> takes the replace-based insertion path.
-  const bare =
-    "<mei>\n   <meiHead>\n      <fileDesc>\n         <titleStmt>\n            <title>Bare</title>\n" +
-    "         </titleStmt>\n         <pubStmt>\n         </pubStmt>\n      </fileDesc>\n   </meiHead>\n   <music/>\n</mei>";
-  const out = recordContribution(bare, {
+  const out = recordContribution(BARE, {
     ...CONTRIBUTION,
     application: "ed$'tor",
   });

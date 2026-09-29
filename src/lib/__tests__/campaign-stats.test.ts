@@ -148,17 +148,16 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
   assert.equal(byGroup.awaiting.passes, 1);
   assert.deepEqual(byGroup.awaiting.dots, ["pass", "open"]);
   assert.equal(myTasksIn(stats, "").length, 0);
-});
-
-test("myTasksIn includes held validation claims with the reaper-derived expiry", () => {
+  // A held validation claim → validating, with the reaper-derived expiry.
   const reviewing = {
     ...stats,
     locks: parseLockCsv(
       LOCK_HEADER + "T0003,S0001,9,2026-08-01T10:00:00Z,validation\n",
     ),
   };
-  const mine = myTasksIn(reviewing, "9");
-  const validating = mine.find((t) => t.group === "validating");
+  const validating = myTasksIn(reviewing, "9").find(
+    (t) => t.group === "validating",
+  );
   assert.equal(validating?.task, "T0003");
   assert.equal(validating?.claimedAt, "2026-08-01T10:00:00Z");
   assert.equal(validating?.expiresAt, "2026-08-01T12:00:00.000Z");
@@ -201,21 +200,19 @@ test("nextTask: work the viewer already holds → continue, not a claim", () => 
   assert.equal(nextTask(reviewing, "9")?.kind, "review");
 });
 
-test("nextTask: tasks open only to others show without an action", () => {
-  // 9 already recorded verdicts on T0003 and T0004 and may not validate again.
-  const next = nextTask(stats, "9");
-  assert.equal(next?.task, "T0003");
-  assert.equal(next?.action, "");
+test("nextTask: tasks open only to others, or to a logged-out viewer, show without an action", () => {
+  // 9 already recorded verdicts on T0003 and T0004 and may not validate again;
+  // "" is logged out.
+  for (const viewer of ["9", ""]) {
+    const next = nextTask(stats, viewer);
+    const label = `viewer ${JSON.stringify(viewer)}`;
+    assert.equal(next?.task, "T0003", label);
+    assert.equal(next?.action, "", label);
+    assert.equal(next?.kind, "review", label);
+  }
   // With self-validation allowed, the slot opens up for 9 again.
   const selfOk = { ...stats, allowSelfValidation: true };
   assert.equal(nextTask(selfOk, "9")?.action, "review");
-});
-
-test("nextTask: logged out, the first task open to anyone, without an action", () => {
-  const next = nextTask(stats, "");
-  assert.equal(next?.task, "T0003");
-  assert.equal(next?.action, "");
-  assert.equal(next?.kind, "review");
 });
 
 test("nextTask: nothing open → null", () => {

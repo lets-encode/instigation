@@ -39,38 +39,6 @@ test("collects non-composer people with their roles, deduplicated", () => {
   });
 });
 
-test("a person named in several places appears once, with their most specific role", () => {
-  // As a real header has it: the composer relisted in the manifestation, a
-  // contributor in both the title statement and a revisionDesc change (where
-  // the persName carries no role).
-  const mei = `<mei><meiHead>
-		<fileDesc>
-			<titleStmt>
-				<title>Trio</title>
-				<respStmt>
-					<persName role="composer">A. Composer</persName>
-					<persName role="contributor">octocat</persName>
-				</respStmt>
-			</titleStmt>
-		</fileDesc>
-		<manifestationList>
-			<manifestation>
-				<titleStmt>
-					<respStmt><persName role="composer">A. Composer</persName></respStmt>
-				</titleStmt>
-			</manifestation>
-		</manifestationList>
-		<revisionDesc>
-			<change n="2"><respStmt><persName>octocat</persName></respStmt></change>
-		</revisionDesc>
-	</meiHead></mei>`;
-  assert.deepEqual(parseMeiHeader(mei), {
-    title: "Trio",
-    composer: "A. Composer",
-    contributors: [{ name: "octocat", role: "contributor" }],
-  });
-});
-
 test("an accepted contribution shows each person once", () => {
   // The real pipeline: a piece header written at campaign creation, then two
   // contributions accepted by the coordinator.

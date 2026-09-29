@@ -137,13 +137,19 @@ class RegistryTest(unittest.TestCase):
 
     # ---------------------------------------------------------------- claims
 
-    def test_claim_then_register_with_token(self):
+    def test_claim_then_register_needs_the_claims_own_token(self):
         r = self.claim("held-name")
         self.assertEqual(r.status_code, 201)
         body = r.get_json()
         self.assertEqual(body["status"], "pending")
         self.assertTrue(body["claim_token"])
 
+        self.assertEqual(
+            self.register(
+                "held-name", repo_id=77, claim_token="not-it"
+            ).status_code,
+            409,
+        )
         r = self.register(
             "held-name", repo_id=77, claim_token=body["claim_token"]
         )
@@ -166,21 +172,6 @@ class RegistryTest(unittest.TestCase):
         # Nobody else can claim or register it while the claim stands.
         self.assertEqual(self.claim("mid-setup").status_code, 409)
         self.assertEqual(self.register("mid-setup", repo_id=2).status_code, 409)
-
-    def test_register_needs_the_claims_own_token(self):
-        token = self.claim("someones-name").get_json()["claim_token"]
-        self.assertEqual(
-            self.register(
-                "someones-name", repo_id=5, claim_token="not-it"
-            ).status_code,
-            409,
-        )
-        self.assertEqual(
-            self.register(
-                "someones-name", repo_id=5, claim_token=token
-            ).status_code,
-            201,
-        )
 
     def test_release_frees_a_claimed_name(self):
         token = self.claim("second-thoughts").get_json()["claim_token"]
@@ -232,12 +223,6 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(self.claim("Bad--Name").status_code, 422)
         self.assertEqual(self.claim("admin").status_code, 422)
 
-    def test_register_without_a_claim_still_works_on_a_free_name(self):
-        # The registry does not require a name to have been claimed first.
-        self.assertEqual(
-            self.register("unclaimed-name", repo_id=64).status_code, 201
-        )
-
     # ----------------------------------------------------------- session gate
 
     def test_claim_register_and_release_require_the_session(self):
@@ -266,16 +251,6 @@ class RegistryTest(unittest.TestCase):
                 "repo_id": None,
             },
         )
-        self.register("live-one", repo_id=555)
-        self.assertEqual(
-            self.lookup("live-one").get_json(),
-            {
-                "name": "live-one",
-                "status": "active",
-                "forge": "github",
-                "repo_id": 555,
-            },
-        )
         self.assertEqual(self.lookup("admin").get_json()["status"], "reserved")
         self.assertEqual(self.lookup("Bad--Name").status_code, 400)
 
@@ -290,47 +265,57 @@ class RegistryTest(unittest.TestCase):
         headers = self.github_get.call_args.kwargs["headers"]
         self.assertEqual(headers["Authorization"], "token server-side-token")
 
-    def test_register_without_push_permission_is_403(self):
-        self.github_get.return_value = github_repo_response(push=False)
-        r = self.register("not-mine", repo_id=666)
-        self.assertEqual(r.status_code, 403)
-        self.assertIn("push permission", r.get_json()["error"])
-        self.assertEqual(self.lookup("not-mine").get_json()["status"], "free")
-
-    def test_register_unknown_repo_is_404(self):
-        self.github_get.return_value = github_repo_response(status=404)
-        r = self.register("ghost-repo", repo_id=777)
-        self.assertEqual(r.status_code, 404)
-        self.assertEqual(self.lookup("ghost-repo").get_json()["status"], "free")
-
-    def test_register_non_github_forge_is_404(self):
-        r = self.register("elsewhere", repo_id=7, forge="gitlab")
-        self.assertEqual(r.status_code, 404)
-        self.github_get.assert_not_called()
+    def test_register_refuses_repos_the_caller_cannot_push_to(self):
+        for label, github, forge, status, error in (
+            (
+                "no push permission",
+                github_repo_response(push=False),
+                "github",
+                403,
+                "push permission",
+            ),
+            (
+                "unknown repo",
+                github_repo_response(status=404),
+                "github",
+                404,
+                None,
+            ),
+            ("non-github forge", github_repo_response(), "gitlab", 404, None),
+        ):
+            with self.subTest(label=label):
+                self.github_get.reset_mock()
+                self.github_get.return_value = github
+                r = self.register("not-mine", repo_id=666, forge=forge)
+                self.assertEqual(r.status_code, status)
+                if error:
+                    self.assertIn(error, r.get_json()["error"])
+                self.assertEqual(
+                    self.lookup("not-mine").get_json()["status"], "free"
+                )
+                if forge != "github":
+                    self.github_get.assert_not_called()
 
     # ----------------------------------------------------- validation at HTTP
 
-    def test_register_rejects_invalid_names(self):
-        for name in ("ab", "Nope", "-abc", "abc-", "ab--cd", "my_name"):
-            with self.subTest(name=name):
-                r = self.register(name)
-                self.assertEqual(r.status_code, 422)
-                self.assertIn("3-40 characters", r.get_json()["error"])
-
-    def test_register_refuses_reserved_paths(self):
-        for name in (
-            "api",
-            "admin",
-            "static",
-            "assets",
-            "auth",
-            "registry",
-            "campaign",
+    def test_register_rejects_invalid_and_reserved_names(self):
+        # test_app_origin_top_level_paths_are_unregistrable covers the names
+        # the app origin serves; these are reserved names it does not list.
+        for name, error in (
+            ("ab", "3-40 characters"),
+            ("Nope", "3-40 characters"),
+            ("-abc", "3-40 characters"),
+            ("abc-", "3-40 characters"),
+            ("ab--cd", "3-40 characters"),
+            ("my_name", "3-40 characters"),
+            ("api", "reserved"),
+            ("static", "reserved"),
+            ("campaign", "reserved"),
         ):
             with self.subTest(name=name):
                 r = self.register(name)
                 self.assertEqual(r.status_code, 422)
-                self.assertIn("reserved", r.get_json()["error"])
+                self.assertIn(error, r.get_json()["error"])
 
     def test_register_requires_an_integer_repo_id(self):
         r = self.client.post(
@@ -360,6 +345,11 @@ class RegistryTest(unittest.TestCase):
     # ------------------------------------------------------------- tombstones
 
     def test_tombstone_prevents_reregistration(self):
+        r = self.client.delete(
+            "/registry/admin/slugs/never-existed", headers=AUTH
+        )
+        self.assertEqual(r.status_code, 404)
+
         self.register("doomed-name")
         r = self.client.delete(
             "/registry/admin/slugs/doomed-name",
@@ -374,12 +364,6 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(
             self.register("doomed-name", repo_id=999).status_code, 409
         )
-
-    def test_tombstone_unknown_name_404(self):
-        r = self.client.delete(
-            "/registry/admin/slugs/never-existed", headers=AUTH
-        )
-        self.assertEqual(r.status_code, 404)
 
     # ------------------------------------------------------------------ admin
 
@@ -399,27 +383,16 @@ class RegistryTest(unittest.TestCase):
             200,
         )
 
-    def test_admin_disabled_without_token(self):
-        del os.environ["ADMIN_TOKEN"]
-        try:
-            r = self.client.get("/registry/admin/slugs", headers=AUTH)
-            self.assertEqual(r.status_code, 503)
-        finally:
-            os.environ["ADMIN_TOKEN"] = ADMIN_TOKEN
-
-    def test_admin_disabled_without_the_enable_flag(self):
+    def test_admin_disabled_without_token_or_enable_flag(self):
         # ADMIN_TOKEN alone (e.g. set for CLI use) must not expose the routes.
-        del os.environ["ADMIN_ROUTES_ENABLED"]
-        try:
-            r = self.client.get("/registry/admin/slugs", headers=AUTH)
-            self.assertEqual(r.status_code, 503)
-        finally:
-            os.environ["ADMIN_ROUTES_ENABLED"] = "1"
-        # With both set, the valid token works again.
-        self.assertEqual(
-            self.client.get("/registry/admin/slugs", headers=AUTH).status_code,
-            200,
-        )
+        for var in ("ADMIN_TOKEN", "ADMIN_ROUTES_ENABLED"):
+            with self.subTest(label=var):
+                value = os.environ.pop(var)
+                try:
+                    r = self.client.get("/registry/admin/slugs", headers=AUTH)
+                    self.assertEqual(r.status_code, 503)
+                finally:
+                    os.environ[var] = value
 
     def test_admin_list(self):
         self.register("one-name", repo_id=321)
