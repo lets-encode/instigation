@@ -29,8 +29,6 @@ export interface PageStaves {
   systems: MeasureBox[][];
   /** Staff boxes on no system. */
   unplaced: number;
-  /** The key of each box (`staff-zone-P-K`, see OmrStaffEntry.zone). */
-  zones: string[][];
   /** The record's entry for each box; null where the record does not describe the box. */
   entries: (OmrStaffEntry | null)[][];
   /** The score staff (1-based) each box shows; 0 for none. */
@@ -80,6 +78,7 @@ export function pieceStaves(
     const staves = pg.staves ?? [];
     const recorded = record.pages.find((r) => r.n === page)?.staves ?? [];
     const { systems, unplaced } = pageSystems(pg);
+    // Each box's key (`staff-zone-P-K`, see OmrStaffEntry.zone).
     const zones = systems.map((system) =>
       system.map((box) => `staff-zone-${page}-${staves.indexOf(box) + 1}`),
     );
@@ -139,7 +138,6 @@ export function pieceStaves(
       page,
       systems,
       unplaced,
-      zones,
       entries,
       assigned,
       transcriptions,
