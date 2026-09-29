@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- OMR pieces keep their corrected layout boxes in layout-corrected.json, and score.mei holds only padded measure zones.
 - Duplicate tests and code fallbacks nothing produces are removed.
 - Repeated test cases are condensed into tables and shared fixtures.
 - The unbuilt staff-placement correction is removed from the OMR record.

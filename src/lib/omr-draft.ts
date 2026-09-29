@@ -6,9 +6,9 @@
 // (slurs, dynamics, ties) that reference them. The skeleton's own measure
 // tags (xml:id, @n, @facs), its page and system breaks and everything outside
 // the page stay as they are. Each system's staves are written as `printed`
-// gives them: a printed staff takes the converted staff of its number and
-// links its staff zone (@facs); a staff the system leaves out rests, keeping
-// any clef change verovio placed on it. Key and meter changes verovio writes
+// gives them: a printed staff takes the converted staff of its number; a
+// staff the system leaves out rests, keeping any clef change verovio placed
+// on it. Key and meter changes verovio writes
 // as a `<scoreDef>` before a measure go before the skeleton measure it fills.
 // What the page's first system changes against the page start (`opening`,
 // from the stitching) is written by the insertion itself: a clef as the first
@@ -115,15 +115,14 @@ function clefsOutOfTremolos(content: string): string {
 
 /**
  * A measure's staves 1…staffCount from converted content: a staff in
- * `printed` (staff n → staff zone id) takes the converted staff's content and
- * links its zone, with `leadingClefs` (staff n → MEI clef) put first in its
- * layer; the others rest, followed by the clefs their converted content
- * holds. The converted control events follow.
+ * `printed` (staff numbers) takes the converted staff's content, with
+ * `leadingClefs` (staff n → MEI clef) put first in its layer; the others
+ * rest, followed by the clefs their converted content holds. The converted control events follow.
  */
 function measureStaves(
   content: string,
   staffCount: number,
-  printed: Map<number, string>,
+  printed: Set<number>,
   leadingClefs: Map<number, string> = new Map(),
 ): string {
   const convertedStaves = content.match(STAFF) ?? [];
@@ -135,9 +134,8 @@ function measureStaves(
   );
   const staves = Array.from({ length: staffCount }, (_, i) => {
     const n = i + 1;
-    const zone = printed.get(n);
     const converted = byN.get(n);
-    if (!zone) {
+    if (!printed.has(n)) {
       const clefs = converted?.match(/<clef\b[^>]*\/>/g)?.join("") ?? "";
       return `<staff n="${n}"><layer n="1"><mRest/>${clefs}</layer></staff>`;
     }
@@ -148,7 +146,7 @@ function measureStaves(
             converted.replace(/^<staff\b[^>]*>/, "").replace(/<\/staff>$/, ""),
           );
     const clef = leadingClefs.get(n);
-    return `<staff n="${n}" facs="#${zone}">${clef ? withLeadingClef(inner, clef) : inner}</staff>`;
+    return `<staff n="${n}">${clef ? withLeadingClef(inner, clef) : inner}</staff>`;
   });
   const controlEvents = convertedStaves
     .reduce((rest, staff) => rest.replace(staff, ""), content)
@@ -168,7 +166,7 @@ function withContent(measure: string, content: string): string {
  * opened by a `<pb>` or `<sb>`; the converted document's systems are given by
  * `measuresPerSystem` (what the stitching produced), one entry per skeleton
  * system, and a different system count is refused. `printed` gives, per
- * system, the staves it prints (staff n → staff zone id). `opening` is what
+ * system, the staff numbers it prints. `opening` is what
  * the page's first system changes against the page start. Converted staves
  * beyond the score definition's staff count are dropped with a warning,
  * since a staff without a staffDef is invalid.
@@ -178,7 +176,7 @@ export function insertPageDraft(
   locator: string,
   converted: string,
   measuresPerSystem: number[],
-  printed: Map<number, string>[],
+  printed: Set<number>[],
   opening: PageOpening = { clefs: [], fifths: null, time: null },
 ): DraftInsertion {
   const warnings: string[] = [];
@@ -255,7 +253,7 @@ export function insertPageDraft(
       const staves = measureStaves(
         content,
         staffCount,
-        printed[s] ?? new Map(),
+        printed[s] ?? new Set(),
         first ? leadingClefs : undefined,
       );
       const before = (first ? startScoreDef : "") + measure.before;

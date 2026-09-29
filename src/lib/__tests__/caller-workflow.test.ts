@@ -124,11 +124,11 @@ test("pull request runs are gated on the event payload before a runner is assign
   const job = /^  run:\n((?:[ ]{4}.*\n)+?)[ ]{4}steps:/m.exec(workflow);
   assert.ok(job, "no run job");
   const guard = job![1].split("\n").find((l) => /^[ ]{4}if:/.test(l)) ?? "";
-  assert.match(guard, /pull_request\.changed_files <= 2/);
+  assert.match(guard, /pull_request\.changed_files <= 3/);
   assert.match(guard, /pull_request\.draft == false/);
   assert.match(guard, /pull_request\.user\.type == 'User'/);
   // The console names the same requirements when a run was skipped.
-  assert.match(RUN_REQUIREMENTS, /two files/);
+  assert.match(RUN_REQUIREMENTS, /three files/);
   assert.match(RUN_REQUIREMENTS, /draft/);
   assert.match(RUN_REQUIREMENTS, /user account/);
 });

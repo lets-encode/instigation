@@ -69,15 +69,14 @@ export interface PageModel {
   height: number;
   zones: ZoneModel[];
   /**
-   * Staff boxes, written as `<zone type="staff">` and referenced by nothing
-   * in the body. Present on pieces prepared by OMR, whose layout task
-   * corrects them and whose transcription crops them.
+   * Staff boxes of a piece prepared by OMR, whose layout task corrects them
+   * and whose transcription crops them. Not written to the score: they are
+   * kept in `layout-corrected.json` (see omr-layout.ts).
    */
   staves?: MeasureBox[];
   /**
-   * Grand-staff boxes (the staves a brace joins), written as `<zone
-   * type="grandstaff">` and referenced by nothing in the body. Present on
-   * pieces prepared by OMR, whose layout task corrects them.
+   * Grand-staff boxes (the staves a brace joins) of a piece prepared by OMR,
+   * whose layout task corrects them. Kept like `staves`.
    */
   grandstaves?: MeasureBox[];
 }
@@ -338,17 +337,43 @@ function seedStaves(staffCount: number, empty = false): string {
 }
 
 /**
+ * The margin written around each measure zone of a piece prepared by OMR, as
+ * a fraction of the page's shorter side. The corrected boxes themselves stay
+ * tight in `layout-corrected.json`.
+ */
+export const MEASURE_ZONE_MARGIN = 0.015;
+
+/** The box grown by `margin` pixels on every side, clamped to the page. */
+function grownBox(
+  box: MeasureBox,
+  margin: number,
+  page: { width: number; height: number },
+): MeasureBox {
+  return {
+    ulx: Math.max(0, box.ulx - margin),
+    uly: Math.max(0, box.uly - margin),
+    lrx: Math.min(page.width, box.lrx + margin),
+    lry: Math.min(page.height, box.lry + margin),
+  };
+}
+
+/**
  * Emit the model as MEI. Stage A (`{}`) contains facsimile zones only; stage C
  * (`{ withBreaks: true }`) adds measures, page/system breaks and movements.
  * `emptyMeasures` gives each measure its staves with empty layers instead of
  * rests: the piece's notation arrives later, from transcription, and nothing
- * is seeded in its place.
+ * is seeded in its place. `padZones` writes each measure zone grown by
+ * MEASURE_ZONE_MARGIN; the model's boxes are the tight ones.
  * Every element carries a deterministic xml:id (surface-1, zone-1-2,
  * measure-3, staff-4, …) so rebuilds are stable and diffable.
  */
 export function buildFacsimileMei(
   model: FacsimileModel,
-  opts: { withBreaks?: boolean; emptyMeasures?: boolean } = {},
+  opts: {
+    withBreaks?: boolean;
+    emptyMeasures?: boolean;
+    padZones?: boolean;
+  } = {},
 ): string {
   const withBreaks = Boolean(opts.withBreaks);
   const withMeasures = withBreaks;
@@ -377,11 +402,14 @@ export function buildFacsimileMei(
     const p = pi + 1;
     const surfaceId = `surface-${p}`;
     const zones: string[] = [];
+    const margin = opts.padZones
+      ? Math.round(Math.min(page.width, page.height) * MEASURE_ZONE_MARGIN)
+      : 0;
 
     page.zones.forEach((zone, zi) => {
       measureNo++;
       const zoneId = `zone-${p}-${zi + 1}`;
-      const m = zone.box;
+      const m = margin ? grownBox(zone.box, margin, page) : zone.box;
       zones.push(
         `            <zone xml:id="${zoneId}" type="measure" n="${xmlEscape(zone.label)}" ` +
           `ulx="${Math.round(m.ulx)}" uly="${Math.round(m.uly)}" ` +
@@ -418,20 +446,6 @@ export function buildFacsimileMei(
         `               <pb xml:id="pb-${p}" n="${p}" facs="#${surfaceId}"/>`,
       );
     }
-    (page.staves ?? []).forEach((box, si) => {
-      zones.push(
-        `            <zone xml:id="staff-zone-${p}-${si + 1}" type="staff" ` +
-          `ulx="${Math.round(box.ulx)}" uly="${Math.round(box.uly)}" ` +
-          `lrx="${Math.round(box.lrx)}" lry="${Math.round(box.lry)}"/>`,
-      );
-    });
-    (page.grandstaves ?? []).forEach((box, gi) => {
-      zones.push(
-        `            <zone xml:id="grandstaff-zone-${p}-${gi + 1}" type="grandstaff" ` +
-          `ulx="${Math.round(box.ulx)}" uly="${Math.round(box.uly)}" ` +
-          `lrx="${Math.round(box.lrx)}" lry="${Math.round(box.lry)}"/>`,
-      );
-    });
 
     surfaces.push(
       `         <surface xml:id="${surfaceId}" n="${p}" ulx="0" uly="0" ` +
@@ -713,25 +727,15 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
     if (!graphic) continue;
     const zones: ZoneModel[] = [];
     const boxesOnly: MeasureBox[] = [];
-    const staves: MeasureBox[] = [];
-    const grandstaves: MeasureBox[] = [];
     for (const zoneMatch of body.matchAll(/<zone\b[^>]*>/g)) {
       const tag = zoneMatch[0];
+      if (attr(tag, "type") !== "measure") continue;
       const box = {
         ulx: Number(attr(tag, "ulx") ?? 0),
         uly: Number(attr(tag, "uly") ?? 0),
         lrx: Number(attr(tag, "lrx") ?? 0),
         lry: Number(attr(tag, "lry") ?? 0),
       };
-      if (attr(tag, "type") === "staff") {
-        staves.push(box);
-        continue;
-      }
-      if (attr(tag, "type") === "grandstaff") {
-        grandstaves.push(box);
-        continue;
-      }
-      if (attr(tag, "type") !== "measure") continue;
       label = attr(tag, "n") ?? nextLabel(label);
       const id = attr(tag, "xml:id") ?? "";
       zones.push({
@@ -760,8 +764,6 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
       width: Number(attr(graphic, "width") ?? 0),
       height: Number(attr(graphic, "height") ?? 0),
       zones,
-      ...(staves.length ? { staves } : {}),
-      ...(grandstaves.length ? { grandstaves } : {}),
     });
   }
 

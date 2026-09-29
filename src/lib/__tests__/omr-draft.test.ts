@@ -77,17 +77,11 @@ function converted(measures: number, staves = 2): string {
   );
 }
 
-/** Per system, every staff 1…staffCount printed, on zones named `z<system>-<n>`. */
+/** Per system, every staff 1…staffCount printed. */
 const allPrinted = (systems: number, staffCount = 2) =>
   Array.from(
     { length: systems },
-    (_, s) =>
-      new Map(
-        Array.from({ length: staffCount }, (_, i) => [
-          i + 1,
-          `z${s + 1}-${i + 1}`,
-        ]),
-      ),
+    () => new Set(Array.from({ length: staffCount }, (_, i) => i + 1)),
   );
 
 test("each skeleton measure of the page takes the converted measure of the same system and position", () => {
@@ -103,9 +97,11 @@ test("each skeleton measure of the page takes the converted measure of the same 
   // Skeleton tags stay; the content is the converted one, control events included.
   assert.match(
     result.mei,
-    /<measure xml:id="measure-1" n="1" facs="#zone-1-1">\s*<staff n="1" facs="#z1-1"><layer n="1"><note xml:id="n1-1"/,
+    /<measure xml:id="measure-1" n="1" facs="#zone-1-1">\s*<staff n="1"><layer n="1"><note xml:id="n1-1"/,
   );
   assert.equal((result.mei.match(/<slur /g) ?? []).length, 4);
+  // Staves link no zone: the score holds measure zones only.
+  assert.doesNotMatch(result.mei, /<staff\b[^>]*\bfacs=/);
   // Page 2 is untouched: its measure keeps its empty layers.
   assert.match(
     result.mei,
@@ -137,7 +133,7 @@ test("mismatched systems are filled as far as they go and reported", () => {
   );
   assert.match(
     result.mei,
-    /<measure xml:id="measure-4" n="4" facs="#zone-1-4">\s*<staff n="1" facs="#z2-1"><layer n="1"><note xml:id="n3-1"/,
+    /<measure xml:id="measure-4" n="4" facs="#zone-1-4">\s*<staff n="1"><layer n="1"><note xml:id="n3-1"/,
   );
 });
 
@@ -183,15 +179,9 @@ test("staves beyond the score definition are dropped", () => {
   assert.equal((result.mei.match(/<staff n="2"/g) ?? []).length, 0);
 });
 
-test("a staff the system does not print rests; a printed staff links its zone", () => {
+test("a staff the system does not print rests; a printed staff takes the converted staff", () => {
   // System 2 prints staff 2 only.
-  const printed = [
-    new Map([
-      [1, "a"],
-      [2, "b"],
-    ]),
-    new Map([[2, "c"]]),
-  ];
+  const printed = [new Set([1, 2]), new Set([2])];
   const result = insertPageDraft(
     skeleton([1, 1]),
     "surface-1",
@@ -203,18 +193,12 @@ test("a staff the system does not print rests; a printed staff links its zone", 
     new RegExp(`<measure[^>]* n="${n}"[^>]*>([\\s\\S]*?)</measure>`).exec(
       result.mei,
     )![1];
-  assert.match(
-    measure(1),
-    /<staff n="1" facs="#a"><layer n="1"><note xml:id="n1-1"/,
-  );
+  assert.match(measure(1), /<staff n="1"><layer n="1"><note xml:id="n1-1"/);
   assert.match(
     measure(2),
     /<staff n="1"><layer n="1"><mRest\/><\/layer><\/staff>/,
   );
-  assert.match(
-    measure(2),
-    /<staff n="2" facs="#c"><layer n="1"><note xml:id="n2-2"/,
-  );
+  assert.match(measure(2), /<staff n="2"><layer n="1"><note xml:id="n2-2"/);
   // Control events follow the staves.
   assert.match(measure(2), /<\/staff>\n<slur /);
 });
@@ -229,14 +213,8 @@ test("a self-closing converted staff does not swallow the staff after it", () =>
     [1],
     allPrinted(1),
   );
-  assert.match(
-    result.mei,
-    /<staff n="1" facs="#z1-1"><layer n="1"\/><\/staff>/,
-  );
-  assert.match(
-    result.mei,
-    /<staff n="2" facs="#z1-2"><layer n="1"><note xml:id="x2"/,
-  );
+  assert.match(result.mei, /<staff n="1"><layer n="1"\/><\/staff>/);
+  assert.match(result.mei, /<staff n="2"><layer n="1"><note xml:id="x2"/);
 });
 
 test("a clef verovio put inside a tremolo follows the tremolo", () => {
@@ -275,7 +253,7 @@ test("the page opening puts its clefs first in the page's first layers and its k
   );
   assert.match(
     result.mei,
-    /<staff n="2" facs="#z1-2"><layer n="1"><clef shape="G" line="2" dis="8" dis.place="below"\/><note xml:id="n1-2"/,
+    /<staff n="2"><layer n="1"><clef shape="G" line="2" dis="8" dis.place="below"\/><note xml:id="n1-2"/,
   );
   assert.equal((result.mei.match(/<clef /g) ?? []).length, 1);
   assert.equal((result.mei.match(/<scoreDef>/g) ?? []).length, 1);
@@ -311,7 +289,7 @@ test("a staff the system does not print keeps the clef change verovio placed on 
     "surface-1",
     converted,
     [1],
-    [new Map([[1, "a"]])],
+    [new Set([1])],
   );
   assert.match(
     result.mei,

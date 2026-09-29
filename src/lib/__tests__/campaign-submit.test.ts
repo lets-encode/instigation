@@ -159,6 +159,21 @@ test("encoding: side files are accepted only for the locator that owns them", ()
   // [locator, changed paths, expected reason or undefined for accepted]
   const cases: [string, string[], string | undefined][] = [
     ["omr-layout", ["sources/score.mei", "sources/layout.json"], undefined],
+    [
+      "omr-layout",
+      [
+        "sources/score.mei",
+        "sources/layout-corrected.json",
+        "sources/layout.json",
+      ],
+      undefined,
+    ],
+    ["omr-layout", ["sources/layout-corrected.json"], undefined],
+    [
+      "measure-zones",
+      ["sources/score.mei", "sources/layout-corrected.json"],
+      "out_of_bounds",
+    ],
     ["", ["sources/score.mei", "sources/layout.json"], "out_of_bounds"],
     ["score-setup", ["sources/score.mei", "sources/omr.xml"], undefined],
     ["score-setup", ["sources/omr.xml"], undefined],

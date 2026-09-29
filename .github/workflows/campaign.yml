@@ -28,13 +28,13 @@ jobs:
       group: ${{ github.event_name == 'pull_request_target' && format('campaign-{0}-pr-{1}', github.repository, github.event.pull_request.number) || format('campaign-{0}-maintenance', github.repository) }}
       cancel-in-progress: false
     # Decided from the event alone, before a runner is assigned: a pull request
-    # the console or mei-friend opens changes at most one file (two for a
-    # validation fail, which carries its comment), is not a draft, and comes
-    # from a user account. Any other pull request gets a skipped job, which the
-    # console reports with these requirements; the coordinator's scheduled
-    # catch-up pass processes oversize ones (closing them with a rejection) and
-    # leaves drafts and non-user pull requests alone.
-    if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 2 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
+    # the console opens changes at most three files (a layout correction's
+    # score and its two layout files), is not a draft, and comes from a user
+    # account. Any other pull request gets a skipped job, which the console
+    # reports with these requirements; the coordinator's scheduled catch-up
+    # pass processes oversize ones (closing them with a rejection) and leaves
+    # drafts and non-user pull requests alone.
+    if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 3 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
     runs-on: ubuntu-24.04
     steps:
       # The central pointer comes from config.yaml on the base ref — a fork PR

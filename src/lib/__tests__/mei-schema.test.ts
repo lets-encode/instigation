@@ -281,7 +281,7 @@ test("an optimized score with a resting, unprinted staff validates", async () =>
   assert.match(mei, /<scoreDef[^>]* optimize="true"/);
   const drafted = mei.replace(
     /(<measure[^>]* n="500"[^>]*>)[\s\S]*?(<\/measure>)/,
-    '$1<staff n="1"><layer n="1"><mRest/></layer></staff><staff n="2" facs="#staff-zone-1-3"><layer n="1"><mRest/></layer></staff>$2',
+    '$1<staff n="1"><layer n="1"><mRest/></layer></staff><staff n="2"><layer n="1"><mRest/></layer></staff>$2',
   );
   assert.notEqual(drafted, mei);
   const check = await validateMei(drafted);

@@ -1,7 +1,8 @@
 // The recognition record of an OMR-prepared piece, committed as `omr.xml`
 // next to the score by the score setup: what the staff pipeline and the OCR
-// produced for every staff box, keyed to the score's staff zones, and the
-// corrections volunteers made to what is computed from it (opening clefs).
+// produced for every staff box, keyed to the staff boxes of
+// `layout-corrected.json`, and the corrections volunteers made to what is
+// computed from it (opening clefs).
 // Everything derivable (systems, clef/key/meter timelines,
 // the stitched page, the converted MEI) is recomputed from it. Each staff's
 // MusicXML is embedded as an element, its XML declaration and DOCTYPE
@@ -13,7 +14,7 @@ import type { OmrPipeline } from "./omr-client.ts";
 export const OMR_RECORD_SCHEMA = 1;
 
 export interface OmrStaffEntry {
-  /** The score's staff zone id (`staff-zone-P-K`). */
+  /** The staff box's key: `staff-zone-P-K` for page P's K-th staff box in `layout-corrected.json`. */
   zone: string;
   /** The staff box the crop was cut from. */
   box: MeasureBox;
@@ -195,7 +196,7 @@ export const sameBox = (a: MeasureBox, b: MeasureBox): boolean =>
   a.ulx === b.ulx && a.uly === b.uly && a.lrx === b.lrx && a.lry === b.lry;
 
 /**
- * The record's entry for a staff zone, while it still describes that box and
+ * The record's entry for a staff box key, while it still describes that box and
  * was made by `pipeline` with `cropMargin`; null otherwise, so the staff is
  * transcribed again.
  */

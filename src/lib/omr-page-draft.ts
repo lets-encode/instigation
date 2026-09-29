@@ -22,6 +22,7 @@ import {
 } from "./omr-timeline.ts";
 import { insertPageDraft } from "./omr-draft.ts";
 import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
+import { correctedLayoutPath, withCorrectedLayout } from "./omr-layout.ts";
 import { recordApplications } from "./mei-provenance.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { checkMei } from "./mei-check.ts";
@@ -62,12 +63,14 @@ export const applicationNames = (models: OmrModels): string[] =>
 
 export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   const { forge, owner, repo, fragment, page } = o;
-  const [score, recordXml] = await Promise.all([
+  const [score, recordXml, corrected] = await Promise.all([
     forge.getRepoFile(owner, repo, fragment, o.headSha),
     forge.getRepoFile(owner, repo, omrRecordPath(fragment), o.headSha),
+    forge.getRepoFile(owner, repo, correctedLayoutPath(fragment), o.headSha),
   ]);
   if (score == null) throw new Error(`Could not read ${fragment}.`);
   const parsed = parseFacsimileMei(score);
+  parsed.pages = withCorrectedLayout(parsed.pages, corrected);
   const pg = parsed.pages[page - 1];
   if (!pg) throw new Error(`${fragment} has no page ${page}.`);
   if (!pg.staves?.length) {
@@ -96,14 +99,9 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   const failed = staves.entries.flat().filter((e) => e && !e.musicxml).length;
 
   o.progress("Assembling the page");
-  const printed = staves.systems.map((system, s) => {
-    const map = new Map<number, string>();
-    system.forEach((_, i) => {
-      if (staves.assigned[s][i] > 0)
-        map.set(staves.assigned[s][i], staves.zones[s][i]);
-    });
-    return map;
-  });
+  const printed = staves.systems.map(
+    (_, s) => new Set(staves.assigned[s].filter((n) => n > 0)),
+  );
   const left = staves.assigned.flat().filter((n) => n === 0).length;
   const start = pageStart(parsed, pieces, page);
   const stitched = stitchPage(

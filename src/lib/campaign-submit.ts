@@ -12,7 +12,7 @@
 // produce the authoritative table changes.
 
 import { boundaryCheck } from "./campaign-claim.ts";
-import { layoutRecordPath } from "./omr-layout.ts";
+import { correctedLayoutPath, layoutRecordPath } from "./omr-layout.ts";
 import { omrRecordPath } from "./omr-record.ts";
 import {
   findRow,
@@ -122,15 +122,20 @@ export function resetTaskRows(
 }
 
 /**
- * The files a pre-task's submission may commit beside its score: the layout
- * model's raw output (`layout.json`) for a layout correction, the recognition
- * record (`omr.xml`) for a score setup.
+ * The files a pre-task's submission may commit beside its score: the
+ * corrected boxes (`layout-corrected.json`) and the layout model's raw output
+ * (`layout.json`) for a layout correction, the recognition record (`omr.xml`)
+ * for a score setup.
  */
 export function sideFilesOf(task: {
   locator: string;
   fragment: string;
 }): string[] {
-  if (task.locator === "omr-layout") return [layoutRecordPath(task.fragment)];
+  if (task.locator === "omr-layout")
+    return [
+      correctedLayoutPath(task.fragment),
+      layoutRecordPath(task.fragment),
+    ];
   if (task.locator === "score-setup") return [omrRecordPath(task.fragment)];
   return [];
 }

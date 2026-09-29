@@ -1,8 +1,9 @@
 // The Musibot layout model's output (a COCO document, `layout.json`) turned
 // into the boxes the zone editor works with: `systemMeasure` boxes become the
-// measure zones, `staff` boxes the staff zones. Pure functions, no DOM.
+// measure boxes, `staff` and `grandstaff` boxes the staff and grand-staff
+// boxes. Pure functions, no DOM.
 
-import type { MeasureBox, ZoneModel } from "./mei-facsimile.ts";
+import type { MeasureBox, PageModel, ZoneModel } from "./mei-facsimile.ts";
 import type { OmrPipeline } from "./omr-client.ts";
 
 /** The parts of a COCO layout document that are read. */
@@ -17,7 +18,7 @@ export interface CocoLayout {
 
 /**
  * The layout model's raw output for a piece, committed as `layout.json` next
- * to the score. The corrected boxes are the zones in the score; this file
+ * to the score. The corrected boxes are in `layout-corrected.json`; this file
  * keeps what the model returned, per page, so it can be read again without
  * another model run.
  */
@@ -31,7 +32,7 @@ export interface LayoutRecord {
 }
 
 export const LAYOUT_RECORD_NOTE =
-  "Raw output of the layout model, not corrected. The corrected staff and measure boxes are the zones in score.mei.";
+  "Raw output of the layout model, not corrected. The corrected boxes are in layout-corrected.json.";
 
 /** The layout record's path for a score: `layout.json` in the score's directory. */
 export const layoutRecordPath = (fragment: string): string =>
@@ -43,6 +44,91 @@ export function layoutRecord(
   pages: { image: string; layout: CocoLayout }[],
 ): LayoutRecord {
   return { model, corrected: false, note: LAYOUT_RECORD_NOTE, pages };
+}
+
+/**
+ * The corrected boxes of a piece prepared by OMR, committed as
+ * `layout-corrected.json` next to the score by the layout correction. The
+ * measure boxes are the score's measure zones in order, without the margin
+ * the score writes around them; the staff and grand-staff boxes are not in
+ * the score.
+ */
+export interface CorrectedLayout {
+  note: string;
+  /** One entry per page in surface order, `image` as the score's graphic target. */
+  pages: {
+    image: string;
+    measures: MeasureBox[];
+    staves: MeasureBox[];
+    grandstaves: MeasureBox[];
+  }[];
+}
+
+export const CORRECTED_LAYOUT_NOTE =
+  "Corrected layout boxes, in the page image's pixel space. The measure zones in score.mei are the measure boxes grown by a margin.";
+
+/** The corrected layout's path for a score: `layout-corrected.json` in the score's directory. */
+export const correctedLayoutPath = (fragment: string): string =>
+  `${fragment.slice(0, fragment.lastIndexOf("/") + 1)}layout-corrected.json`;
+
+const roundedBox = (box: MeasureBox): MeasureBox => ({
+  ulx: Math.round(box.ulx),
+  uly: Math.round(box.uly),
+  lrx: Math.round(box.lrx),
+  lry: Math.round(box.lry),
+});
+
+/** The pages' corrected boxes, as `layout-corrected.json` is written. */
+export function correctedLayoutJson(pages: PageModel[]): string {
+  const layout: CorrectedLayout = {
+    note: CORRECTED_LAYOUT_NOTE,
+    pages: pages.map((pg) => ({
+      image: pg.image,
+      measures: pg.zones.map((zone) => roundedBox(zone.box)),
+      staves: (pg.staves ?? []).map(roundedBox),
+      grandstaves: (pg.grandstaves ?? []).map(roundedBox),
+    })),
+  };
+  return JSON.stringify(layout, null, "\t") + "\n";
+}
+
+/**
+ * The score's pages with the corrected layout (`layout-corrected.json`, null
+ * when the file does not exist) in place: each measure zone takes its tight
+ * box, each page its staff and grand-staff boxes. Without the file, pages
+ * without measure zones are returned as they are. Throws when the file is
+ * missing for a score with measure zones, or does not match its pages and
+ * zones.
+ */
+export function withCorrectedLayout(
+  pages: PageModel[],
+  json: string | null,
+): PageModel[] {
+  if (json == null) {
+    if (pages.some((pg) => pg.zones.length))
+      throw new Error(
+        "The score has measure zones but no layout-corrected.json.",
+      );
+    return pages;
+  }
+  const layout = JSON.parse(json) as CorrectedLayout;
+  if (layout.pages.length !== pages.length)
+    throw new Error(
+      `layout-corrected.json has ${layout.pages.length} pages, the score ${pages.length}.`,
+    );
+  return pages.map((pg, i) => {
+    const entry = layout.pages[i];
+    if (entry.measures.length !== pg.zones.length)
+      throw new Error(
+        `Page ${i + 1}: layout-corrected.json has ${entry.measures.length} measure boxes, the score ${pg.zones.length} measure zones.`,
+      );
+    return {
+      ...pg,
+      zones: pg.zones.map((zone, k) => ({ ...zone, box: entry.measures[k] })),
+      staves: entry.staves,
+      grandstaves: entry.grandstaves,
+    };
+  });
 }
 
 /** The boxes of one page, in the page image's pixel space, unsorted. */

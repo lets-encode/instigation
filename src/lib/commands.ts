@@ -74,7 +74,12 @@ import { WorkflowRunWatch } from "./run-watch.ts";
 import { checkMei } from "./mei-check.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import type { OmrModels } from "./omr-page-draft.ts";
-import { layoutRecordPath } from "./omr-layout.ts";
+import {
+  correctedLayoutJson,
+  correctedLayoutPath,
+  layoutRecordPath,
+  withCorrectedLayout,
+} from "./omr-layout.ts";
 import type { LayoutRecord } from "./omr-layout.ts";
 import { omrRecordPath } from "./omr-record.ts";
 
@@ -246,7 +251,7 @@ type PrProcessingResult =
 // (the job-level guard in campaign.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
-  "a submission must change at most two files, must not be a draft, and must come from a user account";
+  "a submission must change at most three files, must not be a draft, and must come from a user account";
 
 // Wait until the campaign automation has processed a PR (it closes the PR
 // when done) and return its verdict comment. A timeout means the run is still
@@ -1651,9 +1656,19 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       ]);
     const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
     if (!task) throw new Error(`Unknown task ${task_id}.`);
-    const mei = await f.getRepoFile(owner, repo, task.fragment);
+    const preparation =
+      pieceFieldForPath(configYaml, task.fragment, "preparation") ??
+      "measure-detection";
+    const [mei, corrected] = await Promise.all([
+      f.getRepoFile(owner, repo, task.fragment),
+      preparation === "omr"
+        ? f.getRepoFile(owner, repo, correctedLayoutPath(task.fragment))
+        : null,
+    ]);
     if (mei == null) throw new Error(`Could not read ${task.fragment}.`);
     const model = parseFacsimileMei(mei);
+    if (preparation === "omr")
+      model.pages = withCorrectedLayout(model.pages, corrected);
     const imageUrls = await resolveFacsimileImageUrls(
       f,
       owner,
@@ -1703,9 +1718,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       imageUrls,
       fragment: task.fragment,
       locator: task.locator,
-      preparation:
-        pieceFieldForPath(configYaml, task.fragment, "preparation") ??
-        "measure-detection",
+      preparation,
       hasNotation: hasNotation(mei),
       status: taskState?.status ?? "",
       holdsLock,
@@ -1737,14 +1750,16 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // carried over verbatim, its score definition through the parse.
 //
 // The submission advances the score to stage C (generated measures, breaks and
-// movements), so the submitted content always differs from the file in the
-// repo — even when the volunteer changed nothing, since the new stage adds
-// elements the previous one lacked. That guaranteed diff is what makes the
-// caller's path-filtered pull_request_target trigger; an identical file would
-// open an empty PR that never runs the automation.
+// movements), so a first submission always differs from the file in the repo
+// — even when the volunteer changed nothing, since the new stage adds elements
+// the previous one lacked. A submission that changes no file is not opened: an
+// empty PR never runs the automation.
 //
-// A layout submission (an OMR-prepared piece) carries staff zones as well
-// and leaves the measures empty: the notation comes from transcription later.
+// A layout submission (an OMR-prepared piece) writes its measure zones with a
+// margin and leaves the measures empty: the notation comes from transcription
+// later. Its tight measure, staff and grand-staff boxes go to
+// `layout-corrected.json`, and the score is left out of the pull request when
+// only those boxes changed.
 async function submitFacsimile(
   ctx: CommandContext,
   task_id: string,
@@ -1768,11 +1783,16 @@ async function submitFacsimile(
     const parsed = parseFacsimileMei(current);
     const content = buildFacsimileMei(
       { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
-      { withBreaks: true, emptyMeasures: layout },
+      { withBreaks: true, emptyMeasures: layout, padZones: layout },
     );
+    const corrected = layout ? correctedLayoutJson(pages) : null;
+    const correctedChanged =
+      corrected !== null &&
+      corrected !==
+        (await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)));
     // A no-op would open an empty PR the path-filtered caller never runs;
     // guard against that rather than leaving the console polling forever.
-    if (content === current) {
+    if (content === current && !correctedChanged) {
       return {
         ok: true,
         warn: true,
@@ -1789,9 +1809,14 @@ async function submitFacsimile(
       : `Correct measure zones (${task_id})`;
     const body = `${title}. Opened from the zone editor.`;
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
-    // The layout model's raw output goes next to the score. The caller runs a
-    // pull request of at most two files, so it is one file per piece.
-    const files: FileChange[] = [{ path: fragment, content }];
+    // The corrected boxes and the layout model's raw output go next to the
+    // score, one file each per piece: the campaign workflow runs a pull
+    // request of at most three files.
+    const files: FileChange[] =
+      content === current ? [] : [{ path: fragment, content }];
+    if (correctedChanged) {
+      files.push({ path: correctedLayoutPath(fragment), content: corrected! });
+    }
     if (rawLayout) {
       files.push({
         path: layoutRecordPath(fragment),
@@ -1845,11 +1870,11 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 
 // Layout correction: submit the corrected staff, grand-staff and measure
 // boxes of an OMR-prepared piece at stage C with empty measures — the breaks
-// and movements as for measure correction, the staff and grand-staff zones
-// alongside. The
-// validation subtask reviews the boxes. `layout` is the model's raw output
-// for every page, present when detection ran in the editor session; it is
-// committed as `layout.json` next to the score.
+// and movements as for measure correction, the boxes in
+// `layout-corrected.json` alongside. The validation subtask reviews the
+// boxes. `layout` is the model's raw output for every page, present when
+// detection ran in the editor session; it is committed as `layout.json` next
+// to the score.
 const submitOmrLayout: CommandDef<
   { task_id: string; pages: PageModel[]; layout?: LayoutRecord },
   Result
@@ -1921,8 +1946,23 @@ const submitScoreSetup: CommandDef<
           ? replaceScoreDef(current, scoreDef)
           : omr
             ? buildFacsimileMei(
-                { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
-                { withBreaks: parsed.hasBreaks, emptyMeasures: true },
+                {
+                  headXml: parsed.headXml,
+                  scoreDef,
+                  pages: withCorrectedLayout(
+                    parsed.pages,
+                    await f.getRepoFile(
+                      owner,
+                      repo,
+                      correctedLayoutPath(fragment),
+                    ),
+                  ),
+                },
+                {
+                  withBreaks: parsed.hasBreaks,
+                  emptyMeasures: true,
+                  padZones: true,
+                },
               )
             : pieceKindForPath(configYaml, fragment) === "physical-only"
               ? buildBlankScoreMei(

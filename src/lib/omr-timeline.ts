@@ -29,7 +29,7 @@ export interface PageStaves {
   systems: MeasureBox[][];
   /** Staff boxes on no system. */
   unplaced: number;
-  /** The staff zone id of each box. */
+  /** The key of each box (`staff-zone-P-K`, see OmrStaffEntry.zone). */
   zones: string[][];
   /** The record's entry for each box; null where the record does not describe the box. */
   entries: (OmrStaffEntry | null)[][];

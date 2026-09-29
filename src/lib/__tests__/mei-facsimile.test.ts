@@ -118,38 +118,32 @@ test("parseFacsimileMei round-trips the model through both active stages", () =>
   assert.equal(rebuilt, buildFacsimileMei(m, { withBreaks: true }));
 });
 
-test('staff and grand-staff zones are written as type="staff" and type="grandstaff", round-trip, and reference nothing', () => {
+test("staff and grand-staff boxes are not written; padZones grows each measure zone by the margin, clamped to the page", () => {
   const m = model();
   m.pages[0].staves = [
     { ulx: 100, uly: 300, lrx: 1000, lry: 360 },
     { ulx: 100, uly: 420, lrx: 1000, lry: 480 },
   ];
   m.pages[0].grandstaves = [{ ulx: 80, uly: 290, lrx: 1000, lry: 490 }];
-  const mei = buildFacsimileMei(m);
+  m.pages[1].zones[0].box = { ulx: 10, uly: 5, lrx: 1990, lry: 2575 };
+  const mei = buildFacsimileMei(m, { padZones: true });
   assert.equal(SyntaxValidator.validate(mei), true);
+  assert.equal((mei.match(/<zone /g) ?? []).length, 3);
+  assert.doesNotMatch(mei, /type="(staff|grandstaff)"/);
+  // The margin is 1.5 % of the page's shorter side: 30 px on a 2000 px wide page.
   assert.ok(
     mei.includes(
-      '<zone xml:id="staff-zone-1-1" type="staff" ulx="100" uly="300" lrx="1000" lry="360"/>',
+      '<zone xml:id="zone-1-1" type="measure" n="1" ulx="97" uly="229" lrx="1066" lry="834"/>',
     ),
   );
   assert.ok(
     mei.includes(
-      '<zone xml:id="grandstaff-zone-1-1" type="grandstaff" ulx="80" uly="290" lrx="1000" lry="490"/>',
+      '<zone xml:id="zone-2-1" type="measure" n="3" ulx="0" uly="0" lrx="2000" lry="2581"/>',
     ),
   );
-  assert.equal((mei.match(/<zone /g) ?? []).length, 6);
-  assert.equal((mei.match(/#staff-zone/g) ?? []).length, 0);
-
   const parsed = parseFacsimileMei(mei);
-  assert.deepEqual(parsed.pages[0].staves, m.pages[0].staves);
-  assert.deepEqual(parsed.pages[0].grandstaves, m.pages[0].grandstaves);
-  // A page without staff zones parses without the fields.
-  assert.equal(parsed.pages[1].staves, undefined);
-  assert.equal(parsed.pages[1].grandstaves, undefined);
-  assert.equal(
-    buildFacsimileMei({ headXml: parsed.headXml, pages: parsed.pages }),
-    mei,
-  );
+  assert.equal(parsed.pages[0].staves, undefined);
+  assert.equal(parsed.pages[0].grandstaves, undefined);
 });
 
 test("emptyMeasures: stage C measures hold staves with empty layers, no rests", () => {

@@ -1,7 +1,7 @@
 // Staff transcriptions kept per browser while a score setup's recognition
 // runs, so that leaving the editor or a failed run does not require the
 // staves already transcribed to run again. One record per campaign repo,
-// staff zone and box, for one staff pipeline version and crop margin, in
+// staff box key and box, for one staff pipeline version and crop margin, in
 // IndexedDB (a piece's MusicXML outgrows localStorage). Failed staves are not
 // kept. Every call resolves, and without IndexedDB nothing is kept.
 
