@@ -66,7 +66,11 @@ export class PreTaskSession {
     pendingVerdicts.isProcessing(`encode:${this.#taskId()}`),
   );
   canEdit = $derived(this.holds && !this.submitting);
-  busy = $derived(this.runner.busy || this.submitting);
+  // Any submission on the task still being processed (claim, encoding,
+  // verdict, send-back) holds the editor's actions until it lands.
+  busy = $derived.by(
+    () => this.runner.busy || pendingVerdicts.taskProcessing(this.#taskId()),
+  );
   /** id → login for every user the tables mention. */
   logins = $derived(this.tables?.logins ?? {});
 

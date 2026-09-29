@@ -45,6 +45,11 @@ a.btn {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* A link styled as a button, disabled: it takes no pointer input. */
+a.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
 /* The larger size for wizard footers and hero actions. */
 .btn-lg {
   font-size: 14px;

@@ -57,13 +57,10 @@
   } = $props();
 
   const rows = $derived(buildRecord(card, comments, viewer, logins));
-  // A verdict already submitted for a subtask and still being processed: its
-  // controls hold until it lands — a repeat would only be rejected.
-  const verdictPending = (sub: string) =>
-    pendingVerdicts.isProcessing(`validate:${card.task}/${sub}`);
-  const sendBackPending = $derived(
-    pendingVerdicts.isProcessing(`sendback:${card.task}`),
-  );
+  // A submission on this task still being processed (a claim, verdict or
+  // send-back): the slot controls hold until it lands — a repeat would only
+  // be rejected.
+  const processing = $derived(pendingVerdicts.taskProcessing(card.task));
   const orphanFails = $derived(orphanedFails(card, comments));
 
   // The inline form a fail verdict fills in (its mandatory comment).
@@ -186,7 +183,7 @@
                 type="button"
                 class="btn btn-danger"
                 onclick={() => onsendback(card.task)}
-                disabled={runner.busy || sendBackPending}
+                disabled={runner.busy || processing}
                 title={`Return the task to ${workStage(card.locator)}: attribution and reviews reset.`}
                 >{`Send back ${card.pre ? "to" : "for"} ${workStage(card.locator)}`}</button
               >
@@ -212,7 +209,7 @@
               type="button"
               class="btn btn-review"
               onclick={() => onclaim(card.task, r.sub)}
-              disabled={runner.busy || verdictPending(r.sub)}
+              disabled={runner.busy || processing}
               title="Reserve this review slot.">Claim to review</button
             >
           {:else if r.key === "open"}
@@ -223,7 +220,7 @@
                 type="button"
                 class="btn btn-primary btn-finish"
                 onclick={() => onvalidate(card.task, r.sub, "pass")}
-                disabled={runner.busy || verdictPending(r.sub)}
+                disabled={runner.busy || processing}
                 title="Record a passing verdict.">Pass</button
               >
               <button
@@ -235,7 +232,7 @@
                     failForm?.sub === r.sub
                       ? null
                       : { sub: r.sub, body: "", ...prefill() })}
-                disabled={runner.busy || verdictPending(r.sub)}
+                disabled={runner.busy || processing}
                 title="Record a failing verdict — a fail carries a comment saying why."
                 >Fail</button
               >
@@ -270,9 +267,8 @@
                 type="button"
                 class="btn btn-danger"
                 onclick={submitFail}
-                disabled={runner.busy ||
-                  !failForm.body.trim() ||
-                  verdictPending(failForm.sub)}>Submit fail</button
+                disabled={runner.busy || !failForm.body.trim() || processing}
+                >Submit fail</button
               >
             </div>
           </div>
@@ -414,12 +410,12 @@
     font-size: 11.5px;
     white-space: nowrap;
   }
-  /* The verdict pair occupies its own line so the two buttons never split. */
+  /* The verdict pair fills its own line as two equal cells. */
   .rverdict {
-    display: flex;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
     flex-basis: 100%;
-    justify-content: flex-end;
   }
   /* The open fail form keeps its trigger tinted, still an outline. */
   .failbtn.on {

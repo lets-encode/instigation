@@ -222,6 +222,12 @@
     );
     openMeiFriend(runner.result);
   };
+  // A submission on the task still being processed holds its row's actions.
+  const processing = (t: MyTask) =>
+    pendingVerdicts.taskProcessing(
+      t.task,
+      stats.find((x) => x.name === t.campaignSlug)?.repoId,
+    );
   const giveBack = (t: MyTask) =>
     run(t, (c) =>
       invoke(commands.giveBack, { task_id: t.task, subtask_id: t.subtask }, c),
@@ -427,20 +433,22 @@
             {#if isPreTask(t.locator)}
               <a
                 class="btn"
-                href={preTaskHref(t.campaignSlug, t.locator, t.task)}
-                >Open {workPlace(t.locator)}</a
+                href={processing(t)
+                  ? undefined
+                  : preTaskHref(t.campaignSlug, t.locator, t.task)}
+                aria-disabled={processing(t)}>Open {workPlace(t.locator)}</a
               >
             {:else}
               <button
                 type="button"
                 class="btn"
-                disabled={runner.busy}
+                disabled={runner.busy || processing(t)}
                 onclick={() => openEditor(t)}
                 >Open in mei-friend <Icon name="external" /></button
               >
             {/if}
             <GiveBackButton
-              disabled={runner.busy}
+              disabled={runner.busy || processing(t)}
               ongiveback={() => giveBack(t)}
             />
           </div>
@@ -456,7 +464,7 @@
             >
             <span class="spacer"></span>
             <GiveBackButton
-              disabled={runner.busy}
+              disabled={runner.busy || processing(t)}
               ongiveback={() => giveBack(t)}
             />
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}

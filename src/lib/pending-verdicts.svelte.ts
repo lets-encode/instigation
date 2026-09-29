@@ -131,6 +131,20 @@ class PendingVerdictStore {
     );
   }
 
+  /** Whether any submission acting on `taskId` itself (claim, encoding,
+   * verdict, send-back — not a discussion) is still being processed; the
+   * task's controls hold until it lands. `repoId` limits the check to one
+   * campaign. */
+  taskProcessing(taskId: string, repoId?: number): boolean {
+    return this.entries.some(
+      (e) =>
+        taskOf(e.key) === taskId &&
+        !DISCUSSION_KEY_KINDS.has(e.key.split(":", 1)[0]) &&
+        (repoId === undefined || e.repoId === repoId) &&
+        (e.state === "processing" || e.state === "opening"),
+    );
+  }
+
   settle(
     id: string,
     state: Exclude<PendingState, "opening" | "processing">,

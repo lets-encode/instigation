@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- A task's claim, continue, give-back and verdict buttons are disabled while one of its submissions is processing.
+- The measure correction's counts and step labels wrap instead of overflowing the task box.
+- The review view's Pass, Fail and Give back buttons fill the task box width.
 - The comment composer's question and note options are merged into one comment option.
 - The discussion comment kind is stored as comment instead of addition.
 - The unused staff key field is removed from the OMR page staves.

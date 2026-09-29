@@ -1584,7 +1584,6 @@
     font-size: 12.5px;
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
   .submitbtn {
     align-self: stretch;
@@ -1780,12 +1779,21 @@
   .grandstaves .handle {
     stroke: rgba(30, 150, 70, 0.9);
   }
+  /* Three equal cells; in a narrow panel a label wraps inside its cell. */
   .steps {
     align-self: stretch;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    align-items: stretch;
+    border-radius: 12px;
   }
   .steps > button {
-    flex: 1;
     justify-content: center;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.25;
+    padding: 4px 6px;
+    border-radius: 9px;
   }
   /* The side strips are invisible grab areas along the box edges; a
      transparent fill still catches pointer events. */

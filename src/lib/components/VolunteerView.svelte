@@ -327,8 +327,7 @@
                 class="btn btn-lg {stageClass(featured)}"
                 class:btn-primary={!panelOpen}
                 onclick={() => (viewer === "" ? login() : onact(featured))}
-                disabled={busy ||
-                  pendingVerdicts.isProcessing(`claim:${featured.task}`)}
+                disabled={busy || pendingVerdicts.taskProcessing(featured.task)}
                 title={actTitle(featured)}
                 >{actLabel(
                   featured,
@@ -392,7 +391,7 @@
                   type="button"
                   class="btn {stageClass(card)}"
                   onclick={() => onact(card)}
-                  disabled={busy}
+                  disabled={busy || pendingVerdicts.taskProcessing(card.task)}
                   title={actTitle(card)}
                   >{card.column === "validation"
                     ? "Claim to review"

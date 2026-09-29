@@ -78,7 +78,7 @@
           type="button"
           class="btn btn-review"
           onclick={() => session.claimValidation()}
-          disabled={session.runner.busy}
+          disabled={session.busy}
           title="Reserve this review slot.">Claim to review</button
         >
       </div>
@@ -88,7 +88,7 @@
           type="button"
           class="btn btn-primary btn-finish"
           onclick={() => session.validate("pass")}
-          disabled={session.runner.busy}
+          disabled={session.busy}
           title="Record a passing verdict.">Pass</button
         >
         <button
@@ -96,7 +96,7 @@
           class="btn btn-danger vfail"
           class:on={session.failOpen}
           onclick={() => (session.failOpen = !session.failOpen)}
-          disabled={session.runner.busy}
+          disabled={session.busy}
           title="Record a failing verdict — a fail carries a comment saying why."
           >Fail</button
         >
@@ -117,7 +117,7 @@
           type="button"
           class="btn btn-danger"
           onclick={() => session.validate("fail")}
-          disabled={session.runner.busy ||
+          disabled={session.busy ||
             !session.failText.trim() ||
             session.verdictPending}
           title="Submit the failing verdict with this comment."
@@ -128,7 +128,7 @@
     {#if session.holdsValidation && !session.verdictPending}
       <div class="sb-row one">
         <GiveBackButton
-          disabled={session.runner.busy}
+          disabled={session.busy}
           ongiveback={() => session.giveBack(validation.subtask_id)}
         />
       </div>
@@ -138,7 +138,7 @@
         type="button"
         class="btn btn-danger sendbackbtn"
         onclick={() => session.sendBack()}
-        disabled={session.runner.busy || session.sendBackPending}
+        disabled={session.busy || session.sendBackPending}
         title="Return the task to {stage}: attribution and reviews reset."
         >Send back to {stage}</button
       >

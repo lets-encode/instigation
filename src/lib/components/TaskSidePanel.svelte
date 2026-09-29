@@ -105,14 +105,9 @@
     onsendback: (task_id: string) => Promise<void>;
   } = $props();
 
-  // The task's own one-shot submission, held while it is still processing.
-  const encodePending = $derived(
-    pendingVerdicts.isProcessing(`encode:${card.task}`),
-  );
-  // An encoding claim still being processed in the background.
-  const claimingEncoding = $derived(
-    pendingVerdicts.isProcessing(`claim:${card.task}`),
-  );
+  // A submission on this task still being processed: every action in the
+  // footer holds until it lands.
+  const processing = $derived(pendingVerdicts.taskProcessing(card.task));
   const mineEncoding = $derived(
     viewer !== "" &&
       locks.some(
@@ -131,10 +126,6 @@
   /** The review slot the viewer holds a lock on, if any. */
   const myReviewSub = $derived(record.find((r) => r.mine)?.sub);
   const myReview = $derived(myReviewSub !== undefined);
-  const claimPending = $derived(
-    claimableSub !== undefined &&
-      pendingVerdicts.isProcessing(`validate:${card.task}/${claimableSub}`),
-  );
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
   const editorName = $derived(workPlace(card.locator));
 
@@ -254,7 +245,8 @@
           {#if card.pre}
             <a
               class="btn btn-primary btn-pre"
-              href={editorRoute}
+              href={processing ? undefined : editorRoute}
+              aria-disabled={processing}
               title={`Claims the task for you and opens the ${editorName}.`}
               >{claimLabel(card.locator)}</a
             >
@@ -263,7 +255,7 @@
               type="button"
               class="btn btn-primary"
               onclick={() => oneditor(card.task)}
-              disabled={runner.busy || !auth.user || claimingEncoding}
+              disabled={runner.busy || !auth.user || processing}
               title={auth.user
                 ? "Claims the task for you, then opens the score in mei-friend."
                 : "Log in to claim a task."}
@@ -276,12 +268,13 @@
           <div class="tspfoot">
             <a
               class="btn btn-primary"
-              href={editorRoute}
+              href={processing ? undefined : editorRoute}
+              aria-disabled={processing}
               title={`Continue your work in the ${editorName}.`}
               >Continue in {editorName}</a
             >
             <GiveBackButton
-              disabled={runner.busy}
+              disabled={runner.busy || processing}
               ongiveback={() => ongiveback(card.task, "")}
             />
           </div>
@@ -291,12 +284,12 @@
               type="button"
               class="btn btn-primary"
               onclick={() => oneditor(card.task)}
-              disabled={runner.busy || encodePending}
+              disabled={runner.busy || processing}
               title="Opens the score in mei-friend. Completing the task there submits it for review."
               >Open in mei-friend <Icon name="external" /></button
             >
             <GiveBackButton
-              disabled={runner.busy || encodePending}
+              disabled={runner.busy || processing}
               ongiveback={() => ongiveback(card.task, "")}
             />
           </div>
@@ -308,7 +301,7 @@
               type="button"
               class="btn btn-primary btn-review"
               onclick={() => onclaim(card.task, claimableSub)}
-              disabled={runner.busy || claimPending}
+              disabled={runner.busy || processing}
               title="Reserve this review slot.">Claim to review</button
             >
             {#if !card.pre}
@@ -325,20 +318,24 @@
             {#if card.pre}
               <a
                 class="btn btn-primary"
-                href={editorRoute}
+                href={processing ? undefined : editorRoute}
+                aria-disabled={processing}
                 title={`Review the submitted work in the ${editorName}.`}
                 >Open {editorName}</a
               >
             {:else}
               <a
                 class="btn btn-primary"
-                href={`/${campaign}/review/${card.task}`}
+                href={processing
+                  ? undefined
+                  : `/${campaign}/review/${card.task}`}
+                aria-disabled={processing}
                 title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
                 >Open review view</a
               >
             {/if}
             <GiveBackButton
-              disabled={runner.busy}
+              disabled={runner.busy || processing}
               ongiveback={() => ongiveback(card.task, myReviewSub ?? "")}
             />
           </div>

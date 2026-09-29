@@ -144,7 +144,7 @@
               ? 'btn-pre'
               : 'btn-enc'}"
           disabled={busy ||
-            pendingVerdicts.isProcessing(`claim:${next.task}`, stats.repoId)}
+            pendingVerdicts.taskProcessing(next.task, stats.repoId)}
           onclick={() => onact(stats, next)}
           >{actLabel(next)}{#if next.action !== "review" && !next.pre}<Icon
               name="external"

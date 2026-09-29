@@ -397,7 +397,7 @@
         {#if mySlot}
           <div class="tbgiveback">
             <GiveBackButton
-              disabled={runner.busy}
+              disabled={runner.busy || pendingVerdicts.taskProcessing(taskId)}
               ongiveback={() => giveBack(mySlot)}
             />
           </div>
@@ -546,7 +546,9 @@
   .tbrecord {
     padding: 0 12px 10px;
   }
+  /* A grid, so the button fills the box's width like the verdict pair. */
   .tbgiveback {
+    display: grid;
     padding: 0 12px 10px;
   }
 
