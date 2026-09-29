@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { page } from "$app/state";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
@@ -15,7 +15,18 @@
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
-  import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
+  import {
+    buildSpreads,
+    defaultSpreadView,
+    pagesLabelCh,
+    shownPagesLabel,
+  } from "$lib/page-spreads.ts";
+  import {
+    applyAnchor,
+    readAnchor,
+    rowView,
+    scrollToRow,
+  } from "$lib/page-scroll.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import PanelIcon from "$lib/components/PanelIcon.svelte";
@@ -89,7 +100,7 @@
     {
       loaded(d) {
         selected = null;
-        firstVisible = 0;
+        anchor = { page: 0, frac: 0 };
         rawLayouts = {};
         seen = { staves: [], grandstaves: [], measures: [] };
         pages = d.model.pages.map((pg, i) => ({
@@ -177,7 +188,7 @@
   const active = $derived(selected);
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
-  // canvas; above 1 the page overflows and its container scrolls horizontally.
+  // canvas; above 1 the pages overflow and the desk scrolls horizontally.
   const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 4;
   let zoom = $state(1);
@@ -229,31 +240,81 @@
     else if (fit === "page") zoom = fitZoom();
   });
 
-  // Book-style paging: show one spread at a time rather than every page.
-  // `view` is one or two pages per spread; `firstOnRight` places page 1 as a
-  // right-hand page (recto), so a two-up view pairs 2|3, 4|5, … the way a
-  // score opens — the printed page number's side can't be read without OCR, so
-  // this convention (with the toggle) stands in for it.
+  // The pages scroll as rows of one or two pages. `view` is one or two pages
+  // per row; `firstOnRight` places page 1 as a right-hand page (recto), so a
+  // two-up view pairs 2|3, 4|5, … the way a score opens — the printed page
+  // number's side can't be read without OCR, so this convention (with the
+  // toggle) stands in for it.
   let view = $state<"single" | "double">("double");
   let firstOnRight = $state(true);
-  // The lowest page index currently shown; the anchor navigation moves. Keeping
-  // an anchor (not a spread index) preserves the visible page across view/side
-  // toggles, which re-slice the spreads.
-  let firstVisible = $state(0);
-
   const spreads = $derived(buildSpreads(pages.length, view, firstOnRight));
-  const spreadIndex = $derived(
-    Math.max(
-      0,
-      spreads.findIndex((s) => s.pages.includes(firstVisible)),
+
+  // The desk scrolls through the rows, one per spread.
+  let desk = $state<HTMLElement | null>(null);
+  let rowEls = $state<HTMLElement[]>([]);
+  // What the desk shows, read from the scroll position.
+  let rowIndex = $state(0);
+  let shownRows = $state<number[]>([]);
+  let nearPages = $state<number[]>([]);
+  let atTop = $state(true);
+  let atEnd = $state(true);
+  // The position the desk returns to when the rows change size, kept by page
+  // so it survives the rows being re-sliced.
+  let anchor: { page: number; frac: number; x?: number } = {
+    page: 0,
+    frac: 0,
+  };
+  const shownPages = $derived(
+    shownRows.flatMap((r) => spreads[r]?.pages ?? []),
+  );
+  const spreadLabel = $derived(
+    shownPagesLabel(
+      spreads,
+      shownRows.length ? shownRows : [rowIndex],
+      pages.length,
     ),
   );
-  const spread = $derived(spreads[spreadIndex] ?? { pages: [] });
-  const spreadLabel = $derived(
-    spread.pages.length === 2
-      ? `Pages ${spread.pages[0] + 1}–${spread.pages[1] + 1} of ${pages.length}`
-      : `Page ${(spread.pages[0] ?? 0) + 1} of ${pages.length}`,
-  );
+
+  function deskScrolled() {
+    if (!desk) return;
+    const rows = rowEls.slice(0, spreads.length);
+    const v = rowView(desk, rows);
+    rowIndex = v.current;
+    shownRows = v.shown;
+    atTop = v.atTop;
+    atEnd = v.atEnd;
+    const near = v.near.flatMap((r) => spreads[r]?.pages ?? []);
+    if (near.join() !== nearPages.join()) nearPages = near;
+    const a = readAnchor(desk, rows);
+    if (a)
+      anchor = { page: spreads[a.row]?.pages[0] ?? 0, frac: a.frac, x: a.x };
+  }
+  // Zoom, the view, the desk size and a newly loaded task move every row; once
+  // the rows are laid out anew, the desk returns to the remembered position.
+  $effect(() => {
+    void [zoom, spreads, deskW, deskH, pages];
+    tick().then(() => {
+      const row = spreads.findIndex((s) => s.pages.includes(anchor.page));
+      if (!desk || row < 0) return;
+      applyAnchor(desk, rowEls.slice(0, spreads.length), { ...anchor, row });
+      deskScrolled();
+    });
+  });
+  /** Scroll a page's row (0-based page) to the top of the desk. */
+  function showPage(p: number) {
+    const row = spreads.findIndex((s) => s.pages.includes(p));
+    if (!desk || row < 0) return;
+    anchor = { page: spreads[row].pages[0], frac: 0 };
+    scrollToRow(desk, rowEls.slice(0, spreads.length), row);
+    deskScrolled();
+  }
+  // The whole-page fit also scrolls the row being read to the top, so its
+  // pages are in view from top to bottom.
+  function fitWholePage() {
+    const p = spreads[rowIndex]?.pages[0] ?? 0;
+    fit = "page";
+    tick().then(() => showPage(p));
+  }
 
   // The pages a layout task has shown in each step. Submission waits until
   // every page has been on screen in both steps.
@@ -264,7 +325,7 @@
   });
   $effect(() => {
     if (!omr) return;
-    const shown = spread.pages;
+    const shown = shownPages;
     const layer = tool;
     untrack(() => {
       const added = shown.filter((p) => !seen[layer].includes(p));
@@ -292,10 +353,15 @@
     return null;
   });
 
+  // One row on. Back from partway down a row returns to that row's top first.
   function go(delta: number) {
-    const next = spreads[spreadIndex + delta];
+    if (!desk) return;
+    const a = readAnchor(desk, rowEls.slice(0, spreads.length));
+    let row = rowIndex + delta;
+    if (delta < 0 && a && a.row === rowIndex && a.frac > 0.02) row = rowIndex;
+    const next = spreads[Math.max(0, Math.min(spreads.length - 1, row))];
     if (!next) return;
-    firstVisible = next.pages[0];
+    showPage(next.pages[0]);
     selected = null;
   }
 
@@ -337,12 +403,12 @@
   // The piece's comments panel beside the tool. Posting and resolving refresh
   // the tables only: a full reload would discard unsubmitted zone edits.
   let commentsPanel = $state(readSidePanel("comments"));
-  // A comment anchor turns the desk to its page and selects the measure with
+  // A comment anchor scrolls the desk to its page and selects the measure with
   // the anchored number where the page has one.
   function showAnchorFor(c: CommentRow) {
     const p = Number(c.page) - 1;
     if (!Number.isInteger(p) || p < 0 || p >= pages.length) return;
-    firstVisible = p;
+    showPage(p);
     const z = pages[p].zones.findIndex(
       (zone) => (zone.override ?? zone.label) === c.measure_start,
     );
@@ -1034,24 +1100,7 @@
   {:else if data}
     <div class="main">
       <div class="ctoolbar">
-        <button
-          type="button"
-          class="btn btn-icon"
-          onclick={() => go(-1)}
-          disabled={spreadIndex <= 0}
-          aria-label="Previous page"
-          title="Previous page"><Icon name="chevron-left" /></button
-        >
-        <span class="pglabel">{spreadLabel}</span>
-        <button
-          type="button"
-          class="btn btn-icon"
-          onclick={() => go(1)}
-          disabled={spreadIndex >= spreads.length - 1}
-          aria-label="Next page"
-          title="Next page"><Icon name="chevron-right" /></button
-        >
-        <div class="seg" title="How many pages the desk shows at once">
+        <div class="seg" title="How many pages the desk shows side by side">
           <button
             type="button"
             class:on={view === "single"}
@@ -1072,7 +1121,6 @@
           </label>
         {/if}
         <span class="tspacer"></span>
-        <span class="vline"></span>
         <input
           class="zoomslider"
           type="range"
@@ -1101,7 +1149,7 @@
           type="button"
           class="tbtn tbtn-icon"
           class:on={fit === "page"}
-          onclick={() => (fit = "page")}
+          onclick={fitWholePage}
           aria-label="Fit the whole page"
           title="Fit the whole page in the view, top to bottom"
           ><FitIcon kind="page" /></button
@@ -1146,189 +1194,235 @@
           <PanelIcon />
           Comments
         </button>
+        <!-- Last in the toolbar, next to the task panel on the right. -->
+        <div class="pgnav">
+          <span class="vline"></span>
+          <button
+            type="button"
+            class="btn btn-icon pgbtn"
+            onclick={() => go(-1)}
+            disabled={atTop}
+            aria-label="Previous page"
+            title="Previous page"><Icon name="chevron-left" /></button
+          >
+          <span
+            class="pglabel"
+            style={`min-width:${pagesLabelCh(pages.length)}ch`}
+            >{spreadLabel}</span
+          >
+          <button
+            type="button"
+            class="btn btn-icon pgbtn"
+            onclick={() => go(1)}
+            disabled={atEnd}
+            aria-label="Next page"
+            title="Next page"><Icon name="chevron-right" /></button
+          >
+        </div>
       </div>
       <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
-      <div class="desk" bind:clientWidth={deskW} bind:clientHeight={deskH}>
+      <div
+        class="desk"
+        bind:this={desk}
+        bind:clientWidth={deskW}
+        bind:clientHeight={deskH}
+        onscroll={deskScrolled}
+      >
         <div
           class="pages"
           class:double={view === "double"}
           style={`--zoom:${zoom}`}
         >
-          {#if spread.lonelySide === "right"}<div
-              class="page-spacer"
-            ></div>{/if}
-          {#each spread.pages as p (p)}
-            {@const pg = pages[p]}
-            <div class="page">
-              <p class="pagehead">Page {p + 1}</p>
-              {#if pg.failed}
-                <div class="banner err">
-                  The page facsimile for page {p + 1} could not be loaded. The zones
-                  are shown without their reference image.
-                </div>
-              {/if}
-              <div class="canvas" bind:clientWidth={canvasW[p]}>
-                <svg
-                  bind:this={svgEls[p]}
-                  viewBox={`0 0 ${pg.width} ${pg.height}`}
-                  class:staves={tool === "staves"}
-                  class:grandstaves={tool === "grandstaves"}
-                  role="application"
-                  aria-label={`Page ${p + 1} ${tool}`}
-                  onpointerdown={(e) => backgroundPointerDown(e, p)}
-                >
-                  {#if pg.url}
-                    <image
-                      href={pg.url}
-                      width={pg.width}
-                      height={pg.height}
-                      onerror={() => (pages[p].failed = true)}
-                    />
-                  {/if}
-                  {#each tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
-                    <rect
-                      class="staff"
-                      class:grand={tool === "grandstaves"}
-                      class:selected={selected?.p === p && selected?.z === s}
-                      vector-effect="non-scaling-stroke"
-                      role="button"
-                      tabindex={0}
-                      aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}: select, drag or resize`}
-                      x={staff.box.ulx}
-                      y={staff.box.uly}
-                      width={staff.box.lrx - staff.box.ulx}
-                      height={staff.box.lry - staff.box.uly}
-                      onpointerdown={(e) => startZoneDrag(e, p, s, "move")}
-                      onkeydown={(e) => zoneKeydown(e, p, s)}
-                    />
-                    {#if canEdit && selected?.p === p && selected?.z === s}
-                      {@render handles(
-                        p,
-                        s,
-                        staff.box,
-                        `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`,
-                        0,
-                        0,
-                      )}
-                    {/if}
-                  {/each}
-                  {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
-                    <rect
-                      class="zone"
-                      class:selected={selected?.p === p && selected?.z === z}
-                      class:mdivstart={startsMovement(p, z)}
-                      vector-effect="non-scaling-stroke"
-                      role="button"
-                      tabindex={0}
-                      aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
-                      x={zone.box.ulx}
-                      y={zone.box.uly}
-                      width={zone.box.lrx - zone.box.ulx}
-                      height={zone.box.lry - zone.box.uly}
-                      onpointerdown={(e) => startZoneDrag(e, p, z, "move")}
-                      onkeydown={(e) => zoneKeydown(e, p, z)}
-                    >
-                      {#if zoneTitle(p, z)}
-                        <title>{zoneTitle(p, z)}</title>
-                      {/if}
-                    </rect>
-                    {@const lbl = labelText(p, z)}
-                    {@const fs = labelFont(p, pg.width)}
-                    {@const inset = fs * 0.6}
-                    {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
-                    {@const editing =
-                      canEdit && selected?.p === p && selected?.z === z}
-                    {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
-                    {#if !editing}
-                      <rect
-                        class="labelbg"
-                        x={zone.box.ulx + inset}
-                        y={zone.box.uly + inset}
-                        width={lblW}
-                        height={fs * 1.55}
-                        rx={fs * 0.28}
-                      />
-                      <text
-                        class="zonelabel"
-                        x={zone.box.ulx + inset + lblW / 2}
-                        y={zone.box.uly + inset + fs * 1.12}
-                        text-anchor="middle"
-                        font-size={fs}>{lbl}</text
-                      >
-                    {:else}
-                      {@render handles(
-                        p,
-                        z,
-                        zone.box,
-                        `Measure ${zone.label}`,
-                        inset + ZC_W_PX / sc,
-                        inset + ZC_H_PX / sc,
-                      )}
-                    {/if}
-                  {/each}
-                </svg>
-
-                {#if canEdit && tool === "measures" && active && active.p === p && pg.zones[active.z]}
-                  {@const z = active.z}
-                  {@const zone = pg.zones[z]}
-                  {@const box = zone.box}
-                  {@const inset = labelFont(p, pg.width) * 0.6}
-                  <div
-                    class="zc"
-                    style={`left:${((box.ulx + inset) / pg.width) * 100}%; top:${((box.uly + inset) / pg.height) * 100}%; --accent:${accentFor(p, z)}`}
-                  >
-                    <div
-                      class="zc-inner"
-                      role="group"
-                      aria-label={`Measure ${zone.label} controls`}
-                      onpointerdown={(e) => {
-                        selected = { p, z };
-                        e.stopPropagation();
-                      }}
-                    >
-                      <input
-                        class="znum"
-                        value={zone.override ?? zone.label}
-                        size={Math.max(
-                          2,
-                          String(zone.override ?? zone.label).length,
-                        )}
-                        onfocus={() => (selected = { p, z })}
-                        oninput={(e) =>
-                          setLabel(p, z, (e.target as HTMLInputElement).value)}
-                        onchange={() => commit()}
-                        title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
-                      />
-                      <button
-                        type="button"
-                        class:on={sbActive(p, z)}
-                        onclick={() => toggleSb(p, z)}
-                        disabled={pbAt(z)}
-                        aria-pressed={sbActive(p, z)}
-                        title={pbAt(z)
-                          ? "System beginning — implied by the page break on a page's first measure"
-                          : "System beginning (sb)"}>↵</button
-                      >
-                      <button
-                        type="button"
-                        class:on={startsMovement(p, z)}
-                        onclick={() => toggleSection(p, z)}
-                        disabled={sectionLocked(p, z)}
-                        aria-pressed={startsMovement(p, z)}
-                        title={sectionLocked(p, z)
-                          ? "The first measure always opens the first section"
-                          : "Section beginning — starts a new movement/section (mdiv)"}
-                        >§</button
-                      >
+          {#each spreads as sp, r (r)}
+            <div class="row" bind:this={rowEls[r]}>
+              {#if sp.lonelySide === "right"}<div
+                  class="page-spacer"
+                ></div>{/if}
+              {#each sp.pages as p (p)}
+                {@const pg = pages[p]}
+                <div class="page">
+                  <p class="page-label pagehead">Page {p + 1} · Facsimile</p>
+                  {#if pg.failed}
+                    <div class="banner err">
+                      The page facsimile for page {p + 1} could not be loaded. The
+                      zones are shown without their reference image.
                     </div>
+                  {/if}
+                  <div class="canvas" bind:clientWidth={canvasW[p]}>
+                    <svg
+                      bind:this={svgEls[p]}
+                      viewBox={`0 0 ${pg.width} ${pg.height}`}
+                      class:staves={tool === "staves"}
+                      class:grandstaves={tool === "grandstaves"}
+                      role="application"
+                      aria-label={`Page ${p + 1} ${tool}`}
+                      onpointerdown={(e) => backgroundPointerDown(e, p)}
+                    >
+                      <!-- Pages far from the view keep their size but draw nothing. -->
+                      {#if nearPages.includes(p)}
+                        {#if pg.url}
+                          <image
+                            href={pg.url}
+                            width={pg.width}
+                            height={pg.height}
+                            onerror={() => (pages[p].failed = true)}
+                          />
+                        {/if}
+                        {#each tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
+                          <rect
+                            class="staff"
+                            class:grand={tool === "grandstaves"}
+                            class:selected={selected?.p === p &&
+                              selected?.z === s}
+                            vector-effect="non-scaling-stroke"
+                            role="button"
+                            tabindex={0}
+                            aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}: select, drag or resize`}
+                            x={staff.box.ulx}
+                            y={staff.box.uly}
+                            width={staff.box.lrx - staff.box.ulx}
+                            height={staff.box.lry - staff.box.uly}
+                            onpointerdown={(e) =>
+                              startZoneDrag(e, p, s, "move")}
+                            onkeydown={(e) => zoneKeydown(e, p, s)}
+                          />
+                          {#if canEdit && selected?.p === p && selected?.z === s}
+                            {@render handles(
+                              p,
+                              s,
+                              staff.box,
+                              `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`,
+                              0,
+                              0,
+                            )}
+                          {/if}
+                        {/each}
+                        {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
+                          <rect
+                            class="zone"
+                            class:selected={selected?.p === p &&
+                              selected?.z === z}
+                            class:mdivstart={startsMovement(p, z)}
+                            vector-effect="non-scaling-stroke"
+                            role="button"
+                            tabindex={0}
+                            aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
+                            x={zone.box.ulx}
+                            y={zone.box.uly}
+                            width={zone.box.lrx - zone.box.ulx}
+                            height={zone.box.lry - zone.box.uly}
+                            onpointerdown={(e) =>
+                              startZoneDrag(e, p, z, "move")}
+                            onkeydown={(e) => zoneKeydown(e, p, z)}
+                          >
+                            {#if zoneTitle(p, z)}
+                              <title>{zoneTitle(p, z)}</title>
+                            {/if}
+                          </rect>
+                          {@const lbl = labelText(p, z)}
+                          {@const fs = labelFont(p, pg.width)}
+                          {@const inset = fs * 0.6}
+                          {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
+                          {@const editing =
+                            canEdit && selected?.p === p && selected?.z === z}
+                          {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
+                          {#if !editing}
+                            <rect
+                              class="labelbg"
+                              x={zone.box.ulx + inset}
+                              y={zone.box.uly + inset}
+                              width={lblW}
+                              height={fs * 1.55}
+                              rx={fs * 0.28}
+                            />
+                            <text
+                              class="zonelabel"
+                              x={zone.box.ulx + inset + lblW / 2}
+                              y={zone.box.uly + inset + fs * 1.12}
+                              text-anchor="middle"
+                              font-size={fs}>{lbl}</text
+                            >
+                          {:else}
+                            {@render handles(
+                              p,
+                              z,
+                              zone.box,
+                              `Measure ${zone.label}`,
+                              inset + ZC_W_PX / sc,
+                              inset + ZC_H_PX / sc,
+                            )}
+                          {/if}
+                        {/each}
+                      {/if}
+                    </svg>
+
+                    {#if canEdit && tool === "measures" && active && active.p === p && pg.zones[active.z]}
+                      {@const z = active.z}
+                      {@const zone = pg.zones[z]}
+                      {@const box = zone.box}
+                      {@const inset = labelFont(p, pg.width) * 0.6}
+                      <div
+                        class="zc"
+                        style={`left:${((box.ulx + inset) / pg.width) * 100}%; top:${((box.uly + inset) / pg.height) * 100}%; --accent:${accentFor(p, z)}`}
+                      >
+                        <div
+                          class="zc-inner"
+                          role="group"
+                          aria-label={`Measure ${zone.label} controls`}
+                          onpointerdown={(e) => {
+                            selected = { p, z };
+                            e.stopPropagation();
+                          }}
+                        >
+                          <input
+                            class="znum"
+                            value={zone.override ?? zone.label}
+                            size={Math.max(
+                              2,
+                              String(zone.override ?? zone.label).length,
+                            )}
+                            onfocus={() => (selected = { p, z })}
+                            oninput={(e) =>
+                              setLabel(
+                                p,
+                                z,
+                                (e.target as HTMLInputElement).value,
+                              )}
+                            onchange={() => commit()}
+                            title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
+                          />
+                          <button
+                            type="button"
+                            class:on={sbActive(p, z)}
+                            onclick={() => toggleSb(p, z)}
+                            disabled={pbAt(z)}
+                            aria-pressed={sbActive(p, z)}
+                            title={pbAt(z)
+                              ? "System beginning — implied by the page break on a page's first measure"
+                              : "System beginning (sb)"}>↵</button
+                          >
+                          <button
+                            type="button"
+                            class:on={startsMovement(p, z)}
+                            onclick={() => toggleSection(p, z)}
+                            disabled={sectionLocked(p, z)}
+                            aria-pressed={startsMovement(p, z)}
+                            title={sectionLocked(p, z)
+                              ? "The first measure always opens the first section"
+                              : "Section beginning — starts a new movement/section (mdiv)"}
+                            >§</button
+                          >
+                        </div>
+                      </div>
+                    {/if}
                   </div>
-                {/if}
-              </div>
+                </div>
+              {/each}
+              {#if sp.lonelySide === "left"}<div class="page-spacer"></div>{/if}
             </div>
           {/each}
-          {#if spread.lonelySide === "left"}<div class="page-spacer"></div>{/if}
         </div>
       </div>
     </div>
@@ -1653,21 +1747,30 @@
   .tspacer {
     flex: 1;
   }
+  /* The scroll position is kept by page (see `anchor`), not by the browser. */
   .desk {
     flex: 1;
     min-height: 0;
     overflow: auto;
+    overflow-anchor: none;
     padding: 16px 24px;
     box-sizing: border-box;
   }
   .pages {
     min-width: 0;
   }
-  /* Two-up view: the spread's pages (and any empty-half spacer) share the row. */
-  .pages.double {
+  /* A row's width is the zoom level: above 100% every row overflows the desk
+     by the same amount, so the one desk scrollbar moves all pages together.
+     Centred, so zoomed out the pages stay in the middle of the desk. */
+  .row {
+    width: calc(100% * var(--zoom, 1));
+    margin-inline: auto;
+  }
+  /* Two-up view: the spread's pages (and any empty-half spacer) share the
+     row, a few pixels apart at the spine, so they meet in the middle. */
+  .pages.double .row {
     display: flex;
     align-items: flex-start;
-    /* A few pixels between the two pages at the spine. */
     gap: 4px;
   }
   .pages.double .page,
@@ -1675,35 +1778,17 @@
     flex: 1 1 0;
     min-width: 0;
   }
-  /* Open-book: the left column's page hugs the centre spine (right-aligned),
-     the right column's stays left, so the two pages meet in the middle. The
-     page headings keep their normal left alignment. */
-  .pages.double .page:not(:last-child) .canvas {
-    margin-left: auto;
-  }
 
   .page {
     margin-bottom: 1.5rem;
-    /* Above 100% zoom the page overflows this box and scrolls horizontally. */
-    overflow-x: auto;
   }
   .pagehead {
-    margin: 0 0 0.3rem;
-    font-size: 11.5px;
-    color: var(--ink-faint);
-    text-align: center;
-    position: sticky;
-    left: 0;
+    margin-bottom: 4px;
   }
-  /* Positioning context for the per-zone controls overlay: its width tracks the
-     zoomed svg so percentage-placed controls line up with the boxes. */
+  /* Positioning context for the per-zone controls overlay: its width is the
+     svg's, so percentage-placed controls line up with the boxes. */
   .canvas {
     position: relative;
-    width: calc(100% * var(--zoom, 1));
-  }
-  /* One-page view: the page stays centred when zoomed out. */
-  .pages:not(.double) .canvas {
-    margin-inline: auto;
   }
   /* Each page renders as a sheet floating on the desk. */
   svg {

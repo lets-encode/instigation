@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- The score viewers scroll through all pages, with the page switch at the right end of the toolbar.
+- Page views label each page above it, such as Page 2 · Facsimile.
 - A task's claim, continue, give-back and verdict buttons are disabled while one of its submissions is processing.
 - The measure correction's counts and step labels wrap instead of overflowing the task box.
 - The review view's Pass, Fail and Give back buttons fill the task box width.

@@ -84,13 +84,13 @@
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each urls as url, i (url)}
           <figure>
+            <figcaption class="page-label">Page {i + 1} · Facsimile</figcaption>
             <img
               src={url}
               alt="Page {i + 1}"
               bind:naturalWidth={natW[i]}
               bind:naturalHeight={natH[i]}
             />
-            <figcaption class="page-caption">p. {i + 1}</figcaption>
           </figure>
         {/each}
       </div>

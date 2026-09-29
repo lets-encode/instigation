@@ -374,6 +374,7 @@
         {@const scale = (svgWidths[i] || 400) / page.width}
         {@const rx = 6 / scale}
         <figure>
+          <figcaption class="page-label">Page {i + 1} · Facsimile</figcaption>
           {#if failed[i]}
             <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
           {/if}
@@ -496,7 +497,6 @@
               {/if}
             {/each}
           </svg>
-          <figcaption class="page-caption">p. {i + 1}</figcaption>
         </figure>
       {/each}
     </div>

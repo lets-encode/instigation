@@ -1,7 +1,7 @@
 <!--
   The score viewer: one MEI shown as its facsimile pages, as the encoding
-  rendered by Verovio, or both side by side, with book-style paging and zoom
-  shared by the panes. The pane choice is a per-browser preference (see
+  rendered by Verovio, or both side by side, as scrolling rows of one or two
+  pages with zoom shared by the panes. The pane choice is a per-browser preference (see
   preview-pane.ts), so it carries from one preview to the next.
 
   A caller can pass a measure range to highlight, which marks those measures in
@@ -17,14 +17,26 @@
 <script lang="ts">
   import { type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { Snippet } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
-  import { buildSpreads, defaultSpreadView } from "$lib/page-spreads.ts";
   import {
+    buildSpreads,
+    defaultSpreadView,
+    pagesLabelCh,
+    shownPagesLabel,
+  } from "$lib/page-spreads.ts";
+  import {
+    applyAnchor,
+    readAnchor,
+    rowView,
+    scrollToRow,
+  } from "$lib/page-scroll.ts";
+  import {
+    A4_ASPECT,
     getVerovio,
     loadedVerovio,
     loadScore,
@@ -82,17 +94,18 @@
     facs?: PreviewPage[];
     /** Verovio page count; 0 = nothing to render yet. */
     pageCount: number;
-    /** Rendered encoding pages, filled lazily per spread (1-based). */
+    /** A rendered encoding page's height over its width. */
+    encAspect: number;
+    /** Rendered encoding pages, filled lazily as they near the view (1-based). */
     svgs: Record<number, string>;
   } | null>(null);
 
-  // Display state: which panes show, book-style paging and zoom shared by them,
-  // and the zone overlay toggle.
+  // Display state: which panes show, the rows of one or two pages and the zoom
+  // shared by them, and the zone overlay toggle.
   // svelte-ignore state_referenced_locally -- an initial value by contract
   let pvPane = $state<PreviewPane>(initialPane ?? readPreviewPane());
   let pvView = $state<"single" | "double">("single");
   let pvFirstOnRight = $state(true);
-  let pvFirstVisible = $state(0);
   let pvZoom = $state(1);
   // svelte-ignore state_referenced_locally -- an initial value by contract
   let showZones = $state(initialZones);
@@ -101,6 +114,9 @@
   const pane = $derived(preview?.facs?.length ? pvPane : "enc");
   const facsVisible = $derived(pane === "facs" || pane === "both");
   const encVisible = $derived(pane === "enc" || pane === "both");
+  // The panes that have pages to show.
+  const showFacs = $derived(facsVisible && !!preview?.facs?.length);
+  const showEnc = $derived(encVisible && (preview?.pageCount ?? 0) > 0);
 
   function setPane(choice: PreviewPane) {
     pvPane = choice;
@@ -124,7 +140,7 @@
         PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100,
       ) / 100);
   // The fit in force, if any: it keeps the zoom at the fit as the pane
-  // resizes or the spread changes, until the slider is moved.
+  // resizes or the view changes, until the slider is moved.
   let pvFit = $state<"width" | "page" | null>("page");
 
   const pvPageTotal = $derived(
@@ -134,27 +150,24 @@
   // The scroll area's inner size, for the whole-page fit. Both panes share it.
   let pvScrollW = $state(0);
   let pvScrollH = $state(0);
-  // The zoom at which the current spread's pages fit the pane top to bottom:
-  // bounded by the tallest page shown, capped at 1 (the width fit). A rendered
-  // encoding page's aspect comes from its viewBox, since Verovio trims the
-  // page height to its content.
+  // The zoom at which every page fits the pane top to bottom: bounded by the
+  // tallest page, capped at 1 (the width fit).
   const pvFitPage = $derived.by(() => {
     if (!preview || !pvScrollW || !pvScrollH) return 1;
     // Each page's aspect, with the height it needs beyond the sheet: the
-    // border, plus the caption under a facsimile page.
+    // caption above it and the border.
     const needs: { aspect: number; extra: number }[] = [];
-    for (const p of pvSpread.pages) {
-      const pg = facsVisible ? preview.facs?.[p] : undefined;
-      if (pg) needs.push({ aspect: pg.h / pg.w, extra: 18 });
-      const box = encVisible
-        ? /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(preview.svgs[p + 1] ?? "")
-        : null;
-      if (box)
-        needs.push({ aspect: Number(box[2]) / Number(box[1]), extra: 2 });
-    }
+    if (showFacs)
+      for (const pg of preview.facs ?? [])
+        needs.push({ aspect: pg.h / pg.w, extra: 22 });
+    if (showEnc) needs.push({ aspect: preview.encAspect, extra: 22 });
     if (!needs.length) return 1;
-    const cols = pvView === "double" ? 2 : 1;
-    const colW = (pvScrollW - 14 * (cols - 1)) / cols;
+    // A row holds each shown pane's pages, 10px between the panes and 14px
+    // between a pane's pages.
+    const halves = showFacs && showEnc ? 2 : 1;
+    const perHalf = pvView === "double" ? 2 : 1;
+    const halfW = (pvScrollW - 10 * (halves - 1)) / halves;
+    const colW = (halfW - 14 * (perHalf - 1)) / perHalf;
     const z = Math.min(
       ...needs.map((n) => (pvScrollH - n.extra) / (colW * n.aspect)),
     );
@@ -164,18 +177,62 @@
     if (pvFit === "width") pvZoom = 1;
     else if (pvFit === "page") pvZoom = pvFitPage;
   });
-  const pvSpreadIndex = $derived(
-    Math.max(
-      0,
-      pvSpreads.findIndex((sp) => sp.pages.includes(pvFirstVisible)),
+
+  // One scroll area holds both panes, as rows of one spread each.
+  let pvScroller = $state<HTMLElement | null>(null);
+  let pvRowEls = $state<HTMLElement[]>([]);
+  // What the scroll area shows, read from its scroll position.
+  let pvRow = $state(0);
+  let pvShownRows = $state<number[]>([]);
+  let pvNearPages = $state<number[]>([]);
+  let pvAtTop = $state(true);
+  let pvAtEnd = $state(true);
+  // The position the scroll area returns to when its rows change size, kept
+  // by page so it survives the rows being re-sliced.
+  let pvAnchor: { page: number; frac: number; x?: number } = {
+    page: 0,
+    frac: 0,
+  };
+  const pvLabel = $derived(
+    shownPagesLabel(
+      pvSpreads,
+      pvShownRows.length ? pvShownRows : [pvRow],
+      pvPageTotal,
     ),
   );
-  const pvSpread = $derived(pvSpreads[pvSpreadIndex] ?? { pages: [] });
-  const pvSpreadLabel = $derived(
-    pvSpread.pages.length === 2
-      ? `Pages ${pvSpread.pages[0] + 1}–${pvSpread.pages[1] + 1} of ${pvPageTotal}`
-      : `Page ${(pvSpread.pages[0] ?? 0) + 1} of ${pvPageTotal}`,
-  );
+
+  const pvRows = () => pvRowEls.slice(0, pvSpreads.length);
+  function pvScrolled() {
+    if (!pvScroller) return;
+    const v = rowView(pvScroller, pvRows());
+    pvRow = v.current;
+    pvShownRows = v.shown;
+    pvAtTop = v.atTop;
+    pvAtEnd = v.atEnd;
+    const near = v.near.flatMap((r) => pvSpreads[r]?.pages ?? []);
+    if (near.join() !== pvNearPages.join()) {
+      pvNearPages = near;
+      renderNear();
+    }
+    const a = readAnchor(pvScroller, pvRows());
+    if (a)
+      pvAnchor = {
+        page: pvSpreads[a.row]?.pages[0] ?? 0,
+        frac: a.frac,
+        x: a.x,
+      };
+  }
+  // Zoom, the view and the pane size move every row; once the rows are laid
+  // out anew, the scroll area returns to the remembered position.
+  $effect(() => {
+    void [pvZoom, pvSpreads, pvScrollW, pvScrollH, pane];
+    tick().then(() => {
+      const row = pvSpreads.findIndex((s) => s.pages.includes(pvAnchor.page));
+      if (!pvScroller || row < 0) return;
+      applyAnchor(pvScroller, pvRows(), { ...pvAnchor, row });
+      pvScrolled();
+    });
+  });
 
   // The selected measure, linking the panes: clicking a zone on the facsimile
   // or a measure on the rendered encoding highlights it on both. Zone labels
@@ -187,7 +244,8 @@
     onmeasureselect?.(selected);
     if (selected) {
       const p = pageOfMeasure(selected);
-      if (p >= 0 && !pvSpread.pages.includes(p)) showPage(p);
+      const shown = pvShownRows.some((r) => pvSpreads[r]?.pages.includes(p));
+      if (p >= 0 && !shown) showPage(p);
     }
   }
   // A click on the rendered encoding, resolved to the measure it landed in.
@@ -262,13 +320,13 @@
     return out;
   });
 
-  // Render the encoding pages the current spread needs (kept for later visits).
-  function renderSpread() {
+  // Render the encoding pages near the view (kept for later visits).
+  function renderNear() {
     const tk = loadedVerovio();
     if (!preview || preview.loading || !tk || preview.pageCount === 0) return;
     let added = false;
     const svgs = { ...preview.svgs };
-    for (const p of pvSpread.pages) {
+    for (const p of pvNearPages) {
       const n = p + 1;
       if (n <= preview.pageCount && !svgs[n]) {
         svgs[n] = renderPage(tk, n);
@@ -277,21 +335,22 @@
     }
     if (added) preview = { ...preview, svgs };
   }
+  // One row on. Back from partway down a row returns to that row's top first.
   function pvGo(delta: number) {
-    const next = pvSpreads[pvSpreadIndex + delta];
-    if (!next) return;
-    pvFirstVisible = next.pages[0];
-    renderSpread();
+    if (!pvScroller) return;
+    const a = readAnchor(pvScroller, pvRows());
+    let row = pvRow + delta;
+    if (delta < 0 && a && a.row === pvRow && a.frac > 0.02) row = pvRow;
+    const next = pvSpreads[Math.max(0, Math.min(pvSpreads.length - 1, row))];
+    if (next) showPage(next.pages[0]);
   }
   function pvSetView(v: "single" | "double") {
     pvView = v;
     viewChosen = true;
-    renderSpread();
   }
   function pvSetFirstOnRight(on: boolean) {
     pvFirstOnRight = on;
     viewChosen = true;
-    renderSpread();
   }
 
   /**
@@ -306,16 +365,27 @@
     );
   }
 
-  /** Turn to a page (0-based) and render what it needs. */
+  /** Scroll a page's row (0-based page) to the top of the scroll area. */
   export function showPage(page: number) {
-    if (page < 0 || page >= pvPageTotal) return;
-    pvFirstVisible = page;
-    renderSpread();
+    const row = pvSpreads.findIndex((s) => s.pages.includes(page));
+    if (row < 0) return;
+    pvAnchor = { page: pvSpreads[row].pages[0], frac: 0 };
+    if (!pvScroller) return;
+    scrollToRow(pvScroller, pvRows(), row);
+    pvScrolled();
   }
 
-  /** The first page the preview currently shows, 0-based. */
+  /** The first page of the row being read, 0-based. */
   export function currentPage(): number {
-    return pvSpread.pages[0] ?? 0;
+    return pvSpreads[pvRow]?.pages[0] ?? 0;
+  }
+
+  // The whole-page fit also scrolls the row being read to the top, so its
+  // pages are in view from top to bottom.
+  function pvFitWholePage() {
+    const page = currentPage();
+    pvFit = "page";
+    tick().then(() => showPage(page));
   }
 
   /** Show or hide the measure zones on the facsimile. */
@@ -331,9 +401,11 @@
       key: path,
       loading: true,
       pageCount: 0,
+      encAspect: A4_ASPECT,
       svgs: {},
     };
-    pvFirstVisible = 0;
+    pvAnchor = { page: 0, frac: 0 };
+    pvNearPages = [];
     // A selection belongs to the score it was made on.
     if (selected !== null) {
       selected = null;
@@ -372,16 +444,17 @@
       // Verovio paginates on the <pb/> elements, so encoding pages line up
       // with the facsimile pages.
       let pageCount = 0;
+      const aspects = parsed.pages
+        .filter((pg) => pg.width > 0 && pg.height > 0)
+        .map((pg) => pg.height / pg.width)
+        .sort((a, b) => a - b);
+      const encAspect = aspects.length
+        ? aspects[Math.floor(aspects.length / 2)]
+        : A4_ASPECT;
       if (!parsed.pages.length || parsed.hasMeasures) {
         const tk = await getVerovio();
-        const aspects = parsed.pages
-          .filter((pg) => pg.width > 0 && pg.height > 0)
-          .map((pg) => pg.height / pg.width)
-          .sort((a, b) => a - b);
         const ok = loadScore(tk, mei, {
-          aspect: aspects.length
-            ? aspects[Math.floor(aspects.length / 2)]
-            : undefined,
+          aspect: encAspect,
           encodedBreaks: parsed.hasBreaks,
         });
         if (!ok) throw new Error(`Verovio could not parse ${path}.`);
@@ -394,6 +467,7 @@
           loading: false,
           facs,
           pageCount,
+          encAspect,
           svgs: {},
         };
         const total = Math.max(facs?.length ?? 0, pageCount);
@@ -401,8 +475,9 @@
         else if (!viewChosen)
           ({ view: pvView, firstOnRight: pvFirstOnRight } =
             defaultSpreadView(total));
-        pvFirstVisible = Math.min(from, Math.max(0, total - 1));
-        renderSpread();
+        await tick();
+        if (preview?.key === path)
+          showPage(Math.min(from, Math.max(0, total - 1)));
       }
     } catch (e) {
       if (preview?.key === path)
@@ -411,6 +486,7 @@
           loading: false,
           error: `Preview failed: ${(e as Error).message}`,
           pageCount: 0,
+          encAspect: A4_ASPECT,
           svgs: {},
         };
     }
@@ -457,22 +533,7 @@
         >
       </div>
     {/if}
-    <button
-      type="button"
-      class="btn btn-icon"
-      onclick={() => pvGo(-1)}
-      disabled={pvSpreadIndex <= 0}
-      aria-label="Previous page"><Icon name="chevron-left" /></button
-    >
-    <span class="pglabel">{pvSpreadLabel}</span>
-    <button
-      type="button"
-      class="btn btn-icon"
-      onclick={() => pvGo(1)}
-      disabled={pvSpreadIndex >= pvSpreads.length - 1}
-      aria-label="Next page"><Icon name="chevron-right" /></button
-    >
-    <div class="seg" title="How many pages the viewer shows at once">
+    <div class="seg" title="How many pages the viewer shows side by side">
       <button
         type="button"
         class:on={pvView === "single"}
@@ -498,7 +559,6 @@
         Page 1 right
       </label>
     {/if}
-    <span class="mspacer"></span>
     {#if facsVisible}
       <button
         type="button"
@@ -518,7 +578,7 @@
         >m. {selected} <Icon name="close" size={11} /></button
       >
     {/if}
-    <span class="vline"></span>
+    <span class="mspacer"></span>
     <input
       class="zoomslider"
       type="range"
@@ -546,12 +606,33 @@
       type="button"
       class="tbtn tbtn-icon"
       class:on={pvFit === "page"}
-      onclick={() => (pvFit = "page")}
+      onclick={pvFitWholePage}
       aria-label="Fit the whole page"
       title="Fit the whole page in the pane, top to bottom"
       ><FitIcon kind="page" /></button
     >
     {@render trailing?.()}
+    <!-- Last in the toolbar, next to the task panel on the right. -->
+    <div class="pgnav">
+      <span class="vline"></span>
+      <button
+        type="button"
+        class="btn btn-icon pgbtn"
+        onclick={() => pvGo(-1)}
+        disabled={pvAtTop}
+        aria-label="Previous page"><Icon name="chevron-left" /></button
+      >
+      <span class="pglabel" style={`min-width:${pagesLabelCh(pvPageTotal)}ch`}
+        >{pvLabel}</span
+      >
+      <button
+        type="button"
+        class="btn btn-icon pgbtn"
+        onclick={() => pvGo(1)}
+        disabled={pvAtEnd}
+        aria-label="Next page"><Icon name="chevron-right" /></button
+      >
+    </div>
   </div>
   <div class="pbody-panes">
     {#if !preview || preview.loading}
@@ -563,118 +644,140 @@
            rebuilt: its size binding otherwise stops reporting once its
            sibling pane is removed. -->
       {#key pane}
-        {#if facsVisible && preview.facs?.length}
+        {#if showFacs || showEnc}
           <div class="pane">
             <div
               class="pv-scroll"
               class:noh={pvZoom <= 1}
+              bind:this={pvScroller}
               bind:clientWidth={pvScrollW}
               bind:clientHeight={pvScrollH}
+              onscroll={pvScrolled}
             >
-              <div
-                class="pv-spread"
-                class:hug-right={pane === "both"}
-                style={`width:${pvZoom * 100}%`}
-              >
-                {#if pvSpread.lonelySide === "right"}<div
-                    class="pv-spacer"
-                  ></div>{/if}
-                {#each pvSpread.pages as p (p)}
-                  {@const pg = preview.facs[p]}
-                  <figure class="pv-page">
-                    {#if pg}
-                      <svg
-                        viewBox={`0 0 ${pg.w} ${pg.h}`}
-                        role="img"
-                        aria-label={`Facsimile page ${p + 1}`}
-                      >
-                        {#if pg.url}
-                          <image href={pg.url} width={pg.w} height={pg.h} />
-                        {:else}
-                          <rect width={pg.w} height={pg.h} fill="#f3f3f0" />
-                        {/if}
-                        {#if showZones}
-                          {#each pg.zones as z, zi (zi)}
-                            <rect
-                              class="pv-zone"
-                              vector-effect="non-scaling-stroke"
-                              class:flagged={anchor &&
-                                p + 1 === anchor.page &&
-                                zoneFlagged(z.label)}
-                              class:sel={selected === z.label}
-                              role="button"
-                              tabindex={0}
-                              aria-label={`Measure ${z.label}: highlight in both panes`}
-                              x={z.box.ulx}
-                              y={z.box.uly}
-                              width={z.box.lrx - z.box.ulx}
-                              height={z.box.lry - z.box.uly}
-                              onclick={() => selectMeasure(z.label)}
-                              onkeydown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  selectMeasure(z.label);
-                                }
-                              }}
-                            />
-                            <text
-                              class="pv-zonelabel"
-                              class:flagged={anchor &&
-                                p + 1 === anchor.page &&
-                                zoneFlagged(z.label)}
-                              class:sel={selected === z.label}
-                              x={z.box.ulx + 6}
-                              y={z.box.uly + 30}>{z.label}</text
+              {#each pvSpreads as sp, r (r)}
+                <div
+                  class="pv-row"
+                  style={`width:${pvZoom * 100}%`}
+                  bind:this={pvRowEls[r]}
+                >
+                  {#if showFacs && preview.facs}
+                    <div class="pv-spread">
+                      {#if sp.lonelySide === "right"}<div
+                          class="pv-spacer"
+                        ></div>{/if}
+                      {#each sp.pages as p (p)}
+                        {@const pg = preview.facs[p]}
+                        {@const near = pvNearPages.includes(p)}
+                        <figure class="pv-page">
+                          {#if pg}
+                            <figcaption class="page-label">
+                              Page {p + 1} · Facsimile
+                            </figcaption>
+                            <svg
+                              viewBox={`0 0 ${pg.w} ${pg.h}`}
+                              role="img"
+                              aria-label={`Facsimile page ${p + 1}`}
                             >
-                          {/each}
-                        {/if}
-                      </svg>
-                      <figcaption class="mono">page {p + 1}</figcaption>
-                    {/if}
-                  </figure>
-                {/each}
-                {#if pvSpread.lonelySide === "left"}<div
-                    class="pv-spacer"
-                  ></div>{/if}
-              </div>
+                              {#if pg.url && near}
+                                <image
+                                  href={pg.url}
+                                  width={pg.w}
+                                  height={pg.h}
+                                />
+                              {:else}
+                                <rect
+                                  width={pg.w}
+                                  height={pg.h}
+                                  fill="#f3f3f0"
+                                />
+                              {/if}
+                              {#if showZones && near}
+                                {#each pg.zones as z, zi (zi)}
+                                  <rect
+                                    class="pv-zone"
+                                    vector-effect="non-scaling-stroke"
+                                    class:flagged={anchor &&
+                                      p + 1 === anchor.page &&
+                                      zoneFlagged(z.label)}
+                                    class:sel={selected === z.label}
+                                    role="button"
+                                    tabindex={0}
+                                    aria-label={`Measure ${z.label}: highlight in both panes`}
+                                    x={z.box.ulx}
+                                    y={z.box.uly}
+                                    width={z.box.lrx - z.box.ulx}
+                                    height={z.box.lry - z.box.uly}
+                                    onclick={() => selectMeasure(z.label)}
+                                    onkeydown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        selectMeasure(z.label);
+                                      }
+                                    }}
+                                  />
+                                  <text
+                                    class="pv-zonelabel"
+                                    class:flagged={anchor &&
+                                      p + 1 === anchor.page &&
+                                      zoneFlagged(z.label)}
+                                    class:sel={selected === z.label}
+                                    x={z.box.ulx + 6}
+                                    y={z.box.uly + 30}>{z.label}</text
+                                  >
+                                {/each}
+                              {/if}
+                            </svg>
+                          {/if}
+                        </figure>
+                      {/each}
+                      {#if sp.lonelySide === "left"}<div
+                          class="pv-spacer"
+                        ></div>{/if}
+                    </div>
+                  {/if}
+                  {#if showEnc}
+                    <div class="pv-spread">
+                      {#if sp.lonelySide === "right"}<div
+                          class="pv-spacer"
+                        ></div>{/if}
+                      {#each sp.pages as p (p)}
+                        <figure class="pv-page">
+                          <!-- A page past the encoding's last keeps an unseen
+                               caption, so the sheets beside it stay level. -->
+                          <figcaption
+                            class="page-label"
+                            class:blank={p >= preview.pageCount}
+                            title="The current encoding, rendered with Verovio"
+                          >
+                            Page {p + 1} · Encoding
+                          </figcaption>
+                          <!-- The click lands on whichever rendered measure it
+                               hit; the keyboard path to selection is the
+                               facsimile zones. The box keeps the page's shape
+                               before the page is rendered. -->
+                          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                          <div
+                            class="pv-sheet"
+                            style={`aspect-ratio:1/${preview.encAspect}`}
+                            onclick={encClick}
+                          >
+                            {#if p < preview.pageCount}
+                              {@html flaggedSvgs[p + 1] ?? ""}
+                            {/if}
+                          </div>
+                        </figure>
+                      {/each}
+                      {#if sp.lonelySide === "left"}<div
+                          class="pv-spacer"
+                        ></div>{/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
             </div>
-            <div class="pane-cap">Facsimile</div>
           </div>
         {/if}
-        {#if encVisible && preview.pageCount > 0}
-          <div class="pane">
-            <div
-              class="pv-scroll"
-              class:noh={pvZoom <= 1}
-              bind:clientWidth={pvScrollW}
-              bind:clientHeight={pvScrollH}
-            >
-              <div
-                class="pv-spread"
-                class:hug-left={pane === "both"}
-                style={`width:${pvZoom * 100}%`}
-              >
-                {#if pvSpread.lonelySide === "right"}<div
-                    class="pv-spacer"
-                  ></div>{/if}
-                {#each pvSpread.pages as p (p)}
-                  <!-- The click lands on whichever rendered measure it hit; the
-                     keyboard path to selection is the facsimile zones. -->
-                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                  <div class="pv-page enc" onclick={encClick}>
-                    {#if p < preview.pageCount}
-                      {@html flaggedSvgs[p + 1] ?? ""}
-                    {/if}
-                  </div>
-                {/each}
-                {#if pvSpread.lonelySide === "left"}<div
-                    class="pv-spacer"
-                  ></div>{/if}
-              </div>
-            </div>
-            <div class="pane-cap">Current encoding — rendered with Verovio</div>
-          </div>
-        {:else if encVisible && preview.facs?.length}
+        {#if encVisible && !showEnc && preview.facs?.length}
           <div class="pane">
             <p class="muted pnote">
               No encoding to render yet — the measures are generated when the
@@ -734,7 +837,7 @@
   }
   /* Below this the labels no longer fit beside the paging and zoom controls, so
      the pane buttons keep their icon and hide their label from sight only. */
-  @container (max-width: 900px) {
+  @container (max-width: 1200px) {
     .paneseg button {
       padding: 4px 10px;
     }
@@ -767,7 +870,7 @@
     border-radius: 10px;
     display: flex;
     gap: 10px;
-    padding: 10px 10px 4px;
+    padding: 10px;
   }
   .pane {
     flex: 1;
@@ -793,10 +896,12 @@
   .perr {
     color: var(--danger);
   }
+  /* The scroll position is kept by page (see pvAnchor), not by the browser. */
   .pv-scroll {
     flex: 1;
     min-height: 0;
     overflow: auto;
+    overflow-anchor: none;
   }
   /* At 100% zoom and below the spread fits the pane's width, so no sideways
      scrollbar can appear (a vertical scrollbar that takes up space would
@@ -804,23 +909,26 @@
   .pv-scroll.noh {
     overflow-x: hidden;
   }
-  /* Its width is the zoom level, so it must be free to fall below the pane's
-     width — no min-width. Centred, so the fold of a two-page spread sits in the
-     middle of the pane and a lone page keeps its side of it. */
-  .pv-spread {
+  /* One row per spread: the facsimile pages and the rendered pages side by
+     side. Its width is the zoom level, so it must be free to fall below the
+     pane's width — no min-width. Centred, so the fold of a two-page spread
+     sits in the middle of the pane and a lone page keeps its side of it. */
+  .pv-row {
     display: flex;
-    gap: 14px;
+    gap: 10px;
     align-items: flex-start;
     box-sizing: border-box;
     margin-inline: auto;
   }
-  /* Side by side, the two panes' pages meet in the middle rather than each
-     centring in its own half. */
-  .pv-spread.hug-right {
-    margin-right: 0;
+  .pv-row + .pv-row {
+    margin-top: 14px;
   }
-  .pv-spread.hug-left {
-    margin-left: 0;
+  .pv-spread {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
   }
   .pv-spacer,
   .pv-page {
@@ -842,7 +950,7 @@
     background: var(--facsimile-paper);
   }
   /* The rendered pages are paper: they stay light in both themes. */
-  .pv-page.enc :global(svg) {
+  .pv-sheet :global(svg) {
     width: 100%;
     height: auto;
     display: block;
@@ -850,10 +958,8 @@
     border-radius: 8px;
     background: #fdfdfe;
   }
-  .pv-page figcaption {
-    font-size: 10px;
-    color: var(--ink-faint);
-    text-align: center;
+  .pv-page figcaption.blank {
+    visibility: hidden;
   }
   /* Strokes are screen pixels — the markup sets
      vector-effect="non-scaling-stroke" — so they stay even at every zoom. */
@@ -892,15 +998,15 @@
   }
   /* The whole page is clickable (clicks resolve to a measure's bounding
      box), so the cursor says so everywhere on it. */
-  .pv-page.enc :global(svg) {
+  .pv-sheet :global(svg) {
     cursor: pointer;
   }
-  .pv-page.enc :global(g.measure.m-flag *) {
+  .pv-sheet :global(g.measure.m-flag *) {
     fill: #b42318;
     stroke: #b42318;
   }
   /* The selection wins over a fail flag where both mark the same measure. */
-  .pv-page.enc :global(g.measure.m-sel *) {
+  .pv-sheet :global(g.measure.m-sel *) {
     fill: #2563c9;
     stroke: #2563c9;
   }
