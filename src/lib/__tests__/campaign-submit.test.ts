@@ -38,6 +38,10 @@ const val = (
     failComment?: CommentRow | null;
   },
 ): SubmitView => checkValidation({ failComment: null, ...args });
+const commentReason = (args: Parameters<typeof checkComment>[0]) =>
+  (checkComment(args) as SubmitView).reason;
+const resolveReason = (args: Parameters<typeof checkResolveComment>[0]) =>
+  (checkResolveComment(args) as SubmitView).reason;
 
 const comment = (over: Partial<CommentRow>): CommentRow => ({
   comment_id: "",
@@ -134,155 +138,75 @@ test("encoding: accepted submission advances the task and its subtasks, clears t
   assert.equal(serializeLockCsv(v.locks!), LOCK_HEADER);
 });
 
-test("encoding: a layout correction may also commit layout.json beside the score", () => {
-  const tasks = parseTaskCsv(
-    "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
-      "T0001,,sources/score.mei,omr-layout,,,\n" +
-      "T0001,S0001,sources/score.mei,,,,\n",
-  );
-  const base = {
-    state: encodingState(),
-    locks: encodingLock,
-    intent: { task_id: "T0001" },
-    author: "bob",
-    changedPaths: ["sources/score.mei", "sources/layout.json"],
-    meiValid: true,
-    now: NOW,
-  };
-  assert.equal(enc({ ...base, tasks }).ok, true);
-  assert.deepEqual(enc({ ...base, tasks: TASKS }), {
-    ok: false,
-    reason: "out_of_bounds",
-  });
+const encBase: CheckEncodingArgs = {
+  tasks: TASKS,
+  state: encodingState(),
+  locks: encodingLock,
+  intent: { task_id: "T0001" },
+  author: "bob",
+  changedPaths: ["sources/score.mei"],
+  meiValid: true,
+  now: NOW,
+};
+
+test("encoding: side files are accepted only for the locator that owns them", () => {
+  const tasksWithLocator = (locator: string) =>
+    parseTaskCsv(
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
+        `T0001,,sources/score.mei,${locator},,,\n` +
+        "T0001,S0001,sources/score.mei,,,,\n",
+    );
+  // [locator, changed paths, expected reason or undefined for accepted]
+  const cases: [string, string[], string | undefined][] = [
+    ["omr-layout", ["sources/score.mei", "sources/layout.json"], undefined],
+    ["", ["sources/score.mei", "sources/layout.json"], "out_of_bounds"],
+    ["score-setup", ["sources/score.mei", "sources/omr.xml"], undefined],
+    ["score-setup", ["sources/omr.xml"], undefined],
+    [
+      "score-setup",
+      ["sources/score.mei", "sources/layout.json"],
+      "out_of_bounds",
+    ],
+  ];
+  for (const [locator, changedPaths, reason] of cases) {
+    const label = `${locator || "(none)"}: ${changedPaths.join(", ")}`;
+    const v = enc({
+      ...encBase,
+      tasks: tasksWithLocator(locator),
+      changedPaths,
+    });
+    assert.equal(v.ok, reason === undefined, label);
+    assert.equal(v.reason, reason, label);
+  }
 });
 
-test("encoding: a score setup may also commit omr.xml beside the score, alone or with it", () => {
-  const tasks = parseTaskCsv(
-    "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
-      "T0001,,sources/score.mei,score-setup,,,\n" +
-      "T0001,S0001,sources/score.mei,,,,\n",
-  );
-  const base = {
-    state: encodingState(),
-    locks: encodingLock,
-    intent: { task_id: "T0001" },
-    author: "bob",
-    meiValid: true,
-    now: NOW,
-  };
-  assert.equal(
-    enc({
-      ...base,
-      tasks,
-      changedPaths: ["sources/score.mei", "sources/omr.xml"],
-    }).ok,
-    true,
-  );
-  assert.equal(
-    enc({ ...base, tasks, changedPaths: ["sources/omr.xml"] }).ok,
-    true,
-  );
-  assert.deepEqual(
-    enc({
-      ...base,
-      tasks,
-      changedPaths: ["sources/score.mei", "sources/layout.json"],
-    }),
-    {
-      ok: false,
-      reason: "out_of_bounds",
-    },
-  );
-});
-
-test("encoding: an encoding completed without changes, changing no file, is accepted", () => {
-  const v = enc({
-    tasks: TASKS,
-    state: encodingState(),
-    locks: encodingLock,
-    intent: { task_id: "T0001" },
-    author: "bob",
-    changedPaths: [],
-    meiValid: true,
-    now: NOW,
-  });
-  assert.equal(v.ok, true);
-});
-
-test("encoding: rejects a PR that touches anything but the fragment", () => {
-  const v = enc({
-    tasks: TASKS,
-    state: encodingState(),
-    locks: encodingLock,
-    intent: { task_id: "T0001" },
-    author: "bob",
-    changedPaths: ["sources/score.mei", "tracking/state.csv"],
-    meiValid: true,
-    now: NOW,
-  });
-  assert.deepEqual(v, { ok: false, reason: "out_of_bounds" });
-});
-
-test("encoding: rejects when the author does not hold the encoding lock", () => {
-  const v = enc({
-    tasks: TASKS,
-    state: encodingState(),
-    locks: encodingLock, // held by bob
-    intent: { task_id: "T0001" },
-    author: "mallory",
-    changedPaths: ["sources/score.mei"],
-    meiValid: true,
-    now: NOW,
-  });
-  assert.equal(v.reason, "not_lock_holder");
-});
-
-test("encoding: a validation lock is not an encoding lock", () => {
-  const locks = parseLockCsv(LOCK_HEADER + "T0001,S0001,bob,t,validation\n");
-  const v = enc({
-    tasks: TASKS,
-    state: encodingState(),
-    locks,
-    intent: { task_id: "T0001" },
-    author: "bob",
-    changedPaths: ["sources/score.mei"],
-    meiValid: true,
-    now: NOW,
-  });
-  assert.equal(v.reason, "not_lock_holder");
-});
-
-test("encoding: rejects invalid MEI and the wrong state", () => {
-  const base = {
-    tasks: TASKS,
-    locks: encodingLock,
-    intent: { task_id: "T0001" },
-    author: "bob",
-    changedPaths: ["sources/score.mei"],
-    now: NOW,
-  };
-  assert.equal(
-    enc({ ...base, state: encodingState(), meiValid: false }).reason,
-    "mei_invalid",
-  );
-  assert.equal(
-    enc({ ...base, state: validationState(), meiValid: true }).reason,
-    "wrong_state",
-  );
-});
-
-test("encoding: rejects an unknown task", () => {
-  const v = enc({
-    tasks: TASKS,
-    state: encodingState(),
-    locks: encodingLock,
-    intent: { task_id: "T9999" },
-    author: "bob",
-    changedPaths: ["sources/score.mei"],
-    meiValid: true,
-    now: NOW,
-  });
-  assert.equal(v.reason, "unknown_task");
+test("encoding: rejects out-of-bounds changes, non-lock-holders, invalid MEI, the wrong state and unknown tasks", () => {
+  const cases: [string, Partial<CheckEncodingArgs>, string | undefined][] = [
+    ["no file changed", { changedPaths: [] }, undefined],
+    [
+      "file outside the fragment",
+      { changedPaths: ["sources/score.mei", "tracking/state.csv"] },
+      "out_of_bounds",
+    ],
+    [
+      "author without the encoding lock",
+      { author: "mallory" },
+      "not_lock_holder",
+    ],
+    [
+      "validation lock instead of an encoding lock",
+      { locks: parseLockCsv(LOCK_HEADER + "T0001,S0001,bob,t,validation\n") },
+      "not_lock_holder",
+    ],
+    ["invalid MEI", { meiValid: false }, "mei_invalid"],
+    ["task in validation", { state: validationState() }, "wrong_state"],
+    ["unknown task", { intent: { task_id: "T9999" } }, "unknown_task"],
+  ];
+  for (const [label, over, reason] of cases) {
+    const v = enc({ ...encBase, ...over });
+    assert.equal(v.ok, reason === undefined, label);
+    assert.equal(v.reason, reason, label);
+  }
 });
 
 // --- Validation outcome ----------------------------------------------------
@@ -542,73 +466,7 @@ test("comments: a discussion comment is re-authored by the automation", () => {
   }
 });
 
-test("comments: rejects bad kinds, empty bodies, unknown tasks and dangling replies", () => {
-  const base = {
-    state: validationState(),
-    comments: [comment({ comment_id: "c1", kind: "question" })],
-    author: "carol",
-    changedPaths: ["tracking/comment.csv"],
-    now: NOW,
-    newId: "c2",
-  };
-  assert.equal(
-    (checkComment({ ...base, added: null }) as { reason?: string }).reason,
-    "malformed_comment",
-  );
-  assert.equal(
-    (
-      checkComment({ ...base, added: comment({ kind: "fail" }) }) as {
-        reason?: string;
-      }
-    ).reason,
-    "invalid_kind",
-  );
-  assert.equal(
-    (
-      checkComment({
-        ...base,
-        added: comment({ kind: "question", body: " " }),
-      }) as { reason?: string }
-    ).reason,
-    "empty_comment",
-  );
-  assert.equal(
-    (
-      checkComment({
-        ...base,
-        added: comment({ kind: "question", task_id: "T9999" }),
-      }) as { reason?: string }
-    ).reason,
-    "unknown_task",
-  );
-  assert.equal(
-    (
-      checkComment({
-        ...base,
-        added: comment({ kind: "reply", parent_id: "nope" }),
-      }) as { reason?: string }
-    ).reason,
-    "unknown_parent",
-  );
-  assert.equal(
-    (
-      checkComment({
-        ...base,
-        added: comment({ kind: "question", parent_id: "c1" }),
-      }) as { reason?: string }
-    ).reason,
-    "invalid_parent",
-  );
-  assert.equal(
-    checkComment({
-      ...base,
-      added: comment({ kind: "reply", parent_id: "c1" }),
-    }).ok,
-    true,
-  );
-});
-
-test("comments: a reply must answer a top-level question or addition", () => {
+test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to anything but a top-level discussion comment", () => {
   const base = {
     state: validationState(),
     comments: [
@@ -621,32 +479,47 @@ test("comments: a reply must answer a top-level question or addition", () => {
     now: NOW,
     newId: "c4",
   };
+  const cases: [string, CommentRow | null, string][] = [
+    ["no row", null, "malformed_comment"],
+    ["fail kind", comment({ kind: "fail" }), "invalid_kind"],
+    ["blank body", comment({ kind: "question", body: " " }), "empty_comment"],
+    [
+      "unknown task",
+      comment({ kind: "question", task_id: "T9999" }),
+      "unknown_task",
+    ],
+    [
+      "reply to a missing parent",
+      comment({ kind: "reply", parent_id: "nope" }),
+      "unknown_parent",
+    ],
+    [
+      "question with a parent",
+      comment({ kind: "question", parent_id: "c1" }),
+      "invalid_parent",
+    ],
+    // A reply to a reply has no thread to render under.
+    [
+      "reply to a reply",
+      comment({ kind: "reply", parent_id: "c2" }),
+      "invalid_parent",
+    ],
+    // Fail comments live in the validation record, not the discussion threads.
+    [
+      "reply to a fail",
+      comment({ kind: "reply", parent_id: "c3" }),
+      "invalid_parent",
+    ],
+  ];
+  for (const [label, added, reason] of cases) {
+    assert.equal(commentReason({ ...base, added }), reason, label);
+  }
   assert.equal(
     checkComment({
       ...base,
       added: comment({ kind: "reply", parent_id: "c1" }),
     }).ok,
     true,
-  );
-  // A reply to a reply has no thread to render under.
-  assert.equal(
-    (
-      checkComment({
-        ...base,
-        added: comment({ kind: "reply", parent_id: "c2" }),
-      }) as { reason?: string }
-    ).reason,
-    "invalid_parent",
-  );
-  // Fail comments live in the validation record, not the discussion threads.
-  assert.equal(
-    (
-      checkComment({
-        ...base,
-        added: comment({ kind: "reply", parent_id: "c3" }),
-      }) as { reason?: string }
-    ).reason,
-    "invalid_parent",
   );
 });
 
@@ -707,13 +580,7 @@ test("comments: resolving is author- or push-access-only", () => {
     true,
   );
   assert.equal(
-    (
-      checkResolveComment({
-        ...base,
-        author: "mallory",
-        isCollaborator: false,
-      }) as { reason?: string }
-    ).reason,
+    resolveReason({ ...base, author: "mallory", isCollaborator: false }),
     "not_permitted",
   );
   const resolved = [
@@ -725,16 +592,12 @@ test("comments: resolving is author- or push-access-only", () => {
     }),
   ];
   assert.equal(
-    (
-      checkResolveComment({
-        ...base,
-        comments: resolved,
-        author: "carol",
-        isCollaborator: false,
-      }) as {
-        reason?: string;
-      }
-    ).reason,
+    resolveReason({
+      ...base,
+      comments: resolved,
+      author: "carol",
+      isCollaborator: false,
+    }),
     "already_resolved",
   );
 });

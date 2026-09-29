@@ -154,6 +154,8 @@ test("a detector failure (HTTP 500) is not cached; a genuine empty page is", asy
   assert.equal(retried.detectorFailed, undefined);
   assert.equal(fetchMock.mock.callCount(), 2);
 
+  // A new session over the same content — as after going back and returning —
+  // serves the page from the cache without contacting the detector.
   const again = startDetection(images, "https://d.example", options);
   assert.deepEqual(await again.page(0), retried);
   assert.equal(
@@ -178,12 +180,5 @@ test("a failed page is retried when awaited again, a successful one is not", asy
   const result = await session.page(0);
   assert.deepEqual(result.boxes, []);
   assert.equal(fetchMock.mock.callCount(), 2);
-
-  // A new session over the same content — as after going back and returning —
-  // serves the page from the cache without contacting the detector.
-  const again = startDetection(images, "https://d.example", options);
-  assert.deepEqual(await again.page(0), result);
-  assert.equal(fetchMock.mock.callCount(), 2);
   session.cancel();
-  again.cancel();
 });

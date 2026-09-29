@@ -4,7 +4,6 @@ import {
   blobToBase64,
   classifyUpload,
   iiifCanvasUrl,
-  iiifImageUrl,
   iiifProxyUrl,
   parseIiifManifest,
   prepareCandidates,
@@ -74,125 +73,125 @@ const okFetch = (marker = "iiif") => {
 };
 
 test("classifies uploads by MIME type, falling back to the extension", () => {
-  assert.equal(
-    classifyUpload({ name: "a.pdf", type: "application/pdf" }),
-    "pdf",
-  );
-  assert.equal(classifyUpload({ name: "scan.PDF" }), "pdf");
-  assert.equal(classifyUpload({ name: "p1.jpg", type: "image/jpeg" }), "image");
-  assert.equal(classifyUpload({ name: "p1.PNG" }), "image");
-  assert.equal(classifyUpload({ name: "score.mei" }), "encoding");
-  assert.equal(classifyUpload({ name: "score.musicxml" }), "encoding");
-  assert.equal(classifyUpload({ name: "score.mxl" }), "encoding");
-  assert.equal(classifyUpload({ name: "notes.txt" }), null);
-});
-
-test("a useful image MIME type wins over a misleading .pdf extension", () => {
-  assert.equal(
-    classifyUpload({ name: "scan.pdf", type: "image/jpeg" }),
-    "image",
-  );
-  assert.equal(
-    classifyUpload({ name: "scan.pdf", type: "image/png" }),
-    "image",
-  );
-  // An unhelpful type still falls back to the extension.
-  assert.equal(
-    classifyUpload({ name: "scan.pdf", type: "application/octet-stream" }),
-    "pdf",
-  );
-});
-
-test("builds a full-size or capped IIIF Image API request", () => {
-  assert.equal(
-    iiifImageUrl("https://iiif.example/iiif/2/abc", null),
-    "https://iiif.example/iiif/2/abc/full/max/0/default.jpg",
-  );
-  // A trailing slash on the service id must not double up.
-  assert.equal(
-    iiifImageUrl("https://iiif.example/iiif/2/abc/", 800),
-    "https://iiif.example/iiif/2/abc/full/!800,800/0/default.jpg",
-  );
+  const cases: Array<[{ name: string; type?: string }, string | null]> = [
+    [{ name: "a.pdf", type: "application/pdf" }, "pdf"],
+    [{ name: "scan.PDF" }, "pdf"],
+    [{ name: "p1.jpg", type: "image/jpeg" }, "image"],
+    [{ name: "p1.PNG" }, "image"],
+    [{ name: "score.mei" }, "encoding"],
+    [{ name: "score.musicxml" }, "encoding"],
+    [{ name: "score.mxl" }, "encoding"],
+    [{ name: "notes.txt" }, null],
+    // A useful image type wins over a misleading .pdf extension; an unhelpful
+    // type still falls back to it.
+    [{ name: "scan.pdf", type: "image/jpeg" }, "image"],
+    [{ name: "scan.pdf", type: "image/png" }, "image"],
+    [{ name: "scan.pdf", type: "application/octet-stream" }, "pdf"],
+  ];
+  for (const [file, expected] of cases) {
+    assert.equal(classifyUpload(file), expected, `${file.name} ${file.type}`);
+  }
 });
 
 test("asks a canvas for the wanted size, or takes it whole without a service", () => {
-  assert.equal(
-    iiifCanvasUrl(service("https://iiif.example/img/1"), 400),
-    "https://iiif.example/img/1/full/!400,400/0/default.jpg",
-  );
-  assert.equal(
-    iiifCanvasUrl({ service: null, url: "https://ex/plain.jpg" }, 400),
-    "https://ex/plain.jpg",
-  );
+  const cases: Array<[string, IiifCanvas, number | null, string]> = [
+    [
+      "full size",
+      service("https://iiif.example/iiif/2/abc"),
+      null,
+      "https://iiif.example/iiif/2/abc/full/max/0/default.jpg",
+    ],
+    [
+      // A trailing slash on the service id must not double up.
+      "capped, trailing slash",
+      service("https://iiif.example/iiif/2/abc/"),
+      800,
+      "https://iiif.example/iiif/2/abc/full/!800,800/0/default.jpg",
+    ],
+    [
+      "capped",
+      service("https://iiif.example/img/1"),
+      400,
+      "https://iiif.example/img/1/full/!400,400/0/default.jpg",
+    ],
+    [
+      "no service",
+      { service: null, url: "https://ex/plain.jpg" },
+      400,
+      "https://ex/plain.jpg",
+    ],
+  ];
+  for (const [label, canvas, maxEdge, expected] of cases) {
+    assert.equal(iiifCanvasUrl(canvas, maxEdge), expected, label);
+  }
 });
 
-test("parses canvases from a Presentation API v2 manifest", () => {
-  const manifest = {
-    sequences: [
+/** A Presentation API v3 manifest with one canvas served by `id`. */
+const v3Manifest = (id: string) => ({
+  items: [{ items: [{ items: [{ body: { service: [{ id }] } }] }] }],
+});
+
+test("parses canvases from v2 and v3 manifests, and nothing from anything else", () => {
+  const cases: Array<[string, unknown, IiifCanvas[]]> = [
+    [
+      "v2",
       {
-        canvases: [
+        sequences: [
           {
-            images: [
+            canvases: [
               {
-                resource: { service: { "@id": "https://iiif.example/img/1" } },
+                images: [
+                  {
+                    resource: {
+                      service: { "@id": "https://iiif.example/img/1" },
+                    },
+                  },
+                ],
+              },
+              {
+                images: [
+                  {
+                    resource: {
+                      service: { "@id": "https://iiif.example/img/2" },
+                    },
+                  },
+                ],
               },
             ],
           },
+        ],
+      },
+      [
+        { service: "https://iiif.example/img/1", url: "" },
+        { service: "https://iiif.example/img/2", url: "" },
+      ],
+    ],
+    [
+      "v3",
+      v3Manifest("https://iiif.example/img/1"),
+      [{ service: "https://iiif.example/img/1", url: "" }],
+    ],
+    [
+      // A canvas without an image service falls back to the resource URL.
+      "v2 without a service",
+      {
+        sequences: [
           {
-            images: [
-              {
-                resource: { service: { "@id": "https://iiif.example/img/2" } },
-              },
+            canvases: [
+              { images: [{ resource: { "@id": "https://ex/plain.jpg" } }] },
             ],
           },
         ],
       },
+      [{ service: null, url: "https://ex/plain.jpg" }],
     ],
-  };
-  assert.deepEqual(
-    parseIiifManifest(manifest).map((c) => c.service),
-    ["https://iiif.example/img/1", "https://iiif.example/img/2"],
-  );
-});
-
-test("parses canvases from a Presentation API v3 manifest", () => {
-  const manifest = {
-    items: [
-      {
-        items: [
-          {
-            items: [
-              { body: { service: [{ id: "https://iiif.example/img/1" }] } },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-  assert.deepEqual(parseIiifManifest(manifest), [
-    { service: "https://iiif.example/img/1", url: "" },
-  ]);
-});
-
-test("falls back to the resource URL when a canvas has no image service", () => {
-  const manifest = {
-    sequences: [
-      {
-        canvases: [
-          { images: [{ resource: { "@id": "https://ex/plain.jpg" } }] },
-        ],
-      },
-    ],
-  };
-  assert.deepEqual(parseIiifManifest(manifest), [
-    { service: null, url: "https://ex/plain.jpg" },
-  ]);
-});
-
-test("returns no canvases for input that is not a manifest", () => {
-  assert.deepEqual(parseIiifManifest(null), []);
-  assert.deepEqual(parseIiifManifest("nope"), []);
-  assert.deepEqual(parseIiifManifest({}), []);
+    ["null", null, []],
+    ["string", "nope", []],
+    ["empty object", {}, []],
+  ];
+  for (const [label, manifest, expected] of cases) {
+    assert.deepEqual(parseIiifManifest(manifest), expected, label);
+  }
 });
 
 test("offers every PDF page, image file and canvas as a candidate, in upload order", async () => {
@@ -243,12 +242,19 @@ test("reads a source at preview size only, leaving the committing-size work undo
     },
   );
   assert.deepEqual(scales, [1.5], "PDF pages are rasterised at preview scale");
+  assert.equal(requested.length, 1);
   assert.ok(
     requested[0].includes(
       encodeURIComponent(`!${PREVIEW_IMAGE_EDGE},${PREVIEW_IMAGE_EDGE}`),
     ),
     `expected a preview-size canvas request, got ${requested[0]}`,
   );
+  // Canvases are fetched through the relay, never from the host directly.
+  assert.ok(
+    requested[0].includes("/iiif?url="),
+    `expected the relay, got ${requested[0]}`,
+  );
+  assert.ok(!requested[0].startsWith("https://iiif.example"));
 });
 
 test("converts uploaded encodings to MEI and keeps them out of the pages", async () => {
@@ -387,46 +393,47 @@ test("waits longer and re-attempts a refused canvas, keeping the ones already fe
   );
 });
 
-test("gives up on a canvas the relay keeps refusing, blaming the relay not the source", async () => {
-  let requests = 0;
-  const fetchFn = async () => {
-    requests++;
-    return refused(429);
-  };
-  await assert.rejects(
-    () =>
-      prepareCandidates(
-        [],
-        [service("https://iiif.example/img/1")],
-        undefined,
-        {
-          ...stubs,
-          fetchFn,
-          brokerUrl: "/auth",
-        },
-      ),
-    /too many requests to the image relay .*\(429\)/,
-  );
-  assert.ok(requests > 1, "expected the refused canvas to be re-attempted");
-});
-
-test("tells a source server’s refusal apart from the relay’s own", async () => {
+test("names the server that refused a canvas, and re-attempts the relay’s own refusal", async () => {
   const canvas = { service: null, url: "https://iiif.example/missing" };
-  const fails = (res: Response) =>
-    prepareCandidates([], [canvas], undefined, {
-      ...stubs,
-      fetchFn: async () => res,
-      brokerUrl: "/auth",
-    });
   // One status must not read the same from both sides: a relayed 429 is the
-  // source rationing its own service, the relay's own is this application's cap.
-  await assert.rejects(() => fails(refused(429)), /image relay/);
-  await assert.rejects(() => fails(relayed(429)), /source server returned 429/);
-  // An error the relay raises before reaching out is marked by its absence.
-  await assert.rejects(
-    () => fails(unmarked(502)),
-    /the image relay answered 502/,
-  );
+  // source rationing its own service, the relay's own is this application's
+  // cap. An error the relay raises before reaching out carries no marker.
+  // Only the relay's own refusal is re-attempted before giving up.
+  const cases: Array<[string, Response, RegExp, boolean]> = [
+    [
+      "refused by the relay",
+      refused(429),
+      /too many requests to the image relay .*\(429\)/,
+      true,
+    ],
+    ["relayed 429", relayed(429), /source server returned 429/, false],
+    ["unmarked 502", unmarked(502), /the image relay answered 502/, false],
+    [
+      "relayed 404",
+      relayed(404),
+      /Could not fetch the IIIF image at https:\/\/iiif\.example\/missing: the source server returned 404\./,
+      false,
+    ],
+  ];
+  for (const [label, res, pattern, reattempted] of cases) {
+    let requests = 0;
+    await assert.rejects(
+      () =>
+        prepareCandidates([], [canvas], undefined, {
+          ...stubs,
+          fetchFn: async () => {
+            requests++;
+            return res;
+          },
+          brokerUrl: "/auth",
+        }),
+      pattern,
+      label,
+    );
+    if (reattempted) {
+      assert.ok(requests > 1, "expected the refused canvas to be re-attempted");
+    }
+  }
 });
 
 test("stops fetching previews once one canvas has failed", async () => {
@@ -472,49 +479,11 @@ test("refuses to fetch IIIF canvases without a broker to relay through", async (
   );
 });
 
-test("surfaces a failed IIIF canvas fetch", async () => {
-  const fetchFn = async () => relayed(404);
-  await assert.rejects(
-    () =>
-      prepareCandidates(
-        [],
-        [{ service: null, url: "https://iiif.example/missing" }],
-        undefined,
-        {
-          ...stubs,
-          fetchFn,
-          brokerUrl: "/auth",
-        },
-      ),
-    /Could not fetch the IIIF image at https:\/\/iiif\.example\/missing: the source server returned 404\./,
-  );
-});
-
 test("wraps a IIIF URL in the broker relay, escaping the target", () => {
   assert.equal(
     iiifProxyUrl("https://iiif.example/a?b=1&c=2", "/auth"),
     "/auth/iiif?url=https%3A%2F%2Fiiif.example%2Fa%3Fb%3D1%26c%3D2",
   );
-});
-
-test("fetches IIIF canvases through the relay, never the host directly", async () => {
-  const { requested, fetchFn } = okFetch();
-  await prepareCandidates(
-    [],
-    [service("https://iiif.example/img/1")],
-    undefined,
-    {
-      ...stubs,
-      fetchFn,
-      brokerUrl: "/auth",
-    },
-  );
-  assert.equal(requested.length, 1);
-  assert.ok(
-    requested[0].includes("/iiif?url="),
-    `expected the relay, got ${requested[0]}`,
-  );
-  assert.ok(!requested[0].startsWith("https://iiif.example"));
 });
 
 // --- Committing the chosen pages -------------------------------------------
@@ -623,19 +592,7 @@ test("a serviceless canvas commits with the extension of the bytes fetched", asy
 });
 
 test("fetches a manifest and returns its canvases", async () => {
-  const manifest = {
-    items: [
-      {
-        items: [
-          {
-            items: [
-              { body: { service: [{ id: "https://iiif.example/img/9" }] } },
-            ],
-          },
-        ],
-      },
-    ],
-  };
+  const manifest = v3Manifest("https://iiif.example/img/9");
   const fetchFn = async () =>
     ({ ok: true, json: async () => manifest }) as unknown as Response;
   assert.deepEqual(

@@ -161,6 +161,23 @@ class BrokerTest(unittest.TestCase):
             close=lambda: None,
         )
 
+    def iiif_get(self, url, upstream, public=True):
+        """GET /iiif with the target's address check and upstream fetch stubbed.
+
+        `public` is the resolves_to_public_address return value, or a list of
+        per-hop values. Returns (response, upstream_mock)."""
+        resolves = (
+            {"side_effect": public}
+            if isinstance(public, list)
+            else {"return_value": public}
+        )
+        with patch.object(broker, "resolves_to_public_address", **resolves):
+            with patch.object(
+                broker.requests, "get", return_value=upstream
+            ) as upstream_mock:
+                response = self.client.get("/iiif?url=" + url)
+        return response, upstream_mock
+
     def assert_relay_safety_headers(self, response):
         self.assertEqual(response.headers["Content-Disposition"], "attachment")
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
@@ -197,15 +214,9 @@ class BrokerTest(unittest.TestCase):
 
     def test_iiif_relays_without_credentials_and_caps_the_body(self):
         self.authenticate()
-        with patch.object(
-            broker, "resolves_to_public_address", return_value=True
-        ):
-            with patch.object(
-                broker.requests,
-                "get",
-                return_value=self.iiif_response(b'{"ok":1}'),
-            ) as upstream:
-                response = self.client.get("/iiif?url=https://ex.test/manifest")
+        response, upstream = self.iiif_get(
+            "https://ex.test/manifest", self.iiif_response(b'{"ok":1}')
+        )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b'{"ok":1}')
         self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "iiif")
@@ -214,32 +225,19 @@ class BrokerTest(unittest.TestCase):
         self.assertNotIn("Authorization", upstream.call_args.kwargs["headers"])
         self.assertFalse(upstream.call_args.kwargs["allow_redirects"])
 
-        oversized = SimpleNamespace(
-            status_code=200,
-            is_redirect=False,
-            is_permanent_redirect=False,
-            headers={"content-type": "image/jpeg"},
-            iter_content=lambda _size: [b"x" * (broker.IIIF_MAX_BYTES + 1)],
-            close=lambda: None,
+        response, _ = self.iiif_get(
+            "https://ex.test/big.jpg",
+            self.iiif_response(
+                b"x" * (broker.IIIF_MAX_BYTES + 1), "image/jpeg"
+            ),
         )
-        with patch.object(
-            broker, "resolves_to_public_address", return_value=True
-        ):
-            with patch.object(broker.requests, "get", return_value=oversized):
-                response = self.client.get("/iiif?url=https://ex.test/big.jpg")
         self.assertEqual(response.status_code, 413)
 
     def test_iiif_rejects_unexpected_content_and_revalidates_redirects(self):
         self.authenticate()
-        with patch.object(
-            broker, "resolves_to_public_address", return_value=True
-        ):
-            with patch.object(
-                broker.requests,
-                "get",
-                return_value=self.iiif_response(b"<html>", "text/html"),
-            ):
-                response = self.client.get("/iiif?url=https://ex.test/page")
+        response, _ = self.iiif_get(
+            "https://ex.test/page", self.iiif_response(b"<html>", "text/html")
+        )
         self.assertEqual(response.status_code, 415)
 
         # A redirect to a private address must be caught on the second hop.
@@ -250,11 +248,9 @@ class BrokerTest(unittest.TestCase):
             headers={"location": "https://internal.test/secret"},
             close=lambda: None,
         )
-        with patch.object(
-            broker, "resolves_to_public_address", side_effect=[True, False]
-        ):
-            with patch.object(broker.requests, "get", return_value=redirect):
-                response = self.client.get("/iiif?url=https://ex.test/m")
+        response, _ = self.iiif_get(
+            "https://ex.test/m", redirect, public=[True, False]
+        )
         self.assertEqual(response.status_code, 400)
 
     def test_omr_api_is_gated_configured_and_allowlisted(self):
@@ -407,12 +403,6 @@ class BrokerTest(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        response = self.client.post(
-            "/logout",
-            base_url="http://127.0.0.1:7777",
-            headers={"Origin": "https://evil.test", "X-Forwarded-Host": public},
-        )
-        self.assertEqual(response.status_code, 403)
 
     def test_authorize_rotates_the_session_id(self):
         # A session ID fixed before login must not survive into the

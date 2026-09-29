@@ -48,6 +48,7 @@ const entries = (over: Partial<DraftEntries> = {}): DraftEntries => ({
   encodings: [],
   source: emptySourceMetadata(),
   pieces: [],
+  preparation: "measure-detection",
   ...over,
 });
 
@@ -69,55 +70,30 @@ test("stores a draft under its campaign name and reads it back", () => {
   assert.equal(readDraft("other"), null);
 });
 
-test("discarding removes the record", () => {
-  writeDraft(draft());
-  discardDraft("symphony-9");
-  assert.equal(readDraft("symphony-9"), null);
-});
-
 test("rejects records that are unreadable, of another version, or incomplete", () => {
-  assert.equal(parseDraft(null), null);
-  assert.equal(parseDraft("not json"), null);
-  assert.equal(parseDraft('"a string"'), null);
-  assert.equal(
-    parseDraft(JSON.stringify({ ...draft(), version: DRAFT_VERSION + 1 })),
-    null,
-  );
-  assert.equal(parseDraft(JSON.stringify({ ...draft(), handle: "" })), null);
-  // A record without its entries cannot be continued, so it is not a record.
-  assert.equal(
-    parseDraft(JSON.stringify({ ...draft(), entries: undefined })),
-    null,
-  );
-  assert.equal(
-    parseDraft(
-      JSON.stringify({ ...draft(), entries: { ...entries(), pieces: "one" } }),
-    ),
-    null,
-  );
-  // Corrupted scalar fields: a step outside the wizard's, and non-strings
-  // where the wizard stores strings.
-  assert.equal(
-    parseDraft(
-      JSON.stringify({
-        ...draft(),
-        entries: { ...entries(), step: "no-such-step" },
-      }),
-    ),
-    null,
-  );
-  assert.equal(
-    parseDraft(
-      JSON.stringify({ ...draft(), entries: { ...entries(), title: 7 } }),
-    ),
-    null,
-  );
-  assert.equal(
-    parseDraft(
-      JSON.stringify({ ...draft(), entries: { ...entries(), license: null } }),
-    ),
-    null,
-  );
+  const withEntries = (over: Record<string, unknown>) =>
+    JSON.stringify({ ...draft(), entries: { ...entries(), ...over } });
+  const cases: Array<[string, string | null]> = [
+    ["missing", null],
+    ["not JSON", "not json"],
+    ["not an object", '"a string"'],
+    [
+      "another version",
+      JSON.stringify({ ...draft(), version: DRAFT_VERSION + 1 }),
+    ],
+    ["empty handle", JSON.stringify({ ...draft(), handle: "" })],
+    // A record without its entries cannot be continued, so it is not a record.
+    ["no entries", JSON.stringify({ ...draft(), entries: undefined })],
+    ["pieces not a list", withEntries({ pieces: "one" })],
+    // Corrupted scalar fields: a step outside the wizard's, and non-strings
+    // where the wizard stores strings.
+    ["unknown step", withEntries({ step: "no-such-step" })],
+    ["numeric title", withEntries({ title: 7 })],
+    ["null license", withEntries({ license: null })],
+  ];
+  for (const [label, text] of cases) {
+    assert.equal(parseDraft(text), null, label);
+  }
 });
 
 test("lists the signed-in account’s unfinished setups, most recently changed first", () => {

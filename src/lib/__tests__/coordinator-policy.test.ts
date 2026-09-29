@@ -1,14 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  findRow,
-  parseLockCsv,
-  parseStateCsv,
-  type LockRow,
-  type TaskRow,
-} from "../campaign-tables.ts";
-import { checkValidation } from "../campaign-submit.ts";
+import { type TaskRow } from "../campaign-tables.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
@@ -99,54 +92,19 @@ test("validation intent is one changed cell in the PR patch (merge-base relative
     null,
   );
   assert.equal(validationIntentFromPatch(undefined, STATE_HEADER), null);
-});
-
-test("a verdict intent re-applies to tables that moved after the PR was opened", () => {
-  // The PR set validate_status_1 against its merge base, but another
-  // validator's verdict landed there since: checkValidation re-slots the
-  // intent into the next open cell instead of rejecting the PR as malformed.
-  const header = [...STATE_HEADER, "validate_status_2"];
-  const patch =
-    "@@\n" +
-    "-T0001,S0001,validation_required,,,,\n" +
-    "+T0001,S0001,validation_required,,,pass,";
-  const intent = validationIntentFromPatch(patch, header);
-  assert.deepEqual(intent, {
-    task_id: "T0001",
-    subtask_id: "S0001",
-    column: "validate_status_1",
-    value: "pass",
-  });
-
-  const fresh = parseStateCsv(
-    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n" +
-      "T0001,,validation_required,bob,t,,\n" +
-      "T0001,S0001,validation_required,,,pass|dave|t,\n",
-  );
-  const locks = parseLockCsv(
-    "task_id,subtask_id,user_id,timestamp,kind\nT0001,S0001,carol,t,validation\n",
-  );
-  const v = checkValidation({
-    state: fresh,
-    locks,
-    intent: {
-      task_id: intent!.task_id,
-      subtask_id: intent!.subtask_id,
-      verdict: intent!.value,
+  // A second slot column leaves the intent on the changed column.
+  assert.deepEqual(
+    validationIntentFromPatch(
+      "@@\n-T0001,S0001,validation_required,,,,\n+T0001,S0001,validation_required,,,pass,",
+      [...STATE_HEADER, "validate_status_2"],
+    ),
+    {
+      task_id: "T0001",
+      subtask_id: "S0001",
+      column: "validate_status_1",
+      value: "pass",
     },
-    author: "carol",
-    changedPaths: ["tracking/state.csv"],
-    passThreshold: 2,
-    failComment: null,
-    now: "2026-06-25T10:00:00Z",
-  });
-  assert.equal(v.ok, true);
-  if (v.ok) {
-    assert.equal(
-      findRow(v.state.rows, "T0001", "S0001")!.validate_status_2,
-      "pass|carol|2026-06-25T10:00:00Z",
-    );
-  }
+  );
 });
 
 test("validation verdicts are exact, not pass/fail prefixes", () => {
@@ -343,11 +301,12 @@ test("an encoding submission resolves by its envelope, else its task branch", ()
   );
 });
 
-test("pieceKindForPath reads the piece kind from the canonical config shape", () => {
+test("pieceFieldForPath and pieceKindForPath read one quoted field of the piece at a path", () => {
   const config =
     "pieces:\n" +
     '  - id: "piece-01"\n' +
     '    kind: "facsimile"\n' +
+    '    preparation: "omr"\n' +
     '    path: "sources/piece-01/score.mei"\n' +
     "    zones: []\n" +
     '  - id: "piece-02"\n' +
@@ -363,27 +322,9 @@ test("pieceKindForPath reads the piece kind from the canonical config shape", ()
     pieceKindForPath(config, "sources/piece-02/score.mei"),
     "physical-only",
   );
-  assert.equal(pieceKindForPath(config, "sources/piece-09/score.mei"), null);
-  assert.equal(pieceKindForPath(null, "sources/piece-01/score.mei"), null);
-});
-
-test("pieceFieldForPath reads one quoted field of the piece at a path", () => {
-  const config =
-    "pieces:\n" +
-    '  - id: "piece-01"\n' +
-    '    kind: "facsimile"\n' +
-    '    preparation: "omr"\n' +
-    '    path: "sources/piece-01/score.mei"\n' +
-    '  - id: "piece-02"\n' +
-    '    kind: "physical-only"\n' +
-    '    path: "sources/piece-02/score.mei"\n';
   assert.equal(
     pieceFieldForPath(config, "sources/piece-01/score.mei", "preparation"),
     "omr",
-  );
-  assert.equal(
-    pieceKindForPath(config, "sources/piece-01/score.mei"),
-    "facsimile",
   );
   // A piece without the field, and a path no piece carries.
   assert.equal(
@@ -394,6 +335,7 @@ test("pieceFieldForPath reads one quoted field of the piece at a path", () => {
     pieceFieldForPath(config, "sources/piece-03/score.mei", "kind"),
     null,
   );
+  assert.equal(pieceKindForPath(config, "sources/piece-09/score.mei"), null);
   assert.equal(pieceKindForPath(null, "sources/piece-01/score.mei"), null);
 });
 

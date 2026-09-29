@@ -44,18 +44,7 @@ test("cycles colours once there are more pieces than hues", () => {
   assert.equal(pieceColour(PIECE_COLOURS), "var(--zone-1)");
 });
 
-test("copies metadata without sharing the contributor objects", () => {
-  const original = createPiece([]).meta;
-  original.title = "First piece";
-  original.contributors = [{ name: "A. Editor", role: "editor" }];
-  const copy = copyMetadata(original);
-  copy.title = "Second piece";
-  copy.contributors[0].name = "B. Editor";
-  assert.equal(original.title, "First piece");
-  assert.equal(original.contributors[0].name, "A. Editor");
-});
-
-test("copies only the fields a piece can own", () => {
+test("copies only the fields a piece can own, without sharing the contributor objects", () => {
   const original = createPiece([]).meta;
   original.title = "First piece";
   original.composer = "L. van Beethoven";
@@ -64,6 +53,7 @@ test("copies only the fields a piece can own", () => {
   original.publisher = "Breitkopf & Härtel";
   original.date = "1802";
   original.shelfmark = "Mus.Hs.16481";
+  original.contributors = [{ name: "A. Editor", role: "editor" }];
   const copy = copyMetadata(original);
   assert.equal(copy.composer, "L. van Beethoven");
   assert.equal(copy.lyricist, "J. W. von Goethe");
@@ -72,6 +62,10 @@ test("copies only the fields a piece can own", () => {
   assert.equal(copy.publisher, "");
   assert.equal(copy.date, "");
   assert.equal(copy.shelfmark, "");
+  copy.title = "Second piece";
+  copy.contributors[0].name = "B. Editor";
+  assert.equal(original.title, "First piece");
+  assert.equal(original.contributors[0].name, "A. Editor");
 });
 
 test("lists the pages a piece covers, deduplicated and in order", () => {
@@ -136,31 +130,17 @@ test("assigns a measure box to the piece whose region contains its centre", () =
     facsimilePiece("piece-01", [{ surface: 0, ...box(0, 0, 100, 100) }]),
     facsimilePiece("piece-02", [{ surface: 0, ...box(100, 0, 200, 100) }]),
   ];
-  assert.equal(pieceForBox(pieces, 0, box(10, 10, 40, 40)), 0);
-  assert.equal(pieceForBox(pieces, 0, box(150, 10, 180, 40)), 1);
-});
-
-test("keeps a box whose edges spill past the region it is centred in", () => {
-  const pieces = [
-    facsimilePiece("piece-01", [{ surface: 0, ...box(0, 0, 100, 100) }]),
+  const cases: Array<[string, number, ReturnType<typeof box>, number]> = [
+    ["inside piece-01", 0, box(10, 10, 40, 40), 0],
+    ["inside piece-02", 0, box(150, 10, 180, 40), 1],
+    // Edges may spill past the region; the centre decides.
+    ["centre outside every region", 0, box(90, 90, 130, 130), -1],
+    ["centre inside, edges spilling", 0, box(80, 80, 110, 110), 0],
+    ["page no region covers", 1, box(10, 10, 40, 40), -1],
   ];
-  assert.equal(
-    pieceForBox(pieces, 0, box(90, 90, 130, 130)),
-    -1,
-    "centre outside → unassigned",
-  );
-  assert.equal(
-    pieceForBox(pieces, 0, box(80, 80, 110, 110)),
-    0,
-    "centre inside → assigned",
-  );
-});
-
-test("reports no piece for a box on a page no region covers", () => {
-  const pieces = [
-    facsimilePiece("piece-01", [{ surface: 0, ...box(0, 0, 100, 100) }]),
-  ];
-  assert.equal(pieceForBox(pieces, 1, box(10, 10, 40, 40)), -1);
+  for (const [label, surface, b, expected] of cases) {
+    assert.equal(pieceForBox(pieces, surface, b), expected, label);
+  }
 });
 
 test("partitions detected boxes between the pieces that contain them", () => {
@@ -246,11 +226,47 @@ test("an encoded piece takes no pages", () => {
   ]);
 });
 
-test("starts a facsimile-only campaign with one piece", () => {
-  const pieces = initialPieces([], true);
-  assert.equal(pieces.length, 1);
-  assert.equal(pieces[0].kind, "facsimile");
-  assert.deepEqual(pieces[0].zones, []);
+test("starts one encoded piece per upload, a facsimile piece for images, else one physical piece", () => {
+  const cases: Array<[string, string[], boolean, string[]]> = [
+    ["images only", [], true, ["facsimile"]],
+    [
+      "encodings only",
+      ["prelude.musicxml", "fugue.mei"],
+      false,
+      ["encoded", "encoded"],
+    ],
+    [
+      "encoding and images",
+      ["prelude.musicxml"],
+      true,
+      ["encoded", "facsimile"],
+    ],
+    ["neither", [], false, ["physical-only"]],
+    ["one encoding, no images", ["sonata.mei"], false, ["encoded"]],
+  ];
+  for (const [label, encodingNames, hasImages, kinds] of cases) {
+    const pieces = initialPieces(encodingNames, hasImages);
+    assert.deepEqual(
+      pieces.map((p) => p.kind),
+      kinds,
+      label,
+    );
+    for (const piece of pieces) {
+      assert.deepEqual(piece.zones, [], `${label}: zones start empty`);
+    }
+  }
+  assert.deepEqual(
+    initialPieces(["prelude.musicxml", "fugue.mei"], false).map((p) => [
+      p.id,
+      p.meta.title,
+      p.encodingName,
+    ]),
+    [
+      ["piece-01", "prelude", "prelude.musicxml"],
+      ["piece-02", "fugue", "fugue.mei"],
+    ],
+    "encoded pieces are titled from the file name",
+  );
 });
 
 test("createEncodedPiece links the upload and takes its title from the file name", () => {
@@ -260,38 +276,4 @@ test("createEncodedPiece links the upload and takes its title from the file name
   assert.equal(piece.encodingName, "sonata.musicxml");
   assert.equal(piece.meta.title, "sonata");
   assert.equal(piece.id, "piece-02");
-});
-
-test("starts one encoded piece per upload, titled from the file name", () => {
-  const pieces = initialPieces(["prelude.musicxml", "fugue.mei"], false);
-  assert.deepEqual(
-    pieces.map((p) => [p.id, p.kind, p.meta.title, p.encodingName]),
-    [
-      ["piece-01", "encoded", "prelude", "prelude.musicxml"],
-      ["piece-02", "encoded", "fugue", "fugue.mei"],
-    ],
-  );
-});
-
-test("combines encoded uploads with a facsimile piece for the page images", () => {
-  const pieces = initialPieces(["prelude.musicxml"], true);
-  assert.deepEqual(
-    pieces.map((p) => p.kind),
-    ["encoded", "facsimile"],
-  );
-});
-
-test("seeds one physical piece when there is neither an encoding nor an image", () => {
-  const pieces = initialPieces([], false);
-  assert.equal(pieces.length, 1);
-  assert.equal(pieces[0].kind, "physical-only");
-  assert.equal(pieces[0].zones.length, 0);
-});
-
-test("encodings without images seed no physical piece alongside them", () => {
-  const pieces = initialPieces(["sonata.mei"], false);
-  assert.deepEqual(
-    pieces.map((piece) => piece.kind),
-    ["encoded"],
-  );
 });

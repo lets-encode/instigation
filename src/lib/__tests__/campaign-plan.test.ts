@@ -46,6 +46,20 @@ const encodingLock = parseLockCsv(
 );
 
 const copy = (rows: TaskRow[]): TaskRow[] => rows.map((r) => ({ ...r }));
+const row = (
+  task_id: string,
+  subtask_id: string,
+  locator: string,
+  depends_on: string,
+): TaskRow => ({
+  task_id,
+  subtask_id,
+  fragment: "sources/score.mei",
+  locator,
+  allowlist: "",
+  blocklist: "",
+  depends_on,
+});
 
 test("taskStarted: untouched, locked, and encoded tasks", () => {
   assert.equal(taskStarted(freshState, [], "T0001"), false);
@@ -62,24 +76,8 @@ test("a fresh plan may reorder, rewire, remove and add tasks", () => {
 
 test("state rows follow the plan: kept rows carried over, new tasks start fresh", () => {
   const plan = copy(twoTasks).concat([
-    {
-      task_id: "T0003",
-      subtask_id: "",
-      fragment: "sources/score.mei",
-      locator: "surface-3",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "T0002",
-    },
-    {
-      task_id: "T0003",
-      subtask_id: "S0001",
-      fragment: "sources/score.mei",
-      locator: "surface-3",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "",
-    },
+    row("T0003", "", "surface-3", "T0002"),
+    row("T0003", "S0001", "surface-3", ""),
   ]);
   const v = checkPlan(twoTasks, startedState, [], plan);
   assert.equal(v.ok, true);
@@ -147,17 +145,7 @@ test("structural validation: empty plans, duplicates and orphans are rejected", 
     ok: false,
     reason: "duplicate_row",
   });
-  const orphan = copy(twoTasks).concat([
-    {
-      task_id: "T0009",
-      subtask_id: "S0001",
-      fragment: "sources/score.mei",
-      locator: "",
-      allowlist: "",
-      blocklist: "",
-      depends_on: "",
-    },
-  ]);
+  const orphan = copy(twoTasks).concat([row("T0009", "S0001", "", "")]);
   assert.deepEqual(checkPlan(twoTasks, freshState, [], orphan), {
     ok: false,
     reason: "orphan_subtask",

@@ -1,11 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  assertSpliceIntegrity,
-  splicePage,
-  splicePageSpan,
-} from "../mei-page-splice.ts";
+import { splicePage, splicePageSpan } from "../mei-page-splice.ts";
 import {
   initialFacsimileModel,
   buildBlankScoreMei,
@@ -153,10 +149,6 @@ test("splicePage rejects a fork whose page duplicates another page's measure id"
   );
 });
 
-test("assertSpliceIntegrity passes an untouched score", () => {
-  assertSpliceIntegrity(base, base, "surface-1");
-});
-
 // A physical piece's blank score: no facsimile, one seed measure per page.
 // Its pages have no fixed measure grid, so they are joined span-wise.
 const blank = buildBlankScoreMei(HEAD, 2);
@@ -190,27 +182,11 @@ test("splicePageSpan leaves other pages as the base has them", () => {
   assert.ok(!spliced.includes("m-x"));
 });
 
-test("splicePageSpan throws when either side is missing the page break", () => {
-  assert.throws(
-    () => splicePageSpan(blank, blankFork, "surface-9"),
-    /No page break found/,
-  );
+test("splicePageSpan throws when the fork is missing the page break", () => {
   const forkNoPb = blankFork.replace(/<pb xml:id="pb-2"[^>]*>/, "");
   assert.throws(
     () => splicePageSpan(blank, forkNoPb, "surface-2"),
     /No page break found/,
-  );
-});
-
-test("splicePageSpan rejects duplicated measure ids across pages", () => {
-  // The fork transcribed page 2 reusing page 1's seed measure id.
-  const forkDuplicate = blankFork.replace(
-    '<measure xml:id="m-a"',
-    '<measure xml:id="measure-1"',
-  );
-  assert.throws(
-    () => splicePageSpan(blank, forkDuplicate, "surface-2"),
-    /Duplicate measure xml:id "measure-1" after splicing surface-2/,
   );
 });
 

@@ -73,7 +73,6 @@ export function pieceStaves(
   const correcting = new Map(
     record.clefs.map((c) => [c.staff, "misread" as ClefCorrectionState]),
   );
-  const fixed = new Map(record.assignments.map((a) => [a.zone, a.staff]));
   const clefs: (string | null)[] = parts.map((part) => part.clef);
   let previous: number[] = [];
   return parsed.pages.map((pg, p) => {
@@ -110,7 +109,6 @@ export function pieceStaves(
               : clef;
           }),
           previous,
-          fixed: zones[s].map((zone) => fixed.get(zone)),
         },
       );
       assigned.push(placed);

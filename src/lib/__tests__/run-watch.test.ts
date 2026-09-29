@@ -2,24 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { WorkflowRunWatch, type ProgressUpdate } from "../run-watch.ts";
-import type {
-  ForgeClient,
-  WorkflowRunInfo,
-  WorkflowJobInfo,
-} from "../forge/types.ts";
-
-type ForgeOverrides = Partial<{ [K in keyof ForgeClient]: ForgeClient[K] }>;
-
-function fakeForge(overrides: ForgeOverrides): ForgeClient {
-  return new Proxy(overrides, {
-    get(target, property) {
-      if (property in target) return target[property as keyof ForgeOverrides];
-      return () => {
-        throw new Error(`Unexpected forge call: ${String(property)}`);
-      };
-    },
-  }) as ForgeClient;
-}
+import type { WorkflowRunInfo, WorkflowJobInfo } from "../forge/types.ts";
+import { fakeForge } from "./fake-forge.ts";
 
 const run = (overrides: Partial<WorkflowRunInfo>): WorkflowRunInfo => ({
   id: 7,

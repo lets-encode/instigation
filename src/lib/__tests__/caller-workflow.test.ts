@@ -78,33 +78,26 @@ test("no step checks out the fork", () => {
   }
 });
 
-test("run steps do not expand PR head values into commands", () => {
-  for (const step of steps()) {
-    const runStart = step.findIndex((l) => /^\s*run:/.test(l));
-    if (runStart < 0) continue;
-    const runBlock = step.slice(runStart).join("\n");
-    assert.doesNotMatch(
-      runBlock,
-      /\$\{\{[^}]*head\.(sha|ref|repo)/,
-      `a run step expands the PR head:\n${runBlock}`,
-    );
-  }
-});
-
 // The central pointer (repository, ref, entry point) is base-controlled data
 // read from config.yaml. It reaches the checkout as action inputs and the run
 // step as a quoted environment variable, never as an expansion inside a
 // command line.
-test("run steps do not expand the central pointer into commands", () => {
+test("run steps do not expand PR head values or the central pointer into commands", () => {
+  const expansions: Array<[RegExp, string]> = [
+    [/\$\{\{[^}]*head\.(sha|ref|repo)/, "the PR head"],
+    [/\$\{\{[^}]*steps\.cfg\.outputs/, "the central pointer"],
+  ];
   for (const step of steps()) {
     const runStart = step.findIndex((l) => /^\s*run:/.test(l));
     if (runStart < 0) continue;
     const runBlock = step.slice(runStart).join("\n");
-    assert.doesNotMatch(
-      runBlock,
-      /\$\{\{[^}]*steps\.cfg\.outputs/,
-      `a run step expands the central pointer:\n${runBlock}`,
-    );
+    for (const [pattern, label] of expansions) {
+      assert.doesNotMatch(
+        runBlock,
+        pattern,
+        `a run step expands ${label}:\n${runBlock}`,
+      );
+    }
   }
 });
 

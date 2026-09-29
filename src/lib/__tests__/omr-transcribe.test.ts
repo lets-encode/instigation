@@ -6,6 +6,19 @@ import type { OmrClient, OmrExecution } from "../omr-client.ts";
 
 const pipeline = { name: "mzk-staff", version: "1" };
 
+const execution = (
+  input: string[],
+  state: string,
+  error: string | null = null,
+): OmrExecution => ({
+  execution_id: 1,
+  pipeline_name: "mzk-staff",
+  pipeline_version: "1",
+  input,
+  state,
+  error,
+});
+
 test("transcribeStaves: one page, every crop uploaded, one run per staff, null for a failed staff", async () => {
   const calls: string[] = [];
   const client = {
@@ -26,15 +39,9 @@ test("transcribeStaves: one page, every crop uploaded, one run per staff, null f
       input: string[],
     ): Promise<OmrExecution> {
       calls.push(`run ${input[0]}`);
-      const failed = input[0] === "Staves/2/image.jpg";
-      return {
-        execution_id: 1,
-        pipeline_name: "mzk-staff",
-        pipeline_version: "1",
-        input,
-        state: failed ? "failed" : "completed",
-        error: failed ? "malformed sequence" : null,
-      };
+      return input[0] === "Staves/2/image.jpg"
+        ? execution(input, "failed", "malformed sequence")
+        : execution(input, "completed");
     },
     async download(_pageId: string, paths: string[]) {
       calls.push(`download ${paths.join(",")}`);
@@ -89,14 +96,7 @@ test("transcribeStaves: at most 16 executions run at once, results stay in crop 
       peak = Math.max(peak, running);
       await new Promise((r) => setTimeout(r, 1));
       running--;
-      return {
-        execution_id: 1,
-        pipeline_name: "mzk-staff",
-        pipeline_version: "1",
-        input,
-        state: "completed",
-        error: null,
-      };
+      return execution(input, "completed");
     },
     async download(_pageId: string, paths: string[]) {
       return Object.fromEntries(paths.map((path) => [path, new Blob([path])]));

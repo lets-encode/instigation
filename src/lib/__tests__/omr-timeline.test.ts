@@ -57,7 +57,6 @@ function piece(clefs: string[], corrections: OmrRecord["clefs"] = []) {
         },
       ],
     })),
-    assignments: [],
     clefs: corrections,
   };
   return { pages, record };
@@ -128,24 +127,4 @@ test("a box the record describes with another box has no entry", () => {
   const [page] = pieceStaves(parsed, record, scoreStaves(parsed));
   assert.equal(page.entries[0][0], null);
   assert.equal(page.transcriptions[0][0], null);
-});
-
-test("a placement from the record is kept, and the next system follows it", () => {
-  const { pages, record } = piece([G, G]);
-  record.assignments = [{ zone: "staff-zone-1-1", staff: 2 }];
-  const two: ScoreDefModel = {
-    ...DEFAULT_SCORE_DEF,
-    staves: [DEFAULT_SCORE_DEF.staves[0], DEFAULT_SCORE_DEF.staves[0]],
-  };
-  const parsed = { pages, scoreDef: two };
-  const staves = pieceStaves(parsed, record, scoreStaves(parsed));
-  assert.deepEqual(
-    staves.map((s) => s.assigned),
-    [[[2]], [[2]]],
-  );
-  record.assignments = [];
-  assert.deepEqual(
-    pieceStaves(parsed, record, scoreStaves(parsed)).map((s) => s.assigned),
-    [[[1]], [[1]]],
-  );
 });

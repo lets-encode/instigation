@@ -1,8 +1,8 @@
 // The recognition record of an OMR-prepared piece, committed as `omr.xml`
 // next to the score by the score setup: what the staff pipeline and the OCR
 // produced for every staff box, keyed to the score's staff zones, and the
-// corrections volunteers made to what is computed from it (staff assignment,
-// opening clefs). Everything derivable (systems, clef/key/meter timelines,
+// corrections volunteers made to what is computed from it (opening clefs).
+// Everything derivable (systems, clef/key/meter timelines,
 // the stitched page, the converted MEI) is recomputed from it. Each staff's
 // MusicXML is embedded as an element, its XML declaration and DOCTYPE
 // removed. Regex over the document text, no DOM.
@@ -45,8 +45,6 @@ export interface OmrRecord {
   staffPipeline: OmrPipeline;
   ocr: OcrEngine;
   pages: OmrPageEntry[];
-  /** Staff assignments a volunteer corrected: score staff (1-based, 0 for none) per staff zone. */
-  assignments: { zone: string; staff: number }[];
   /** Opening-clef corrections: the score staff, the clef the model read and the clef it should be. */
   clefs: { staff: number; read: string; corrected: string }[];
 }
@@ -115,8 +113,6 @@ export function serializeOmrRecord(record: OmrRecord): string {
     }
     lines.push("  </page>");
   }
-  for (const a of record.assignments)
-    lines.push(`  <assignment zone="${escape(a.zone)}" staff="${a.staff}"/>`);
   for (const c of record.clefs) {
     lines.push(
       `  <clef staff="${c.staff}" read="${escape(c.read)}" corrected="${escape(c.corrected)}"/>`,
@@ -184,10 +180,6 @@ export function parseOmrRecord(xml: string | null): OmrRecord | null {
       language: attr(ocr, "language") ?? "",
     },
     pages,
-    assignments: (tail.match(/<assignment\b[^>]*>/g) ?? []).map((tag) => ({
-      zone: attr(tag, "zone") ?? "",
-      staff: num(tag, "staff"),
-    })),
     clefs: (tail.match(/<clef\b[^>]*\bcorrected="[^"]*"[^>]*>/g) ?? []).map(
       (tag) => ({
         staff: num(tag, "staff"),

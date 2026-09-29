@@ -312,7 +312,7 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
     meta: { ...emptySourceMetadata(), ...piece.meta },
   }));
   wizard.encodings = entries.encodings;
-  wizard.preparation = entries.preparation ?? "measure-detection";
+  wizard.preparation = entries.preparation;
   wizard.images = images;
   // Picked files are not part of a draft; the upload step collects them again.
   // The candidate pages read from them go the same way.

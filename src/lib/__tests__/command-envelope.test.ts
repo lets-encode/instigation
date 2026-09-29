@@ -25,21 +25,17 @@ test("envelope: round-trips through a PR body", () => {
   assert.deepEqual(envelopeFromPrBody(body), ENVELOPE);
 });
 
-test("envelopeFromPrBody: null on bodies without an envelope", () => {
-  assert.equal(envelopeFromPrBody("A hand-written PR body."), null);
-  assert.equal(envelopeFromPrBody(""), null);
-  assert.equal(envelopeFromPrBody(null), null);
-});
-
-test("envelopeFromPrBody: null on a malformed envelope", () => {
-  assert.equal(
-    envelopeFromPrBody("<!-- lets-encode:command {not json} -->"),
-    null,
-  );
-  assert.equal(
-    envelopeFromPrBody('<!-- lets-encode:command {"input":{}} -->'),
-    null,
-  );
+test("envelopeFromPrBody: null on bodies without an envelope or with a malformed one", () => {
+  const bodies: Array<[string, string | null]> = [
+    ["hand-written body", "A hand-written PR body."],
+    ["empty body", ""],
+    ["null body", null],
+    ["not JSON", "<!-- lets-encode:command {not json} -->"],
+    ["missing fields", '<!-- lets-encode:command {"input":{}} -->'],
+  ];
+  for (const [label, body] of bodies) {
+    assert.equal(envelopeFromPrBody(body), null, label);
+  }
 });
 
 test("envelopeFromPrBody: rejects invalid envelope fields", () => {

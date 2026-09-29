@@ -85,7 +85,7 @@ function pbSurfaces(xml: string): string[] {
  * descriptive Error on the first violation; the checks are what turn a fork
  * that would silently corrupt the score into a loud rejection.
  */
-export function assertSpliceIntegrity(
+function assertSpliceIntegrity(
   baseMei: string,
   splicedMei: string,
   locator: string,

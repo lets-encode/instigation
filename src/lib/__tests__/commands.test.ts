@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -9,19 +9,7 @@ import {
 } from "../commands.ts";
 import { envelopeFromPrBody } from "../command-envelope.ts";
 import type { ForgeClient, OpenedChangeRequest } from "../forge/types.ts";
-
-type ForgeOverrides = Partial<{ [K in keyof ForgeClient]: ForgeClient[K] }>;
-
-function fakeForge(overrides: ForgeOverrides): ForgeClient {
-  return new Proxy(overrides, {
-    get(target, property) {
-      if (property in target) return target[property as keyof ForgeOverrides];
-      return () => {
-        throw new Error(`Unexpected forge call: ${String(property)}`);
-      };
-    },
-  }) as ForgeClient;
-}
+import { fakeForge, type ForgeOverrides } from "./fake-forge.ts";
 
 function context(forge: ForgeClient): CommandContext {
   // viewer is the acting user's numeric id (written to the tables); viewerLogin
@@ -66,11 +54,7 @@ const encodingFiles: Record<string, string> = {
 };
 // Take the schema download away, so the browser-side pre-check reports itself
 // unavailable and the submission proceeds to the automation's check.
-function offline(t: {
-  mock: {
-    method: (obj: object, name: string, impl: () => Promise<never>) => unknown;
-  };
-}): void {
+function offline(t: TestContext): void {
   t.mock.method(globalThis, "fetch", async () => {
     throw new Error("offline");
   });
@@ -85,6 +69,57 @@ function captureVerdict(): Promise<{ state: string; message: string }> {
       attachPr: () => {},
       settle: (_id, state, message) => resolve({ state, message }),
     });
+  });
+}
+
+// The forge a claim on P0001 reads and writes: an empty lock table and a PR
+// opened from the volunteer's fork with the given number. `pr` fields are
+// merged into the opened PR.
+function claimForge(
+  number: number,
+  { pr, ...overrides }: ForgeOverrides & { pr?: Partial<OpenedChangeRequest> },
+): ForgeClient {
+  return fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoFile: async () => lockHeader,
+    openChangePr: async () => ({
+      number,
+      html_url: `https://example.test/pr/${number}`,
+      head: {
+        owner: "volunteer",
+        repo: "campaign",
+        branch: "claim-P0001-abcd",
+      },
+      ...pr,
+    }),
+    ...overrides,
+  });
+}
+
+// Submit T0001 as a volunteer encoding from a fork, with the schema download
+// unavailable, and wait for the background settlement of its PR.
+function runEncoding(t: TestContext, overrides: ForgeOverrides) {
+  offline(t);
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoHead: async () => ({
+      branch: "main",
+      sha: "base-sha",
+      treeSha: "base-sha-tree",
+      canPush: false,
+    }),
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
+    ...overrides,
+  });
+  const settled = captureVerdict();
+  return withImmediateTimeouts(async () => {
+    const result = await invoke(
+      commands.submitEncoding,
+      { task_id: "T0001" },
+      context(forge),
+    );
+    return { result, verdict: await settled };
   });
 }
 
@@ -159,19 +194,8 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
 });
 
 test("a failed automation run surfaces as an error while the PR stays open", async () => {
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoFile: async () => lockHeader,
-    openChangePr: async () => ({
-      number: 21,
-      html_url: "https://example.test/pr/21",
-      headSha: "abc123",
-      head: {
-        owner: "volunteer",
-        repo: "campaign",
-        branch: "claim-P0001-abcd",
-      },
-    }),
+  const forge = claimForge(21, {
+    pr: { headSha: "abc123" },
     getPullRequestState: async () => "open",
     listWorkflowRuns: async (_owner, _repo, _workflow, filter) => {
       assert.equal(filter?.headSha, "abc123");
@@ -197,19 +221,8 @@ test("a failed automation run surfaces as an error while the PR stays open", asy
 
 test("a skipped automation run is explained and its PR closed by the console", async () => {
   let closed = 0;
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoFile: async () => lockHeader,
-    openChangePr: async () => ({
-      number: 22,
-      html_url: "https://example.test/pr/22",
-      headSha: "def456",
-      head: {
-        owner: "volunteer",
-        repo: "campaign",
-        branch: "claim-P0001-abcd",
-      },
-    }),
+  const forge = claimForge(22, {
+    pr: { headSha: "def456" },
     getPullRequestState: async () => "open",
     listWorkflowRuns: async () => [
       {
@@ -239,18 +252,14 @@ test("a skipped automation run is explained and its PR closed by the console", a
 });
 
 test("a closed PR without a coordinator verdict fails closed", async () => {
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoFile: async () => lockHeader,
-    openChangePr: async () => ({
-      number: 13,
-      html_url: "https://example.test/pr/13",
+  const forge = claimForge(13, {
+    pr: {
       head: {
         owner: "campaign-owner",
         repo: "campaign",
         branch: "claim-P0001-abcd",
       },
-    }),
+    },
     getPullRequestState: async () => "closed",
     getLastIssueComment: async () => null,
   });
@@ -267,19 +276,9 @@ test("a closed PR without a coordinator verdict fails closed", async () => {
 });
 
 test("a volunteer encoding submission cleans the encode branch in their fork", async (t) => {
-  offline(t);
   let pullHead = "";
   let deleted: string[] = [];
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoHead: async () => ({
-      branch: "main",
-      sha: "base-sha",
-      treeSha: "base-sha-tree",
-      canPush: false,
-    }),
-    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
-    getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
+  const { result, verdict } = await runEncoding(t, {
     createPullRequest: async (_owner, _repo, options) => {
       pullHead = options.head;
       return { number: 14, html_url: "https://example.test/pr/14" };
@@ -291,16 +290,6 @@ test("a volunteer encoding submission cleans the encode branch in their fork", a
     },
   });
 
-  const settled = captureVerdict();
-  const { result, verdict } = await withImmediateTimeouts(async () => {
-    const result = await invoke(
-      commands.submitEncoding,
-      { task_id: "T0001" },
-      context(forge),
-    );
-    return { result, verdict: await settled };
-  });
-
   assert.equal(result.ok, true);
   assert.equal(pullHead, "volunteer:encode-T0001");
   assert.equal(verdict.state, "accepted");
@@ -308,17 +297,7 @@ test("a volunteer encoding submission cleans the encode branch in their fork", a
 });
 
 test("a poll failure settles a background submission as timeout, not rejection", async (t) => {
-  offline(t);
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoHead: async () => ({
-      branch: "main",
-      sha: "base-sha",
-      treeSha: "base-sha-tree",
-      canPush: false,
-    }),
-    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
-    getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
+  const { result, verdict } = await runEncoding(t, {
     createPullRequest: async () => ({
       number: 16,
       html_url: "https://example.test/pr/16",
@@ -328,34 +307,13 @@ test("a poll failure settles a background submission as timeout, not rejection",
     },
   });
 
-  const settled = captureVerdict();
-  const { result, verdict } = await withImmediateTimeouts(async () => {
-    const result = await invoke(
-      commands.submitEncoding,
-      { task_id: "T0001" },
-      context(forge),
-    );
-    return { result, verdict: await settled };
-  });
-
   assert.equal(result.ok, true);
   assert.equal(verdict.state, "timeout");
   assert.match(verdict.message, /still being processed/);
 });
 
 test("a poll failure leaves a claim as still-processing, not rejected", async () => {
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoFile: async () => lockHeader,
-    openChangePr: async () => ({
-      number: 17,
-      html_url: "https://example.test/pr/17",
-      head: {
-        owner: "volunteer",
-        repo: "campaign",
-        branch: "claim-P0001-abcd",
-      },
-    }),
+  const forge = claimForge(17, {
     getPullRequestState: async () => {
       throw new Error("network down");
     },
@@ -414,18 +372,8 @@ test("resolving a comment flips its replies in the PR payload too", async () => 
 });
 
 test("a rejected volunteer encoding keeps its fork branch for correction", async (t) => {
-  offline(t);
   let deleted = false;
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoHead: async () => ({
-      branch: "main",
-      sha: "base-sha",
-      treeSha: "base-sha-tree",
-      canPush: false,
-    }),
-    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
-    getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
+  const { result, verdict } = await runEncoding(t, {
     createPullRequest: async () => ({
       number: 15,
       html_url: "https://example.test/pr/15",
@@ -435,16 +383,6 @@ test("a rejected volunteer encoding keeps its fork branch for correction", async
     deleteBranch: async () => {
       deleted = true;
     },
-  });
-
-  const settled = captureVerdict();
-  const { result, verdict } = await withImmediateTimeouts(async () => {
-    const result = await invoke(
-      commands.submitEncoding,
-      { task_id: "T0001" },
-      context(forge),
-    );
-    return { result, verdict: await settled };
   });
 
   assert.equal(result.ok, true);
@@ -572,18 +510,14 @@ test("openEditor leaves the task branch alone while someone else holds the claim
 });
 
 test("an encoding completed without changes gets a commit so its PR can open", async (t) => {
-  offline(t);
-  const verdict = captureVerdict();
   const calls: string[] = [];
-  const forge = fakeForge({
-    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+  const { verdict } = await runEncoding(t, {
     getRepoHead: async () => ({
       sha: "head1",
       treeSha: "tree1",
       branch: "main",
       canPush: true,
     }),
-    getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
     createPullRequest: async () => {
       calls.push("pr");
       if (calls.length === 1)
@@ -606,15 +540,10 @@ test("an encoding completed without changes gets a commit so its PR can open", a
     deleteBranch: async () => {},
   });
 
-  await withImmediateTimeouts(() =>
-    invoke(commands.submitEncoding, { task_id: "T0001" }, context(forge)),
-  );
-  const settled = await verdict;
-
   assert.deepEqual(calls, [
     "pr",
     "commit sources/score.mei on encode-T0001",
     "pr",
   ]);
-  assert.equal(settled.state, "accepted");
+  assert.equal(verdict.state, "accepted");
 });

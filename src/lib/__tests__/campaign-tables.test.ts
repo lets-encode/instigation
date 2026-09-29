@@ -26,32 +26,35 @@ const STATE =
   "T0001,,encoding_required,,,\n" +
   "T0001,S0001,pending,,,\n";
 
-test("parseCsv: handles quoted fields with embedded commas", () => {
-  assert.deepEqual(parseCsv('a,"b,c",d\n'), [["a", "b,c", "d"]]);
-});
-
-test("parseCsv: handles escaped quotes", () => {
-  assert.deepEqual(parseCsv('a,"b""c",d\n'), [["a", 'b"c', "d"]]);
-});
-
-test("parseCsv: handles newlines inside quoted fields", () => {
-  assert.deepEqual(parseCsv('a,"line 1\nline 2",d\n'), [
-    ["a", "line 1\nline 2", "d"],
-  ]);
-});
-
-test("parseCsv: no trailing empty row when text ends in newline", () => {
-  assert.deepEqual(parseCsv("x,y\n1,2\n"), [
-    ["x", "y"],
-    ["1", "2"],
-  ]);
-});
-
-test("parseCsv: blank lines are not records", () => {
-  assert.deepEqual(parseCsv("x,y\n\n1,2\n\n"), [
-    ["x", "y"],
-    ["1", "2"],
-  ]);
+test("parseCsv: quoting, escaped quotes, embedded newlines, trailing and blank lines", () => {
+  const cases: [string, string, string[][]][] = [
+    ["quoted field with embedded comma", 'a,"b,c",d\n', [["a", "b,c", "d"]]],
+    ["escaped quote", 'a,"b""c",d\n', [["a", 'b"c', "d"]]],
+    [
+      "newline inside a quoted field",
+      'a,"line 1\nline 2",d\n',
+      [["a", "line 1\nline 2", "d"]],
+    ],
+    [
+      "no trailing empty row after a final newline",
+      "x,y\n1,2\n",
+      [
+        ["x", "y"],
+        ["1", "2"],
+      ],
+    ],
+    [
+      "blank lines are not records",
+      "x,y\n\n1,2\n\n",
+      [
+        ["x", "y"],
+        ["1", "2"],
+      ],
+    ],
+  ];
+  for (const [label, input, expected] of cases) {
+    assert.deepEqual(parseCsv(input), expected, label);
+  }
 });
 
 test("configNumber: reads a positive integer, falling back on 0 or absence", () => {
@@ -122,11 +125,10 @@ test("serializeStateCsv: round-trips with parseStateCsv", () => {
   assert.equal(serializeStateCsv(parseStateCsv(STATE)), STATE);
 });
 
-test("parseLockCsv: header-only yields an empty array", () => {
-  assert.deepEqual(
-    parseLockCsv("task_id,subtask_id,user_id,timestamp,kind\n"),
-    [],
-  );
+test("lock.csv: a header-only table and an empty row list round-trip", () => {
+  const header = "task_id,subtask_id,user_id,timestamp,kind\n";
+  assert.deepEqual(parseLockCsv(header), []);
+  assert.equal(serializeLockCsv([]), header);
 });
 
 test("parseLockCsv: rows become objects", () => {
@@ -150,13 +152,6 @@ test("serializeLockCsv: round-trips with parseLockCsv", () => {
     "T0001,,bob,2026-06-25T10:00:00Z,encoding\n" +
     "T0001,S0001,carol,2026-06-25T10:05:00Z,validation\n";
   assert.equal(serializeLockCsv(parseLockCsv(text)), text);
-});
-
-test("serializeLockCsv: empty rows yield a header-only table", () => {
-  assert.equal(
-    serializeLockCsv([]),
-    "task_id,subtask_id,user_id,timestamp,kind\n",
-  );
 });
 
 test("appendHistory: appends rows, keeping existing lines verbatim", () => {
@@ -185,7 +180,7 @@ test("appendHistory: appends rows, keeping existing lines verbatim", () => {
   assert.equal(parseHistoryCsv(twice).length, 2);
 });
 
-test("appendHistory: creates the header when the table is missing", () => {
+test("appendHistory: creates the header when the table is missing; absent command columns serialise empty", () => {
   const out = appendHistory("", [
     {
       timestamp: "t",
@@ -201,6 +196,9 @@ test("appendHistory: creates the header when the table is missing", () => {
     out,
     /^timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input,pr\n/,
   );
+  const [row] = parseHistoryCsv(out);
+  assert.equal(row.command, "");
+  assert.equal(row.input, "");
 });
 
 test("appendHistory: adds a newline before appending to a table without one", () => {
@@ -237,23 +235,6 @@ test("appendHistory: command columns and their JSON input round-trip through CSV
   };
   const out = appendHistory("", [row]);
   assert.deepEqual(parseHistoryCsv(out), [row]);
-});
-
-test("appendHistory: rows without command columns serialise them empty", () => {
-  const out = appendHistory("", [
-    {
-      timestamp: "t",
-      task_id: "T1",
-      subtask_id: "",
-      user_id: "u",
-      action: "reap",
-      outcome: "released",
-      detail: "encoding",
-    },
-  ]);
-  const [row] = parseHistoryCsv(out);
-  assert.equal(row.command, "");
-  assert.equal(row.input, "");
 });
 
 test("findRow: distinguishes the task row from subtask rows", () => {
@@ -325,9 +306,6 @@ test("configPieces: reads the pieces configToYaml writes, in order", () => {
     { id: "piece-01", path: "pieces/piece-01/score.mei", title: "Prelude" },
     { id: "piece-02", path: "pieces/piece-02/score.mei", title: "" },
   ]);
-});
-
-test("configPieces: a config without pieces yields none", () => {
   assert.deepEqual(
     configPieces('pieces: []\nfragmentation:\n  strategy: "by-piece"\n'),
     [],

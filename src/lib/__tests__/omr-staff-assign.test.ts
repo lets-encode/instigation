@@ -148,64 +148,6 @@ test("a system keeps to the staves the previous system showed", () => {
   );
 });
 
-test("a box a volunteer placed keeps its staff, and the others fit around it", () => {
-  const definition = parts(["G2", "G2", "G2", "G2"]);
-  assert.deepEqual(
-    suggestStaffAssignment(
-      printed([30, 30], [null, null, null]),
-      definition,
-      undefined,
-      { fixed: [undefined, 3] },
-    ),
-    [1, 3, 4],
-  );
-  assert.deepEqual(
-    suggestStaffAssignment(printed([30], [null, null]), definition, undefined, {
-      fixed: [0, undefined],
-    }),
-    [0, 1],
-  );
-});
-
-test("placements the box order does not allow are not kept", () => {
-  const three = parts(["G2", "G2", "G2"]);
-  // A full system stays in order.
-  assert.deepEqual(
-    suggestStaffAssignment(
-      printed([30, 30], [null, null, null]),
-      three,
-      undefined,
-      { fixed: [undefined, 1] },
-    ),
-    [1, 2, 3],
-  );
-  // No room below the top box, placements out of order, a staff the definition does not have.
-  assert.deepEqual(
-    suggestStaffAssignment(printed([30], [null, null]), three, undefined, {
-      fixed: [3],
-    }),
-    [1, 2],
-  );
-  assert.deepEqual(
-    suggestStaffAssignment(printed([30], [null, null]), three, undefined, {
-      fixed: [3, 1],
-    }),
-    [1, 2],
-  );
-  assert.deepEqual(
-    suggestStaffAssignment(printed([30], [null, null]), three, undefined, {
-      fixed: [2, 1],
-    }),
-    [2, 3],
-  );
-  assert.deepEqual(
-    suggestStaffAssignment(printed([], [null]), three, undefined, {
-      fixed: [5],
-    }),
-    [1],
-  );
-});
-
 test("label readings: abbreviations, OCR misreadings and numerals", () => {
   const labels = [
     "Flöte I",

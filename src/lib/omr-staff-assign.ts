@@ -25,8 +25,6 @@ const EPSILON = 1e-9;
 const CONTINUITY = 0.5;
 /** The score for a clef equal to the staff's clef in force. */
 const CLEF_TIE = 0.1;
-/** The score that holds a box on the staff a volunteer placed it on. */
-const FIXED = 1000;
 
 // ---------------------------------------------------------------------------
 // Labels
@@ -212,8 +210,6 @@ export interface AssignmentContext {
   clefs?: (string | null)[];
   /** The staves (1-based) the previous system showed. */
   previous?: number[];
-  /** Per box: the staff (1-based, 0 for none) a volunteer placed it on; undefined for none placed. */
-  fixed?: (number | undefined)[];
 }
 
 /**
@@ -228,35 +224,6 @@ export function suggestStaffAssignment(
   reference?: MeasureBox[],
   context: AssignmentContext = {},
 ): number[] {
-  const given = context.fixed ?? [];
-  // A box placed on no staff takes no part in the ordering of the others.
-  if (given.some((f) => f === 0)) {
-    const kept = printed.flatMap((_, i) => (given[i] === 0 ? [] : [i]));
-    const placed = suggestStaffAssignment(
-      kept.map((i) => printed[i]),
-      parts,
-      reference,
-      { ...context, fixed: kept.map((i) => given[i]) },
-    );
-    const out = printed.map(() => 0);
-    kept.forEach((i, j) => (out[i] = placed[j]));
-    return out;
-  }
-  // Volunteer placements the order of the boxes allows: below every kept
-  // placement above, with a staff for each box between and below. Others are
-  // not kept.
-  const fixed: (number | undefined)[] = [];
-  let last = { box: -1, staff: 0 };
-  given.forEach((f, i) => {
-    if (f === undefined) return;
-    if (
-      f - last.staff >= i - last.box &&
-      f <= parts.length - (printed.length - 1 - i)
-    ) {
-      fixed[i] = f;
-      last = { box: i, staff: f };
-    }
-  });
   const n = printed.length;
   const m = parts.length;
   // A system of at least as many boxes as staves is read in order; placements do not move it.
@@ -270,7 +237,6 @@ export function suggestStaffAssignment(
   );
   const previous = new Set(context.previous ?? []);
   const staffScore = (i: number, p: number) =>
-    (fixed[i] !== undefined ? (fixed[i] === p + 1 ? FIXED : -FIXED) : 0) +
     (printed[i].clef !== null &&
     printed[i].clef === (context.clefs?.[p] ?? parts[p].clef)
       ? CLEF_TIE

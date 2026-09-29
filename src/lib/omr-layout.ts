@@ -108,10 +108,9 @@ export const STAFF_CROP_MARGIN = 0.9;
 export function staffCrops(
   staves: MeasureBox[],
   page: { width: number; height: number },
-  margin = STAFF_CROP_MARGIN,
 ): MeasureBox[] {
   return staves.map((box) => {
-    const pad = Math.round((box.lry - box.uly) * margin);
+    const pad = Math.round((box.lry - box.uly) * STAFF_CROP_MARGIN);
     return {
       ulx: Math.max(0, box.ulx - pad),
       uly: Math.max(0, box.uly - pad),

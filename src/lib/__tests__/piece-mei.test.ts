@@ -24,7 +24,7 @@ function source(): SourceMetadata {
   };
 }
 
-test("a piece header carries the piece title and the whole source beneath it", () => {
+test("a piece header carries the piece title and describes the source in its manifestation", () => {
   const head = buildPieceHead(
     { title: "Sonata I", composer: "", license: "CC-BY-4.0" },
     source(),
@@ -33,14 +33,19 @@ test("a piece header carries the piece title and the whole source beneath it", (
 
   // The piece names itself...
   assert.match(head, /<titleStmt[^>]*>\s*<title[^>]*>Sonata I<\/title>/);
-  // ...and the source it was read from is copied in, not referenced.
+  // ...and the source it was read from is described in the manifestation.
+  const manifestation =
+    /<manifestation\b[\s\S]*<\/manifestation>/.exec(head)?.[0] ?? "";
+  assert.match(manifestation, /<title[^>]*>Drei Sonaten<\/title>/);
   assert.match(
-    head,
-    /<sourceDesc[^>]*>[\s\S]*<title[^>]*>Drei Sonaten<\/title>/,
+    manifestation,
+    /<publisher[^>]*>Breitkopf &amp; Härtel<\/publisher>/,
   );
-  assert.match(head, /<publisher[^>]*>Breitkopf &amp; Härtel<\/publisher>/);
-  assert.match(head, /<extent[^>]*>48 pages<\/extent>/);
-  assert.match(head, /<annot[^>]*>Bound with two other sonatas\.<\/annot>/);
+  assert.match(manifestation, /<extent[^>]*>48 pages<\/extent>/);
+  assert.match(
+    manifestation,
+    /<annot[^>]*>Bound with two other sonatas\.<\/annot>/,
+  );
   assert.match(head, /<useRestrict[^>]*>CC-BY-4\.0<\/useRestrict>/);
 });
 
@@ -76,20 +81,18 @@ test("a piece's own people and note reach its file description", () => {
   );
 });
 
-test("a piece with no composer of its own inherits the source's", () => {
-  const head = buildPieceHead({ title: "Sonata I", composer: "" }, source());
-  assert.equal(
-    parseMeiHeader(`<mei>${head}</mei>`)?.composer,
-    "L. van Beethoven",
-  );
-});
-
-test("a piece composer overrides the source composer", () => {
-  const head = buildPieceHead(
-    { title: "Sonata I", composer: "C. P. E. Bach" },
-    source(),
-  );
-  assert.equal(parseMeiHeader(`<mei>${head}</mei>`)?.composer, "C. P. E. Bach");
+test("a piece's composer falls back to the source's", () => {
+  for (const { composer, expected } of [
+    { composer: "", expected: "L. van Beethoven" },
+    { composer: "C. P. E. Bach", expected: "C. P. E. Bach" },
+  ]) {
+    const head = buildPieceHead({ title: "Sonata I", composer }, source());
+    assert.equal(
+      parseMeiHeader(`<mei>${head}</mei>`)?.composer,
+      expected,
+      `piece composer ${JSON.stringify(composer)}`,
+    );
+  }
 });
 
 test("a piece header stays well-formed when nothing is known", () => {
@@ -126,38 +129,31 @@ test("the piece header drops into a facsimile scaffold", () => {
   assert.match(mei, /<zone [^>]*type="measure"/);
 });
 
-test("replaceMeiHead swaps a converted encoding’s header for the piece’s", () => {
-  const converted =
-    "<mei><meiHead><fileDesc><titleStmt><title>From Verovio</title></titleStmt></fileDesc></meiHead><music/></mei>";
+test("replaceMeiHead puts the piece’s header in, whatever the document had", () => {
   const head = buildPieceHead(
     { title: "Prelude", composer: "J. S. Bach" },
     emptySourceMetadata(),
   );
-  const out = replaceMeiHead(converted, head);
-  assert.equal(SyntaxValidator.validate(out), true);
-  assert.ok(
-    !out.includes("From Verovio"),
-    "the converter’s header must be gone",
-  );
-  assert.equal(parseMeiHeader(out)?.title, "Prelude");
-  assert.ok(out.includes("<music/>"), "the notation must survive untouched");
-});
-
-test("replaceMeiHead inserts a header when the document has none", () => {
-  const out = replaceMeiHead(
-    "<mei><music/></mei>",
-    buildPieceHead({ title: "P", composer: "" }, emptySourceMetadata()),
-  );
-  assert.equal(SyntaxValidator.validate(out), true);
-  assert.equal(parseMeiHeader(out)?.title, "P");
-});
-
-test("replaceMeiHead handles a self-closing header", () => {
-  const out = replaceMeiHead(
-    "<mei><meiHead/><music/></mei>",
-    buildPieceHead({ title: "P", composer: "" }, emptySourceMetadata()),
-  );
-  assert.equal(SyntaxValidator.validate(out), true);
-  assert.equal(parseMeiHeader(out)?.title, "P");
-  assert.equal((out.match(/<meiHead/g) ?? []).length, 1, "exactly one header");
+  for (const [label, document] of [
+    [
+      "converted header",
+      "<mei><meiHead><fileDesc><titleStmt><title>From Verovio</title></titleStmt></fileDesc></meiHead><music/></mei>",
+    ],
+    ["no header", "<mei><music/></mei>"],
+    ["self-closing header", "<mei><meiHead/><music/></mei>"],
+  ]) {
+    const out = replaceMeiHead(document, head);
+    assert.equal(SyntaxValidator.validate(out), true, label);
+    assert.ok(
+      !out.includes("From Verovio"),
+      `${label}: converter’s header gone`,
+    );
+    assert.equal(parseMeiHeader(out)?.title, "Prelude", label);
+    assert.equal(
+      (out.match(/<meiHead/g) ?? []).length,
+      1,
+      `${label}: exactly one header`,
+    );
+    assert.ok(out.includes("<music/>"), `${label}: notation kept`);
+  }
 });

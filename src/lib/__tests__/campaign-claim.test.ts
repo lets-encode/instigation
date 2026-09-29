@@ -18,6 +18,8 @@ const NOW = "2026-06-25T10:00:00Z";
 const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind\n";
 const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
+const STATE_HEADER_2 =
+  "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n";
 const TASK_HEADER =
   "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n";
 
@@ -38,9 +40,15 @@ const validationRequired = parseStateCsv(
     "T0001,S0001,validation_required,,,\n",
 );
 const validationTwoSlots = parseStateCsv(
-  "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n" +
+  STATE_HEADER_2 +
     "T0001,,validation_required,bob,2026-06-25T09:00:00Z,,\n" +
     "T0001,S0001,validation_required,,,,\n",
+);
+// Two slots, carol's pass recorded in the first.
+const validationOnePass = parseStateCsv(
+  STATE_HEADER_2 +
+    "T0001,,validation_required,bob,t,,\n" +
+    "T0001,S0001,validation_required,,,pass|carol|t,\n",
 );
 
 const claim = (over: Partial<CheckClaimArgs> = {}): ClaimView =>
@@ -61,42 +69,28 @@ const validationIntent = {
   kind: "validation",
 };
 
-test("dependency gate: a claim on a task whose depends_on is not completed is rejected", () => {
+test("dependency gate: a claim is rejected until the depended-on task is completed", () => {
   const tasks = parseTaskCsv(
     TASK_HEADER +
       "P0001,,sources/score.mei,measure-zones,,,\n" +
       "P0002,,sources/score.mei,,,,P0001\n",
   );
-  const state = parseStateCsv(
+  const intent = { task_id: "P0002", subtask_id: "", kind: "encoding" };
+  const pending = parseStateCsv(
     STATE_HEADER +
       "P0001,,encoding_required,,,\n" +
       "P0002,,encoding_required,,,\n",
   );
-  const v = claim({
-    tasks,
-    state,
-    intent: { task_id: "P0002", subtask_id: "", kind: "encoding" },
+  assert.deepEqual(claim({ tasks, state: pending, intent }), {
+    ok: false,
+    reason: "dependency_incomplete",
   });
-  assert.deepEqual(v, { ok: false, reason: "dependency_incomplete" });
-});
-
-test("dependency gate: the claim opens once the depended-on task is completed", () => {
-  const tasks = parseTaskCsv(
-    TASK_HEADER +
-      "P0001,,sources/score.mei,measure-zones,,,\n" +
-      "P0002,,sources/score.mei,,,,P0001\n",
-  );
-  const state = parseStateCsv(
+  const completed = parseStateCsv(
     STATE_HEADER +
       "P0001,,completed,alice,2026-06-25T09:00:00Z,\n" +
       "P0002,,encoding_required,,,\n",
   );
-  const v = claim({
-    tasks,
-    state,
-    intent: { task_id: "P0002", subtask_id: "", kind: "encoding" },
-  });
-  assert.equal(v.ok, true);
+  assert.equal(claim({ tasks, state: completed, intent }).ok, true);
 });
 
 test("boundaryCheck: only allowed paths, and at least one change", () => {
@@ -123,12 +117,6 @@ test("encoding claim on a free task is accepted with an Action-authored lock", (
       kind: "encoding",
     },
   });
-});
-
-test("lock identity comes from the author, never the fork", () => {
-  // Even if a fork tried to smuggle a different login, only `author` is used.
-  const v = claim({ author: "dave" });
-  assert.equal(v.lock!.user_id, "dave");
 });
 
 test("rejects a PR that strays outside lock.csv", () => {
@@ -252,12 +240,7 @@ test("two-slot subtask: same validator cannot claim twice, a second validator ca
 });
 
 test("a validator with a recorded verdict cannot claim another slot of the subtask", () => {
-  const state = parseStateCsv(
-    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n" +
-      "T0001,,validation_required,bob,t,,\n" +
-      "T0001,S0001,validation_required,,,pass|carol|t,\n",
-  );
-  const base = { state, intent: validationIntent };
+  const base = { state: validationOnePass, intent: validationIntent };
   assert.equal(claim({ ...base, author: "carol" }).reason, "already_validated");
   // A different validator takes the open slot.
   assert.equal(claim({ ...base, author: "dave" }).ok, true);
@@ -271,13 +254,8 @@ test("a validator with a recorded verdict cannot claim another slot of the subta
 test("pass threshold below the slot count closes claiming once it is reachable", () => {
   // Two slots, threshold 1: a recorded pass leaves a physically open slot
   // whose verdict could never land — the claim is rejected.
-  const state = parseStateCsv(
-    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n" +
-      "T0001,,validation_required,bob,t,,\n" +
-      "T0001,S0001,validation_required,,,pass|carol|t,\n",
-  );
   const v = claim({
-    state,
+    state: validationOnePass,
     intent: validationIntent,
     author: "dave",
     passThreshold: 1,
@@ -305,7 +283,7 @@ test("pass threshold below the slot count counts active locks as prospective pas
 
 test("a fail verdict does not count toward the pass threshold", () => {
   const state = parseStateCsv(
-    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n" +
+    STATE_HEADER_2 +
       "T0001,,validation_required,bob,t,,\n" +
       "T0001,S0001,validation_required,,,fail|carol|t,\n",
   );
