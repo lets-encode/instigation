@@ -234,13 +234,11 @@
       if (t.subtask_id === "") by.set(t.task_id, index.get(t.fragment) ?? 0);
     return by;
   });
-  // Tasks with unresolved fails or open comments/questions, behind the hero's
+  // Tasks with unresolved fails or open comments, behind the hero's
   // attention count.
   const attentionCards = $derived(
     allCards.filter(
-      (c) =>
-        c.column !== "done" &&
-        c.counts.fails + c.counts.comments + c.counts.questions > 0,
+      (c) => c.column !== "done" && c.counts.fails + c.counts.comments > 0,
     ),
   );
   let showAttention = $state(false);
@@ -252,13 +250,7 @@
     for (const c of attentionCards) {
       const path = previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path;
       if (!path) continue;
-      by.set(
-        path,
-        (by.get(path) ?? 0) +
-          c.counts.fails +
-          c.counts.comments +
-          c.counts.questions,
-      );
+      by.set(path, (by.get(path) ?? 0) + c.counts.fails + c.counts.comments);
     }
     return by;
   });
@@ -1330,7 +1322,7 @@
                   type="button"
                   class="stat statbtn"
                   onclick={() => (showAttention = !showAttention)}
-                  title="Show the tasks with unresolved fails, comments or questions."
+                  title="Show the tasks with unresolved fails or comments."
                   ><b>{board.attention}</b> need{board.attention === 1
                     ? "s"
                     : ""} attention <Icon
@@ -1392,14 +1384,6 @@
                       <span class="chip chip-note"
                         >{card.counts.comments} comment{card.counts.comments ===
                         1
-                          ? ""
-                          : "s"}</span
-                      >
-                    {/if}
-                    {#if card.counts.questions > 0}
-                      <span class="chip chip-question"
-                        >{card.counts.questions} question{card.counts
-                          .questions === 1
                           ? ""
                           : "s"}</span
                       >
@@ -1563,7 +1547,7 @@
                               {card.doneLine}
                             </div>
                           {/if}
-                          {#if card.column !== "done" && card.counts.fails + card.counts.comments + card.counts.questions > 0}
+                          {#if card.column !== "done" && card.counts.fails + card.counts.comments > 0}
                             <div class="card-chips">
                               {#if card.counts.fails > 0}
                                 <span class="chip chip-fail"
@@ -1577,14 +1561,6 @@
                                 <span class="chip chip-note"
                                   >{card.counts.comments} comment{card.counts
                                     .comments === 1
-                                    ? ""
-                                    : "s"}</span
-                                >
-                              {/if}
-                              {#if card.counts.questions > 0}
-                                <span class="chip chip-question"
-                                  >{card.counts.questions} question{card.counts
-                                    .questions === 1
                                     ? ""
                                     : "s"}</span
                                 >

@@ -458,7 +458,7 @@ test("send-back: allowed for push access, rejected for bystanders and without a 
 
 test("comments: a discussion comment is re-authored by the automation", () => {
   const added = comment({
-    kind: "question",
+    kind: "comment",
     body: "Cue-size notes in m. 38?",
     author_id: "forged",
     timestamp: "forged",
@@ -485,7 +485,7 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
   const base = {
     state: validationState(),
     comments: [
-      comment({ comment_id: "c1", kind: "question" }),
+      comment({ comment_id: "c1", kind: "comment" }),
       comment({ comment_id: "c2", kind: "reply", parent_id: "c1" }),
       comment({ comment_id: "c3", kind: "fail" }),
     ],
@@ -497,10 +497,10 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
   const cases: [string, CommentRow | null, string][] = [
     ["no row", null, "malformed_comment"],
     ["fail kind", comment({ kind: "fail" }), "invalid_kind"],
-    ["blank body", comment({ kind: "question", body: " " }), "empty_comment"],
+    ["blank body", comment({ kind: "comment", body: " " }), "empty_comment"],
     [
       "unknown task",
-      comment({ kind: "question", task_id: "T9999" }),
+      comment({ kind: "comment", task_id: "T9999" }),
       "unknown_task",
     ],
     [
@@ -509,8 +509,8 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
       "unknown_parent",
     ],
     [
-      "question with a parent",
-      comment({ kind: "question", parent_id: "c1" }),
+      "comment with a parent",
+      comment({ kind: "comment", parent_id: "c1" }),
       "invalid_parent",
     ],
     // A reply to a reply has no thread to render under.
@@ -540,7 +540,7 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
 
 test("comments: resolving a root resolves its reply chain with it", () => {
   const comments = [
-    comment({ comment_id: "c1", kind: "question", author_id: "carol" }),
+    comment({ comment_id: "c1", kind: "comment", author_id: "carol" }),
     comment({
       comment_id: "c2",
       kind: "reply",
@@ -553,7 +553,7 @@ test("comments: resolving a root resolves its reply chain with it", () => {
       parent_id: "c2",
       author_id: "erin",
     }),
-    comment({ comment_id: "c4", kind: "question", author_id: "carol" }),
+    comment({ comment_id: "c4", kind: "comment", author_id: "carol" }),
   ];
   const v = checkResolveComment({
     comments,
@@ -579,7 +579,7 @@ test("comments: resolving a root resolves its reply chain with it", () => {
 
 test("comments: resolving is author- or push-access-only", () => {
   const comments = [
-    comment({ comment_id: "c1", kind: "question", author_id: "carol" }),
+    comment({ comment_id: "c1", kind: "comment", author_id: "carol" }),
   ];
   const base = {
     comments,
@@ -601,7 +601,7 @@ test("comments: resolving is author- or push-access-only", () => {
   const resolved = [
     comment({
       comment_id: "c1",
-      kind: "question",
+      kind: "comment",
       author_id: "carol",
       resolved: "true",
     }),

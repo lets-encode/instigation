@@ -188,21 +188,21 @@ test("a send-back patch reads as the reset of exactly one task", () => {
 test("a comment patch is a pure append or a set of resolve flips", () => {
   // One appended row; the base rows show up only as context.
   const added = appendedCommentsFromPatch(
-    "@@ -1,2 +1,3 @@\n c1,T0001,S0001,question,,,,carol,t1,,,Question?\n+,T0001,,addition,,,,me,,,,A note",
+    "@@ -1,2 +1,3 @@\n c1,T0001,S0001,comment,,,,carol,t1,,,Question?\n+,T0001,,comment,,,,me,,,,A note",
   );
   assert.equal(added?.length, 1);
-  assert.equal(added?.[0].kind, "addition");
+  assert.equal(added?.[0].kind, "comment");
   assert.equal(added?.[0].body, "A note");
   // A quoted body spanning several patch lines is one appended row.
   const multiline = appendedCommentsFromPatch(
-    '@@\n+,T0001,,question,,,,me,,,,"line 1\n+line 2"',
+    '@@\n+,T0001,,comment,,,,me,,,,"line 1\n+line 2"',
   );
   assert.equal(multiline?.length, 1);
   assert.equal(multiline?.[0].body, "line 1\nline 2");
   // Rewriting an existing row is not an append.
   assert.equal(
     appendedCommentsFromPatch(
-      "@@\n-c1,T0001,S0001,question,,,,carol,t1,,,Question?\n+c1,T0001,S0001,question,,,,carol,t1,,,Edited",
+      "@@\n-c1,T0001,S0001,comment,,,,carol,t1,,,Question?\n+c1,T0001,S0001,comment,,,,carol,t1,,,Edited",
     ),
     null,
   );
@@ -210,8 +210,8 @@ test("a comment patch is a pure append or a set of resolve flips", () => {
 });
 
 test("a resolve patch flips resolved on one top-level comment (replies may ride along)", () => {
-  const c1 = "c1,T0001,S0001,question,,,,carol,t1,,,Question?";
-  const c1Resolved = "c1,T0001,S0001,question,,,,carol,t1,true,,Question?";
+  const c1 = "c1,T0001,S0001,comment,,,,carol,t1,,,Question?";
+  const c1Resolved = "c1,T0001,S0001,comment,,,,carol,t1,true,,Question?";
   const reply = "c2,T0001,S0001,reply,,,,dave,t2,,c1,An answer";
   const replyResolved = "c2,T0001,S0001,reply,,,,dave,t2,true,c1,An answer";
 
@@ -228,13 +228,13 @@ test("a resolve patch flips resolved on one top-level comment (replies may ride 
   // Any other edit alongside the flip is rejected.
   assert.equal(
     resolvedCommentFromPatch(
-      `@@\n-${c1}\n+c1,T0001,S0001,question,,,,carol,t1,true,,Edited`,
+      `@@\n-${c1}\n+c1,T0001,S0001,comment,,,,carol,t1,true,,Edited`,
     ),
     null,
   );
   // Two top-level flips carry no single intent.
-  const c3 = "c3,T0001,,addition,,,,erin,t3,,,A note";
-  const c3Resolved = "c3,T0001,,addition,,,,erin,t3,true,,A note";
+  const c3 = "c3,T0001,,comment,,,,erin,t3,,,A note";
+  const c3Resolved = "c3,T0001,,comment,,,,erin,t3,true,,A note";
   assert.equal(
     resolvedCommentFromPatch(
       `@@\n-${c1}\n-${c3}\n+${c1Resolved}\n+${c3Resolved}`,

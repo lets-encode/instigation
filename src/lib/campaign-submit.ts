@@ -357,7 +357,7 @@ export type CommentResult =
   | { ok: true; row: CommentRow }
   | { ok: false; reason: string };
 
-const DISCUSSION_KINDS = ["question", "addition", "reply"];
+const DISCUSSION_KINDS = ["comment", "reply"];
 
 /**
  * A discussion comment. The PR may only append one row to comment.csv; `fail`
@@ -386,7 +386,7 @@ export function checkComment({
     if (!parent) return { ok: false, reason: "unknown_parent" };
     // Replies attach to the top-level discussion comments only — the ones
     // the threads projection renders as roots.
-    if (parent.kind !== "question" && parent.kind !== "addition") {
+    if (parent.kind !== "comment") {
       return { ok: false, reason: "invalid_parent" };
     }
   } else if (added.parent_id !== "") {

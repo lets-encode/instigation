@@ -59,8 +59,8 @@ export interface HistoryRow {
 
 /**
  * A comment row from comment.csv: the campaign's comment log. A `fail`
- * comment is the mandatory explanation of a fail validation; `question`,
- * `addition` and `reply` carry the discussion. Comments are anchored to
+ * comment is the mandatory explanation of a fail validation; `comment`
+ * and `reply` carry the discussion. Comments are anchored to
  * measures (page + measure range), not pixels, so they survive re-encoding.
  */
 export interface CommentRow {
@@ -68,7 +68,7 @@ export interface CommentRow {
   comment_id: string;
   task_id: string;
   subtask_id: string;
-  /** 'fail' | 'question' | 'addition' | 'reply'. */
+  /** 'fail' | 'comment' | 'reply'. */
   kind: string;
   /** 1-based facsimile page the comment anchors to; '' = unanchored. */
   page: string;

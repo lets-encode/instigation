@@ -1283,7 +1283,7 @@ const submitValidation: CommandDef<
   },
 };
 
-// Open a PR that appends one discussion comment (question / addition / reply)
+// Open a PR that appends one discussion comment (comment / reply)
 // to comment.csv. The Action re-authors id, author and timestamp.
 /** The submitComment input for a task-level comment, anchored at `at` when given. */
 export const commentInput = (
@@ -1354,7 +1354,7 @@ const submitComment: CommandDef<
             body: input.body.trim(),
           },
         ]);
-        const body = `Adds a ${input.kind} comment on ${input.task_id}. Opened from the campaign console.`;
+        const body = `Adds a ${input.kind} on ${input.task_id}. Opened from the campaign console.`;
         const pr = await f.openChangePr(owner, repo, {
           branch: `comment-${input.task_id}-${rand()}`,
           files: [{ path: COMMENT_PATH, content }],

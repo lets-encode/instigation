@@ -92,13 +92,6 @@
           : ""}{resolved ? " · resolved" : ""}
       {/if}
     </span>
-    {#if !reply}
-      {#if comment.kind === "question"}
-        <span class="kindpill question">question</span>
-      {:else}
-        <span class="kindpill note">note</span>
-      {/if}
-    {/if}
   </div>
   <span class="cbody">{comment.body}</span>
   {#if !reply && measureLabel}
@@ -184,25 +177,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .kindpill {
-    margin-left: auto;
-    font-size: 10.5px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 7px;
-    flex: none;
-  }
-  .kindpill.question {
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
-  }
-  .kindpill.note {
-    color: var(--warn);
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
   }
   .cbody {
     font-size: 12px;

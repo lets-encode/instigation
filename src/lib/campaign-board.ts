@@ -92,11 +92,10 @@ function failCellTimestamps(d: GraphData, task: string): Set<string> {
   return set;
 }
 
-/** The attention chips of one task: recorded fails, open comments, open questions. */
+/** The attention chips of one task: recorded fails and open comments. */
 export interface TaskCounts {
   fails: number;
   comments: number;
-  questions: number;
 }
 
 /**
@@ -124,21 +123,18 @@ function taskCounts(
     }
     return c?.resolved === "true";
   };
-  let questions = 0;
   let other = 0;
   for (const c of comments) {
     if (c.task_id !== task || c.resolved === "true") continue;
     if (c.kind === "reply" && rootResolved(c)) continue;
-    if (c.kind === "question") questions++;
-    else if (c.kind === "fail") {
+    if (c.kind === "fail") {
       if (!cellTs.has(c.timestamp)) other++;
     } else other++;
   }
-  return { fails, comments: other, questions };
+  return { fails, comments: other };
 }
 
-const countsTotal = (c: TaskCounts): number =>
-  c.fails + c.comments + c.questions;
+const countsTotal = (c: TaskCounts): number => c.fails + c.comments;
 
 /** When a task was finished: its last final verdict, else its encoding time. */
 function finishedAt(d: GraphData, task: string): string {
@@ -541,14 +537,12 @@ export interface Thread {
 }
 
 /**
- * The overlay's discussion: the task's top-level question/addition comments
+ * The overlay's discussion: the task's top-level comments
  * with their replies. Fail comments live in the validation record instead.
  */
 export function buildThreads(comments: CommentRow[], task: string): Thread[] {
   const ofTask = comments.filter((c) => c.task_id === task);
-  const roots = ofTask.filter(
-    (c) => c.kind === "question" || c.kind === "addition",
-  );
+  const roots = ofTask.filter((c) => c.kind === "comment");
   return roots.map((root) => ({
     root,
     replies: ofTask.filter(

@@ -107,7 +107,7 @@
   );
   let showCompleted = $state(false);
 
-  // Unresolved questions and notes on the viewer's work; fails surface through
+  // Unresolved comments on the viewer's work; fails surface through
   // the fix group instead, so they are not repeated here.
   const openComments = $derived(
     viewer
@@ -115,9 +115,7 @@
           .flatMap((s) => commentsOnMyWork(s, viewer))
           .filter(
             (f) =>
-              (f.comment.kind === "question" ||
-                f.comment.kind === "addition") &&
-              f.comment.resolved !== "true",
+              f.comment.kind === "comment" && f.comment.resolved !== "true",
           )
           .sort(
             (a, b) =>
@@ -374,9 +372,7 @@
         {/each}
         {#each openComments as f (f.comment.comment_id || f.comment.timestamp + f.task)}
           <a class="row" href={taskHref(f.campaignSlug, f.task)}>
-            <span class="pill {f.comment.kind === 'question' ? 'blue' : 'grey'}"
-              >{f.comment.kind === "question" ? "Question" : "Note"}</span
-            >
+            <span class="pill grey">Comment</span>
             <span class="rowtitle">{f.taskTitle}</span>
             <span class="excerpt"
               >@{handle(f.logins, f.comment.author_id)}: “{f.comment

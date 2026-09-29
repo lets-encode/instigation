@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- The comment composer's question and note options are merged into one comment option.
+- The discussion comment kind is stored as comment instead of addition.
 - The unused staff key field is removed from the OMR page staves.
 - OMR pieces keep their corrected layout boxes in layout-corrected.json, and score.mei holds only padded measure zones.
 - Duplicate tests and code fallbacks nothing produces are removed.

@@ -199,7 +199,7 @@ const REASON_TEXT: Record<string, string> = {
   empty_comment: "the comment is empty",
   unknown_parent: "the reply's parent comment does not exist",
   invalid_parent:
-    "a parent comment must be a top-level question or addition, and only replies carry one",
+    "a parent comment must be a top-level comment, and only replies carry one",
   unknown_comment: "no such comment",
   already_resolved: "the comment is already resolved",
   too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open submissions on this campaign`,

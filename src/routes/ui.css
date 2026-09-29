@@ -272,7 +272,7 @@ button.chip {
   background: var(--danger-bg);
   border-color: var(--danger-line);
 }
-/* Attention chips on a task: fails, comments, questions. */
+/* Attention chips on a task (fails, comments) and measure-anchor chips. */
 .chip.chip-fail {
   color: var(--danger);
   background: var(--danger-bg);

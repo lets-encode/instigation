@@ -332,9 +332,9 @@ test("a poll failure leaves a claim as still-processing, not rejected", async ()
 test("resolving a comment flips its replies in the PR payload too", async () => {
   const commentCsv =
     "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n" +
-    "c1,T0001,,question,,,,9001,t1,,,Answered?\n" +
+    "c1,T0001,,comment,,,,9001,t1,,,Answered?\n" +
     "c2,T0001,,reply,,,,7,t2,,c1,Yes\n" +
-    "c3,T0001,,question,,,,9001,t3,,,Other thread\n";
+    "c3,T0001,,comment,,,,9001,t3,,,Other thread\n";
   let serialized = "";
   const forge = fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
@@ -366,9 +366,9 @@ test("resolving a comment flips its replies in the PR payload too", async () => 
   });
 
   assert.equal(result.ok, true);
-  assert.match(serialized, /c1,T0001,,question,,,,9001,t1,true,,Answered\?/);
+  assert.match(serialized, /c1,T0001,,comment,,,,9001,t1,true,,Answered\?/);
   assert.match(serialized, /c2,T0001,,reply,,,,7,t2,true,c1,Yes/);
-  assert.match(serialized, /c3,T0001,,question,,,,9001,t3,,,Other thread/);
+  assert.match(serialized, /c3,T0001,,comment,,,,9001,t3,,,Other thread/);
 });
 
 test("a rejected volunteer encoding keeps its fork branch for correction", async (t) => {

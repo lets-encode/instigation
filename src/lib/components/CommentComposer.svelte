@@ -1,5 +1,5 @@
 <!--
-  The discussion composer: a question or note on the task, or a reply to the
+  The discussion composer: a comment on the task, or a reply to the
   bound comment (set by the host's Reply buttons). Renders nothing for a
   logged-out viewer.
 -->
@@ -16,7 +16,7 @@
     runner,
     replyTo = $bindable(),
     oncomment,
-    placeholder = "Reply or leave a note…",
+    placeholder = "Write a comment…",
   }: {
     /** The task id the composer posts to, e.g. "T0002". */
     task: string;
@@ -29,8 +29,6 @@
   } = $props();
 
   let composerText = $state("");
-  let composerKind = $state<"question" | "addition">("question");
-
   let sending = $state(false);
   // Pending from Send until the comment PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
@@ -40,7 +38,7 @@
 
   async function postComment() {
     if (!composerText.trim()) return;
-    const kind = replyTo ? "reply" : composerKind;
+    const kind = replyTo ? "reply" : "comment";
     const parent_id = replyTo?.comment_id ?? "";
     sending = true;
     try {
@@ -64,21 +62,6 @@
         Replying to <strong>{commentLogin(replyTo)}</strong>
         <button type="button" class="linkish" onclick={() => (replyTo = null)}
           >Cancel</button
-        >
-      </div>
-    {:else}
-      <div class="seg">
-        <button
-          type="button"
-          class:on={composerKind === "question"}
-          onclick={() => (composerKind = "question")}
-          title="Ask the campaign a question">question</button
-        >
-        <button
-          type="button"
-          class:on={composerKind === "addition"}
-          onclick={() => (composerKind = "addition")}
-          title="Leave a note">note</button
         >
       </div>
     {/if}

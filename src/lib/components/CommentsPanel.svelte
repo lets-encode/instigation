@@ -159,7 +159,7 @@
             class="chip-switch"
             class:on={hideResolved}
             onclick={() => (hideResolved = !hideResolved)}
-            title="Hide the threads whose comment or question is resolved"
+            title="Hide the resolved threads"
             ><span class="sw"></span>Hide resolved · {resolvedCount}</button
           >
         </div>
@@ -214,8 +214,7 @@
           {logins}
           {runner}
           bind:replyTo
-          placeholder={composerHint ||
-            `Ask a question about ${pieceLabel(piece)}…`}
+          placeholder={composerHint || `Comment on ${pieceLabel(piece)}…`}
           oncomment={(kind, body, parent_id) =>
             oncomment(composerTask, kind, body, parent_id)}
         />

@@ -60,7 +60,7 @@ const locks = parseLockCsv(
 const comments = parseCommentCsv(
   COMMENT_HEADER +
     "c1,T0003,S0001,fail,3,24,31,9,2026-07-31T08:00:00Z,,,Slurs missing\n" +
-    "c2,T0004,,question,4,40,,9,2026-08-01T09:00:00Z,,,Ossia staff?\n" +
+    "c2,T0004,,comment,4,40,,9,2026-08-01T09:00:00Z,,,Ossia staff?\n" +
     "c3,T0004,,reply,,,,7,2026-08-01T10:00:00Z,,c2,Yes on purpose\n",
 );
 

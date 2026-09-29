@@ -25,7 +25,7 @@
     progress: Map<string, { done: number; total: number }>;
     /** Fragment path → not-done tasks per board category. */
     counts: Map<string, { open: number; encoding: number; validation: number }>;
-    /** Fragment path → unresolved fails/comments/questions on its tasks. */
+    /** Fragment path → unresolved fails and comments on its tasks. */
     attention: Map<string, number>;
     /** Tasks open to claim across the campaign, for the "All pieces" row. */
     openCount: number;
@@ -231,7 +231,7 @@
   .rc.zero b {
     font-weight: 500;
   }
-  /* Unresolved fails, comments and questions, marked by the speech bubble. */
+  /* Unresolved fails and comments, marked by the speech bubble. */
   .attn {
     flex: none;
     display: inline-flex;

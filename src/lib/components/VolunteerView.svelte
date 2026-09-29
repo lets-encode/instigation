@@ -280,13 +280,6 @@
         : "s"}</span
     >
   {/if}
-  {#if card.counts.questions > 0}
-    <span class="chip chip-question"
-      >{card.counts.questions} question{card.counts.questions === 1
-        ? ""
-        : "s"}</span
-    >
-  {/if}
 {/snippet}
 
 <div class="volunteer">
