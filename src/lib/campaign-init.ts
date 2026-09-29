@@ -357,13 +357,16 @@ const preTaskId = (n: number): string => `P${String(n).padStart(4, "0")}`;
  */
 export type PieceSurfaces = Record<string, number[]>;
 
-/** The pages a facsimile piece is split by: measured pages, else the pages it covers. */
+/**
+ * The pages a facsimile piece is split by: measured pages, else every page it
+ * covers. Both are the piece's own surface numbers, counted from 1 at its first
+ * covered page, since config zones carry the source's page numbers.
+ */
 function surfacesFor(piece: ConfigPiece, surfaces?: PieceSurfaces): number[] {
   const measured = surfaces?.[piece.id];
   if (measured) return [...measured].sort((a, b) => a - b);
-  return [...new Set(piece.zones.map((zone) => zone.surface))].sort(
-    (a, b) => a - b,
-  );
+  const covered = new Set(piece.zones.map((zone) => zone.surface));
+  return [...covered].map((_, i) => i + 1);
 }
 
 /** One planned task: the row pair the task and state tables each emit for it. */

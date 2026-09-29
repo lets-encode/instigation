@@ -7,7 +7,12 @@ import {
   parseLockCsv,
 } from "../campaign-tables.ts";
 import type { TaskRow } from "../campaign-tables.ts";
-import { checkPlan, nextTaskId, taskStarted } from "../campaign-plan.ts";
+import {
+  checkPlan,
+  nextTaskId,
+  replanPageTasks,
+  taskStarted,
+} from "../campaign-plan.ts";
 
 const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
@@ -166,4 +171,88 @@ test("nextTaskId continues after the highest T#### in use", () => {
     TASK_HEADER + "P0001,,sources/score.mei,measure-zones,,,\n",
   );
   assert.equal(nextTaskId(withPre), "T0001");
+});
+
+const pieceTasks = parseTaskCsv(
+  TASK_HEADER +
+    "P0001,,sources/score.mei,omr-layout,,,\n" +
+    "P0001,S0001,sources/score.mei,omr-layout,,,\n" +
+    "P0002,,sources/score.mei,score-setup,,,P0001\n" +
+    "P0002,S0001,sources/score.mei,score-setup,,,\n" +
+    "T0001,,sources/score.mei,surface-1,,,P0002\n" +
+    "T0001,S0001,sources/score.mei,surface-1,,,\n" +
+    "T0002,,sources/score.mei,surface-2,,,P0002\n" +
+    "T0002,S0001,sources/score.mei,surface-2,,,\n" +
+    "T0003,,sources/score.mei,surface-3,,,P0002\n" +
+    "T0003,S0001,sources/score.mei,surface-3,,,\n" +
+    "T0004,,sources/other.mei,,,,\n" +
+    "T0004,S0001,sources/other.mei,,,,\n",
+);
+const pieceState = parseStateCsv(
+  STATE_HEADER +
+    "P0001,,validation_required,42,2026-07-01T09:00:00Z,\n" +
+    "P0001,S0001,validation_required,,,\n" +
+    "P0002,,encoding_required,,,\n" +
+    "P0002,S0001,pending,,,\n" +
+    ["T0001", "T0002", "T0003", "T0004"]
+      .map((t) => `${t},,encoding_required,,,\n${t},S0001,pending,,,\n`)
+      .join(""),
+);
+const locatorsOf = (rows: TaskRow[]) =>
+  rows
+    .filter((r) => r.subtask_id === "")
+    .map((r) => `${r.task_id}:${r.locator}`);
+
+test("replanPageTasks: a page without measures gets no task, the first task opens the first measured page", () => {
+  const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
+    "surface-2",
+    "surface-3",
+  ]);
+  assert.ok(r);
+  assert.deepEqual(locatorsOf(r.tasks), [
+    "P0001:omr-layout",
+    "P0002:score-setup",
+    "T0001:surface-2",
+    "T0002:surface-3",
+    "T0004:",
+  ]);
+  assert.equal(r.tasks.find((t) => t.task_id === "T0001")?.depends_on, "P0002");
+  assert.deepEqual(
+    r.stateRows.map((row) => `${row.task_id}/${row.subtask_id}`),
+    r.tasks.map((row) => `${row.task_id}/${row.subtask_id}`),
+  );
+});
+
+test("replanPageTasks: an extra measured page gets the next free id", () => {
+  const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
+    "surface-1",
+    "surface-2",
+    "surface-3",
+    "surface-4",
+  ]);
+  assert.ok(r);
+  assert.deepEqual(locatorsOf(r.tasks).slice(2), [
+    "T0001:surface-1",
+    "T0002:surface-2",
+    "T0003:surface-3",
+    "T0005:surface-4",
+    "T0004:",
+  ]);
+});
+
+test("replanPageTasks: matching or started page tasks are left as they are", () => {
+  const same = ["surface-1", "surface-2", "surface-3"];
+  assert.equal(
+    replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", same),
+    null,
+  );
+  const claimed = parseLockCsv(
+    LOCK_HEADER + "T0001,,42,2026-07-01T09:00:00Z,encoding\n",
+  );
+  assert.equal(
+    replanPageTasks(pieceTasks, pieceState, claimed, "sources/score.mei", [
+      "surface-2",
+    ]),
+    null,
+  );
 });

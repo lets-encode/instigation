@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- Page tasks of a piece that starts after the source's first page address the right pages.
+- An accepted measure or layout correction rebuilds the piece's page tasks so pages without measures get no task.
 - The npm package is renamed to lets-encode.
 - References follow the repository renames to lets-encode and campaign-template.
 - A new campaign gets its own README and no longer keeps the template's own files.

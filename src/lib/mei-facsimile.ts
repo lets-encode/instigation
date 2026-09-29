@@ -644,6 +644,16 @@ export interface ParsedFacsimile extends FacsimileModel {
   hasBreaks: boolean;
 }
 
+/** The xml:ids of the score's surfaces that hold a measure zone, in document order. */
+export function measuredSurfaceIds(text: string): string[] {
+  return [...text.matchAll(/<surface\b([^>]*)>([\s\S]*?)<\/surface>/g)].flatMap(
+    (match) => {
+      const id = attr(`<surface${match[1]}>`, "xml:id");
+      return id && /<zone\b[^>]*\btype="measure"/.test(match[2]) ? [id] : [];
+    },
+  );
+}
+
 /**
  * Parse a facsimile score (any stage, as emitted by buildFacsimileMei) back
  * into the model. Labels fall back to continuous

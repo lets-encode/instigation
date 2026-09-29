@@ -148,3 +148,48 @@ export function nextTaskId(rows: TaskRow[]): string {
   }, 0);
   return `T${String(max + 1).padStart(4, "0")}`;
 }
+
+/**
+ * Rebuild one piece's page tasks (locator `surface-N`) for the pages that
+ * carry measures, in page order: the existing task ids are reused in order,
+ * extra pages get the next free ids, and ids left over are dropped. A page
+ * without measures gets no task. Each rebuilt task keeps the first existing
+ * page task's dependency and subtask rows. Returns null — the tables stay as
+ * they are — when the piece has no page tasks, when they already match, or
+ * when the rewrite is not allowed (a page task has started, or another task
+ * depends on a dropped one).
+ */
+export function replanPageTasks(
+  current: TaskRow[],
+  state: ParsedState,
+  locks: LockRow[],
+  fragment: string,
+  measuredSurfaces: string[],
+): { tasks: TaskRow[]; stateRows: StateRow[] } | null {
+  const isPageRow = (r: TaskRow) =>
+    r.fragment === fragment && /^surface-\d+$/.test(r.locator);
+  const pageTasks = current.filter((r) => isPageRow(r) && r.subtask_id === "");
+  if (pageTasks.length === 0 || measuredSurfaces.length === 0) return null;
+  if (
+    pageTasks.length === measuredSurfaces.length &&
+    pageTasks.every((t, i) => t.locator === measuredSurfaces[i])
+  )
+    return null;
+
+  const template = rowsOf(current, pageTasks[0].task_id);
+  const ids = pageTasks.map((t) => t.task_id);
+  const rebuilt: TaskRow[] = [];
+  measuredSurfaces.forEach((locator, i) => {
+    const id = ids[i] ?? nextTaskId([...current, ...rebuilt]);
+    for (const row of template) rebuilt.push({ ...row, task_id: id, locator });
+  });
+
+  const first = current.findIndex((r) => r.task_id === ids[0]);
+  const kept = current.filter((r) => !ids.includes(r.task_id));
+  const at = current
+    .slice(0, first)
+    .filter((r) => !ids.includes(r.task_id)).length;
+  const tasks = [...kept.slice(0, at), ...rebuilt, ...kept.slice(at)];
+  const result = checkPlan(current, state, locks, tasks);
+  return result.ok ? { tasks, stateRows: result.stateRows } : null;
+}

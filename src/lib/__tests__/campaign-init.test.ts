@@ -237,6 +237,16 @@ test("an OMR-prepared facsimile piece opens with the layout pre-task instead", (
   ]);
 });
 
+test("an OMR piece starting after the source's first page numbers its page tasks from 1", () => {
+  const piece = { ...facsimile("piece-01", [2, 3, 4]), preparation: "omr" };
+  assert.deepEqual(
+    planTasks(build({ pieces: [piece] }))
+      .filter((task) => task.id.startsWith("T"))
+      .map((task) => task.locator),
+    ["surface-1", "surface-2", "surface-3"],
+  );
+});
+
 test("configToYaml: a facsimile piece records its preparation", () => {
   const yaml = configToYaml(
     build({ pieces: [{ ...facsimile("piece-01", [1]), preparation: "omr" }] }),
@@ -343,13 +353,13 @@ test("several pieces: ids stay unique and every task addresses its own piece", (
     {
       id: "T0004",
       fragment: "sources/piece-03/score.mei",
-      locator: "surface-2",
+      locator: "surface-1",
       dependsOn: "P0004",
     },
     {
       id: "T0005",
       fragment: "sources/piece-03/score.mei",
-      locator: "surface-3",
+      locator: "surface-2",
       dependsOn: "P0004",
     },
   ]);
@@ -438,7 +448,8 @@ test("two pieces may share a page without sharing a task", () => {
     pieces: [facsimile("piece-01", [2]), facsimile("piece-02", [2])],
   });
   const planned = planTasks(config);
-  const onPageTwo = planned.filter((task) => task.locator === "surface-2");
+  // Source page 2 is each piece's own first page.
+  const onPageTwo = planned.filter((task) => task.locator === "surface-1");
   assert.equal(onPageTwo.length, 2);
   assert.deepEqual(
     onPageTwo.map((task) => task.fragment),

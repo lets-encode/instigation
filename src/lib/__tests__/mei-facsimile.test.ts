@@ -5,6 +5,7 @@ import {
   buildBlankScoreMei,
   buildFacsimileMei,
   initialFacsimileModel,
+  measuredSurfaceIds,
   parseFacsimileMei,
   parseScoreDef,
   relinkFacsimileImages,
@@ -684,4 +685,14 @@ test("a system with fewer staff boxes than the definition has staves optimizes t
     replaceScoreDef(reduced, DEFAULT_SCORE_DEF),
     /<scoreDef[^>]* optimize="true"/,
   );
+});
+
+test("measuredSurfaceIds: only pages holding measure zones", () => {
+  const blank = { ...twoPages[0], measures: [] };
+  const m = {
+    ...initialFacsimileModel([blank, ...twoPages]),
+    headXml: HEAD,
+  };
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.deepEqual(measuredSurfaceIds(mei), ["surface-2", "surface-3"]);
 });

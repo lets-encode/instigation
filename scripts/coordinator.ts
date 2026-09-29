@@ -27,6 +27,7 @@ import {
   parseHistoryCsv,
   serializeStateCsv,
   serializeLockCsv,
+  serializeTaskCsv,
   serializeCommentCsv,
   appendHistory,
   configFlag,
@@ -62,6 +63,8 @@ import {
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
 import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
+import { measuredSurfaceIds } from "../src/lib/mei-facsimile.ts";
+import { replanPageTasks } from "../src/lib/campaign-plan.ts";
 import {
   applicationNamesIn,
   recordApplications,
@@ -688,13 +691,33 @@ async function decideEncoding(
     return content == null ? [] : [{ path, content }];
   });
 
+  // An accepted measure or layout correction fixes which pages carry
+  // measures: the piece's page tasks are rebuilt for those pages, so a page
+  // without music gets no task.
+  const replan =
+    task.locator === "omr-layout" || task.locator === "measure-zones"
+      ? replanPageTasks(
+          tasks,
+          verdict.state,
+          verdict.locks,
+          task.fragment,
+          measuredSurfaceIds(mei!),
+        )
+      : null;
+  const newState = replan
+    ? { ...verdict.state, rows: replan.stateRows }
+    : verdict.state;
+
   return {
     ok: true,
     history,
     files: [
       { path: task.fragment, content: mei! },
       ...sideFiles,
-      { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
+      ...(replan
+        ? [{ path: TASK_PATH, content: serializeTaskCsv(replan.tasks) }]
+        : []),
+      { path: STATE_PATH, content: serializeStateCsv(newState) },
       { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
     ],
     message: `Accept encoding of ${task.task_id} by ${authorLabel}\n\nCo-authored-by: ${authorLabel} <${author}+${authorLogin}@users.noreply.github.com>`,
