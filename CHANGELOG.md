@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- The zone editor sets system beginnings from the rows after every box change and keeps the ones set by hand.
 - A comment or fail note is cleared only when its own command succeeded, and Enter does nothing while another command runs.
 - Metadata typed in the XML view is adopted as it is typed, and the wizard cannot be left while that XML is not well-formed.
 - The score viewers scroll through all pages, with the page switch at the right end of the toolbar.
