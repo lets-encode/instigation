@@ -163,6 +163,7 @@
     busy = true;
     failed = false;
     log.clear();
+    let rendered = false;
     try {
       // Fetching and rendering happens before the repository is created, so an
       // upload that cannot be read leaves nothing behind.
@@ -177,6 +178,7 @@
             { brokerUrl: provider.brokerUrl },
           )
         : [];
+      rendered = true;
 
       const repo = await ensureCampaignRepo(
         f,
@@ -249,7 +251,9 @@
       console.error("Pages step failed:", (err as Error).message);
       error = wizard.repo
         ? `The repository ${wizard.repo.full_name} was created, but the upload didn't finish: ${(err as Error).message}`
-        : `Could not commit the pages: ${(err as Error).message}`;
+        : rendered
+          ? `Could not create the repository: ${(err as Error).message}`
+          : `Could not read the pages: ${(err as Error).message}`;
       log.fail();
       failed = true;
       busy = false;

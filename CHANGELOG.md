@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- The pages step's error names the stage that failed, reading the pages or creating the repository.
 - A page draft with warnings keeps its overlay open until Continue before mei-friend opens.
 - The zone editor sets system beginnings from the rows after every box change and keeps the ones set by hand.
 - A comment or fail note is cleared only when its own command succeeded, and Enter does nothing while another command runs.
