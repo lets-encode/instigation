@@ -161,24 +161,6 @@ test("a differing system count or a page the skeleton does not have is refused",
   }
 });
 
-test("staves beyond the score definition are dropped", () => {
-  const result = insertPageDraft(
-    skeleton([2], 1),
-    "surface-1",
-    converted(2, 2),
-    [2],
-    allPrinted(1, 1),
-  );
-  assert.equal(result.filled, 2);
-  assert.ok(
-    result.warnings.includes(
-      "Page 1: staves beyond the score definition's 1 were left out.",
-    ),
-  );
-  // The converted second staves were dropped; the skeleton itself has one staff per measure.
-  assert.equal((result.mei.match(/<staff n="2"/g) ?? []).length, 0);
-});
-
 test("a staff the system does not print rests; a printed staff takes the converted staff", () => {
   // System 2 prints staff 2 only.
   const printed = [new Set([1, 2]), new Set([2])];

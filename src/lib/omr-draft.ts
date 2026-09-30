@@ -167,9 +167,7 @@ function withContent(measure: string, content: string): string {
  * `measuresPerSystem` (what the stitching produced), one entry per skeleton
  * system, and a different system count is refused. `printed` gives, per
  * system, the staff numbers it prints. `opening` is what
- * the page's first system changes against the page start. Converted staves
- * beyond the score definition's staff count are dropped with a warning,
- * since a staff without a staffDef is invalid.
+ * the page's first system changes against the page start.
  */
 export function insertPageDraft(
   skeleton: string,
@@ -224,7 +222,6 @@ export function insertPageDraft(
   const startScoreDef = openingScoreDef(opening);
 
   let filled = 0;
-  let dropped = false;
   let cursor = 0;
   let result = span;
   for (const [s, system] of systems.entries()) {
@@ -238,17 +235,7 @@ export function insertPageDraft(
     for (let i = 0; i < take; i++) {
       const measure = convertedMeasures[cursor + i];
       if (!measure) break;
-      // Staves the score definition does not have are left out.
-      let content = measure.inner;
-      const extra =
-        content.match(/<staff\b[^>]*\bn="(\d+)"[^>]*>[\s\S]*?<\/staff>/g) ?? [];
-      for (const staff of extra) {
-        const n = Number(/\bn="(\d+)"/.exec(staff)![1]);
-        if (n > staffCount) {
-          content = content.replace(staff, "");
-          dropped = true;
-        }
-      }
+      const content = measure.inner;
       const first = s === 0 && i === 0;
       const staves = measureStaves(
         content,
@@ -264,11 +251,6 @@ export function insertPageDraft(
       filled++;
     }
     cursor += available;
-  }
-  if (dropped) {
-    warnings.push(
-      `Page ${page}: staves beyond the score definition's ${staffCount} were left out.`,
-    );
   }
   return {
     mei: skeleton.slice(0, from) + result + skeleton.slice(to),
