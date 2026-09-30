@@ -190,7 +190,9 @@ broker (section 4), with its own OAuth App whose callback is
     reverse-proxied to `http://127.0.0.1:<broker port>/registry/` with the
     path unchanged. These must be matched before the document root, so the
     SPA fallback cannot swallow them. `/registry/admin/` must be restricted to
-    institutional auth at the proxy (see `broker/README.md`);
+    institutional auth at the proxy (see `broker/README.md`), and
+    `/auth/registry/` denied outright: the stripped `/auth/` mount would
+    otherwise reach the same registry routes past that restriction;
   - MIME types `application/wasm` for `.wasm` and `text/javascript` for
     `.mjs` (the score renderer and the PDF worker refuse to load otherwise);
   - `Cache-Control: no-cache` on `.html` files (the shell names hashed
