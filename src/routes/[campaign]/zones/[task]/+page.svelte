@@ -67,12 +67,15 @@
 
   // Editor-side zone: the box, the label override (null = automatic), the
   // computed label, and the break flags. The page break is derived from
-  // position (each page's first measure), not stored per-zone.
+  // position (each page's first measure), not stored per-zone. `sb` follows
+  // the reading-order rows (a row's first box starts a system) unless
+  // `sbOverride` holds a value set by hand.
   type EditZone = {
     box: MeasureBox;
     override: string | null;
     label: string;
     sb: boolean;
+    sbOverride: boolean | null;
     mdiv: boolean;
   };
   // A staff or grand-staff box of an OMR-prepared piece: geometry only.
@@ -114,6 +117,7 @@
             override: null,
             label: z.label,
             sb: z.sb,
+            sbOverride: null,
             mdiv: z.mdiv,
           })),
           staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
@@ -134,6 +138,13 @@
             prev = zone.label;
           }
         }
+        // Likewise a system beginning that differs from what the rows give.
+        pages.forEach((pg, p) => {
+          const starts = rowStarts(p);
+          for (const zone of pg.zones) {
+            if (zone.sb !== starts.has(zone.box)) zone.sbOverride = zone.sb;
+          }
+        });
         resetHistory();
       },
       reset() {
@@ -376,14 +387,25 @@
     }
   }
 
-  // Re-sort a page's zones into reading order (after geometry changed), then
+  // The first box of every reading-order row of a page but its first row,
+  // whose first box carries the page break.
+  function rowStarts(p: number): Set<MeasureBox> {
+    const rows = readingOrderRows(pages[p].zones.map((z) => z.box));
+    return new Set(rows.slice(1).map((row) => row[0]));
+  }
+
+  // Re-sort a page's zones into reading order (after geometry changed), set
+  // its system beginnings from the rows where none was set by hand, then
   // renumber everything.
   function resort(p: number) {
     const zones = pages[p].zones;
     const byBox = new Map(zones.map((z) => [z.box, z]));
-    pages[p].zones = readingOrderRows(zones.map((z) => z.box))
-      .flat()
-      .map((box) => byBox.get(box)!);
+    const rows = readingOrderRows(zones.map((z) => z.box));
+    pages[p].zones = rows.flat().map((box) => byBox.get(box)!);
+    const starts = new Set(rows.slice(1).map((row) => row[0]));
+    for (const zone of pages[p].zones) {
+      zone.sb = zone.sbOverride ?? starts.has(zone.box);
+    }
     renumber();
   }
 
@@ -499,14 +521,7 @@
     }
   });
   function seedLayout() {
-    for (const pg of pages) {
-      const rows = readingOrderRows(pg.zones.map((z) => z.box));
-      const byBox = new Map(pg.zones.map((z) => [z.box, z]));
-      pg.zones = rows.flatMap((row, r) =>
-        row.map((box, i) => ({ ...byBox.get(box)!, sb: i === 0 && r > 0 })),
-      );
-    }
-    renumber();
+    pages.forEach((_, p) => resort(p));
   }
 
   async function detectLayout() {
@@ -557,6 +572,7 @@
           override: null,
           label: "",
           sb: false,
+          sbOverride: null,
           mdiv: false,
         }));
         pages[p].staves = boxes.staves.map((box) => ({ box }));
@@ -690,9 +706,13 @@
   const sbActive = (p: number, z: number) => pbAt(z) || pages[p].zones[z].sb;
   const sectionLocked = (p: number, z: number) => p === 0 && z === 0;
 
+  // A flag set to what the rows give follows the rows again.
   function toggleSb(p: number, z: number) {
     if (!canEdit || pbAt(z)) return;
-    pages[p].zones[z].sb = !pages[p].zones[z].sb;
+    const zone = pages[p].zones[z];
+    const next = !zone.sb;
+    zone.sbOverride = next === rowStarts(p).has(zone.box) ? null : next;
+    zone.sb = next;
     commit();
   }
   function toggleSection(p: number, z: number) {
@@ -862,6 +882,7 @@
           override: null,
           label: "",
           sb: false,
+          sbOverride: null,
           mdiv: false,
         });
       drag.z = items(drag.p, drag.layer).length - 1;

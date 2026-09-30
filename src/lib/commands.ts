@@ -120,6 +120,9 @@ export type Result = {
   message?: string;
   prUrl?: string;
   meiFriendUrl?: string;
+  /** The mei-friend hand-off waits until the overlay's Continue, so the
+   * steps it shows (a draft's warnings) are read before the page is left. */
+  holdHandOff?: boolean;
 };
 
 interface CommandDef<I, O> {
@@ -991,7 +994,7 @@ const openEditor: CommandDef<
       // A page task of an OMR-prepared piece starts from a draft of its page
       // made from the piece's recognition record, committed to the fresh
       // branch before mei-friend opens. A branch with work in progress keeps it.
-      let draft: { note: string } | null = null;
+      let draft: { note: string; warnings: string[] } | null = null;
       const pageNo = pageOfLocator(taskDef.locator);
       if (
         fresh &&
@@ -1019,8 +1022,8 @@ const openEditor: CommandDef<
             prUrl,
           };
         }
-        // The note is shown as a step of the overlay, which stays up until
-        // Continue; the hand-off itself goes ahead.
+        // The note is a step of the overlay. With warnings, the overlay
+        // stays up until Continue before the hand-off (holdHandOff).
         ctx.progress({ step: draft.note });
       }
 
@@ -1061,6 +1064,7 @@ const openEditor: CommandDef<
         meiFriendUrl: url,
         prUrl,
         message: `${claimMessage}${draft ? `${draft.note} ` : ""}Opening the score in mei-friend.`,
+        ...(draft?.warnings.length ? { holdHandOff: true } : {}),
       };
     } catch (e) {
       return { error: `Open in mei-friend failed: ${(e as Error).message}` };

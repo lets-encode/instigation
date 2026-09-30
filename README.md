@@ -63,12 +63,11 @@ is secret; the OAuth credentials live only in the broker's env (next step).
   optional mount paths and automation pointer. Vite loads it in every mode.
 - `instances-config/.env.production`, `.env.staging`, `.env.testing`,
   `.env.development` — the overlay for one deployment, holding only what
-  differs: today the `PUBLIC_REPO_TOPIC` that isolates each instance's campaign
-  repos. For builds, `vite.config.js` picks the overlay from the checked-out
+  differs: the `PUBLIC_REPO_TOPIC` that isolates each instance's campaign
+  repos and the `PUBLIC_MEI_FRIEND_URL` volunteers are handed off to. For builds, `vite.config.js` picks the overlay from the checked-out
   branch (section 6); `npm run dev` uses `.env.development`.
 - `instances-config/services.json` — the external services the app talks to (the
-  mei-friend instance volunteers are handed off to, the measure detector that
-  scaffolds scores). Read by the app and by `svelte.config.js`, which lists
+  measure detector that scaffolds scores, the OMR models). Read by the app and by `svelte.config.js`, which lists
   the detector in the CSP.
 - `instances-config/.env.local` and `instances-config/.env.<mode>.local` — personal overrides,
   gitignored, loaded on top of the committed files.
@@ -190,7 +189,9 @@ broker (section 4), with its own OAuth App whose callback is
     reverse-proxied to `http://127.0.0.1:<broker port>/registry/` with the
     path unchanged. These must be matched before the document root, so the
     SPA fallback cannot swallow them. `/registry/admin/` must be restricted to
-    institutional auth at the proxy (see `broker/README.md`);
+    institutional auth at the proxy (see `broker/README.md`), and
+    `/auth/registry/` denied outright: the stripped `/auth/` mount would
+    otherwise reach the same registry routes past that restriction;
   - MIME types `application/wasm` for `.wasm` and `text/javascript` for
     `.mjs` (the score renderer and the PDF worker refuse to load otherwise);
   - `Cache-Control: no-cache` on `.html` files (the shell names hashed

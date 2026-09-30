@@ -1,5 +1,4 @@
 {
-  "meiFriendUrl": "http://localhost:5001",
   "measureDetectorUrl": "https://measure-detector.edirom.de",
   "omr": {
     "layoutModel": { "name": "dvorak-ola", "version": "2.0-2025-03-09" },
