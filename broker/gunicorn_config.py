@@ -7,7 +7,7 @@
 # Loopback only: the reverse proxy is the broker's sole client.
 import os
 
-bind = "127.0.0.1:" + os.environ.get("PORT", "7777")
+bind = "127.0.0.1:" + os.environ.get("PORT", "7779")
 
 # Sessions and the slug DB live on the shared filesystem (instance/), so
 # workers need no coordination beyond the host. flask-limiter's counters do
