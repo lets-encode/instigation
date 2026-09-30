@@ -53,6 +53,8 @@ export interface PageDraftOptions {
 export interface PageDraftResult {
   /** What was done, for the hand-off message; names every mismatch. */
   note: string;
+  /** The mismatches the note names: staves left out, empty or misplaced. */
+  warnings: string[];
 }
 
 /** The application names the header records for a transcription. */
@@ -76,12 +78,14 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   if (!pg.staves?.length) {
     return {
       note: `Page ${page} has no staff boxes, so it has no draft.`,
+      warnings: [],
     };
   }
   const record = parseOmrRecord(recordXml);
   if (!record) {
     return {
       note: `The piece has no recognition record (${omrRecordPath(fragment)}), so page ${page} has no draft.`,
+      warnings: [],
     };
   }
   o.progress("Reading the recognition record");
@@ -93,6 +97,7 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   if (!flat.length) {
     return {
       note: `Page ${page}: no staff box lies on a system of measure boxes, so it has no draft.`,
+      warnings: [],
     };
   }
   const unrecorded = staves.entries.flat().filter((e) => !e).length;
@@ -168,5 +173,6 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     note:
       `Page ${page} was drafted into ${draft.filled} measure(s).` +
       (warnings.length ? ` ${warnings.join(" ")}` : ""),
+    warnings,
   };
 }

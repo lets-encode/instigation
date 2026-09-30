@@ -81,7 +81,8 @@ export class CommandRunner {
    * step times until dismiss() — the overlay's Continue button. `after` runs
    * after that press, while still busy — the page's refresh (or navigation)
    * after a command lands. A clean mei-friend hand-off neither holds nor
-   * runs `after`: the page is left for mei-friend right away. Resolves to
+   * runs `after`: the page is left for mei-friend right away, or, with
+   * `holdHandOff`, once the overlay's Continue is pressed. Resolves to
    * the command's result, or null when another command was still running
    * and this one did not start.
    */
@@ -104,13 +105,14 @@ export class CommandRunner {
       // A background command holds nobody: no overlay stop, no banner —
       // the task's run state carries on from here. Without an overlay there
       // is no Continue button, so nothing to hold for either.
-      if (handsOff(result)) return result;
+      if (handsOff(result) && !result.holdHandOff) return result;
       if (!result?.background && this.overlay) {
         this.held = true;
         await new Promise<void>((resolve) => (this.release = resolve));
         this.release = null;
         this.held = false;
       }
+      if (handsOff(result)) return result;
       if (after) await after(result);
       return result;
     } finally {

@@ -44,7 +44,7 @@ export const provider: ProviderConfig = {
 export const registryUrl = env.PUBLIC_REGISTRY_URL || "/registry";
 
 /** The mei-friend instance volunteers are handed off to for editing. */
-export const meiFriendUrl = services.meiFriendUrl;
+export const meiFriendUrl = env.PUBLIC_MEI_FRIEND_URL;
 
 /** The edirom measure-detector used to scaffold a score from page images. */
 export const measureDetectorUrl = services.measureDetectorUrl;
