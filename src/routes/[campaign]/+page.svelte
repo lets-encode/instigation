@@ -599,8 +599,8 @@
     refresh = true,
   ) {
     const f = forge();
-    if (!f) return;
-    await runner.run(
+    if (!f) return null;
+    return runner.run(
       () => command(ctx(f)),
       async (result) => {
         // A background command changed nothing yet — the settle listener
@@ -618,10 +618,10 @@
   // on a clean claim, so a rejected claim leaves you on the console.
   const claimValidate = async (task_id: string, subtask_id: string) => {
     actedOn(task_id);
-    await run((c) =>
+    const result = await run((c) =>
       invoke(commands.claimValidation, { task_id, subtask_id }, c),
     );
-    if (!runner.result?.ok || runner.result.warn) return;
+    if (!result?.ok || result.warn) return;
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
@@ -635,14 +635,14 @@
     // A claim still being processed holds the editor until its verdict lands.
     if (pendingVerdicts.isProcessing(`claim:${task_id}`, repoId)) return;
     actedOn(task_id);
-    await run((c) =>
+    const result = await run((c) =>
       invoke(
         commands.openEditor,
         { task_id, campaign, base: location.origin },
         c,
       ),
     );
-    openMeiFriend(runner.result);
+    openMeiFriend(result);
   };
 
   const submitpr = (task_id: string) =>
@@ -768,8 +768,8 @@
   // Save the edited plan; a clean save leaves the manage takeover (run() has
   // already refreshed the tables, so the board reflects the new plan).
   async function savePlan(tasks: TaskRow[]) {
-    await run((c) => invoke(commands.savePlan, { tasks }, c));
-    if (runner.result?.ok) manage = false;
+    const result = await run((c) => invoke(commands.savePlan, { tasks }, c));
+    if (result?.ok) manage = false;
   }
 
   // Deep links, read once after the first load: ?task= opens that task's

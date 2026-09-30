@@ -8,7 +8,7 @@
 <script lang="ts">
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import type { FailComment } from "$lib/commands.ts";
+  import type { FailComment, Result } from "$lib/commands.ts";
   import { handle, workStage } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { buildRecord, elapsed, orphanedFails } from "$lib/campaign-board.ts";
@@ -45,15 +45,15 @@
     prefill: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the preview. */
     onshowanchor: (c: CommentRow) => void;
-    onclaim: (task_id: string, subtask_id: string) => Promise<void>;
+    onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
       verdict: string,
       comment?: FailComment,
-    ) => Promise<void>;
-    onresolve: (comment_id: string) => Promise<void>;
-    onsendback: (task_id: string) => Promise<void>;
+    ) => Promise<Result | null>;
+    onresolve: (comment_id: string) => Promise<unknown>;
+    onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
 
   const rows = $derived(buildRecord(card, comments, viewer, logins));
@@ -89,13 +89,13 @@
   async function submitFail() {
     if (!failForm || !failForm.body.trim()) return;
     const form = failForm;
-    await onvalidate(card.task, form.sub, "fail", {
+    const result = await onvalidate(card.task, form.sub, "fail", {
       body: form.body,
       page: form.page.trim(),
       measure_start: form.m1.trim(),
       measure_end: form.m2.trim(),
     });
-    if (runner.result?.ok) failForm = null;
+    if (result?.ok) failForm = null;
   }
 
   const canResolve = (c: CommentRow) =>

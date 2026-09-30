@@ -12,7 +12,6 @@
   final step writes them with the configuration and the piece MEIs.
 -->
 <script lang="ts">
-  import { parseSourceHead } from "$lib/source-metadata.ts";
   import { wizard, nextStep, previousStep } from "$lib/wizard.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import MetadataForm from "./MetadataForm.svelte";
@@ -34,31 +33,8 @@
     wizard.source.extent = `${knownPages} page${knownPages === 1 ? "" : "s"}`;
   }
 
-  // Whether what is in the editor parses as XML, reported in its toolbar. On a
-  // debounce, so it is not checked per keystroke.
-  let wellFormed = $state<boolean | null>(null);
-  $effect(() => {
-    if (view !== "xml") {
-      wellFormed = null;
-      return;
-    }
-    const current = xml;
-    const timer = setTimeout(() => {
-      const parsed = new DOMParser().parseFromString(
-        current,
-        "application/xml",
-      );
-      wellFormed = parsed.querySelector("parsererror") === null;
-    }, 300);
-    return () => clearTimeout(timer);
-  });
-
-  // Leaving the step from the XML view: adopt what was written, as switching
-  // views would have.
-  function leave(go: () => void) {
-    if (view === "xml") wizard.source = parseSourceHead(xml);
-    go();
-  }
+  // Whether the editor holds a well-formed <meiHead>, reported in its toolbar.
+  let xmlValid = $state(true);
 </script>
 
 {#snippet material()}
@@ -66,12 +42,10 @@
     <div class="material-card">
       <div class="material-toolbar">
         <span class="toolbar-name head-name">meiHead — source header</span>
-        {#if wellFormed !== null}
-          <span class="chip" class:chip-err={!wellFormed}>
-            <span class="chip-dot"></span>
-            {wellFormed ? "Well-formed" : "Not well-formed"}
-          </span>
-        {/if}
+        <span class="chip" class:chip-err={!xmlValid}>
+          <span class="chip-dot"></span>
+          {xmlValid ? "Well-formed" : "Not a well-formed meiHead"}
+        </span>
         <div class="toolbar-gap"></div>
         <button
           type="button"
@@ -108,10 +82,19 @@
   intro="What the pages were taken from. Every piece inherits this, and can add its own details next."
   status={view === "xml" ? "editing the XML" : "describing the source"}
   material={wizard.images.length || view === "xml" ? material : undefined}
-  onBack={() => leave(previousStep)}
-  onNext={() => leave(nextStep)}
+  onBack={previousStep}
+  onNext={nextStep}
+  navBlocked={xmlValid
+    ? undefined
+    : "The XML is not a well-formed meiHead. Correct it before leaving this step."}
 >
-  <MetadataForm bind:meta={wizard.source} bind:view bind:xml externalEditor />
+  <MetadataForm
+    bind:meta={wizard.source}
+    bind:view
+    bind:xml
+    bind:xmlValid
+    externalEditor
+  />
 </WizardCard>
 
 <style>

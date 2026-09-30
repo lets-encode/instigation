@@ -57,6 +57,7 @@
     nextIcon = "arrow-right",
     nextDisabled = false,
     backDisabled = false,
+    navBlocked,
     finish = false,
     footer,
   }: {
@@ -77,6 +78,11 @@
     nextIcon?: "arrow-right" | "check" | null;
     nextDisabled?: boolean;
     backDisabled?: boolean;
+    /**
+     * Why the step cannot be left right now: disables Back, Next and the
+     * rail's steps, with this as their tooltip.
+     */
+    navBlocked?: string;
     /** Styles the primary button green, for the step that completes the flow. */
     finish?: boolean;
     /** Controls the Back/Next pair cannot express, in place of it. */
@@ -233,7 +239,8 @@
           <button
             type="button"
             class="step"
-            disabled={!done || backDisabled}
+            disabled={!done || backDisabled || navBlocked !== undefined}
+            title={done ? navBlocked : undefined}
             onclick={() => (wizard.step = s.id)}
             aria-current={active ? "step" : undefined}
           >
@@ -387,7 +394,8 @@
             type="button"
             class="btn btn-lg btn-secondary"
             onclick={onBack}
-            disabled={backDisabled}
+            disabled={backDisabled || navBlocked !== undefined}
+            title={navBlocked}
           >
             Back
           </button>
@@ -398,7 +406,8 @@
             class="btn btn-lg btn-primary"
             class:btn-finish={finish}
             onclick={onNext}
-            disabled={nextDisabled}
+            disabled={nextDisabled || navBlocked !== undefined}
+            title={navBlocked}
           >
             {nextLabel}{#if nextIcon}<Icon name={nextIcon} />{/if}
           </button>

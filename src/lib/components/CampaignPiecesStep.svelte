@@ -204,6 +204,15 @@
     return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
   });
 
+  // Whether the selected piece's XML view holds a well-formed <meiHead>.
+  // While it does not, nothing that leaves the piece is available.
+  let xmlValid = $state(true);
+  const xmlBlock = $derived(
+    xmlValid
+      ? undefined
+      : `The XML of ${label} is not a well-formed meiHead. Correct it before leaving it.`,
+  );
+
   function selectPiece(index: number) {
     selected = index;
     bulkNotice = null;
@@ -228,6 +237,7 @@
   material={pages.length ? material : undefined}
   onBack={previousStep}
   backDisabled={busy}
+  navBlocked={xmlBlock}
   onNext={last ? () => finisher.run() : nextStep}
   nextDisabled={busy || !wizard.pieces.length || unmarked.length > 0}
   nextLabel={!last
@@ -248,8 +258,12 @@
 >
   <div class="pieces-head">
     <span class="pieces-count">Pieces · {wizard.pieces.length}</span>
-    <button type="button" class="pill pill-sm" onclick={addPiece}
-      >+ Add piece</button
+    <button
+      type="button"
+      class="pill pill-sm"
+      onclick={addPiece}
+      disabled={xmlBlock !== undefined}
+      title={xmlBlock}>+ Add piece</button
     >
   </div>
 
@@ -265,6 +279,8 @@
             type="button"
             class="piece-head"
             onclick={() => selectPiece(i)}
+            disabled={xmlBlock !== undefined && selected !== i}
+            title={selected !== i ? xmlBlock : undefined}
           >
             <span class="swatch"></span>
             <span class="name" class:plain={selected !== i}>{labelOf(p)}</span>
@@ -356,7 +372,11 @@
 
   {#if piece}
     <div class="piece-meta" style="--piece: {pieceColour(selected)}">
-      <MetadataForm bind:meta={wizard.pieces[selected].meta} variant="piece">
+      <MetadataForm
+        bind:meta={wizard.pieces[selected].meta}
+        bind:xmlValid
+        variant="piece"
+      >
         {#snippet heading()}
           <span class="meta-for">
             Metadata for <span style="color: {pieceColour(selected)}"

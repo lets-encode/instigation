@@ -246,8 +246,8 @@ export class PreTaskSession {
     opts: { overviewOnSuccess?: boolean } = {},
   ) {
     const f = forge();
-    if (!f) return;
-    await this.runner.run(
+    if (!f) return null;
+    return this.runner.run(
       () => command(this.ctx(f)),
       async (result) => {
         // A rejected command changed nothing worth reloading for — and a
@@ -314,7 +314,7 @@ export class PreTaskSession {
   }
 
   async validate(verdict: string) {
-    await this.run(
+    const result = await this.run(
       (c) =>
         invoke(
           commands.submitValidation,
@@ -337,8 +337,8 @@ export class PreTaskSession {
         ),
       { overviewOnSuccess: true },
     );
-    // A failed submission keeps the typed comment for the retry.
-    if (this.runner.result?.ok) {
+    // A failed or unstarted submission keeps the typed comment for the retry.
+    if (result?.ok) {
       this.failOpen = false;
       this.failText = "";
     }
@@ -369,8 +369,8 @@ export class PreTaskSession {
     parent_id: string,
   ) {
     const f = forge();
-    if (!f) return;
-    await this.runner.run(
+    if (!f) return null;
+    return this.runner.run(
       () =>
         invoke(
           commands.submitComment,

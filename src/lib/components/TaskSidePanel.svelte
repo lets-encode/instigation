@@ -12,7 +12,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type { CommentRow, LockRow, StateRow } from "$lib/campaign-tables.ts";
-  import type { FailComment } from "$lib/commands.ts";
+  import type { FailComment, Result } from "$lib/commands.ts";
   import {
     handle,
     pageOfLocator,
@@ -90,19 +90,23 @@
     onopenscore: () => void;
     /** Highlight a comment's measure range in the score. */
     onshowanchor: (c: CommentRow) => void;
-    onclaim: (task_id: string, subtask_id: string) => Promise<void>;
+    onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     oneditor: (task_id: string) => Promise<void>;
     /** Give back the viewer's claim: the task's encoding ('' subtask) or a review slot. */
-    ongiveback: (task_id: string, subtask_id: string) => Promise<void>;
+    ongiveback: (task_id: string, subtask_id: string) => Promise<unknown>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
       verdict: string,
       comment?: FailComment,
-    ) => Promise<void>;
-    oncomment: (kind: string, body: string, parent_id: string) => Promise<void>;
-    onresolve: (comment_id: string) => Promise<void>;
-    onsendback: (task_id: string) => Promise<void>;
+    ) => Promise<Result | null>;
+    oncomment: (
+      kind: string,
+      body: string,
+      parent_id: string,
+    ) => Promise<Result | null>;
+    onresolve: (comment_id: string) => Promise<unknown>;
+    onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
 
   // A submission on this task still being processed: every action in the

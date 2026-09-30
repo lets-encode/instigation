@@ -40,7 +40,7 @@
     onanchor: (comment: CommentRow) => void;
     /** Start a reply to this comment; absent hides the Reply action. */
     onreply?: (comment: CommentRow) => void;
-    onresolve: (comment_id: string) => Promise<void>;
+    onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
   const login = $derived(handle(logins, comment.author_id));

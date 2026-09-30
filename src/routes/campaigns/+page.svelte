@@ -185,8 +185,8 @@
     command: (c: CommandContext) => Promise<Result>,
   ) {
     const c = ctxFor(t);
-    if (!c) return;
-    await runner.run(
+    if (!c) return null;
+    return runner.run(
       () => command(c),
       async () => {
         runner.log.step("Refreshing…");
@@ -217,10 +217,10 @@
   const openEditor = async (t: MyTask) => {
     const s = stats.find((x) => x.name === t.campaignSlug);
     if (s && pendingVerdicts.isProcessing(`claim:${t.task}`, s.repoId)) return;
-    await run(t, (c) =>
+    const result = await run(t, (c) =>
       invoke(commands.openEditor, editorInput(t.campaignSlug, t.task), c),
     );
-    openMeiFriend(runner.result);
+    openMeiFriend(result);
   };
   // A submission on the task still being processed holds its row's actions.
   const processing = (t: MyTask) =>
@@ -250,13 +250,13 @@
       next.action === "encode" ||
       (next.action === "continue" && next.kind !== "review" && !next.pre)
     ) {
-      await runner.run(
+      const result = await runner.run(
         () => invoke(commands.openEditor, editorInput(s.name, next.task), c),
         refresh,
       );
-      openMeiFriend(runner.result);
+      openMeiFriend(result);
     } else if (next.action === "review") {
-      await runner.run(
+      const result = await runner.run(
         () =>
           invoke(
             commands.claimValidation,
@@ -265,7 +265,7 @@
           ),
         refresh,
       );
-      if (runner.result?.ok && !runner.result.warn) {
+      if (result?.ok && !result.warn) {
         await goto(reviewHref(s.name, next.locator, next.task));
       }
     }

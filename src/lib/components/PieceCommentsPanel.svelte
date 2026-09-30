@@ -8,7 +8,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
-  import type { CampaignTables } from "$lib/commands.ts";
+  import type { CampaignTables, Result } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { findRow, pieceNamesOf, pieceZone } from "$lib/campaign-tables.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
@@ -56,8 +56,8 @@
       kind: string,
       body: string,
       parent_id: string,
-    ) => Promise<void>;
-    onresolve: (comment_id: string) => Promise<void>;
+    ) => Promise<Result | null>;
+    onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
   // The pieces the tasks address, named from the campaign's config where it

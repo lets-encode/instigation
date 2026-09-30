@@ -5,6 +5,8 @@ parentheses.
 
 ## Unreleased
 
+- A comment or fail note is cleared only when its own command succeeded, and Enter does nothing while another command runs.
+- Metadata typed in the XML view is adopted as it is typed, and the wizard cannot be left while that XML is not well-formed.
 - The score viewers scroll through all pages, with the page switch at the right end of the toolbar.
 - Page views label each page above it, such as Page 2 · Facsimile.
 - A task's claim, continue, give-back and verdict buttons are disabled while one of its submissions is processing.

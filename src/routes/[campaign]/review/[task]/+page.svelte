@@ -208,8 +208,8 @@
     opts: { overviewOnSuccess?: boolean } = {},
   ) {
     const f = forge();
-    if (!f) return;
-    await runner.run(
+    if (!f) return null;
+    return runner.run(
       () => command(ctx(f)),
       async (result) => {
         if (result.error) return;

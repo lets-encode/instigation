@@ -108,7 +108,12 @@
         bind:value={session.failText}
         placeholder="Why does this fail?"
         onkeydown={(e) => {
-          if (e.key === "Enter" && session.failText.trim())
+          if (
+            e.key === "Enter" &&
+            session.failText.trim() &&
+            !session.busy &&
+            !session.verdictPending
+          )
             session.validate("fail");
         }}
       />

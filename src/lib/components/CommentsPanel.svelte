@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+  import type { Result } from "$lib/commands.ts";
   import { pieceLabel } from "$lib/campaign-tables.ts";
   import type { Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
@@ -72,8 +73,8 @@
       kind: string,
       body: string,
       parent_id: string,
-    ) => Promise<void>;
-    onresolve: (comment_id: string) => Promise<void>;
+    ) => Promise<Result | null>;
+    onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
   type Section = { card: BoardCard; threads: Thread[] };

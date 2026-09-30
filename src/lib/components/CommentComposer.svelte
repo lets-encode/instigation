@@ -4,6 +4,7 @@
   logged-out viewer.
 -->
 <script lang="ts">
+  import type { Result } from "$lib/commands.ts";
   import { auth } from "$lib/auth.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
@@ -24,7 +25,11 @@
     runner: CommandRunner;
     /** The comment a reply is being written to, shared with the thread list. */
     replyTo: CommentRow | null;
-    oncomment: (kind: string, body: string, parent_id: string) => Promise<void>;
+    oncomment: (
+      kind: string,
+      body: string,
+      parent_id: string,
+    ) => Promise<Result | null>;
     placeholder?: string;
   } = $props();
 
@@ -41,12 +46,13 @@
     const kind = replyTo ? "reply" : "comment";
     const parent_id = replyTo?.comment_id ?? "";
     sending = true;
+    let result: Result | null;
     try {
-      await oncomment(kind, composerText, parent_id);
+      result = await oncomment(kind, composerText, parent_id);
     } finally {
       sending = false;
     }
-    if (runner.result?.ok) {
+    if (result?.ok) {
       composerText = "";
       replyTo = null;
     }
@@ -77,7 +83,8 @@
         {placeholder}
         aria-label="Comment text"
         onkeydown={(e) => {
-          if (e.key === "Enter" && composerText.trim()) postComment();
+          if (e.key === "Enter" && composerText.trim() && !runner.busy)
+            postComment();
         }}
       />
       <button

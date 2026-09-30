@@ -4,17 +4,19 @@
   header models), and the generated <meiHead> itself.
 
   The form is the source of truth. Switching to the XML view generates the
-  header from the fields; edits there are parsed back into the fields when the
-  view is left, and anything the form does not model is preserved (see
-  source-metadata.ts). That avoids promising a loss-free round trip for
-  arbitrary XML while still letting an expert add markup the form lacks.
+  header from the fields; edits there are parsed back into the fields as they
+  are typed, whenever the text is a well-formed <meiHead>, and anything the
+  form does not model is preserved (see source-metadata.ts). While it is not,
+  `xmlValid` is false and the other views cannot be opened. That avoids
+  promising a loss-free round trip for arbitrary XML while still letting an
+  expert add markup the form lacks.
 
   With `externalEditor`, the XML view does not render an editor here: the
   parent binds `view` and `xml` and shows the editor in the material pane,
   while this component keeps a live read-back of what the form understands.
 -->
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import {
     buildSourceHead,
     parseSourceHead,
@@ -28,6 +30,7 @@
     meta = $bindable(),
     view = $bindable("short"),
     xml = $bindable(""),
+    xmlValid = $bindable(true),
     externalEditor = false,
     heading,
     subhead,
@@ -36,6 +39,8 @@
     meta: SourceMetadata;
     view?: View;
     xml?: string;
+    /** Whether the XML view holds a well-formed <meiHead>; true in the other views. */
+    xmlValid?: boolean;
     /** The parent shows the XML editor elsewhere and binds `view` and `xml`. */
     externalEditor?: boolean;
     /** Rendered on the switcher's row, left of the pills. */
@@ -49,16 +54,45 @@
     variant?: "source" | "piece";
   } = $props();
 
+  // The metadata object the XML text was generated from: edits in the XML
+  // view are written into it, so a pending edit cannot reach another object
+  // bound to `meta` later.
+  let xmlFor: SourceMetadata | null = null;
+  let generated = "";
+  function generate() {
+    xmlFor = meta;
+    xml = generated = buildSourceHead(meta);
+  }
+
   function show(next: View) {
-    if (next === view) return;
-    if (next === "xml") {
-      xml = buildSourceHead(meta);
-    } else if (view === "xml") {
-      // Leaving the editor: adopt whatever the expert wrote.
-      meta = parseSourceHead(xml);
-    }
+    if (next === view || !xmlValid) return;
+    if (next === "xml") generate();
     view = next;
   }
+
+  // Another object bound while the XML view is open (another piece, or the
+  // fields replaced by a copy) gets its own header in the editor.
+  $effect(() => {
+    if (view === "xml" && meta !== xmlFor) untrack(generate);
+  });
+
+  // Edits in the XML view are adopted as they are typed, when well-formed.
+  $effect(() => {
+    if (view !== "xml") {
+      xmlValid = true;
+      return;
+    }
+    const current = xml;
+    if (current === generated) {
+      xmlValid = true;
+      return;
+    }
+    const doc = new DOMParser().parseFromString(current, "application/xml");
+    xmlValid =
+      doc.querySelector("parsererror") === null &&
+      doc.documentElement.localName === "meiHead";
+    if (xmlValid && xmlFor) Object.assign(xmlFor, parseSourceHead(current));
+  });
 
   function addContributor() {
     meta.contributors = [...meta.contributors, { name: "", role: "" }];
@@ -116,6 +150,10 @@
         class="pill"
         class:pill-sm={heading !== undefined}
         class:on={view === id}
+        disabled={!xmlValid && id !== "xml"}
+        title={!xmlValid && id !== "xml"
+          ? "The XML is not a well-formed meiHead. Correct it to leave the XML view."
+          : undefined}
         onclick={() => show(id)}
       >
         {label}
@@ -127,8 +165,8 @@
     {#if externalEditor}
       <p class="hint xml-note">
         The editor is using the material pane while you write. Fields the form
-        knows are read back when you switch views; markup it doesn't model is
-        kept as written.
+        knows are read back as you type; markup it doesn't model is kept as
+        written.
       </p>
       {#if readBack}
         <div class="read-back">
@@ -170,10 +208,16 @@
     {:else}
       <p class="hint xml-note">
         The header generated from the form. Fields the form knows are read back
-        when you switch away; other markup inside <code>&lt;meiHead&gt;</code> is
-        kept as you wrote it.
+        as you type; other markup inside <code>&lt;meiHead&gt;</code> is kept as you
+        wrote it.
       </p>
       <XmlEditor bind:value={xml} />
+      {#if !xmlValid}
+        <p class="msg-error" role="alert">
+          Not a well-formed meiHead. The fields keep the last well-formed
+          version.
+        </p>
+      {/if}
     {/if}
   {:else}
     <div class="fields">

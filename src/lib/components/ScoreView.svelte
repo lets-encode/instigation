@@ -7,6 +7,7 @@
   link returns to the campaign.
 -->
 <script lang="ts">
+  import type { Result } from "$lib/commands.ts";
   import {
     commentAnchor,
     type MeasureAnchor,
@@ -64,8 +65,8 @@
       body: string,
       parent_id: string,
       anchor?: { page: string; measure_start: string; measure_end: string },
-    ) => Promise<void>;
-    onresolve: (comment_id: string) => Promise<void>;
+    ) => Promise<Result | null>;
+    onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
   let preview = $state<ReturnType<typeof ScorePreview>>();
