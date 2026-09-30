@@ -1,6 +1,6 @@
 # Gunicorn settings for the session broker. Run from broker/:
 #
-#   PORT=7777 gunicorn -c gunicorn_config.py wsgi:app
+#   PORT=7778 gunicorn -c gunicorn_config.py wsgi:app
 #
 # One broker process per instance; PORT must match the instance's reverse-proxy
 # target (production 7777, staging 7778, testing 7779 — see README.md §6).
