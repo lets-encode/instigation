@@ -106,7 +106,11 @@ app.config["SESSION_COOKIE_NAME"] = (
 )
 app.config["SESSION_COOKIE_PATH"] = "/"
 app.config["SESSION_PERMANENT"] = False
+# A stored session expires PERMANENT_SESSION_LIFETIME after the last request
+# that carried it: every request rewrites it with a fresh expiry. The SPA
+# relies on this to keep an open app logged in.
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 Session(app)
 
 # Behind a reverse proxy the client address and Host header Flask sees are the

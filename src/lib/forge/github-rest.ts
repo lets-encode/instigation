@@ -24,6 +24,16 @@ export function routeSessionVia(base: string): void {
   sessionApiBase = base;
 }
 
+let sessionRejected: (() => void) | null = null;
+
+/**
+ * Register the callback run when a SESSION call is answered with 401: the
+ * broker session has ended or GitHub no longer accepts its token.
+ */
+export function onSessionRejected(callback: () => void): void {
+  sessionRejected = callback;
+}
+
 function apiRoot(token?: string): string {
   if (token === SESSION) {
     if (!sessionApiBase)
@@ -57,11 +67,14 @@ const baseHeaders: Record<string, string> = {
 
 /**
  * Thrown when GitHub reports the request rate limit is exhausted (HTTP 403/429
- * with no remaining quota). Carries the reset time so callers can tell the user
- * when to retry.
+ * with no remaining quota). Its message is written for the person using the
+ * app and says when to retry; logged out, it also names logging in as the way
+ * past the shared anonymous limit.
  */
 export class RateLimitError extends Error {
   readonly source: "github" | "broker";
+  /** The request carried no credentials, so the per-address anonymous limit applied. */
+  readonly anonymous: boolean;
   readonly resource: string | null;
   readonly limit: number | null;
   readonly remaining: number | null;
@@ -71,6 +84,7 @@ export class RateLimitError extends Error {
   readonly retryAfterSeconds: number | null;
   constructor({
     source,
+    anonymous,
     resource,
     limit,
     remaining,
@@ -79,6 +93,7 @@ export class RateLimitError extends Error {
     retryAfterSeconds,
   }: {
     source: "github" | "broker";
+    anonymous: boolean;
     resource: string | null;
     limit: number | null;
     remaining: number | null;
@@ -86,16 +101,25 @@ export class RateLimitError extends Error {
     resetAt: number | null;
     retryAfterSeconds: number | null;
   }) {
+    // A reset time is shown to the minute, rounded up so it is never early.
     const when = retryAfterSeconds
       ? `in about ${retryAfterSeconds} seconds`
       : resetAt
-        ? `at ${new Date(resetAt * 1000).toLocaleTimeString()}`
-        : "shortly";
-    const service = source === "broker" ? "OAuth broker request" : "GitHub API";
-    const bucket = resource ? ` (${resource})` : "";
-    super(`${service} rate limit exceeded${bucket} — retry ${when}.`);
+        ? `at ${new Date(Math.ceil(resetAt / 60) * 60_000).toLocaleTimeString(
+            [],
+            { hour: "2-digit", minute: "2-digit" },
+          )}`
+        : "later";
+    super(
+      source === "broker"
+        ? `Too many requests were sent in a short time. Try again ${when}.`
+        : anonymous
+          ? `GitHub allows only a limited number of requests without logging in, and that limit has been reached. Try again ${when}, or log in with GitHub to continue now.`
+          : `GitHub's request limit has been reached. Try again ${when}.`,
+    );
     this.name = "RateLimitError";
     this.source = source;
+    this.anonymous = anonymous;
     this.resource = resource;
     this.limit = limit;
     this.remaining = remaining;
@@ -234,6 +258,12 @@ async function githubFetch(
     throw error;
   }
   const telemetry = recordRequest(input, init, startedAt, res);
+  const viaSession =
+    sessionApiBase !== null &&
+    (input instanceof Request ? input.url : String(input)).startsWith(
+      sessionApiBase,
+    );
+  if (res.status === 401 && viaSession) sessionRejected?.();
   if (res.status !== 403 && res.status !== 429) return res;
   const remaining = res.headers.get("X-RateLimit-Remaining");
   const retryAfterHeader = res.headers.get("Retry-After");
@@ -256,6 +286,7 @@ async function githubFetch(
   requestTelemetry.rateLimited++;
   throw new RateLimitError({
     source: telemetry?.source ?? "github",
+    anonymous: !viaSession && !new Headers(init?.headers).has("Authorization"),
     resource: telemetry?.resource ?? null,
     limit: telemetry?.limit ?? null,
     remaining: telemetry?.remaining ?? null,

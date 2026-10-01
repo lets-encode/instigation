@@ -5,6 +5,12 @@ parentheses.
 
 ## Unreleased
 
+- The campaign page drops the owner view and re-reads its tables after a logout or an expired login.
+- Rate-limit errors are worded plainly with the retry time on every page that shows them.
+- An expired GitHub login logs the app out, and the page's login prompt says it expired.
+- An open app keeps its login alive with a session check every 30 minutes.
+- The broker sets the per-request session refresh explicitly and tests it.
+- Opening mei-friend without a configured address shows an error instead of a broken link.
 - Production, staging and testing hand volunteers off to staging.mei-friend.mdw.ac.at.
 - The pages step's error names the stage that failed, reading the pages or creating the repository.
 - A page draft with warnings keeps its overlay open until Continue before mei-friend opens.

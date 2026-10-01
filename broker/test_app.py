@@ -77,6 +77,34 @@ class BrokerTest(unittest.TestCase):
             400,
         )
 
+    def test_a_request_extends_the_session_lifetime(self):
+        lifetime = int(broker.app.permanent_session_lifetime.total_seconds())
+        upstream = SimpleNamespace(
+            content=b'{"login":"alice"}',
+            status_code=200,
+            raw=SimpleNamespace(headers={"Content-Type": "application/json"}),
+        )
+        start = 1_800_000_000
+        with patch.object(broker.requests, "request", return_value=upstream):
+            with patch("cachelib.file.time", return_value=start):
+                self.authenticate()
+            with patch("cachelib.file.time", return_value=start + 3600):
+                self.client.get("/proxy/api.github.com/user")
+            # Past the lifetime counted from login, within it counted from
+            # the last request.
+            with patch(
+                "cachelib.file.time", return_value=start + lifetime + 60
+            ):
+                kept = self.client.get("/proxy/api.github.com/user")
+            with patch(
+                "cachelib.file.time",
+                return_value=start + 2 * lifetime + 3600,
+            ):
+                ended = self.client.get("/proxy/api.github.com/user")
+
+        self.assertEqual(kept.status_code, 200)
+        self.assertEqual(ended.status_code, 401)
+
     def test_proxy_replaces_identity_headers_and_filters_the_response(self):
         self.authenticate()
         upstream = SimpleNamespace(

@@ -265,8 +265,8 @@ export interface CampaignListing {
   stats: CampaignStats[];
   /** Repositories the search found whose tables could not be read. */
   failed: number;
-  /** Why (the first failure — a rate-limit one preferred); '' when none. */
-  failureMessage: string;
+  /** Why (the first failure — a rate-limit one preferred); null when none. */
+  failure: Error | null;
 }
 
 /**
@@ -304,9 +304,11 @@ export async function loadAllCampaignStats(
   return {
     stats: loaded,
     failed: errors.length,
-    failureMessage: errors.length
-      ? ((cause as Error)?.message ?? String(cause))
-      : "",
+    failure: errors.length
+      ? cause instanceof Error
+        ? cause
+        : new Error(String(cause))
+      : null,
   };
 }
 
