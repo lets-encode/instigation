@@ -418,7 +418,7 @@
      the row's width; the drag handle is not needed there. */
   .tspwrap.floating {
     position: fixed;
-    top: 56px;
+    top: calc(var(--topbar-h, 56px) + var(--notice-h, 0px));
     right: 0;
     bottom: 0;
     /* The stored width still applies (inline); the viewport caps it. */

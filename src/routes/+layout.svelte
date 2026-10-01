@@ -4,6 +4,8 @@
   import { page } from "$app/state";
   import { auth, initAuth, login, logout } from "$lib/auth.svelte.ts";
   import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
+  import ConstructionNotice from "$lib/components/ConstructionNotice.svelte";
+  import { bugReportHref } from "$lib/bug-report.ts";
   import "./theme.css";
   import "./ui.css";
 
@@ -52,13 +54,25 @@
     return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
   });
 
+  // Surfaces fixed below the top bar offset themselves by its current height,
+  // read as --topbar-h; narrow viewports wrap it onto a second row.
+  let headerHeight = $state(56);
+  $effect(() => {
+    document.documentElement.style.setProperty(
+      "--topbar-h",
+      `${headerHeight}px`,
+    );
+  });
+
   // Resolve any existing broker session once the app mounts (client-only).
   onMount(() => {
     initAuth();
   });
 </script>
 
-<header>
+<ConstructionNotice />
+
+<header bind:offsetHeight={headerHeight}>
   <a class="brand" href="/campaigns">
     <img
       class="brand-light"
@@ -197,6 +211,10 @@
   <span class="fsep" aria-hidden="true">·</span>
   <a href="https://iwk.mdw.ac.at/impressum/" target="_blank" rel="noopener"
     >Imprint</a
+  >
+  <span class="fsep" aria-hidden="true">·</span>
+  <a href={bugReportHref(page.url.pathname)} target="_blank" rel="noopener"
+    >Report a bug</a
   >
 </footer>
 

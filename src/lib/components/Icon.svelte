@@ -21,7 +21,11 @@
     | "gear"
     | "facsimile"
     | "notes"
-    | "side-by-side";
+    | "side-by-side"
+    | "warning"
+    | "check-circle"
+    | "reset"
+    | "lock";
   let {
     name,
     size = 14,
@@ -46,6 +50,11 @@
     notes:
       "M9 18V6l10-2v12M9 18a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zM19 16a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z",
     "side-by-side": "M4 5h7v14H4zM13 5h7v14h-7z",
+    warning: "M12 3 2 21h20L12 3zM12 10v5M12 18h.01",
+    "check-circle":
+      "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM8.5 12l2.5 2.5 4.5-5",
+    reset: "M3 12a9 9 0 1 0 3-6.7M3 4v5h5",
+    lock: "M6 10h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM8 10V7a4 4 0 0 1 8 0v3",
   };
 </script>
 

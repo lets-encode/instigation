@@ -5,6 +5,9 @@ parentheses.
 
 ## Unreleased
 
+- An under-construction banner shows on every page, and a dialog opens once per browser on the campaign list and the wizard.
+- The footer links to a prefilled bug report on GitHub.
+- The floating task panel starts below the top bar when the top bar wraps onto two rows.
 - The app footer links to the imprint.
 - The broker caps request bodies and answers a larger one with a JSON 413.
 - A literal %, ? or # in a file path reaches GitHub unchanged.
