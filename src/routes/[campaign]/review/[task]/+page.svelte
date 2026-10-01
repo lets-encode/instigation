@@ -19,6 +19,7 @@
   import { commands, invoke, commentInput } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
   import { CampaignResolution } from "$lib/campaign-resolution.svelte.ts";
+  import { campaignLoadFailure } from "$lib/campaign-resolve.ts";
   import {
     findRow,
     pieceNamesOf,
@@ -171,8 +172,7 @@
       allowSelfValidation = tables.allowSelfValidation;
       loaded = true;
     } catch (e) {
-      if (name === campaign)
-        loadError = `Could not read ${owner}/${repo}: ${(e as Error).message}`;
+      if (name === campaign) loadError = campaignLoadFailure(e);
     } finally {
       if (name === campaign) loading = false;
     }
@@ -408,10 +408,10 @@
       {#if !auth.user}
         <div class="banner warn">
           <span>
-            Viewing read-only. <button
-              type="button"
-              class="linkish"
-              onclick={() => login()}>Log in with GitHub</button
+            {#if auth.expired}Your GitHub login has expired.{/if}
+            Viewing read-only.
+            <button type="button" class="linkish" onclick={() => login()}
+              >Log in with GitHub</button
             >
             to review.
           </span>

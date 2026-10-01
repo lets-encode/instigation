@@ -42,7 +42,7 @@ import time
 from datetime import timedelta
 from os import getenv, makedirs, chmod, path
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
 from authlib.integrations.flask_client import OAuth
@@ -106,7 +106,11 @@ app.config["SESSION_COOKIE_NAME"] = (
 )
 app.config["SESSION_COOKIE_PATH"] = "/"
 app.config["SESSION_PERMANENT"] = False
+# A stored session expires PERMANENT_SESSION_LIFETIME after the last request
+# that carried it: every request rewrites it with a fresh expiry. The SPA
+# relies on this to keep an open app logged in.
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 Session(app)
 
 # Behind a reverse proxy the client address and Host header Flask sees are the
@@ -206,6 +210,14 @@ def broker_rate_limited(_error):
     return response
 
 
+@app.errorhandler(413)
+def broker_body_too_large(_error):
+    response = jsonify(error="That request is too large", source="broker")
+    response.status_code = 413
+    response.headers["X-Lets-Encode-Upstream"] = "broker"
+    return response
+
+
 oauth = OAuth(app)
 github = oauth.register(
     name="github",
@@ -233,6 +245,11 @@ ALLOWED_DOMAINS = ["api.github.com"]
 IIIF_MAX_BYTES = 100 * 1024 * 1024
 IIIF_MAX_REDIRECTS = 5
 IIIF_ALLOWED_CONTENT = ("application/json", "application/ld+json", "image/")
+
+# The largest request body any route reads: a file at the IIIF cap committed
+# through /proxy as a base64 blob (4/3 of its size), plus room for the JSON
+# around it. Werkzeug answers a larger body, chunked or not, with 413.
+app.config["MAX_CONTENT_LENGTH"] = IIIF_MAX_BYTES * 4 // 3 + 1024 * 1024
 
 # Headers on relayed third-party bodies. The relays answer in the app origin, so
 # a body opened directly in a tab (an SVG or HTML document) would otherwise run
@@ -687,7 +704,9 @@ def proxy(url):
     # browser instead.
     if "githubToken" not in session:
         return jsonify(error="Authentication required"), 401
-    url = requests.utils.unquote(url)
+    # The server has already percent-decoded the path. Quoting it again keeps
+    # a literal %, ? or # in a file name inside the path GitHub receives.
+    url = quote(url, safe="/:")
     if not url.startswith("http"):
         url = "https://" + url
     parsed = urlsplit(url)

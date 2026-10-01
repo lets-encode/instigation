@@ -8,25 +8,46 @@
 import { provider } from "./forge/config.ts";
 import { replaceState } from "$app/navigation";
 import { createForge } from "./forge/index.ts";
-import { routeSessionVia, SESSION } from "./forge/github-rest.ts";
+import {
+  onSessionRejected,
+  routeSessionVia,
+  SESSION,
+} from "./forge/github-rest.ts";
 import type { ForgeClient, GitHubUser } from "./forge/types.ts";
 
 routeSessionVia(`${provider.brokerUrl}/proxy/api.github.com`);
+
+// A session that ends while the app is open (the broker's session lifetime ran
+// out, or the token was revoked) shows up as a 401 on the next proxied call.
+onSessionRejected(() => {
+  if (auth.status !== "authenticated") return;
+  clear();
+  auth.expired = true;
+});
 
 type Status = "loading" | "authenticated" | "anonymous";
 
 /**
  * Reactive auth state, shared across the app. `token` is not a credential: it
  * is the SESSION sentinel when logged in (API calls then ride the broker
- * session cookie) and null when anonymous.
+ * session cookie) and null when anonymous. `expired` is set when a session
+ * that was active is rejected by the broker.
  */
 export const auth = $state<{
   token: string | null;
   user: GitHubUser | null;
   scope: string;
   error: string | null;
+  expired: boolean;
   status: Status;
-}>({ token: null, user: null, scope: "", error: null, status: "loading" });
+}>({
+  token: null,
+  user: null,
+  scope: "",
+  error: null,
+  expired: false,
+  status: "loading",
+});
 
 function clear(): void {
   auth.token = null;
@@ -48,6 +69,16 @@ export async function initAuth(): Promise<void> {
     const query = params.toString();
     replaceState(location.pathname + (query ? `?${query}` : ""), {});
   }
+
+  // Returning to a tab left open re-checks the session, so an expired one is
+  // reported before the next action rather than by its failure.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkSession();
+  });
+  // The broker extends a session on every request it receives and ends it
+  // after PERMANENT_SESSION_LIFETIME without one; a periodic check keeps it
+  // alive while the app is open.
+  setInterval(checkSession, SESSION_CHECK_INTERVAL_MS);
 
   let resolved;
   try {
@@ -78,6 +109,16 @@ export async function initAuth(): Promise<void> {
     "scope:",
     resolved.scopes,
   );
+}
+
+const SESSION_CHECK_INTERVAL_MS = 30 * 60_000;
+
+/** Ask the broker for the session's user; a rejection marks the session expired. */
+function checkSession(): void {
+  if (auth.status !== "authenticated") return;
+  createForge(SESSION)
+    .getAuthenticatedUser()
+    .catch(() => {});
 }
 
 /** Begin the OAuth dance: the broker remembers `returnTo` and hands off to GitHub. */

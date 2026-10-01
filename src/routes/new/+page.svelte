@@ -49,8 +49,9 @@
 {:else if !auth.user}
   <WizardCard step="name" heading="Start a new encoding campaign">
     <p class="note login-note">
-      Log in with GitHub to create a campaign. Its score, configuration and
-      progress live in a repository on your account.
+      {#if auth.expired}Your GitHub login has expired.{/if}
+      Log in with GitHub to create a campaign. Its score, configuration and progress
+      live in a repository on your account.
     </p>
     {#snippet footer()}
       <button

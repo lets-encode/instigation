@@ -187,6 +187,19 @@ test("getRepoFile falls back to the raw media type when inline content is unavai
   assert.equal(accepts.at(-1), "application/vnd.github.raw");
 });
 
+test("getRepoFile encodes each path segment and keeps the separators", async (t) => {
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return Response.json({ content: btoa("text"), encoding: "base64" });
+  });
+  await getRepoFile("token", "owner", "repo", "sources/a%b?c#d e.mei", "main");
+  assert.equal(
+    urls[0],
+    "https://api.github.com/repos/owner/repo/contents/sources/a%25b%3Fc%23d%20e.mei?ref=main",
+  );
+});
+
 test("getRepoFile rejects a directory path instead of returning empty content", async (t) => {
   t.mock.method(globalThis, "fetch", async () =>
     Response.json([{ name: "a.mei" }]),
@@ -568,7 +581,7 @@ test("403 and 429 responses are rate limits only when GitHub or the broker repor
       expect: (error) =>
         error instanceof RateLimitError &&
         error.source === "broker" &&
-        /OAuth broker request rate limit exceeded/.test(error.message),
+        /Too many requests were sent in a short time/.test(error.message),
       rateLimited: 1,
     },
     {
@@ -606,6 +619,44 @@ test("403 and 429 responses are rate limits only when GitHub or the broker repor
         row.label,
       );
   }
+});
+
+test("a rate-limit message suggests logging in only when the request was logged out", async (t) => {
+  t.mock.method(console, "info", () => {});
+  // 2_000_000_000 is 20 seconds into a minute; the message rounds up to the next.
+  const at = new Date(2_000_000_040_000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(
+      { message: "API rate limit exceeded" },
+      {
+        status: 403,
+        headers: {
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": "2000000000",
+        },
+      },
+    ),
+  );
+
+  await assert.rejects(
+    searchReposByTopic("topic"),
+    (e: unknown) =>
+      e instanceof RateLimitError &&
+      e.anonymous &&
+      e.message ===
+        `GitHub allows only a limited number of requests without logging in, and that limit has been reached. Try again at ${at}, or log in with GitHub to continue now.`,
+  );
+  await assert.rejects(
+    searchReposByTopic("topic", "token"),
+    (e: unknown) =>
+      e instanceof RateLimitError &&
+      !e.anonymous &&
+      e.message ===
+        `GitHub's request limit has been reached. Try again at ${at}.`,
+  );
 });
 
 test("request telemetry records rate headers without query strings", async (t) => {

@@ -18,6 +18,7 @@
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
+  import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { elapsed } from "$lib/campaign-board.ts";
@@ -54,11 +55,11 @@
 
   let stats = $state<CampaignStats[]>([]);
   let listLoading = $state(false);
-  let listError = $state<string | null>(null);
+  let listError = $state<Error | null>(null);
   let listLoaded = $state(false);
   // Repositories the search found but whose tables could not be read.
   let listFailed = $state(0);
-  let listFailureMessage = $state("");
+  let listFailure = $state<Error | null>(null);
 
   $effect(() => {
     if (auth.status === "loading" || listLoaded || listLoading) return;
@@ -82,12 +83,19 @@
         },
       );
       listFailed = listing.failed;
-      listFailureMessage = listing.failureMessage;
+      listFailure = listing.failure;
       listError = null;
     } catch (err) {
-      listError = (err as Error).message;
+      listError = err as Error;
     }
   }
+
+  const listRateLimit = $derived(
+    listError instanceof RateLimitError ? listError : null,
+  );
+  const partialRateLimit = $derived(
+    !listError && listFailure instanceof RateLimitError ? listFailure : null,
+  );
 
   // ----------------------------------------------------- the viewer's work
   const tasks = $derived(
@@ -551,7 +559,10 @@
       <span class="countpill">{filtered.length}</span>
     </div>
     {#if listError}
-      <p class="note">Couldn't load the campaigns: {listError}</p>
+      <p class="note">
+        {#if listRateLimit && auth.expired}Your GitHub login has expired.{/if}
+        Couldn't load the campaigns: {listError.message}
+      </p>
     {:else if listLoaded && stats.length === 0}
       <p class="note">No campaigns yet. Create one with New campaign.</p>
     {:else if (listLoading || auth.status === "loading") && stats.length === 0}
@@ -587,11 +598,13 @@
     {/if}
     {#if !listError && listFailed > 0}
       <p class="note partial">
-        {listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded — {listFailureMessage}
+        {#if partialRateLimit && auth.expired}Your GitHub login has expired.{/if}
+        {listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded: {listFailure?.message}
       </p>
     {/if}
-    {#if !auth.user && auth.status === "anonymous"}
+    {#if !auth.user && auth.status === "anonymous" && !listRateLimit && !partialRateLimit}
       <p class="note login-hint">
+        {#if auth.expired}Your GitHub login has expired.{/if}
         Browsing works logged out:
         <button type="button" class="linkish" onclick={() => login()}
           >log in with GitHub</button

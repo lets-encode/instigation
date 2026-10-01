@@ -509,6 +509,25 @@ test("openEditor leaves the task branch alone while someone else holds the claim
   assert.equal(result.error, "Someone else holds the claim on T0001.");
 });
 
+test("openEditor without a configured mei-friend address fails before reading the campaign", async () => {
+  let read = false;
+  const forge = fakeForge({
+    getRepoFile: async () => {
+      read = true;
+      return null;
+    },
+  });
+
+  const result = await invoke(
+    commands.openEditor,
+    { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
+    { ...context(forge), meiFriendUrl: undefined },
+  );
+
+  assert.match(result.error ?? "", /no mei-friend address is configured/);
+  assert.equal(read, false);
+});
+
 test("an encoding completed without changes gets a commit so its PR can open", async (t) => {
   const calls: string[] = [];
   const { verdict } = await runEncoding(t, {

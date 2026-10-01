@@ -97,8 +97,8 @@ export interface CommandContext {
   viewer: string;
   /** The acting user's login — for human-readable PR prose only, never as an id. */
   viewerLogin: string;
-  /** Editor instance used for the mei-friend hand-off. */
-  meiFriendUrl: string;
+  /** Editor instance used for the mei-friend hand-off; undefined when the deployment sets none. */
+  meiFriendUrl?: string;
   /** The OMR models, pinned by version. */
   omr: OmrModels;
   /**
@@ -836,7 +836,12 @@ const openEditor: CommandDef<
   log: "pr",
   envelopeInput: ({ task_id }) => ({ task_id }),
   async run({ task_id, campaign, base }, ctx, envelope) {
-    const { forge: f, owner, repo, viewer } = ctx;
+    const { forge: f, owner, repo, viewer, meiFriendUrl } = ctx;
+    if (!meiFriendUrl)
+      return {
+        error:
+          "Open in mei-friend failed: no mei-friend address is configured for this deployment.",
+      };
     try {
       const [taskCsv, stateCsv, configYaml, lockCsv] = await Promise.all([
         f.getRepoFile(owner, repo, TASK_PATH),
@@ -1058,7 +1063,7 @@ const openEditor: CommandDef<
         le_taskid: task_id,
         le_base: base,
       });
-      const url = `${ctx.meiFriendUrl}/?${params}`;
+      const url = `${meiFriendUrl}/?${params}`;
       return {
         ok: true,
         meiFriendUrl: url,
