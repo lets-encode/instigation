@@ -6,7 +6,7 @@ import { auth } from "./auth.svelte.ts";
 import { readForge } from "./command-runner.svelte.ts";
 import {
   resolveCampaign,
-  resolveFailureMessage,
+  campaignLoadFailure,
   type ResolvedCampaign,
 } from "./campaign-resolve.ts";
 
@@ -50,7 +50,7 @@ export class CampaignResolution {
           else this.notFound = true;
         })
         .catch((e) => {
-          if (current === name()) this.error = resolveFailureMessage(e);
+          if (current === name()) this.error = campaignLoadFailure(e);
         })
         .finally(() => (this.#resolving = false));
     });

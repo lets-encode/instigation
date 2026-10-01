@@ -13,7 +13,7 @@
   import {
     lookupSlug,
     resolveCampaign,
-    resolveFailureMessage,
+    campaignLoadFailure,
   } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
   import {
@@ -90,6 +90,8 @@
   let notInitialised = $state(false);
   let isPrivate = $state(false);
   let canPush = $state(false);
+  // The login the tables were last read as; null when read logged out.
+  let readAs: string | null = null;
   let taskDefs = $state<TaskRow[]>([]);
   let rows = $state<StateRow[]>([]);
   let validationColumns = $state<string[]>([]);
@@ -461,6 +463,7 @@
     const f = readForge();
     // Tables for a name the page has since navigated away from are dropped.
     const name = campaign;
+    readAs = auth.user?.login ?? null;
     if (!loaded) loading = true;
     loadError = null;
     try {
@@ -499,8 +502,7 @@
       }
       loaded = true;
     } catch (e) {
-      if (name === campaign)
-        loadError = `Could not read ${owner}/${repo}: ${(e as Error).message}`;
+      if (name === campaign) loadError = campaignLoadFailure(e);
     } finally {
       if (name === campaign) loading = false;
     }
@@ -545,7 +547,7 @@
     try {
       info = await lookupSlug(name);
     } catch (e) {
-      if (name === campaign) resolveError = resolveFailureMessage(e);
+      if (name === campaign) resolveError = campaignLoadFailure(e);
       return;
     }
     if (name !== campaign) return;
@@ -571,7 +573,7 @@
     try {
       r = await resolveCampaign(readForge(), name, info);
     } catch (e) {
-      if (name === campaign) resolveError = resolveFailureMessage(e);
+      if (name === campaign) resolveError = campaignLoadFailure(e);
       return;
     }
     if (name !== campaign) return;
@@ -581,6 +583,17 @@
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
+  });
+
+  // The push permission and the owner's views belong to the viewer the tables
+  // were read as. When the viewer changes (a logout or an expired session),
+  // they are dropped at once and the tables are read again as the new viewer.
+  $effect(() => {
+    if (loaded && (auth.user?.login ?? null) !== readAs) {
+      canPush = false;
+      manage = false;
+      loaded = false;
+    }
   });
 
   // Background verdicts refresh the tables when they land — unless a command
@@ -976,10 +989,10 @@
     {#if !auth.user}
       <div class="banner bar warn">
         <span>
-          Viewing this public campaign read-only. <button
-            type="button"
-            class="linkish"
-            onclick={() => login()}>Log in with GitHub</button
+          {#if auth.expired}Your GitHub login has expired.{/if}
+          Viewing this public campaign read-only.
+          <button type="button" class="linkish" onclick={() => login()}
+            >Log in with GitHub</button
           >
           to contribute.
         </span>

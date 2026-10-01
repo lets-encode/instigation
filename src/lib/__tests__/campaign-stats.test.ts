@@ -256,6 +256,7 @@ const fakeForge = (
 const rateLimit = () =>
   new RateLimitError({
     source: "github",
+    anonymous: true,
     resource: "core",
     limit: 60,
     remaining: 0,
@@ -278,7 +279,7 @@ test("loadAllCampaignStats: one unreadable repository is skipped but reported", 
     ["ok"],
   );
   assert.equal(listing.failed, 1);
-  assert.equal(listing.failureMessage, "boom");
+  assert.equal(listing.failure?.message, "boom");
 });
 
 test("loadAllCampaignStats: every repository failing throws instead of listing nothing", async () => {
@@ -316,7 +317,7 @@ test("loadAllCampaignStats: an empty search result is not an error", async () =>
   assert.deepEqual(await loadAllCampaignStats(f, "topic"), {
     stats: [],
     failed: 0,
-    failureMessage: "",
+    failure: null,
   });
 });
 

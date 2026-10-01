@@ -1098,7 +1098,9 @@
     <div class="deskwrap">
       <div class="banner warn">
         <span>
-          Please <button type="button" class="linkish" onclick={() => login()}
+          {#if auth.expired}Your GitHub login has expired.{/if}
+          Please
+          <button type="button" class="linkish" onclick={() => login()}
             >log in with GitHub</button
           >
           to work on this task.

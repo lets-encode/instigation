@@ -145,16 +145,14 @@ export async function registerCampaign(
 }
 
 /**
- * Message for a resolution that FAILED (resolveCampaign threw — the forge
- * request errored, e.g. the API rate limit) as opposed to a genuine miss
- * (resolveCampaign returned null). A failed resolution must never be presented
- * as "campaign not found".
+ * Message for a campaign that could not be loaded: its resolution FAILED
+ * (resolveCampaign threw — the forge request errored, e.g. the API rate limit)
+ * as opposed to a genuine miss (resolveCampaign returned null), or its tables
+ * could not be read. A failed resolution must never be presented as "campaign
+ * not found".
  */
-export function resolveFailureMessage(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  return /rate limit/i.test(msg)
-    ? "GitHub's request limit was reached, so the campaign could not be loaded. Try again later, or log in for a higher limit."
-    : `The campaign could not be loaded: ${msg}`;
+export function campaignLoadFailure(e: unknown): string {
+  return `The campaign could not be loaded: ${e instanceof Error ? e.message : String(e)}`;
 }
 
 /**
