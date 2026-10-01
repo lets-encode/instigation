@@ -151,6 +151,13 @@ function bindPullRequest(pr: PullRequestContext): void {
   headRef = pr.headRef;
 }
 
+// Appends a Co-authored-by trailer for the PR author, so GitHub attributes the
+// automation's commit to them. The noreply address needs both id and login.
+function coAuthored(message: string): string {
+  if (!author || !authorLogin) return message;
+  return `${message}\n\nCo-authored-by: ${authorLogin} <${author}+${authorLogin}@users.noreply.github.com>`;
+}
+
 const MAX_ATTEMPTS = 5;
 // Open non-draft pull requests one author may have on a campaign, counting
 // the one being processed; beyond it a pull request is closed unprocessed and
@@ -408,7 +415,9 @@ async function attemptClaim(
   }
 
   const message = verdict.ok
-    ? `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && "/" + verdict.lock!.subtask_id} for ${authorLabel} (${verdict.lock!.kind})`
+    ? coAuthored(
+        `Lock ${verdict.lock!.task_id}${verdict.lock!.subtask_id && "/" + verdict.lock!.subtask_id} for ${authorLabel} (${verdict.lock!.kind})`,
+      )
     : `Reject claim by ${authorLabel} (${verdict.reason})`;
   // Non-fast-forward update fails if `main` moved since `sha` → we retry.
   const commitStart = Date.now();
@@ -504,7 +513,7 @@ async function attemptRelease(
   }
   const target = `${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}`;
   const message = verdict.ok
-    ? `Release ${target} by ${authorLabel} (${intent.kind})`
+    ? coAuthored(`Release ${target} by ${authorLabel} (${intent.kind})`)
     : `Reject release by ${authorLabel} (${verdict.reason})`;
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
@@ -720,7 +729,7 @@ async function decideEncoding(
       { path: STATE_PATH, content: serializeStateCsv(newState) },
       { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
     ],
-    message: `Accept encoding of ${task.task_id} by ${authorLabel}\n\nCo-authored-by: ${authorLabel} <${author}+${authorLogin}@users.noreply.github.com>`,
+    message: `Accept encoding of ${task.task_id} by ${authorLabel}`,
   };
 }
 
@@ -928,7 +937,7 @@ async function attemptSubmit(
     { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", [history]) },
   ];
   const message = outcome.ok
-    ? outcome.message!
+    ? coAuthored(outcome.message!)
     : `Reject ${kind} submission by ${authorLabel} (${outcome.reason})`;
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
@@ -1038,9 +1047,11 @@ async function attemptComment(
       content: serializeCommentCsv(nextComments),
     });
   const message = verdict.ok
-    ? action === "resolve_comment"
-      ? `Resolve comment ${row!.comment_id} (by ${authorLabel})`
-      : `Record ${row!.kind} comment on ${row!.task_id} by ${authorLabel}`
+    ? coAuthored(
+        action === "resolve_comment"
+          ? `Resolve comment ${row!.comment_id} (by ${authorLabel})`
+          : `Record ${row!.kind} comment on ${row!.task_id} by ${authorLabel}`,
+      )
     : `Reject comment by ${authorLabel} (${verdict.reason})`;
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
