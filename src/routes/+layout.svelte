@@ -194,6 +194,10 @@
   >
   <span class="fsep" aria-hidden="true">·</span>
   <span>app last updated {__BUILD_DATE__}</span>
+  <span class="fsep" aria-hidden="true">·</span>
+  <a href="https://iwk.mdw.ac.at/impressum/" target="_blank" rel="noopener"
+    >Imprint</a
+  >
 </footer>
 
 <style>
@@ -332,6 +336,9 @@
   }
   .fsep {
     color: var(--line);
+  }
+  footer a {
+    color: inherit;
   }
   /* ---- Theme (light/dark) bulb toggle --------------------------------- */
   .theme-toggle {

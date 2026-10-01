@@ -5,6 +5,7 @@ parentheses.
 
 ## Unreleased
 
+- The app footer links to the imprint.
 - The campaign page drops the owner view and re-reads its tables after a logout or an expired login.
 - Rate-limit errors are worded plainly with the retry time on every page that shows them.
 - An expired GitHub login logs the app out, and the page's login prompt says it expired.
