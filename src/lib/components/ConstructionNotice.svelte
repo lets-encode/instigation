@@ -63,8 +63,8 @@
     <Icon name="warning" size={16} />
     <span class="banner-text"
       ><strong>Under construction.</strong> Data on this platform can be reset
-      at any time. GitHub repositories created with the app are kept, but the
-      app may no longer open them.
+      at any time. GitHub repositories created with the platform are kept, but
+      the platform may no longer open them.
       <span class="banner-links">
         <button type="button" class="link" onclick={open}>Details</button>
         <a href={reportHref} target="_blank" rel="noopener">Report a bug</a>
@@ -116,9 +116,9 @@
         <li>
           <span class="pi pi-green"><Icon name="lock" size={20} /></span>
           <span
-            >GitHub repositories created with the app stay in your GitHub
-            account and are not affected by a reset, but after a reset the app
-            may no longer show or open them.</span
+            >GitHub repositories created with the platform stay in your GitHub
+            account and are not affected by a reset, but after a reset the
+            platform may no longer show or open them.</span
           >
         </li>
       </ul>
