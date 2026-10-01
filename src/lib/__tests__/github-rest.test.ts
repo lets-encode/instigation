@@ -187,6 +187,19 @@ test("getRepoFile falls back to the raw media type when inline content is unavai
   assert.equal(accepts.at(-1), "application/vnd.github.raw");
 });
 
+test("getRepoFile encodes each path segment and keeps the separators", async (t) => {
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return Response.json({ content: btoa("text"), encoding: "base64" });
+  });
+  await getRepoFile("token", "owner", "repo", "sources/a%b?c#d e.mei", "main");
+  assert.equal(
+    urls[0],
+    "https://api.github.com/repos/owner/repo/contents/sources/a%25b%3Fc%23d%20e.mei?ref=main",
+  );
+});
+
 test("getRepoFile rejects a directory path instead of returning empty content", async (t) => {
   t.mock.method(globalThis, "fetch", async () =>
     Response.json([{ name: "a.mei" }]),

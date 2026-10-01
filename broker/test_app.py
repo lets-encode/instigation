@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import unittest
@@ -156,6 +157,38 @@ class BrokerTest(unittest.TestCase):
         self.assertIn('"endpoint":"/user"', event)
         self.assertIn('"remaining":"4998"', event)
         self.assertIn('"request_id":"request-1"', event)
+
+    def test_proxy_keeps_reserved_characters_in_the_path(self):
+        self.authenticate()
+        upstream = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        with patch.object(
+            broker.requests, "request", return_value=upstream
+        ) as request_upstream:
+            self.client.get(
+                "/proxy/api.github.com/repos/o/r/contents/a%25b%3Fc%23d%20e.mei?ref=main"
+            )
+        self.assertEqual(
+            request_upstream.call_args.args[1],
+            "https://api.github.com/repos/o/r/contents/a%25b%3Fc%23d%20e.mei?ref=main",
+        )
+
+    def test_request_bodies_over_the_limit_are_rejected(self):
+        self.authenticate()
+        path = "/proxy/api.github.com/repos/o/r/git/blobs"
+        with patch.dict(broker.app.config, {"MAX_CONTENT_LENGTH": 16}):
+            with patch.object(broker.requests, "request") as request_upstream:
+                declared = self.client.post(path, data=b"x" * 17)
+                chunked = self.client.post(
+                    path,
+                    input_stream=io.BytesIO(b"x" * 17),
+                    environ_overrides={"wsgi.input_terminated": True},
+                )
+        for response in (declared, chunked):
+            self.assertEqual(response.status_code, 413)
+            self.assertEqual(response.get_json()["source"], "broker")
+        request_upstream.assert_not_called()
 
     def test_broker_rate_limit_is_labeled_separately(self):
         with broker.app.test_request_context("/proxy/api.github.com/user"):

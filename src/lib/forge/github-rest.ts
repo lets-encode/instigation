@@ -601,6 +601,12 @@ export async function createRepoFromTemplate(
   return data; // includes html_url, full_name, etc.
 }
 
+// A repo-relative path as a URL path: each segment percent-encoded, the
+// separators kept, so a %, ? or # in a file name stays part of the path.
+function encodeRepoPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
 /**
  * Fetch and decode a UTF-8 text file from a repo. Returns the file's content as
  * a string, or null if it doesn't exist yet (404).
@@ -615,7 +621,10 @@ export async function getRepoFile(
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
   const { status, ok, data } = await ghGet<
     { content?: string; encoding?: string; message?: string } | Array<unknown>
-  >(`${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`, token);
+  >(
+    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}${query}`,
+    token,
+  );
   if (status === 404) return null;
   if (Array.isArray(data))
     throw new Error(`Failed to fetch ${path}: the path is a directory`);
@@ -645,7 +654,7 @@ export async function getRepoFileBytes(
 ): Promise<Blob | null> {
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
   const res = await githubFetch(
-    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`,
+    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}${query}`,
     {
       headers: {
         ...baseHeaders,
@@ -681,7 +690,7 @@ export async function getRepoFileDownloadUrl(
     download_url?: string | null;
     message?: string;
   }>(
-    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${path}${query}`,
+    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}${query}`,
     token,
     { cache: false },
   );
@@ -724,7 +733,7 @@ export async function getDirDownloadUrls(
   const { status, ok, data } = await ghGet<
     Array<{ name: string; download_url?: string | null }> & ErrorResponse
   >(
-    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${cleanDir}${query}`,
+    `${apiRoot(token)}/repos/${owner}/${repo}/contents/${encodeRepoPath(cleanDir)}${query}`,
     token,
     { cache: false },
   );

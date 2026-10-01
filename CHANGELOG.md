@@ -3,20 +3,32 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
-## Unreleased
+## 2026-10-01
 
+- An under-construction banner shows on every page, and a dialog opens once per browser on the campaign list and the wizard.
+- The footer links to a prefilled bug report on GitHub.
+- The floating task panel starts below the top bar when the top bar wraps onto two rows.
+- The app footer links to the imprint.
+- The broker caps request bodies and answers a larger one with a JSON 413.
+- A literal %, ? or # in a file path reaches GitHub unchanged.
 - The campaign page drops the owner view and re-reads its tables after a logout or an expired login.
 - Rate-limit errors are worded plainly with the retry time on every page that shows them.
 - An expired GitHub login logs the app out, and the page's login prompt says it expired.
 - An open app keeps its login alive with a session check every 30 minutes.
 - The broker sets the per-request session refresh explicitly and tests it.
 - Opening mei-friend without a configured address shows an error instead of a broken link.
+
+## 2026-09-30
+
 - Production, staging and testing hand volunteers off to staging.mei-friend.mdw.ac.at.
 - The pages step's error names the stage that failed, reading the pages or creating the repository.
 - A page draft with warnings keeps its overlay open until Continue before mei-friend opens.
 - The zone editor sets system beginnings from the rows after every box change and keeps the ones set by hand.
 - A comment or fail note is cleared only when its own command succeeded, and Enter does nothing while another command runs.
 - Metadata typed in the XML view is adopted as it is typed, and the wizard cannot be left while that XML is not well-formed.
+
+## 2026-09-29
+
 - The score viewers scroll through all pages, with the page switch at the right end of the toolbar.
 - Page views label each page above it, such as Page 2 · Facsimile.
 - A task's claim, continue, give-back and verdict buttons are disabled while one of its submissions is processing.
@@ -32,6 +44,9 @@ parentheses.
 - Schema tests fail instead of skipping when the MEI schema cannot be downloaded.
 - Page tasks of a piece that starts after the source's first page address the right pages.
 - An accepted measure or layout correction rebuilds the piece's page tasks so pages without measures get no task.
+
+## 2026-09-28
+
 - The npm package is renamed to lets-encode.
 - References follow the repository renames to lets-encode and campaign-template.
 - A new campaign gets its own README and no longer keeps the template's own files.
@@ -58,6 +73,10 @@ parentheses.
 - The campaigns page shows the mei-friend link when the browser blocks the new tab.
 - The score setup and zone editor result banners have a Dismiss button.
 - Box editing, panel resizing, result banners, comment anchors and piece labels each have one shared implementation.
+- The SPA fallback moves from `static/.htaccess` to the virtual host.
+
+## 2026-09-25
+
 - Repo paths, page locators, work stages, the MEI opening and the OCR settings are each defined once.
 - Board cards show the piece colour as a dot before the title instead of a coloured left edge.
 - The console shows lock expiry with the coordinator's 120-minute default when the config sets none.
@@ -66,7 +85,6 @@ parentheses.
 - Code is formatted with Prettier (2 spaces) and the broker with Black (80 columns).
 - A pre-commit hook rejects unformatted files.
 - The mei-friend URL is set only in `services.json`.
-- The SPA fallback moves from `static/.htaccess` to the virtual host.
 - OMR layout correction has a grand-staff step between the staff boxes and the measures.
 - The coordinator keeps the Musibot models of an OMR page draft in the score header when it splices the page.
 - Instrument labels are read in front of an indented system too, such as a piano introduction.
@@ -76,13 +94,19 @@ parentheses.
 - Score setup of an OMR piece transcribes every staff into `omr.xml`, and page drafts are made from it.
 - The coordinator commits the `layout.json` and `omr.xml` a pre-task submits beside its score.
 - OMR page drafts keep the recognised clefs and change key or meter only where most staves of a system read the change.
+
+## 2026-09-24
+
 - OMR page drafts no longer fail the MEI schema check when a clef change follows a tremolo.
 - OMR page drafts keep every staff of the score, so a system that leaves out staves no longer shifts the staves below.
 - OMR page drafts place the staves of a shorter system on their score staves by clef, printed instrument label and staff spacing.
 - Score setup of an OMR piece fills in the instrument labels printed in front of the first system.
 - OMR page drafts keep each staff in its score clef, correcting the pitches of a staff whose clef was misread.
-- Layout correction of an OMR piece can be submitted once every page was shown in both steps and no page has staff boxes without measures.
 - OMR transcription runs at most 16 staves at once and retries requests the broker rate limit refused.
+
+## 2026-09-23
+
+- Layout correction of an OMR piece can be submitted once every page was shown in both steps and no page has staff boxes without measures.
 - The volunteer view lists every submission still being processed, not only when no task is open.
 - Committed page images keep the source's full resolution, so OMR staff crops match a direct Musibot run.
 - OMR page drafts take their systems from the corrected measure rows, so a system without staff boxes no longer shifts the music after it.
@@ -97,6 +121,9 @@ parentheses.
 - Broker trusts X-Forwarded-Host behind the reverse proxy, so writes no longer fail the same-origin check in production.
 - Layout correction keeps the layout model's output per page in the browser, so reopening the task before submitting skips the model run.
 - Score setup of an OMR piece no longer offers to fill from recognition again.
+
+## 2026-09-21
+
 - Review record: the Pass and Fail buttons of a held slot sit on their own line.
 - Volunteer view: open-task rows show a claim button only when the viewer can claim the task, and review slots read "Claim to review".
 - Score setup of an OMR piece groups staves into systems by the measure boxes that span them, and single-staff systems no longer vote on the staff count.
