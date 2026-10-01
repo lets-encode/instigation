@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-01
 
+- Every accepted volunteer command commit names the volunteer in a Co-authored-by trailer.
 - An under-construction banner shows on every page, and a dialog opens once per browser on the campaign list and the wizard.
 - The footer links to a prefilled bug report on GitHub.
 - The floating task panel starts below the top bar when the top bar wraps onto two rows.
