@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-02
+
+- A campaign address with capital letters forwards to the lowercase name.
+- The wizard's campaign name field lowercases what is typed.
+- A campaign address that is not a valid name says what names can contain.
+
 ## 2026-10-01
 
 - Every accepted volunteer command commit names the volunteer in a Co-authored-by trailer.

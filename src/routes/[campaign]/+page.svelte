@@ -16,6 +16,7 @@
     campaignLoadFailure,
   } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
+  import { isValidHandle } from "$lib/campaign-handle.ts";
   import {
     findRow,
     pieceNamesOf,
@@ -1011,6 +1012,14 @@
             class="linkish"
             onclick={() => (resolveError = null)}>Try again</button
           >
+        </span>
+      </div>
+    {:else if notFound && !isValidHandle(campaign)}
+      <div class="banner bar err">
+        <span>
+          <code>{campaign}</code> cannot be a campaign name. Names are 3–40
+          characters: lowercase letters, digits, and single internal hyphens.
+          <a href="/campaigns">Back to all campaigns</a>.
         </span>
       </div>
     {:else if notFound}
