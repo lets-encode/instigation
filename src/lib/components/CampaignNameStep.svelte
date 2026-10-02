@@ -40,12 +40,13 @@
 
   // Arriving with a chosen name (/new?slug=, from the landing's start card):
   // prefill the name field once, so later edits to it are not overwritten.
+  // Names are lowercase, so the field lowercases what is entered.
   let slugApplied = false;
   $effect(() => {
     const chosen = page.url.searchParams.get("slug");
     if (chosen && !slugApplied) {
       slugApplied = true;
-      wizard.handle = chosen;
+      wizard.handle = chosen.toLowerCase();
     }
   });
 
@@ -220,7 +221,9 @@
       Campaign name
       <input
         class="input"
-        bind:value={wizard.handle}
+        bind:value={
+          () => wizard.handle, (v) => (wizard.handle = v.toLowerCase())
+        }
         placeholder="symphony-9-choral"
         readonly={wizard.claim !== null}
         required
