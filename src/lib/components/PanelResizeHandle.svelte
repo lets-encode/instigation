@@ -1,61 +1,67 @@
 <!--
-  The drag bar on a right-docked side panel's left edge: dragging left widens
-  the panel. The width is clamped to the viewport and persisted per browser
-  when the drag ends (side-panels.ts).
+  The drag bar on the side panel's edge: on its left edge beside the content,
+  dragging left widens the panel; on its top edge when docked below the
+  content, dragging up raises it. The size is clamped to the viewport and
+  persisted per browser when the drag ends (side-panels.ts).
 -->
 <script lang="ts">
   import {
+    clampPanelHeight,
     clampPanelWidth,
     writeSidePanel,
-    type SidePanelId,
     type SidePanelState,
   } from "$lib/side-panels.ts";
 
   let {
-    id,
     label,
     panel = $bindable(),
-    hidden = false,
+    docked = false,
   }: {
-    id: SidePanelId;
     /** The separator's accessible name. */
     label: string;
     panel: SidePanelState;
-    hidden?: boolean;
+    /** The panel is docked below the content: the bar drags its height. */
+    docked?: boolean;
   } = $props();
 
   let resizing = $state(false);
-  let startX = 0;
-  let startWidth = 0;
+  let start = 0;
+  let startSize = 0;
 
   function begin(e: PointerEvent) {
     // Keeps the drag from starting a text selection in the panel.
     e.preventDefault();
     resizing = true;
-    startX = e.clientX;
-    startWidth = panel.width;
+    start = docked ? e.clientY : e.clientX;
+    startSize = docked ? panel.height : panel.width;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function move(e: PointerEvent) {
     if (!resizing) return;
-    panel.width = clampPanelWidth(
-      startWidth + (startX - e.clientX),
-      window.innerWidth,
-    );
+    if (docked)
+      panel.height = clampPanelHeight(
+        startSize + (start - e.clientY),
+        window.innerHeight,
+      );
+    else
+      panel.width = clampPanelWidth(
+        startSize + (start - e.clientX),
+        window.innerWidth,
+      );
   }
   function end() {
     if (!resizing) return;
     resizing = false;
-    writeSidePanel(id, { ...panel });
+    writeSidePanel({ ...panel });
   }
 </script>
 
 <div
   class="handle"
+  class:docked
   class:active={resizing}
-  {hidden}
   role="separator"
-  aria-orientation="vertical"
+  aria-orientation={docked ? "horizontal" : "vertical"}
   aria-label={label}
   onpointerdown={begin}
   onpointermove={move}
@@ -78,13 +84,24 @@
     touch-action: none;
     position: relative;
   }
-  .handle[hidden] {
-    display: none;
+  /* Docked: a grip centred on the panel's top edge, tall enough to touch. */
+  .handle.docked {
+    align-self: center;
+    margin: 0;
+    width: 64px;
+    height: 20px;
+    background: none;
+    opacity: 1;
+    cursor: row-resize;
   }
   .handle:hover,
   .handle.active {
     background: var(--accent);
     opacity: 0.8;
+  }
+  .handle.docked:hover,
+  .handle.docked.active {
+    background: none;
   }
   /* The embossed double line marking the bar as draggable. */
   .handle::before,
@@ -103,5 +120,19 @@
   }
   .handle::after {
     right: 1.5px;
+  }
+  .handle.docked::after {
+    content: none;
+  }
+  .handle.docked::before {
+    left: 14px;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line-input);
+  }
+  .handle.docked:hover::before,
+  .handle.docked.active::before {
+    background: var(--accent);
   }
 </style>

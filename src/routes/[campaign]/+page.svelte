@@ -35,7 +35,12 @@
     PieceRef,
   } from "$lib/campaign-tables.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
-  import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
+  import type {
+    CommandContext,
+    CommentAnchorInput,
+    Result,
+    FailComment,
+  } from "$lib/commands.ts";
   import {
     pageOfLocator,
     preTaskHref,
@@ -47,23 +52,20 @@
   import type { MeiHeader } from "$lib/mei-header.ts";
   import {
     readSidePanel,
-    DEFAULT_PANEL_WIDTH,
-    writeSidePanel,
     readLastTask,
     writeLastTask,
   } from "$lib/side-panels.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
-  import CommentsPanel from "$lib/components/CommentsPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import PanelIcon from "$lib/components/PanelIcon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import TaskSidePanel from "$lib/components/TaskSidePanel.svelte";
+  import SidePanel from "$lib/components/SidePanel.svelte";
+  import TaskBox from "$lib/components/TaskBox.svelte";
   import VolunteerView from "$lib/components/VolunteerView.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
@@ -111,41 +113,28 @@
   const runner = new CommandRunner();
 
   // UI-only state — the board, with the owner's manage takeover and the score
-  // view (?score=) over it, plus the task panel when ?task= is present.
-  // Everything else derives from the tracking tables.
+  // view (?score=) over it, and the side panel showing the ?task= task or the
+  // campaign. Everything else derives from the tracking tables.
   let manage = $state(false);
   let showInfo = $state(false);
-  // The in-page task panel's width; its open state follows ?task=.
-  let taskPanel = $state(readSidePanel("task"));
-  // The two side panels share one width (side-panels.ts); mirroring the live
-  // objects keeps a drag on either panel in step within the session. Writing
-  // an unchanged width does not re-trigger the effects.
-  $effect(() => {
-    taskPanel.width = commentsPanel.width;
-  });
-  $effect(() => {
-    commentsPanel.width = taskPanel.width;
-  });
-  // The board row's layout steps, all judged against the task panel's docked
-  // width whether it is docked or floating: the panel docks only while four
-  // lanes fit beside the dot rail, and the rail takes its wide form only
-  // while four lanes fit beside it with the panel docked. The space the
-  // panel frees when it floats therefore changes neither.
+  // The side panel's size (side-panels.ts).
+  let sidePanel = $state(readSidePanel());
+  // The board row's rail takes its wide form only while four lanes fit
+  // beside it and the side panel, at the panel's rendered width (its stored
+  // width, capped at half the window).
   let instrowBox = $state<DOMRectReadOnly | null>(null);
   const instrowWidth = $derived(instrowBox?.width ?? 0);
   let windowWidth = $state(0);
   /** Four 200px lanes with 1px borders and three 12px gaps. */
   const LANES_WIDTH = 844;
   const ROW_GAP = 14;
-  /** The rail's two widths (PieceRail.svelte). */
+  /** The rail's wide width (PieceRail.svelte). */
   const RAIL_WIDE = 168;
-  const RAIL_DOTS = 38;
-  const rowBesidePanel = $derived(instrowWidth - taskPanel.width - ROW_GAP);
+  const rowBesidePanel = $derived(
+    instrowWidth - Math.min(sidePanel.width, windowWidth / 2) - ROW_GAP,
+  );
   const railCompact = $derived(
     instrowWidth > 0 && rowBesidePanel < RAIL_WIDE + ROW_GAP + LANES_WIDTH,
-  );
-  const panelFloats = $derived(
-    instrowWidth > 0 && rowBesidePanel < RAIL_DOTS + ROW_GAP + LANES_WIDTH,
   );
   // The scores a viewer can read end to end: the pieces the tasks address,
   // named from the campaign's config where it names them.
@@ -335,29 +324,6 @@
     return `You: ${parts.join(" · ")}`;
   });
 
-  // ----------------------------------------- the volunteer's comments panel
-  let commentsPanel = $state(readSidePanel("comments"));
-  // The piece row the volunteer expanded; the comments panel follows it, and
-  // falls back to the next task's piece.
-  let volunteerPiece = $state<string | null>(null);
-  const volunteerScope = $derived.by(() => {
-    const path =
-      volunteerPiece ??
-      (nextCard
-        ? previewPieces[pieceIndexByTask.get(nextCard.task) ?? 0]?.path
-        : undefined) ??
-      previewPieces[0]?.path;
-    const index = previewPieces.findIndex((p) => p.path === path);
-    return index >= 0 ? { piece: previewPieces[index], index } : null;
-  });
-  const scopeCards = $derived(
-    volunteerScope
-      ? allCards.filter(
-          (c) => (pieceIndexByTask.get(c.task) ?? 0) === volunteerScope.index,
-        )
-      : [],
-  );
-
   // --------------------------------------------------------- the task detail
   // A task's detail opens in the preview panel; the URL carries it as ?task=
   // so the row stays addressable (deep links, post-login resume).
@@ -374,11 +340,15 @@
       keepFocus: true,
     });
   }
-  // Close the task panel.
+  // Deselect the task: the side panel shows the campaign. The score view's
+  // parameters stay.
   function closeTask() {
     detailTask = null;
     writeLastTask(campaign, null);
-    goto(`/${campaign}`, {
+    const query = new URLSearchParams(page.url.searchParams);
+    query.delete("task");
+    const rest = query.toString();
+    goto(`/${campaign}${rest ? `?${rest}` : ""}`, {
       replaceState: true,
       noScroll: true,
       keepFocus: true,
@@ -397,16 +367,10 @@
   const scoreStartPage = $derived(
     Math.max(0, (Number(page.url.searchParams.get("page")) || 1) - 1),
   );
-  const scoreCards = $derived(
-    scoreView
-      ? allCards.filter(
-          (c) => (pieceIndexByTask.get(c.task) ?? 0) === scoreView.index,
-        )
-      : [],
-  );
   // The measure range the score view opens highlighted (from a comment
   // anchor); within the view, anchors work without navigation.
   let anchor = $state<MeasureAnchor | null>(null);
+  let scoreViewRef = $state<ReturnType<typeof ScoreView>>();
   // The open task's ?task= survives entering and leaving the score view.
   function openScoreView(
     path: string,
@@ -418,7 +382,15 @@
     if (detailTask) query.set("task", detailTask);
     query.set("score", path);
     if (startPage) query.set("page", String(startPage + 1));
-    goto(`/${campaign}?${query}`, { noScroll: true, keepFocus: true });
+    // The score already open turns in place; the URL follows without a new
+    // history entry.
+    const same = scoreView?.piece.path === path;
+    if (same) scoreViewRef?.show(startPage, a);
+    goto(`/${campaign}?${query}`, {
+      noScroll: true,
+      keepFocus: true,
+      replaceState: same,
+    });
   }
   function closeScoreView() {
     goto(
@@ -443,8 +415,9 @@
   // A comment anchor outside the score view: open it on the comment's piece,
   // at the anchored page, with the range highlighted.
   function showCommentInScore(c: CommentRow) {
-    const index = pieceIndexByTask.get(c.task_id);
-    const path = previewPieces[index ?? -1]?.path;
+    const path = c.task_id
+      ? previewPieces[pieceIndexByTask.get(c.task_id) ?? -1]?.path
+      : c.fragment;
     if (!path) return;
     openScoreView(
       path,
@@ -473,8 +446,6 @@
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
       canPush = tables.canPush;
-      // Volunteers start with the comments panel closed; a stored choice wins.
-      if (!canPush) commentsPanel = readSidePanel("comments", false);
       taskDefs = tables.taskDefs;
       rows = tables.rows;
       validationColumns = tables.validationColumns;
@@ -671,7 +642,7 @@
   // mei-friend returns the volunteer to /<campaign>?task=<id>&mf_status=
   // complete|failed|abandoned (with an optional mf_msg). `complete` submits the
   // encoding, `abandoned` gives the claim back, `failed` shows mei-friend's
-  // message in the task panel.
+  // message in the side panel.
   /** An error from the return from mei-friend, shown in the task's panel;
       `label` names mei-friend when the text is its own message. */
   let editorError = $state<{
@@ -764,7 +735,7 @@
     kind: string,
     body: string,
     parent_id: string,
-    at?: { page: string; measure_start: string; measure_end: string },
+    at?: CommentAnchorInput,
   ) =>
     run((c) =>
       invoke(
@@ -787,8 +758,8 @@
   }
 
   // Deep links, read once after the first load: ?task= opens that task's
-  // detail. On the owner's board the panel defaults open — to the task chosen
-  // last time, or the first card on the board.
+  // detail. On the owner's board the side panel reopens the task chosen last
+  // time, if any; the score view shows a task only from ?task=.
   let deepLinked = false;
   $effect(() => {
     if (!loaded || deepLinked) return;
@@ -819,13 +790,9 @@
       }
       return;
     }
-    if (!canPush) return;
+    if (!canPush || scoreView) return;
     const last = readLastTask(campaign);
-    detailTask =
-      last && allCards.some((c) => c.task === last)
-        ? last
-        : (displayColumns.find((c) => c.cards.length > 0)?.cards[0]?.task ??
-          null);
+    if (last && allCards.some((c) => c.task === last)) detailTask = last;
   });
 
   function claimCard(card: BoardCard) {
@@ -851,7 +818,7 @@
     if (nextCard) actOnCard(nextCard);
   }
 
-  // The task panel names its piece and carries its colour.
+  // The side panel names its piece and carries its colour.
   const pieceNameOf = (task: string) => {
     const p = previewPieces[pieceIndexByTask.get(task) ?? 0];
     return p ? pieceLabel(p) : "";
@@ -952,10 +919,9 @@
   <span class="dot {key}" aria-label={key} title={key}></span>
 {/snippet}
 
-{#snippet taskSide(card: BoardCard, floating: boolean)}
-  <TaskSidePanel
+{#snippet boardTaskBox(card: BoardCard)}
+  <TaskBox
     {card}
-    {floating}
     pieceName={pieceNameOf(card.task)}
     zone={zoneOf(card.task)}
     {campaign}
@@ -966,9 +932,6 @@
     {viewer}
     {canPush}
     {runner}
-    {resultBanner}
-    bind:panel={taskPanel}
-    onclose={closeTask}
     onopenscore={() => viewCardScore(card)}
     onshowanchor={showCommentInScore}
     onclaim={claimValidate}
@@ -976,11 +939,51 @@
     oneditor={editor}
     ongiveback={giveBack}
     onvalidate={validate}
-    oncomment={(kind, body, parent_id) =>
-      postComment(card.task, kind, body, parent_id)}
     onresolve={resolveCommentRow}
     onsendback={sendBackTask}
   />
+{/snippet}
+
+<!-- The side panel of the board and the volunteer view: the selected task,
+     else the campaign. -->
+{#snippet sidePanelFor(card: BoardCard | null, emptyLine: string)}
+  {#if card}
+    <SidePanel
+      task={card.task}
+      subtitle={pieceNameOf(card.task)}
+      zone={zoneOf(card.task)}
+      review={card.column === "validation"}
+      {comments}
+      {logins}
+      {viewer}
+      {canPush}
+      {runner}
+      bind:panel={sidePanel}
+      banner={resultBanner}
+      ondeselect={closeTask}
+      onanchor={showCommentInScore}
+      oncomment={(kind, body, parent_id) =>
+        postComment(card.task, kind, body, parent_id)}
+      onresolve={resolveCommentRow}
+    >
+      {#snippet taskBox()}{@render boardTaskBox(card)}{/snippet}
+    </SidePanel>
+  {:else}
+    <SidePanel
+      task=""
+      {emptyLine}
+      {comments}
+      {logins}
+      {viewer}
+      {canPush}
+      {runner}
+      bind:panel={sidePanel}
+      onanchor={showCommentInScore}
+      oncomment={(kind, body, parent_id) =>
+        postComment("", kind, body, parent_id)}
+      onresolve={resolveCommentRow}
+    />
+  {/if}
 {/snippet}
 
 <div class="console">
@@ -1074,23 +1077,35 @@
         {:else if scoreView}
           {#key scoreView.piece.path}
             <ScoreView
+              bind:this={scoreViewRef}
               piece={scoreView.piece}
-              zone={pieceZone(scoreView.index)}
               campaignTitle={title || repo}
               {owner}
               {repo}
               startPage={scoreStartPage}
               {anchor}
-              cards={scoreCards}
+              card={detailCard}
+              cardOnPiece={!!detailCard &&
+                (pieceIndexByTask.get(detailCard.task) ?? 0) ===
+                  scoreView.index}
+              cardSubtitle={detailCard ? pieceNameOf(detailCard.task) : ""}
+              cardZone={detailCard ? zoneOf(detailCard.task) : 0}
+              banner={resultBanner}
               {comments}
               {logins}
               {viewer}
               {canPush}
               {runner}
-              bind:panel={commentsPanel}
+              bind:panel={sidePanel}
+              ondeselect={closeTask}
+              onopenanchor={showCommentInScore}
               oncomment={postComment}
               onresolve={resolveCommentRow}
-            />
+            >
+              {#snippet taskBox()}{#if detailCard}{@render boardTaskBox(
+                    detailCard,
+                  )}{/if}{/snippet}
+            </ScoreView>
           {/key}
         {:else if manage && canPush}
           <div class="crumbrow">
@@ -1136,15 +1151,7 @@
           />
         {:else if !canPush}
           <div class="volwrap">
-            <!-- The group's width: the task column plus the side panel's default
-               width and the row's gap. It does not follow a dragged panel
-               width, so widening the panel narrows the column instead. -->
-            <div
-              class="volcenter"
-              style="--side: {detailCard || commentsPanel.open
-                ? `${DEFAULT_PANEL_WIDTH + 14}px`
-                : '0px'}"
-            >
+            <div class="volcenter">
               <div class="volhead">
                 <div class="voltitle">
                   <h1>{title || repo}</h1>
@@ -1154,22 +1161,8 @@
                 </div>
                 <span class="volspacer"></span>
                 <span class="volcount">{board.done} of {board.total} done</span>
-                {#if volunteerScope && !detailCard}
-                  <button
-                    type="button"
-                    class="cptoggle"
-                    aria-pressed={commentsPanel.open}
-                    title={commentsPanel.open
-                      ? "Hide the comments panel"
-                      : "Show the comments panel"}
-                    onclick={() => {
-                      commentsPanel.open = !commentsPanel.open;
-                      writeSidePanel("comments", { ...commentsPanel });
-                    }}><PanelIcon /></button
-                  >
-                {/if}
               </div>
-              <div class="volrow">
+              <div class="volrow sidehost">
                 <VolunteerView
                   {owner}
                   {repo}
@@ -1184,32 +1177,16 @@
                   pieceIndex={pieceIndexByTask}
                   busy={runner.busy}
                   panelOpen={!!detailCard}
-                  bind:expandedPiece={volunteerPiece}
                   onact={actOnCard}
                   onopen={openTask}
                   onviewscore={viewScorePiece}
                 />
-                {#if detailCard}
-                  {@render taskSide(detailCard, windowWidth < 1100)}
-                {:else if volunteerScope && commentsPanel.open}
-                  <div class="cpholder">
-                    <CommentsPanel
-                      piece={volunteerScope.piece}
-                      zone={pieceZone(volunteerScope.index)}
-                      cards={scopeCards}
-                      {comments}
-                      {logins}
-                      {viewer}
-                      {canPush}
-                      {runner}
-                      fitEmpty
-                      bind:panel={commentsPanel}
-                      onanchor={showCommentInScore}
-                      oncomment={postComment}
-                      onresolve={resolveCommentRow}
-                    />
-                  </div>
-                {/if}
+                <div class="sideslot">
+                  {@render sidePanelFor(
+                    detailCard,
+                    "Select a task from the list to show it here.",
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1417,7 +1394,7 @@
             {/if}
           </div>
 
-          <div class="instrow" bind:contentRect={instrowBox}>
+          <div class="instrow sidehost" bind:contentRect={instrowBox}>
             {#if previewPieces.length > 0}
               <div class="railslot">
                 <PieceRail
@@ -1596,9 +1573,10 @@
                 {/each}
               </div>
             </div>
-            {#if detailCard}
-              {@render taskSide(detailCard, panelFloats)}
-            {/if}
+            {@render sidePanelFor(
+              detailCard,
+              "Select a task on the board to show it here.",
+            )}
           </div>
 
           <div class="ticker">
@@ -1664,7 +1642,7 @@
   }
 
   /* --------------------------------------------------------------- main */
-  /* The view fills the window — the rail, board and task panel share every
+  /* The view fills the window — the rail, board and side panel share every
      available column. Its minimum height is its content's. The width minimum
      is explicit: the inline-size containment below makes the content's own
      width invisible to sizing, and the board's stacking reacts to the
@@ -1684,9 +1662,8 @@
     min-height: 0;
   }
 
-  /* The volunteer view: the header row, the task column and the comments
-     panel form one centred group; the group's width is the row's content
-     width (the fixed task column plus the panel). */
+  /* The volunteer view: the header row, the task column and the side panel
+     form one centred group, at most 1750px wide with its padding. */
   .volwrap {
     flex: 1;
     min-height: 0;
@@ -1701,7 +1678,7 @@
     flex: 1;
     min-height: 0;
     width: 100%;
-    max-width: calc(800px + var(--side, 0px));
+    max-width: calc(1750px - 64px);
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -1748,40 +1725,25 @@
     display: flex;
     gap: 14px;
   }
-  /* The comments panel's top edge lines up with the next-task card, below
-     the task column's section label. */
-  .cpholder {
+  /* The side panel's top edge lines up with the next-task card, below the
+     task column's section label. */
+  .sideslot {
     flex: none;
     min-height: 0;
     display: flex;
     padding-top: 26px;
     box-sizing: border-box;
   }
-  .cptoggle {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink-soft);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex: none;
-    padding: 0;
+  /* Docked below the task list (DOCKED_QUERY in side-panels.ts). */
+  @media (orientation: portrait) and (max-width: 900px) {
+    .sideslot {
+      padding-top: 0;
+    }
   }
-  /* Narrow column: the header wraps its title over the count, the task
-     column and the comments panel stack, and the wrapper scrolls the group
-     as a whole (VolunteerView.svelte stops scrolling on its own at the same
-     width). */
+  /* Narrow column: the header wraps its title over the count. */
   @container (max-width: 700px) {
     .volwrap {
-      overflow-y: auto;
       padding: 12px 16px 8px;
-    }
-    .volcenter {
-      flex: none;
     }
     .volhead {
       flex-wrap: wrap;
@@ -1793,20 +1755,6 @@
     }
     .voltitle {
       flex-basis: 100%;
-    }
-    .volrow {
-      flex-direction: column;
-    }
-    .cpholder {
-      padding-top: 0;
-      height: 480px;
-      max-height: 70vh;
-    }
-    /* The panel's stored width is an inline style; here it fills the column. */
-    .cpholder :global(.cpwrap) {
-      width: auto !important;
-      min-width: 0;
-      flex: 1;
     }
   }
 
@@ -2011,7 +1959,7 @@
     color: var(--ink-faint);
   }
   /* -------------------------------------------------------------- pieces */
-  /* ---------------------------------------- rail · board · task panel row */
+  /* ---------------------------------------- rail · board · side panel row */
   .instrow {
     flex: 1;
     min-height: 0;
@@ -2026,15 +1974,7 @@
     align-self: flex-start;
     max-height: 100%;
   }
-  /* The volunteer view's task panel floats over the view below 1100px
-     (TaskSidePanel.svelte); the board's floats as soon as docking it would
-     stack the lanes (panelFloats). */
   @media (max-width: 1100px) {
-    /* The task panel floats over the view at this width (TaskSidePanel.svelte)
-       and takes no share of the group. */
-    .volcenter {
-      max-width: 800px;
-    }
     .instrow {
       padding: 0 20px;
     }
@@ -2046,7 +1986,7 @@
     flex-direction: column;
     gap: 12px;
     /* The board's stacking query measures this column, which the rail and
-       the task panel narrow independently of the window. */
+       the side panel narrow independently of the window. */
     container-type: inline-size;
   }
   /* The scoped piece's preview over the columns. */
@@ -2219,7 +2159,7 @@
     min-height: 88px;
     box-sizing: border-box;
   }
-  /* The card whose task panel is open. */
+  /* The card the side panel shows. */
   .card.paneled {
     background: var(--info-bg);
     border-color: var(--info-line);

@@ -1,8 +1,8 @@
 <!--
   The review view: a full-screen surface for validating an encoding task. The
   score fills the window, facsimile and rendered encoding side by side, and
-  the comments panel on the right carries the task box — the validation
-  record with the verdict controls — pinned above the piece's discussion.
+  the side panel on the right carries the task box — the validation
+  record with the verdict controls — pinned above the task's comments.
   Clicking a measure in either pane highlights it in both and prefills the
   fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
 -->
@@ -41,11 +41,10 @@
   } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import { readSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import PanelIcon from "$lib/components/PanelIcon.svelte";
-  import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
+  import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import ValidationRecord from "$lib/components/ValidationRecord.svelte";
@@ -128,20 +127,14 @@
     m2: selectedMeasure ?? "",
   });
 
-  // The piece's comments panel beside the rail; the tables it reads are the
-  // ones this page already loads.
-  let commentsPanel = $state(readSidePanel("comments"));
+  // The side panel beside the score; the tables it reads are the ones this
+  // page already loads.
+  let sidePanel = $state(readSidePanel());
   const panelTables = $derived({
     taskDefs,
-    rows,
-    validationColumns,
-    locks,
-    history,
     comments,
     pieces,
     logins,
-    passThreshold,
-    allowSelfValidation,
     canPush,
   });
 
@@ -297,7 +290,7 @@
   <RunnerBanner {runner} />
 {/snippet}
 
-<div class="review">
+<div class="review sidehost">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else if place.error}
@@ -344,23 +337,6 @@
       </span>
     </div>
   {:else}
-    {#snippet reopenComments()}
-      <button
-        type="button"
-        aria-pressed={commentsPanel.open}
-        class="btn"
-        title={commentsPanel.open
-          ? "Hide the comments panel with the verdict controls"
-          : "Show the comments panel with the verdict controls"}
-        onclick={() => {
-          commentsPanel.open = !commentsPanel.open;
-          writeSidePanel("comments", { ...commentsPanel });
-        }}
-      >
-        <PanelIcon />
-        Comments
-      </button>
-    {/snippet}
     {#snippet taskBox()}
       <div class="taskbox" aria-label={`Review ${card.title}`}>
         <div class="tbhead">
@@ -428,22 +404,21 @@
           initialPane="both"
           initialView={taskPage === null ? null : "single"}
           onmeasureselect={(label) => (selectedMeasure = label)}
-          trailing={reopenComments}
         />
       {:else}
         <p class="msg perr">
           No score file is recorded for {card.task}.
-          {@render reopenComments()}
         </p>
       {/if}
     </div>
-    <PieceCommentsPanel
+    <TaskPageSidePanel
       tables={panelTables}
       {taskId}
       {viewer}
       {runner}
-      bind:panel={commentsPanel}
-      header={taskBox}
+      bind:panel={sidePanel}
+      review={card.column === "validation"}
+      {taskBox}
       onanchor={showAnchorFor}
       oncomment={postComment}
       onresolve={resolveCommentRow}
@@ -478,7 +453,7 @@
     color: var(--danger);
   }
 
-  /* The whole view: the score with the comments panel beside it, filling the
+  /* The whole view: the score with the side panel beside it, filling the
      window under the navigation bar. */
   .review {
     flex: 1;
@@ -486,9 +461,9 @@
     display: flex;
     background: var(--bg);
   }
-  /* The comments panel brings no outer spacing of its own; the score view's
-     host row provides it there. */
-  .review > :global(.cpwrap) {
+  /* The side panel brings no outer spacing of its own; the score view's
+     host row provides it there. Docked below the score it spans the width. */
+  .review > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 12px 0;
   }
   .scorecol {
@@ -501,7 +476,7 @@
 
   /* -------------------------------------------------------------- task box
      The task's record and verdict controls, pinned at the top of the
-     comments panel. The tint follows the panel's piece colour (--zone). */
+     side panel. The tint follows the panel's piece colour (--zone). */
   .taskbox {
     background: var(--card);
     border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));

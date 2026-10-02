@@ -203,11 +203,12 @@
 </main>
 
 <footer>
-  <span
+  <span class="flong"
     >© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span
   >
+  <span class="fshort">© 2026 Let's Encode! · mdw</span>
   <span class="fsep" aria-hidden="true">·</span>
-  <span>app last updated {__BUILD_DATE__}</span>
+  <span><span class="flong">app last updated </span>{__BUILD_DATE__}</span>
   <span class="fsep" aria-hidden="true">·</span>
   <a href="https://iwk.mdw.ac.at/impressum/" target="_blank" rel="noopener"
     >Imprint</a
@@ -357,6 +358,24 @@
   }
   footer a {
     color: inherit;
+  }
+  /* Phones: the short credit and the bare date, on one line. */
+  .fshort {
+    display: none;
+  }
+  @media (max-width: 560px) {
+    footer {
+      gap: 5px;
+      padding: 6px 8px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .flong {
+      display: none;
+    }
+    .fshort {
+      display: inline;
+    }
   }
   /* ---- Theme (light/dark) bulb toggle --------------------------------- */
   .theme-toggle {

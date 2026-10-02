@@ -249,6 +249,19 @@ test("a resolve patch flips resolved on one top-level comment (replies may ride 
   assert.equal(resolvedCommentFromPatch(undefined), null);
 });
 
+test("a resolve patch that rewrites a table without the fragment column still names its root", () => {
+  const oldHeader =
+    "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body";
+  const c1 = "c1,T0001,,comment,,,,carol,t1,,,Question?";
+  const c3 = "c3,T0001,,comment,,,,erin,t3,,,A note";
+  assert.deepEqual(
+    resolvedCommentFromPatch(
+      `@@\n-${oldHeader}\n-${c1}\n-${c3}\n+${oldHeader},fragment\n+c1,T0001,,comment,,,,carol,t1,true,,Question?,\n+${c3},`,
+    ),
+    { comment_id: "c1" },
+  );
+});
+
 test("rejected encoding branches are retained for correction", () => {
   assert.equal(shouldCleanupSubmission("encoding", false), false);
   assert.equal(shouldCleanupSubmission("encoding", true), true);

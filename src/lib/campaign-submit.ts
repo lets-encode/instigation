@@ -361,7 +361,8 @@ const DISCUSSION_KINDS = ["comment", "reply"];
 
 /**
  * A discussion comment. The PR may only append one row to comment.csv; `fail`
- * comments never arrive this way (they ride the fail-validation PR). The
+ * comments never arrive this way (they ride the fail-validation PR). An empty
+ * task_id makes it a campaign comment, which names no subtask. The
  * automation authors the id, author and timestamp — never the fork's values.
  */
 export function checkComment({
@@ -379,14 +380,19 @@ export function checkComment({
   if (!DISCUSSION_KINDS.includes(added.kind))
     return { ok: false, reason: "invalid_kind" };
   if (added.body.trim() === "") return { ok: false, reason: "empty_comment" };
-  if (!findRow(state.rows, added.task_id, ""))
+  if (
+    added.task_id === ""
+      ? added.subtask_id !== ""
+      : !findRow(state.rows, added.task_id, "")
+  )
     return { ok: false, reason: "unknown_task" };
   if (added.kind === "reply") {
     const parent = comments.find((c) => c.comment_id === added.parent_id);
     if (!parent) return { ok: false, reason: "unknown_parent" };
     // Replies attach to the top-level discussion comments only — the ones
-    // the threads projection renders as roots.
-    if (parent.kind !== "comment") {
+    // the threads projection renders as roots — of the same task, or of the
+    // campaign.
+    if (parent.kind !== "comment" || parent.task_id !== added.task_id) {
       return { ok: false, reason: "invalid_parent" };
     }
   } else if (added.parent_id !== "") {

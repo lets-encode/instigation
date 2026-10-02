@@ -18,7 +18,6 @@
   import { type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { tick, untrack } from "svelte";
-  import type { Snippet } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
@@ -56,7 +55,6 @@
     initialView = null,
     initialZones = true,
     onmeasureselect,
-    trailing,
   }: {
     owner: string;
     repo: string;
@@ -74,8 +72,6 @@
     initialZones?: boolean;
     /** Reports the selected measure's label; null when deselected. */
     onmeasureselect?: (label: string | null) => void;
-    /** Extra controls rendered at the toolbar's end. */
-    trailing?: Snippet;
   } = $props();
 
   /** One facsimile page in the preview: image plus its measure zones. */
@@ -611,8 +607,7 @@
       title="Fit the whole page in the pane, top to bottom"
       ><FitIcon kind="page" /></button
     >
-    {@render trailing?.()}
-    <!-- Last in the toolbar, next to the task panel on the right. -->
+    <!-- Last in the toolbar, next to the side panel on the right. -->
     <div class="pgnav">
       <span class="vline"></span>
       <button

@@ -3,7 +3,7 @@
   as the one action card, every other open task as a list filtered by kind,
   and every piece as a table row that expands to its tasks. Rows only
   navigate — the actions live on the next-task card, the list rows and the
-  task panel.
+  side panel.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
@@ -56,11 +56,11 @@
     /** Task id → index into `pieces`, for grouping and tinting by piece. */
     pieceIndex: Map<string, number>;
     busy: boolean;
-    /** A task panel is open beside the view. Its action is then the one solid
+    /** The side panel shows a task. Its action is then the one solid
         button; the next-task card's action becomes an outline. */
     panelOpen: boolean;
-    /** The piece row expanded to its task list; the comments panel follows it. */
-    expandedPiece: string | null;
+    /** The piece row expanded to its task list. */
+    expandedPiece?: string | null;
     /** Perform a card's action (claim, or open its detail). */
     onact: (card: BoardCard) => void;
     /** Open a task's panel. */
@@ -562,8 +562,8 @@
 
 <style>
   .volunteer {
-    /* The column takes what the host's group leaves beside the comments
-       panel (800px without one). It is the container for the narrow layout
+    /* The column takes what the host's group leaves beside the side panel
+       and scrolls on its own. It is the container for the narrow layout
        below. */
     flex: 1 1 auto;
     width: 100%;
@@ -699,11 +699,12 @@
     font-weight: 600;
     overflow-wrap: anywhere;
   }
+  /* The crop grows with the card, keeping its proportions. */
   .crop {
     position: relative;
     flex: none;
-    width: 260px;
-    height: 144px;
+    width: clamp(260px, 36%, 480px);
+    aspect-ratio: 260 / 144;
     border: 1px solid var(--line);
     border-radius: 6px;
     overflow: hidden;
@@ -1025,6 +1026,7 @@
     }
     .crop {
       width: 100%;
+      aspect-ratio: auto;
       height: 120px;
     }
     .nextbody {
@@ -1085,17 +1087,6 @@
     }
     .ttype {
       white-space: normal;
-    }
-  }
-  /* The host stacks the comments panel under this column below 700px of its
-     own width (the campaign page's .viewcol) and scrolls the whole view; the
-     column then stops scrolling on its own. Both values are the host's. */
-  @container (max-width: 700px) {
-    .volunteer {
-      flex: none;
-      overflow-y: visible;
-      scrollbar-gutter: auto;
-      padding-right: 0;
     }
   }
 </style>

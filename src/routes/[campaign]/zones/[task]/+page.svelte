@@ -13,7 +13,7 @@
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
   import { workStage, typeLabel } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import { readSidePanel } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import {
     buildSpreads,
@@ -29,8 +29,7 @@
   } from "$lib/page-scroll.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import PanelIcon from "$lib/components/PanelIcon.svelte";
-  import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
+  import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskReview from "$lib/components/PreTaskReview.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
@@ -422,9 +421,9 @@
   ) => session.run(command, opts);
 
   // ------------------------------------------------------------- comments
-  // The piece's comments panel beside the tool. Posting and resolving refresh
-  // the tables only: a full reload would discard unsubmitted zone edits.
-  let commentsPanel = $state(readSidePanel("comments"));
+  // The side panel beside the tool. Posting and resolving refresh the tables
+  // only: a full reload would discard unsubmitted zone edits.
+  let sidePanel = $state(readSidePanel());
   // A comment anchor scrolls the desk to its page and selects the measure with
   // the anchored number where the page has one.
   function showAnchorFor(c: CommentRow) {
@@ -1069,7 +1068,7 @@
   />
 {/if}
 
-<div class="corrector">
+<div class="corrector sidehost">
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -1202,22 +1201,7 @@
           aria-label="Editor help"
           title={helpText}>?</span
         >
-        <button
-          type="button"
-          aria-pressed={commentsPanel.open}
-          class="btn"
-          title={commentsPanel.open
-            ? "Hide the comments panel with the task's controls"
-            : "Show the comments panel with the task's controls"}
-          onclick={() => {
-            commentsPanel.open = !commentsPanel.open;
-            writeSidePanel("comments", { ...commentsPanel });
-          }}
-        >
-          <PanelIcon />
-          Comments
-        </button>
-        <!-- Last in the toolbar, next to the task panel on the right. -->
+        <!-- Last in the toolbar, next to the side panel on the right. -->
         <div class="pgnav">
           <span class="vline"></span>
           <button
@@ -1608,13 +1592,13 @@
     {/snippet}
 
     {#if tables}
-      <PieceCommentsPanel
+      <TaskPageSidePanel
         {tables}
         {taskId}
         {viewer}
         {runner}
-        bind:panel={commentsPanel}
-        header={taskBox}
+        bind:panel={sidePanel}
+        {taskBox}
         onanchor={showAnchorFor}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
@@ -1642,7 +1626,7 @@
   }
 
   /* The whole tool: the desk the page sheets float on (the only scrolling
-     region), with the comments panel — carrying the task box — beside it.
+     region), with the side panel — carrying the task box — beside it.
      The app's navigation bar and footer come from the layout, as on every
      other page. */
   .corrector {
@@ -1652,15 +1636,15 @@
     background: var(--desk);
     box-shadow: var(--shadow-inset);
   }
-  /* The comments panel brings no outer spacing of its own; the score view's
-     host row provides it there. */
-  .corrector > :global(.cpwrap) {
+  /* The side panel brings no outer spacing of its own; the score view's
+     host row provides it there. Docked below the tool it spans the width. */
+  .corrector > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 12px 0;
   }
 
   /* --------------------------------------------------------------- task box
      The task's status, actions and validation controls, pinned at the top of
-     the comments panel. The tint follows the panel's piece colour (--zone). */
+     the side panel. The tint follows the panel's piece colour (--zone). */
   .taskbox {
     background: var(--card);
     border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));

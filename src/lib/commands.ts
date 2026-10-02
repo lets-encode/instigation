@@ -1267,6 +1267,7 @@ const submitValidation: CommandDef<
                 resolved: "",
                 parent_id: "",
                 body: comment!.body.trim(),
+                fragment: "",
               },
             ]),
           });
@@ -1294,13 +1295,22 @@ const submitValidation: CommandDef<
 
 // Open a PR that appends one discussion comment (comment / reply)
 // to comment.csv. The Action re-authors id, author and timestamp.
-/** The submitComment input for a task-level comment, anchored at `at` when given. */
+/** A measure anchor; `fragment` names the piece on a campaign comment. */
+export interface CommentAnchorInput {
+  page: string;
+  measure_start: string;
+  measure_end: string;
+  fragment?: string;
+}
+
+/** The submitComment input for a task comment, or a campaign comment when
+    `task_id` is '', anchored at `at` when given. */
 export const commentInput = (
   task_id: string,
   kind: string,
   body: string,
   parent_id: string,
-  at?: { page: string; measure_start: string; measure_end: string },
+  at?: CommentAnchorInput,
 ) => ({
   task_id,
   subtask_id: "",
@@ -1309,6 +1319,7 @@ export const commentInput = (
   page: at?.page ?? "",
   measure_start: at?.measure_start ?? "",
   measure_end: at?.measure_end ?? "",
+  fragment: at?.fragment ?? "",
   parent_id,
 });
 
@@ -1321,6 +1332,7 @@ const submitComment: CommandDef<
     page: string;
     measure_start: string;
     measure_end: string;
+    fragment: string;
     parent_id: string;
   },
   Result
@@ -1339,9 +1351,10 @@ const submitComment: CommandDef<
     const { forge: f, owner, repo } = ctx;
     if (!input.body.trim())
       return { error: "The comment is empty — nothing was sent." };
+    const target = input.task_id || "the campaign";
     return openAndFinishInBackground(
       ctx,
-      `Comment on ${input.task_id}`,
+      `Comment on ${target}`,
       `comment:${input.task_id}`,
       async () => {
         await muteOnce(ctx);
@@ -1361,14 +1374,15 @@ const submitComment: CommandDef<
             resolved: "",
             parent_id: input.parent_id,
             body: input.body.trim(),
+            fragment: input.fragment,
           },
         ]);
-        const body = `Adds a ${input.kind} on ${input.task_id}. Opened from the campaign console.`;
+        const body = `Adds a ${input.kind} on ${target}. Opened from the campaign console.`;
         const pr = await f.openChangePr(owner, repo, {
-          branch: `comment-${input.task_id}-${rand()}`,
+          branch: `comment-${input.task_id || "campaign"}-${rand()}`,
           files: [{ path: COMMENT_PATH, content }],
-          message: `Comment on ${input.task_id} (${input.kind})`,
-          title: `Comment on ${input.task_id} (${input.kind})`,
+          message: `Comment on ${target} (${input.kind})`,
+          title: `Comment on ${target} (${input.kind})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         });
         console.log("[comment] comment PR opened", pr.number, pr.html_url);
@@ -1410,7 +1424,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
       `resolve:${comment_id}`,
       async () => {
         await muteOnce(ctx);
-        const body = `Resolves comment ${comment_id} on ${row.task_id}. Opened from the campaign console.`;
+        const body = `Resolves comment ${comment_id} on ${row.task_id || "the campaign"}. Opened from the campaign console.`;
         const pr = await f.openChangePr(owner, repo, {
           branch: `resolve-${comment_id}-${rand()}`,
           files: [

@@ -56,6 +56,7 @@ const comment = (over: Partial<CommentRow>): CommentRow => ({
   resolved: "",
   parent_id: "",
   body: "Slur missing in m. 34–35.",
+  fragment: "",
   ...over,
 });
 
@@ -504,6 +505,11 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
       "unknown_task",
     ],
     [
+      "campaign comment naming a subtask",
+      comment({ kind: "comment", task_id: "" }),
+      "unknown_task",
+    ],
+    [
       "reply to a missing parent",
       comment({ kind: "reply", parent_id: "nope" }),
       "unknown_parent",
@@ -517,6 +523,11 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
     [
       "reply to a reply",
       comment({ kind: "reply", parent_id: "c2" }),
+      "invalid_parent",
+    ],
+    [
+      "reply to another task's comment",
+      comment({ kind: "reply", parent_id: "c1", task_id: "", subtask_id: "" }),
       "invalid_parent",
     ],
     // Fail comments live in the validation record, not the discussion threads.
@@ -533,6 +544,48 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
     checkComment({
       ...base,
       added: comment({ kind: "reply", parent_id: "c1" }),
+    }).ok,
+    true,
+  );
+});
+
+test("comments: a campaign comment has no task and keeps its measure anchor", () => {
+  const added = comment({
+    kind: "comment",
+    task_id: "",
+    subtask_id: "",
+    fragment: "scores/piece2.mei",
+    body: "Old clefs here; encode them as written.",
+  });
+  const v = checkComment({
+    state: validationState(),
+    comments: [],
+    added,
+    author: "carol",
+    changedPaths: ["tracking/comment.csv"],
+    now: NOW,
+    newId: "c1",
+  });
+  assert.equal(v.ok, true);
+  if (v.ok) {
+    assert.equal(v.row.task_id, "");
+    assert.equal(v.row.fragment, "scores/piece2.mei");
+    assert.equal(v.row.measure_start, "34");
+  }
+  assert.equal(
+    checkComment({
+      state: validationState(),
+      comments: [{ ...added, comment_id: "c1" }],
+      added: comment({
+        kind: "reply",
+        task_id: "",
+        subtask_id: "",
+        parent_id: "c1",
+      }),
+      author: "dave",
+      changedPaths: ["tracking/comment.csv"],
+      now: NOW,
+      newId: "c2",
     }).ok,
     true,
   );

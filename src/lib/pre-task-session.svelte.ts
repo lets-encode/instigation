@@ -41,7 +41,7 @@ export class PreTaskSession {
   loading = $state(false);
   loadError = $state<string | null>(null);
   data = $state<FacsimileTaskData | null>(null);
-  /** The campaign tables behind the comments panel, refreshed on their own. */
+  /** The campaign tables behind the side panel, refreshed on their own. */
   tables = $state<CampaignTables | null>(null);
   /** A fail carries a mandatory comment; the box is open while one is typed. */
   failOpen = $state(false);

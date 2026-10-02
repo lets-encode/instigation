@@ -1,8 +1,8 @@
 <!--
   One discussion comment as a card: avatar, author, elapsed/measure meta, the
   kind pill, body, measure anchor and the reply/resolve actions. Replies
-  render indented without pill or actions. Shared by the comments panel and
-  the task panel's discussion.
+  render indented without pill or actions. Rendered in the side panel's
+  comment list.
 -->
 <script lang="ts">
   import { auth } from "$lib/auth.svelte.ts";

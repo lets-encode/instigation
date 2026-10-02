@@ -16,7 +16,7 @@
   }: {
     /** The task id whose run state renders, e.g. "T0002". */
     task: string;
-    /** Render as a full-width strip (task panel) instead of a card badge. */
+    /** Render as a full-width strip (side panel task box) instead of a card badge. */
     bar?: boolean;
     /** Render at the next-task card's text size. */
     large?: boolean;

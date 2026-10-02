@@ -60,7 +60,8 @@ export interface HistoryRow {
 /**
  * A comment row from comment.csv: the campaign's comment log. A `fail`
  * comment is the mandatory explanation of a fail validation; `comment`
- * and `reply` carry the discussion. Comments are anchored to
+ * and `reply` carry the discussion. A discussion comment with an empty
+ * task_id belongs to the campaign rather than a task. Comments are anchored to
  * measures (page + measure range), not pixels, so they survive re-encoding.
  */
 export interface CommentRow {
@@ -82,6 +83,9 @@ export interface CommentRow {
   /** comment_id of the comment this replies to; '' for top-level comments. */
   parent_id: string;
   body: string;
+  /** The piece's score path a campaign comment's measure anchor refers to;
+   *  '' on task comments, whose task names the piece. */
+  fragment: string;
 }
 
 /**
@@ -163,6 +167,7 @@ export const COMMENT_COLUMNS = [
   "resolved",
   "parent_id",
   "body",
+  "fragment",
 ];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.

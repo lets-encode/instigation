@@ -12,7 +12,7 @@
   } from "$lib/commands.ts";
   import { workStage } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import { readSidePanel } from "$lib/side-panels.ts";
   import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
   import type {
     MeasureBox,
@@ -42,8 +42,7 @@
   import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import PanelIcon from "$lib/components/PanelIcon.svelte";
-  import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
+  import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskReview from "$lib/components/PreTaskReview.svelte";
@@ -279,9 +278,9 @@
   ) => session.run(command, opts);
 
   // ------------------------------------------------------------- comments
-  // The piece's comments panel beside the tool. Posting and resolving refresh
-  // the tables only: a full reload would discard unsubmitted form values.
-  let commentsPanel = $state(readSidePanel("comments"));
+  // The side panel beside the tool. Posting and resolving refresh the tables
+  // only: a full reload would discard unsubmitted form values.
+  let sidePanel = $state(readSidePanel());
   // A comment anchor turns the reference score to its page and highlights the
   // range; the measure zones show so the range is visible.
   let refPreview = $state<ReturnType<typeof ScorePreview>>();
@@ -641,7 +640,7 @@
   />
 {/if}
 
-<div class="corrector">
+<div class="corrector sidehost">
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -977,25 +976,7 @@
             initialPane="facs"
             initialZones={false}
             {anchor}
-          >
-            {#snippet trailing()}
-              <button
-                type="button"
-                aria-pressed={commentsPanel.open}
-                class="btn"
-                title={commentsPanel.open
-                  ? "Hide the comments panel with the task's controls"
-                  : "Show the comments panel with the task's controls"}
-                onclick={() => {
-                  commentsPanel.open = !commentsPanel.open;
-                  writeSidePanel("comments", { ...commentsPanel });
-                }}
-              >
-                <PanelIcon />
-                Comments
-              </button>
-            {/snippet}
-          </ScorePreview>
+          />
         </div>
       </div>
     </div>
@@ -1065,13 +1046,13 @@
     {/snippet}
 
     {#if tables}
-      <PieceCommentsPanel
+      <TaskPageSidePanel
         {tables}
         {taskId}
         {viewer}
         {runner}
-        bind:panel={commentsPanel}
-        header={taskBox}
+        bind:panel={sidePanel}
+        {taskBox}
         onanchor={showAnchorFor}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
@@ -1108,9 +1089,9 @@
     background: var(--desk);
     box-shadow: var(--shadow-inset);
   }
-  /* The comments panel brings no outer spacing of its own; the score view's
-     host row provides it there. */
-  .corrector > :global(.cpwrap) {
+  /* The side panel brings no outer spacing of its own; the score view's
+     host row provides it there. Docked below the tool it spans the width. */
+  .corrector > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 12px 0;
   }
   .deskwrap {
@@ -1309,7 +1290,7 @@
 
   /* --------------------------------------------------------------- task box
      The task's status, actions and validation controls, pinned at the top of
-     the comments panel. The tint follows the panel's piece colour (--zone). */
+     the side panel. The tint follows the panel's piece colour (--zone). */
   .taskbox {
     background: var(--card);
     border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));

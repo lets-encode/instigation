@@ -327,7 +327,9 @@ function buildTicker(
     const def = findRow(d.taskDefs, h.task_id, "");
     const text = tickerText(
       h,
-      def ? cardTitle(def.fragment, def.locator, names) : h.task_id,
+      def
+        ? cardTitle(def.fragment, def.locator, names)
+        : h.task_id || "the campaign",
       def?.locator ?? "",
     );
     if (text)

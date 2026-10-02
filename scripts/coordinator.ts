@@ -1050,7 +1050,7 @@ async function attemptComment(
     ? coAuthored(
         action === "resolve_comment"
           ? `Resolve comment ${row!.comment_id} (by ${authorLabel})`
-          : `Record ${row!.kind} comment on ${row!.task_id} by ${authorLabel}`,
+          : `Record ${row!.kind} comment on ${row!.task_id || "the campaign"} by ${authorLabel}`,
       )
     : `Reject comment by ${authorLabel} (${verdict.reason})`;
   const commitStart = Date.now();

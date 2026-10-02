@@ -1,13 +1,14 @@
 <!--
   The full-page score view: one piece's score takes over the campaign page,
-  with the piece-scoped comments panel beside it. Comment anchors turn the
-  score to their page and highlight their measures; selecting a measure in the
-  score targets the composer, and a comment posted then carries that anchor.
-  The view is addressed by the campaign page's ?score= parameter; the back
-  link returns to the campaign.
+  with the side panel beside it — the ?task= task when one is selected, else
+  the campaign. Comment anchors on this piece turn the score to their page
+  and highlight their measures; a comment posted while a measure is selected
+  carries that measure. The view is addressed by the campaign page's ?score=
+  parameter; the back link returns to the campaign.
 -->
 <script lang="ts">
-  import type { Result } from "$lib/commands.ts";
+  import type { Snippet } from "svelte";
+  import type { CommentAnchorInput, Result } from "$lib/commands.ts";
   import {
     commentAnchor,
     type MeasureAnchor,
@@ -15,35 +16,36 @@
   } from "$lib/campaign-tables.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
-  import { buildThreads } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
-  import { writeSidePanel } from "$lib/side-panels.ts";
   import type { SidePanelState } from "$lib/side-panels.ts";
-  import CommentsPanel from "./CommentsPanel.svelte";
-  import PanelIcon from "./PanelIcon.svelte";
   import ScorePreview from "./ScorePreview.svelte";
+  import SidePanel from "./SidePanel.svelte";
 
   let {
     piece,
-    zone,
     campaignTitle,
     owner,
     repo,
     startPage = 0,
     anchor = null,
-    cards,
+    card,
+    cardOnPiece,
+    cardSubtitle = "",
+    cardZone = 0,
+    taskBox,
+    banner,
     comments,
     logins,
     viewer,
     canPush,
     runner,
     panel = $bindable(),
+    ondeselect,
+    onopenanchor,
     oncomment,
     onresolve,
   }: {
     piece: PieceRef;
-    /** The piece's colour slot, 1-based (--zone-N). */
-    zone: number;
     campaignTitle: string;
     owner: string;
     repo: string;
@@ -51,20 +53,30 @@
     startPage?: number;
     /** A measure range to open highlighted (from a comment anchor). */
     anchor?: MeasureAnchor | null;
-    /** The piece's task cards, for the comments panel's sections. */
-    cards: BoardCard[];
+    /** The selected task, or null for the campaign. */
+    card: BoardCard | null;
+    /** Whether the selected task is a task of this piece. */
+    cardOnPiece: boolean;
+    cardSubtitle?: string;
+    cardZone?: number;
+    /** The selected task's box. */
+    taskBox?: Snippet;
+    banner?: Snippet;
     comments: CommentRow[];
     logins: Record<string, string>;
     viewer: string;
     canPush: boolean;
     runner: CommandRunner;
     panel: SidePanelState;
+    ondeselect: () => void;
+    /** Show an anchor on another piece (the campaign page reopens the view). */
+    onopenanchor: (comment: CommentRow) => void;
     oncomment: (
       task: string,
       kind: string,
       body: string,
       parent_id: string,
-      anchor?: { page: string; measure_start: string; measure_end: string },
+      anchor?: CommentAnchorInput,
     ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
@@ -73,8 +85,8 @@
   // svelte-ignore state_referenced_locally -- an initial value by contract
   let shownAnchor = $state(anchor);
 
-  // The measure selected in the score, and the page it sits on: the composer
-  // targets that page's task and a posted comment carries the anchor.
+  // The measure selected in the score, and the page it sits on: a comment
+  // posted then carries it.
   let selected = $state<{ label: string; page: number } | null>(null);
   function onmeasureselect(label: string | null) {
     selected =
@@ -82,34 +94,36 @@
         ? null
         : { label, page: preview?.pageOfMeasure(label) ?? 0 };
   }
-  const selectedTask = $derived(
-    selected
-      ? (cards.find((c) => c.locator === `surface-${selected!.page + 1}`)
-          ?.task ?? null)
-      : null,
-  );
-  const selectionAnchor = () =>
-    selected
+  const task = $derived(card?.task ?? "");
+  // A campaign comment names this piece with its anchor; a task comment
+  // carries the anchor only when the task is on this piece.
+  const selectionAnchor = (): CommentAnchorInput | undefined =>
+    selected && (task === "" || cardOnPiece)
       ? {
           page: String(selected.page + 1),
           measure_start: selected.label,
           measure_end: selected.label,
+          fragment: task === "" ? piece.path : "",
         }
       : undefined;
 
-  const commentCount = $derived(
-    cards.reduce(
-      (n, card) =>
-        n +
-        buildThreads(comments, card.task).reduce(
-          (m, t) => m + 1 + t.replies.length,
-          0,
-        ),
-      0,
-    ),
-  );
+  /** Turn the open score to a page (0-based), highlighting `range` when
+      given; the campaign page calls it for links into the score shown. */
+  export function show(page: number | undefined, range: MeasureAnchor | null) {
+    if (range) {
+      shownAnchor = range;
+      preview?.setZones(true);
+    }
+    if (page !== undefined) preview?.showPage(page);
+  }
 
+  const onThisPiece = (c: CommentRow) =>
+    c.task_id === "" ? c.fragment === piece.path : cardOnPiece;
   function showAnchor(c: CommentRow) {
+    if (!onThisPiece(c)) {
+      onopenanchor(c);
+      return;
+    }
     shownAnchor = commentAnchor(c);
     preview?.setZones(true);
     if (shownAnchor.page) preview?.showPage(shownAnchor.page - 1);
@@ -120,23 +134,8 @@
   <div class="shead">
     <span class="sname">{pieceLabel(piece)}</span>
     <span class="scamp">{campaignTitle}</span>
-    <span class="sspacer"></span>
-    <button
-      type="button"
-      aria-pressed={panel.open}
-      class="btn"
-      title={panel.open ? "Hide the comments panel" : "Show the comments panel"}
-      onclick={() => {
-        panel.open = !panel.open;
-        writeSidePanel("comments", { ...panel });
-      }}
-    >
-      <PanelIcon />
-      Comments
-      <span class="countpill">{commentCount}</span>
-    </button>
   </div>
-  <div class="srow">
+  <div class="srow sidehost">
     <div class="smain">
       <ScorePreview
         bind:this={preview}
@@ -148,26 +147,28 @@
         {onmeasureselect}
       />
     </div>
-    {#if panel.open}
-      <CommentsPanel
-        {piece}
-        {zone}
-        {cards}
-        {comments}
-        {logins}
-        {viewer}
-        {canPush}
-        {runner}
-        bind:panel
-        targetTask={selectedTask}
-        composerHint={selected ? "Comment on the selected measure…" : ""}
-        inScore
-        onanchor={showAnchor}
-        oncomment={(task, kind, body, parent_id) =>
-          oncomment(task, kind, body, parent_id, selectionAnchor())}
-        {onresolve}
-      />
-    {/if}
+    <SidePanel
+      {task}
+      subtitle={card ? cardSubtitle : ""}
+      zone={card ? cardZone : 0}
+      review={card?.column === "validation"}
+      {comments}
+      {logins}
+      {viewer}
+      {canPush}
+      {runner}
+      bind:panel
+      inScore
+      emptyLine="Select a task on the board to show it here."
+      composerHint={selectionAnchor() ? "Comment on the selected measure…" : ""}
+      banner={card ? banner : undefined}
+      taskBox={card ? taskBox : undefined}
+      ondeselect={card ? ondeselect : undefined}
+      onanchor={showAnchor}
+      oncomment={(kind, body, parent_id) =>
+        oncomment(task, kind, body, parent_id, selectionAnchor())}
+      {onresolve}
+    />
   </div>
 </div>
 
@@ -201,19 +202,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .sspacer {
-    flex: 1;
-  }
-  .countpill {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
-    border-radius: 999px;
-    line-height: 1;
-    padding: 2px 7px;
-  }
   .srow {
     flex: 1;
     min-height: 0;
@@ -226,5 +214,17 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* Docked panel (DOCKED_QUERY in side-panels.ts): the panel spans the
+     window's width under the score. */
+  @media (orientation: portrait) and (max-width: 900px) {
+    .scoreview {
+      padding: 10px 0 0;
+      gap: 8px;
+    }
+    .shead,
+    .smain {
+      padding: 0 12px;
+    }
   }
 </style>

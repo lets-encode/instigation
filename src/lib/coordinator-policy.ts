@@ -210,7 +210,9 @@ const PARENT_CELL = COMMENT_COLUMNS.indexOf("parent_id");
  * The top-level comment a comment.csv patch resolves — every changed row only
  * flips `resolved` '' → 'true', and exactly one of them is top-level (empty
  * parent_id) — or null for any other diff. Flipped replies ride along; the
- * coordinator resolves the root's whole thread authoritatively.
+ * coordinator resolves the root's whole thread authoritatively. Rows whose
+ * cells are unchanged (a rewrite that only adds empty trailing cells) and the
+ * header row are not changes; the coordinator writes its own header.
  */
 export function resolvedCommentFromPatch(
   patch: string | undefined,
@@ -228,7 +230,14 @@ export function resolvedCommentFromPatch(
     const head = rows.added[i];
     if ((head[0] ?? "") === "" || (base[0] ?? "") !== (head[0] ?? ""))
       return null;
+    if (head[0] === COMMENT_COLUMNS[0]) continue;
     const width = Math.max(base.length, head.length);
+    if (
+      Array.from({ length: width }).every(
+        (_, j) => (base[j] ?? "") === (head[j] ?? ""),
+      )
+    )
+      continue;
     for (let j = 0; j < width; j++) {
       if ((base[j] ?? "") === (head[j] ?? "")) continue;
       if (

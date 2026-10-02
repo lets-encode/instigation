@@ -5,6 +5,10 @@ parentheses.
 
 ## 2026-10-02
 
+- Every campaign view shows one side panel that cannot be closed, docked below the content on portrait phones.
+- Campaign comments can be posted and read when no task is selected.
+- The volunteer page is capped at 1750px wide.
+- Phones show a one-line under-construction banner and a short footer.
 - A campaign address with capital letters forwards to the lowercase name.
 - The wizard's campaign name field lowercases what is typed.
 - A campaign address that is not a valid name says what names can contain.

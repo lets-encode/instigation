@@ -1,78 +1,63 @@
-// The campaign view's in-page side panels (the comments panel and the task
-// panel): whether one is open and how wide it is, kept per browser. The task
-// panel's open state follows the ?task= parameter, so only its width applies.
-// The width is ONE value shared
-// by both panels — they occupy the same place in the layout, and a differing
-// width would shift the centred board when one replaces the other.
-
-export type SidePanelId = "comments" | "task";
+// The side panel of the campaign views (SidePanel.svelte): its width when it
+// sits beside the content and its height when it is docked below it, kept
+// per browser.
 
 export interface SidePanelState {
-  open: boolean;
   width: number;
+  height: number;
 }
 
-const KEYS: Record<SidePanelId, string> = {
-  comments: "lets-encode:comments-panel",
-  task: "lets-encode:task-panel",
-};
-
-// The shared width; the per-panel keys keep their {open, width} shape, whose
-// width serves as the fallback where the shared key is not yet stored.
 const WIDTH_KEY = "lets-encode:side-panel-width";
+const HEIGHT_KEY = "lets-encode:side-panel-height";
+
+/** Where the panel docks below the content instead of beside it: portrait
+    screens up to tablet width. ui.css stacks `.sidehost` rows on the same
+    query. */
+export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 900px)";
 
 export const PANEL_MIN = 280;
-export const DEFAULT_PANEL_WIDTH = 380;
-
-const DEFAULT_OPEN: Record<SidePanelId, boolean> = {
-  comments: true,
-  task: true,
-};
+export const DEFAULT_PANEL_WIDTH = 480;
+/** Below this docked height the panel shows only its task box. */
+export const PANEL_LOWERED = 200;
 
 // Storage is read through this so the module can be used where there is none.
 const store = () => (typeof localStorage === "undefined" ? null : localStorage);
 
-const width = (v: unknown, fallback: number): number =>
-  typeof v === "number" && Number.isFinite(v) && v >= PANEL_MIN
-    ? Math.round(v)
-    : fallback;
-
-// The panel key's stored {open, width}, or {} where nothing valid is stored.
-function readPanelKey(id: SidePanelId): Record<string, unknown> {
+function readNumber(key: string): unknown {
   try {
-    const raw = store()?.getItem(KEYS[id]);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    return (parsed ?? {}) as Record<string, unknown>;
+    const raw = store()?.getItem(key);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-/** The stored panel state, or its default where nothing valid is stored;
-    `fallbackOpen` replaces the panel's default open state. */
-export function readSidePanel(
-  id: SidePanelId,
-  fallbackOpen: boolean = DEFAULT_OPEN[id],
-): SidePanelState {
-  const p = readPanelKey(id);
-  let shared: unknown = null;
-  try {
-    const raw = store()?.getItem(WIDTH_KEY);
-    shared = raw ? JSON.parse(raw) : null;
-  } catch {
-    /* an unreadable width falls back to the panel's own */
-  }
+const finite = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v);
+
+/** The default docked height: 40% of the viewport. */
+export const defaultPanelHeight = (viewport: number): number =>
+  Math.round(viewport * 0.4);
+
+/** The stored panel state, or its defaults where nothing valid is stored. */
+export function readSidePanel(): SidePanelState {
+  const w = readNumber(WIDTH_KEY);
+  const h = readNumber(HEIGHT_KEY);
+  const viewport = typeof window === "undefined" ? 800 : window.innerHeight;
   return {
-    open: typeof p.open === "boolean" ? p.open : fallbackOpen,
-    width: width(shared, width(p.width, DEFAULT_PANEL_WIDTH)),
+    width: finite(w) && w >= PANEL_MIN ? Math.round(w) : DEFAULT_PANEL_WIDTH,
+    height:
+      finite(h) && h > 0
+        ? clampPanelHeight(h, viewport)
+        : defaultPanelHeight(viewport),
   };
 }
 
-/** Store a panel's state. A browser refusing the write leaves it unstored. */
-export function writeSidePanel(id: SidePanelId, state: SidePanelState): void {
+/** Store the panel state. A browser refusing the write leaves it unstored. */
+export function writeSidePanel(state: SidePanelState): void {
   try {
-    store()?.setItem(KEYS[id], JSON.stringify(state));
     store()?.setItem(WIDTH_KEY, JSON.stringify(state.width));
+    store()?.setItem(HEIGHT_KEY, JSON.stringify(state.height));
   } catch {
     /* full or blocked storage only costs the preference */
   }
@@ -105,4 +90,10 @@ export function clampPanelWidth(w: number, viewport: number): number {
   return Math.round(
     Math.min(Math.max(w, PANEL_MIN), Math.max(PANEL_MIN, viewport / 2)),
   );
+}
+
+/** A dragged docked height, kept between 120px and the viewport less 160px
+    for the content above it. */
+export function clampPanelHeight(h: number, viewport: number): number {
+  return Math.round(Math.min(Math.max(h, 120), Math.max(120, viewport - 160)));
 }

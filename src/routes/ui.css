@@ -767,3 +767,14 @@ textarea.input {
   color: var(--danger);
   font-weight: 600;
 }
+
+/* ------------------------------------------------------------ side panel host
+   A row holding a view's content and its SidePanel. On the panel's docked
+   query (DOCKED_QUERY in side-panels.ts) the row stacks: the content above,
+   the panel below. Markup: <div class="sidehost">content<SidePanel /></div> */
+@media (orientation: portrait) and (max-width: 900px) {
+  .sidehost {
+    flex-direction: column !important;
+    gap: 0 !important;
+  }
+}
